@@ -90,13 +90,17 @@ describe("SlidesStyleImageGenerator", () => {
       .rejects.toThrow(/中转会话不可用/);
   });
 
-  it("surfaces generation HTTP failures", async () => {
+  it("surfaces generation HTTP failures after retries when nothing succeeds", async () => {
     const store = setupStore(true);
     const { files } = setupFiles();
+    // 504 属可重试瞬时错误：三次尝试后仍失败才向上抛（快退避注入防测试等待）。
     const fetchImpl = vi.fn(async () => fakeResponse({ error: "boom" }, false, 504));
-    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch);
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch, {
+      retryDelaysMs: [0, 1, 1],
+    });
     await expect(generator.generateOverviewImages({ prompt: "p", count: 1, idempotencyKey: "k" }))
       .rejects.toThrow(/HTTP 504/);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
   it("clamps candidate count into 1..4", async () => {
@@ -106,5 +110,64 @@ describe("SlidesStyleImageGenerator", () => {
     const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch);
     await generator.generateOverviewImages({ prompt: "p", count: 99, idempotencyKey: "k" });
     expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries 429s with backoff and keeps partial success", async () => {
+    const store = setupStore(true);
+    const { files, imports } = setupFiles();
+    // 脚本化响应队列：第 0 张一次成功；第 1 张前两次 429、第三次成功。
+    const script: Array<"ok" | "rate"> = ["ok", "rate", "rate", "ok"];
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      const step = script[call] ?? "ok";
+      call += 1;
+      if (step === "rate") return fakeResponse({ error: "rate limited" }, false, 429);
+      return fakeResponse({ data: [{ b64_json: Buffer.from(`img-${String(call)}`).toString("base64") }] });
+    });
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch, {
+      retryDelaysMs: [0, 1, 1],
+    });
+
+    const results = await generator.generateOverviewImages({ prompt: "p", count: 2, idempotencyKey: "k" });
+
+    expect(results).toHaveLength(2);
+    expect(imports).toHaveLength(2);
+    expect(call).toBe(4);
+  });
+
+  it("returns the survivors when only some candidates get through the rate limit", async () => {
+    const store = setupStore(true);
+    const { files, imports } = setupFiles();
+    // 调用顺序确定（allSettled 按序起跑、重试定时器按注册序触发）：
+    // 1=图0首试、2=图1首试、3=图0二试、4=图0三试。图0三次全 429，图1一次成功。
+    const script: Array<"ok" | "rate"> = ["rate", "ok", "rate", "rate"];
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      const step = script[call] ?? "ok";
+      call += 1;
+      if (step === "rate") return fakeResponse({ error: "rate limited" }, false, 429);
+      return fakeResponse({ data: [{ b64_json: Buffer.from("survivor").toString("base64") }] });
+    });
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch, {
+      retryDelaysMs: [0, 1, 1],
+    });
+
+    const results = await generator.generateOverviewImages({ prompt: "p", count: 2, idempotencyKey: "k" });
+
+    expect(results).toHaveLength(1);
+    expect(imports).toHaveLength(1);
+    expect(call).toBe(4);
+  });
+
+  it("does not retry non-retryable failures and surfaces the error when all candidates fail", async () => {
+    const store = setupStore(true);
+    const { files } = setupFiles();
+    const fetchImpl = vi.fn(async () => fakeResponse({ error: "bad request" }, false, 400));
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch, {
+      retryDelaysMs: [0, 1, 1],
+    });
+    await expect(generator.generateOverviewImages({ prompt: "p", count: 2, idempotencyKey: "k" }))
+      .rejects.toThrow(/HTTP 400/);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
