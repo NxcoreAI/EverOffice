@@ -2731,6 +2731,35 @@ export interface LocalAgentDispatchMaterialRecord {
   sourceDispatchId: string | null;
 }
 
+/** slides 风格会话（无模版风格管线的跨轮次状态）。 */
+export const slidesStyleSessions = sqliteTable(
+  "slides_style_sessions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id"),
+    instruction: text("instruction").notNull().default(""),
+    /** 用户累积反馈（「不要太蓝」等），逐条进入下轮生图提示词。 */
+    feedback: text("feedback", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** 候选纵览图（contentHash 寻址回源 /v1/materials/:hash）。 */
+    overviewImages: text("overview_images", { mode: "json" })
+      .$type<Array<{ contentHash: string; fileEntryId: string; generation: number }>>()
+      .notNull()
+      .default([]),
+    selectedImageHash: text("selected_image_hash"),
+    styleParams: text("style_params", { mode: "json" }).$type<unknown>(),
+    demoImageHash: text("demo_image_hash"),
+    stage: text("stage", { enum: ["images_ready", "extracting", "card_ready", "confirmed"] }).notNull(),
+    /** 第几次「不满意」重生成（提示词反馈累积层数）。 */
+    generation: integer("generation").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_style_sessions_room_idx").on(table.roomId, table.stage),
+  ],
+);
+
 export const localAgentDispatches = sqliteTable(
   "local_agent_dispatches",
   {

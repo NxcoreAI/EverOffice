@@ -484,6 +484,13 @@
       "when": 1790749771232,
       "tag": "0070_room_task_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1791546704754,
+      "tag": "0071_slides_style_sessions",
+      "breakpoints": true
     }
   ]
 }
