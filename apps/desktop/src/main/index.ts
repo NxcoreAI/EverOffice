@@ -211,6 +211,11 @@ protocol.registerSchemesAsPrivileged([
     scheme: OBSIDIAN_VAULT_ASSET_SCHEME,
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
+  {
+    // 网关素材按内容哈希寻址（slides 素材图、风格卡候选/演示页图共用）。
+    scheme: 'everroom-material',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
 ])
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -494,6 +499,9 @@ const ACCOUNT_CHANNELS = {
    *  通道不在 channelGroups 中就不会安装 ipcMain.handle（引入提交漏了这行，
    *  已登录开设置页每次都报 No handler registered）。 */
   aiRelayStatus: 'ai-relay:status',
+  /** SaaS 权威额度判定（402/403 后置 true）：启动闸门用它区分「额度耗尽」
+   *  与「服务未就绪」，keeper 未起/未判定返回 false。 */
+  aiRelayVerdict: 'ai-relay:verdict',
 } as const
 
 const TRANSCRIPTION_CHANNELS = {
@@ -3641,6 +3649,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
+  protocol.handle('everroom-material', async (request) => {
+    // everroom-material://<64位sha256> → 网关 /v1/materials/:hash（文件桥惰性取）。
+    try {
+      const url = new URL(request.url)
+      const hash = `${url.hostname}${url.pathname}`.replace(/\/+$/, '').toLowerCase()
+      if (!/^[a-f0-9]{64}$/.test(hash) || !officeFilesBridge) {
+        return new Response('Not found', { status: 404 })
+      }
+      const content = await officeFilesBridge.readMaterial(hash)
+      if (!content) return new Response('Not found', { status: 404 })
+      return new Response(new Uint8Array(content.buffer), {
+        headers: { 'Content-Type': content.mime, 'Cache-Control': 'private, max-age=86400' },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
   installIpcRouters()
   registerObsidianHandlers(obsidianVaultService)
   registerSystemClipboardHandler()
@@ -3680,6 +3705,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     if (!client) return Promise.resolve(null)
     return rateLimitAware(() => client.aiGatewayStatus())
   })
+  handle(ACCOUNT_CHANNELS.aiRelayVerdict, () => ({ quotaExhausted: aiRelayKeeper?.isQuotaExhausted() ?? false }))
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))

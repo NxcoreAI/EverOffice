@@ -15,9 +15,24 @@ export interface SlidesPagePlan {
   materials?: Array<{ url: string; desc?: string }>
 }
 
+/** 风格纵览候选（everroom-material:// 寻址）。 */
+export interface StyleCandidate {
+  url: string
+  generation: number
+}
+
+/** 风格卡数据（色块/字号/线框 SVG/演示页/效果文案——全部效果语言）。 */
+export interface StyleCardData {
+  swatches: Array<{ hex: string; label: string }>
+  typography: Array<{ label: string; value: string }>
+  wireframes: Array<{ role: string; svg: string }>
+  demoImageUrl: string | null
+  effectLines: string[]
+}
+
 /** slides_draft 进度载荷（网关 onUpdate details，全量快照，取最新一条即可）。 */
 export interface SlidesProgressState {
-  stage: 'draft_ready' | 'plan_ready' | 'page_applied'
+  stage: 'draft_ready' | 'plan_ready' | 'page_applied' | 'style_images_ready' | 'style_card_ready'
   title?: string
   totalPages?: number
   pages?: SlidesPagePlan[]
@@ -25,9 +40,13 @@ export interface SlidesProgressState {
   documentId?: string
   narrative?: string
   warnings?: string[]
+  styleSessionId?: string
+  styleCandidates?: StyleCandidate[]
+  styleCard?: StyleCardData
 }
 
 const PROGRESS_STAGES = new Set(['draft_ready', 'plan_ready', 'page_applied'])
+const STYLE_STAGES = new Set(['style_images_ready', 'style_card_ready'])
 
 /** 从 slides_draft 工具调用的 partialResult 还原进度载荷；不是进行中的 PPT 任务返回 null。 */
 export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefined): SlidesProgressState | null {
@@ -37,8 +56,11 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
   const payload = (details as { details?: unknown }).details
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
   const record = payload as Record<string, unknown>
-  if (typeof record.stage !== 'string' || !PROGRESS_STAGES.has(record.stage)) return null
-  if (!Array.isArray(record.pages)) return null
+  if (typeof record.stage !== 'string') return null
+  const isStyleStage = STYLE_STAGES.has(record.stage)
+  if (!isStyleStage && !PROGRESS_STAGES.has(record.stage)) return null
+  if (isStyleStage && typeof record.styleSessionId !== 'string') return null
+  if (!isStyleStage && !Array.isArray(record.pages)) return null
   return record as unknown as SlidesProgressState
 }
 
@@ -64,21 +86,24 @@ export function SlidesProgressCard({
 }) {
   const { t } = useLocale()
   const isDraft = state.stage === 'draft_ready' && typeof state.documentId === 'string'
+  const isStyleImages = state.stage === 'style_images_ready'
+  const isStyleCard = state.stage === 'style_card_ready'
+  const awaitingUser = isDraft || isStyleImages || isStyleCard
   const [form, setForm] = useState<GenerateFormState>({ audience: 0, duration: 1, focus: 2 })
   // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
   const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
-  // 点「生成」即确认：卡片折成短卡；新一轮 draft_ready 到来才重新出现确认表单（渲染期重置）
-  const [confirmed, setConfirmed] = useState(!isDraft)
-  const [bodyOpen, setBodyOpen] = useState(isDraft)
-  const [prevAwaitingConfirm, setPrevAwaitingConfirm] = useState(isDraft)
+  // 点「生成/使用/确认」即收起：卡片折成短卡；新一轮待确认节点到来才重新展开（渲染期重置）
+  const [confirmed, setConfirmed] = useState(!awaitingUser)
+  const [bodyOpen, setBodyOpen] = useState(awaitingUser)
+  const [prevAwaitingConfirm, setPrevAwaitingConfirm] = useState(awaitingUser)
   if (prevDeckTitle !== state.title) {
     setPrevDeckTitle(state.title)
     setExpanded(new Set())
   }
-  if (prevAwaitingConfirm !== isDraft) {
-    setPrevAwaitingConfirm(isDraft)
-    if (isDraft) {
+  if (prevAwaitingConfirm !== awaitingUser) {
+    setPrevAwaitingConfirm(awaitingUser)
+    if (awaitingUser) {
       setConfirmed(false)
       setBodyOpen(true)
     }
@@ -135,7 +160,11 @@ export function SlidesProgressCard({
       <small>
         {isDraft
           ? t('surface:agentChat.slidesDraftPageCount', { total })
-          : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
+          : isStyleImages
+            ? t('surface:agentChat.slidesStylePickTitle')
+            : isStyleCard
+              ? t('surface:agentChat.slidesStyleCardTitle')
+              : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
       </small>
     </span>
   )
@@ -163,6 +192,83 @@ export function SlidesProgressCard({
       )}
 
       {bodyOpen && state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
+
+      {bodyOpen && isStyleImages && !confirmed && state.styleCandidates?.length ? (
+        <div className="agent-slides-style-candidates">
+          {state.styleCandidates.map((candidate, index) => (
+            <figure key={`${candidate.url}-${String(index)}`} className="agent-slides-style-candidate">
+              <img src={candidate.url} alt="" loading="lazy" />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmed(true)
+                  setBodyOpen(false)
+                  onGenerate?.(t('surface:agentChat.slidesStylePickMessage', {
+                    index: index + 1,
+                    sessionId: state.styleSessionId ?? '',
+                  }))
+                }}
+              >
+                {t('surface:agentChat.slidesStyleUse', { index: index + 1 })}
+              </button>
+            </figure>
+          ))}
+        </div>
+      ) : null}
+
+      {bodyOpen && isStyleCard && !confirmed && state.styleCard ? (
+        <div className="agent-slides-style-card">
+          {state.styleCard.swatches.length ? (
+            <div className="agent-slides-style-swatches">
+              {state.styleCard.swatches.map((swatch) => (
+                <span key={swatch.label} className="agent-slides-style-swatch">
+                  <i style={{ background: swatch.hex }} />
+                  <b>{swatch.label}</b>
+                  <small>{swatch.hex.toUpperCase()}</small>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {state.styleCard.typography.length ? (
+            <dl className="agent-slides-style-typography">
+              {state.styleCard.typography.map((row) => (
+                <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
+              ))}
+            </dl>
+          ) : null}
+          {state.styleCard.wireframes.length ? (
+            <div className="agent-slides-style-wireframes">
+              {state.styleCard.wireframes.map((frame) => (
+                <div key={frame.role} className="agent-slides-style-wireframe" dangerouslySetInnerHTML={{ __html: frame.svg }} />
+              ))}
+            </div>
+          ) : null}
+          {state.styleCard.demoImageUrl ? (
+            <img className="agent-slides-style-demo" src={state.styleCard.demoImageUrl} alt="" loading="lazy" />
+          ) : null}
+          {state.styleCard.effectLines.length ? (
+            <ul className="agent-slides-style-lines">
+              {state.styleCard.effectLines.map((line) => <li key={line}>{line}</li>)}
+            </ul>
+          ) : null}
+          <button
+            type="button"
+            className="agent-slides-style-confirm"
+            disabled={busy}
+            onClick={() => {
+              setConfirmed(true)
+              setBodyOpen(false)
+              onGenerate?.(t('surface:agentChat.slidesStyleConfirmMessage', {
+                sessionId: state.styleSessionId ?? '',
+              }))
+            }}
+          >
+            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
+            {t('surface:agentChat.slidesStyleConfirm')}
+          </button>
+        </div>
+      ) : null}
 
       {bodyOpen && pages.length > 0 ? (
         <ol className="agent-slides-progress-pages">
