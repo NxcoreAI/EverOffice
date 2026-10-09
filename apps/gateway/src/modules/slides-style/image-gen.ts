@@ -132,8 +132,11 @@ export class SlidesStyleImageGenerator {
     const body = await response.json() as { data?: Array<{ url?: unknown; b64_json?: unknown }> };
     const item = body.data?.[0];
     if (!item) throw new Error("生图响应缺少 data");
-    const buffer = typeof item.b64_json === "string"
-      ? Buffer.from(item.b64_json, "base64")
+    // 实测接口成功时返回 b64_json:""（空串）+ 有效 url——只有非空 b64 才走内联，
+    // 空串必须落回 url 下载（按“是否字符串”判断会把空串当内联数据解出 0 字节）。
+    const inline = typeof item.b64_json === "string" ? item.b64_json.trim() : "";
+    const buffer = inline.length > 0
+      ? Buffer.from(inline, "base64")
       : await this.downloadImage(item.url);
     if (buffer.byteLength === 0) throw new Error("生图结果为空");
 

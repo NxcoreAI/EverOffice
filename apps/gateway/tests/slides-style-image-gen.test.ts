@@ -112,6 +112,27 @@ describe("SlidesStyleImageGenerator", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
+  it("falls back to url download when b64_json is an empty string (real API shape)", async () => {
+    const store = setupStore(true);
+    const { files, imports } = setupFiles();
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.endsWith("/images/generations")) {
+        // 实测形状：b64_json 是空串 + 有效 url。
+        return fakeResponse({ data: [{ b64_json: "", url: "https://oss.example.com/img.png" }] });
+      }
+      return fakeResponse({ data: [{ b64_json: Buffer.from("downloaded-bytes").toString("base64") }] });
+    });
+    const generator = new SlidesStyleImageGenerator(store, files, fetchImpl as unknown as typeof fetch);
+
+    const results = await generator.generateOverviewImages({ prompt: "p", count: 1, idempotencyKey: "k" });
+
+    expect(calls).toEqual(["https://ai.example.com/v1/images/generations", "https://oss.example.com/img.png"]);
+    expect(results).toHaveLength(1);
+    expect(imports[0]?.buffer.toString()).toBe("downloaded-bytes");
+  });
+
   it("retries 429s with backoff and keeps partial success", async () => {
     const store = setupStore(true);
     const { files, imports } = setupFiles();
