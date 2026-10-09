@@ -949,12 +949,10 @@ export function createSubagentPiTools(
       description: "调度 slides 子代理按「草稿 → 用户确认 → 生成」三步产出或修改演示文稿（PPT）。"
         + "draft：先由 slides-planner 收集背景信息，产出内容草稿文档（一个章节 = 一页，含要点/数据/配图建议）——到此即停，"
         + "用户在文档里确认修改内容后才会发起生成；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
-        + "generate：用户确认草稿后调用，传 draftDocumentId（草稿文档 id）与可选 style——"
+        + "generate：用户确认草稿后调用，传 draftDocumentId（草稿文档 id）——"
         + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图，再由 slides-builder 定调设计并一口气落完所有页"
-        + "（逐页进度实时展示，中途不再逐页询问）；确认卡的受众/时长/详略答案原样写进 instruction 转述。"
-        + "style 可选：japanese-style（和纸柔光·日式静）/ japanese-lifestyle（白底焦橙·杂志锐）/ futuristic-tech-editorial（白底电蓝·数据锐）/"
-        + "minimalist-luxury-branding（米棕衬线·奢牌）/ modern-illustration-editorial（现代插画·暖）/ soft-3d-clay（黏土软调·圆润）/ japanese-hand-drawn-editorial（手绘线稿·手作）"
-        + "——用户点名风格时传对应 id，拿不准就不传（落页代理自选）。"
+        + "（逐页进度实时展示，中途不再逐页询问）；确认卡的受众/时长/详略答案原样写进 instruction 转述，"
+        + "用户口头表达的风格倾向（如「商务一点」「不要蓝色」）也原样写进 instruction，没有预设风格可选。"
         + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
         + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
         + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
@@ -963,7 +961,6 @@ export function createSubagentPiTools(
         task: Type.Union([Type.Literal("draft"), Type.Literal("generate"), Type.Literal("edit")]),
         instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-        style: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
         outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 24 })),
         draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
@@ -974,7 +971,6 @@ export function createSubagentPiTools(
         const instruction = String(params.instruction ?? "").trim();
         if (!instruction) throw new Error("slides_draft_instruction_required");
         const titleArg = typeof params.title === "string" ? params.title.trim().slice(0, 120) : "";
-        const styleArg = typeof params.style === "string" ? params.style.trim().slice(0, 40) : "";
         const fileIdArg = typeof params.fileId === "string" ? params.fileId.trim() : "";
         const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
         if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
@@ -1184,7 +1180,6 @@ export function createSubagentPiTools(
             roomId,
             title: draftSnapshot.document.title.slice(0, 120),
             draftPages,
-            ...(styleArg ? { style: styleArg } : {}),
           };
           let plannerInvocation;
           try {
@@ -1262,7 +1257,6 @@ export function createSubagentPiTools(
             instruction,
             roomId,
             title: gatePlan.title,
-            ...(styleArg ? { style: styleArg } : {}),
             plan,
           };
           let builderInvocation;

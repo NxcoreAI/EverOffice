@@ -46,7 +46,6 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
 interface GenerateFormState {
   audience: number
   duration: number
-  style: string | null
   focus: number
 }
 
@@ -65,7 +64,7 @@ export function SlidesProgressCard({
 }) {
   const { t } = useLocale()
   const isDraft = state.stage === 'draft_ready' && typeof state.documentId === 'string'
-  const [form, setForm] = useState<GenerateFormState>({ audience: 0, duration: 1, style: null, focus: 2 })
+  const [form, setForm] = useState<GenerateFormState>({ audience: 0, duration: 1, focus: 2 })
   // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
   const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
@@ -104,16 +103,6 @@ export function SlidesProgressCard({
     t('surface:agentChat.slidesFocusData'),
     t('surface:agentChat.slidesFocusBalanced'),
   ]
-  const styleOptions: Array<{ key: string | null; label: string }> = [
-    { key: null, label: t('surface:agentChat.slidesStyleAuto') },
-    { key: 'japanese-style', label: t('surface:agentChat.slidesStyleJapanese') },
-    { key: 'japanese-lifestyle', label: t('surface:agentChat.slidesStyleLifestyle') },
-    { key: 'futuristic-tech-editorial', label: t('surface:agentChat.slidesStyleTech') },
-    { key: 'minimalist-luxury-branding', label: t('surface:agentChat.slidesStyleLuxury') },
-    { key: 'modern-illustration-editorial', label: t('surface:agentChat.slidesStyleIllustration') },
-    { key: 'soft-3d-clay', label: t('surface:agentChat.slidesStyleClay') },
-    { key: 'japanese-hand-drawn-editorial', label: t('surface:agentChat.slidesStyleHandDrawn') },
-  ]
 
   const composeGenerateMessage = (): string => {
     const params = {
@@ -121,12 +110,9 @@ export function SlidesProgressCard({
       title: state.title ?? '',
       audience: audiences[form.audience],
       duration: durations[form.duration],
-      style: form.style ?? '',
       focus: focusOptions[form.focus],
     }
-    return form.style
-      ? t('surface:agentChat.slidesGenerateMessageStyled', params)
-      : t('surface:agentChat.slidesGenerateMessage', params)
+    return t('surface:agentChat.slidesGenerateMessage', params)
   }
 
   const statusOf = (index: number): 'done' | 'running' | 'pending' => {
@@ -267,18 +253,6 @@ export function SlidesProgressCard({
                 onChange={(event) => setForm((prev) => ({ ...prev, duration: Number(event.target.value) }))}
               >
                 {durations.map((label, index) => <option key={label} value={index}>{label}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{t('surface:agentChat.slidesFormStyle')}</span>
-              <select
-                value={form.style ?? ''}
-                disabled={busy}
-                onChange={(event) => setForm((prev) => ({ ...prev, style: event.target.value || null }))}
-              >
-                {styleOptions.map((option) => (
-                  <option key={option.key ?? ''} value={option.key ?? ''}>{option.label}</option>
-                ))}
               </select>
             </label>
             <label>

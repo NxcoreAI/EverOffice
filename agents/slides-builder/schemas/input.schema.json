@@ -28,11 +28,6 @@
       "maxLength": 120,
       "description": "Deck title for create, from the plan; also the default file name."
     },
-    "style": {
-      "type": "string",
-      "maxLength": 40,
-      "description": "Style skill id for create: japanese-style | japanese-lifestyle | soft-3d-clay | futuristic-tech-editorial | minimalist-luxury-branding | modern-illustration-editorial | japanese-hand-drawn-editorial. Optional — pick the closest style yourself when absent; explicit user style requests in instruction override the skill."
-    },
     "fileId": {
       "type": "string",
       "maxLength": 128,

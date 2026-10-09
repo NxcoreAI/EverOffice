@@ -8,26 +8,17 @@
 ## 权威分层（同一件事只有一个出处，冲突时按此裁决）
 
 1. **结构与坐标** → 布局技能（`skills/layout-ppt-skill/`）：网格、等分公式、P/D/T/F 具名预设、页序节奏。
-2. **风格气质** → 风格技能（`skills/<style>-ppt-skill/SKILL.md`，单文件）：六色色板底稿、字体、母题、各预设在本风格下的处理方式。风格原文即最终口径；本引擎不存在的概念（HTML/SVG 模板、px 单位、外部管线）在风格文件里不存在，读到任何来历不明的名词一律忽略。
-3. **颜色与母题定稿** → 设计简报（create 第 1 步产出）：默认取风格色板；instruction 带品牌色或题材与色板气质冲突时，按 design-craft 技能 `references/palettes.md` 的配方推导整套六色替换。
-4. **字号带、折行估算、工艺硬规则、引擎拒绝项** → 本文件。
+2. **风格气质** → 设计简报（create 第 1 步产出，全篇唯一风格出处）：六色色板、字体角色、视觉母题、明暗节奏、密度基调。由 design-craft「定调三步」结合 plan 题材与 instruction 里的风格倾向推导；instruction 明确的品牌色或颜色要求优先，定制色板按 design-craft 技能 `references/palettes.md` 的配方整套替换后全篇一致。设计简报一经定稿，逐页施工不得漂移；本引擎不存在的概念（HTML/SVG 模板、px 单位、外部管线）读到任何来历不明的名词一律忽略。
+3. **字号带、折行估算、工艺硬规则、引擎拒绝项** → 本文件。
 
 ## create 作业流程（按序执行，禁止跳步）
 
-1. **定调**：读 `skills/design-craft-ppt-skill/SKILL.md`，按「定调三步」写设计简报（六色色板、视觉母题、明暗节奏、密度基调、字体角色），题材取自 plan 的 narrative 与各页内容。需要定制色板时读其 `references/palettes.md`。
-2. **选风格**：按下表自选。读齐所选风格的 `skills/<style>-ppt-skill/SKILL.md`（每风格只有这一份文件）。不混搭两套；instruction 明确的风格/颜色要求优先于风格文件（以最接近的风格为底、按 palettes.md 配方改整套色板后全篇一致）；edit 任务不换风格。
-   - `japanese-style` 和纸柔光·静 —— 正式汇报、人文读物、品牌故事、需要温度的商务
-   - `japanese-lifestyle` 白底焦橙·锐 —— 生活方式品牌、趋势报告、消费叙事、杂志感
-   - `futuristic-tech-editorial` 白底电蓝·数据锐 —— 技术方案、产品发布、数据复盘、开发者题材
-   - `minimalist-luxury-branding` 米棕衬线·奢 —— 高端品牌、地产、金融、创始人叙事
-   - `modern-illustration-editorial` 柔和插画·暖 —— 产品介绍、营销、教育、团队介绍
-   - `soft-3d-clay` 黏土软调·圆润 —— 活泼产品、儿童教育、轻量科普
-   - `japanese-hand-drawn-editorial` 手绘线稿·手作 —— 人文、生活方式、创作过程、工作室
-3. **排页序定预设**：读 `skills/layout-ppt-skill/SKILL.md`（网格与等分公式、均匀性法则、布局选择器、页序节奏），结合 plan 每页 role 给每页指定具名预设。**填每一类页之前再读对应二级文件**：表格→`layouts/table-pages.md`、数据/图表→`layouts/data-pages.md`、封面/章节/图文→`layouts/text-media-pages.md`、流程/时间线/架构→`layouts/flow-pages.md`。
-4. **建文件**：调用 `context_room_slides_create`，只传 title + outline（页序蓝图：每页一个标题、长度即页数上限，取自 plan.pages 的 title）。创建的文件初始只有 1 页骨架，入库后自动以可编辑方式打开，用户能看到。禁止把任何页面内容塞进 create。
-5. **逐页生成**：立即用 `context_room_slides_set_page` 从 slideIndex=0 起按 0、1、2… 顺序一页一页生成——slideIndex=0 替换骨架页，此后每页 slideIndex=当前页数（工具自动在末尾追加）；每次只生成一页，拿到成功结果再继续下一页（用户实时看到每一页成形）；某页失败只需修正该页 spec 重试，不影响已成的页。生成到第几页文件就有几页完整成形的页——绝不提前为后面的页建空壳。
-6. **完稿自检**：全部页生成完后、提交结果前，读 `skills/design-craft-ppt-skill/references/ai-tells.md` 对全篇逐条过（定调自查 + 逐页扫描），发现 AI 味页用 set_page 重生成该页。先查可数的项（字号、间距、强调色次数、相邻页预设重复、折行溢出），再查观感项。
-7. **提交**：按输出 Schema 调用 `subagent_submit_result` 完整提交 status、summary 等；summary 里说明所用风格名与母题。
+1. **定调**：读 `skills/design-craft-ppt-skill/SKILL.md`，按「定调三步」写设计简报（六色色板、视觉母题、明暗节奏、密度基调、字体角色）。题材取自 plan 的 narrative 与各页内容；instruction 里用户口头表达的风格倾向（如「商务一点」「不要蓝色」「活泼些」）作为定调输入优先消化。需要定制色板时读其 `references/palettes.md`。
+2. **排页序定预设**：读 `skills/layout-ppt-skill/SKILL.md`（网格与等分公式、均匀性法则、布局选择器、页序节奏），结合 plan 每页 role 给每页指定具名预设。**填每一类页之前再读对应二级文件**：表格→`layouts/table-pages.md`、数据/图表→`layouts/data-pages.md`、封面/章节/图文→`layouts/text-media-pages.md`、流程/时间线/架构→`layouts/flow-pages.md`。
+3. **建文件**：调用 `context_room_slides_create`，只传 title + outline（页序蓝图：每页一个标题、长度即页数上限，取自 plan.pages 的 title）。创建的文件初始只有 1 页骨架，入库后自动以可编辑方式打开，用户能看到。禁止把任何页面内容塞进 create。
+4. **逐页生成**：立即用 `context_room_slides_set_page` 从 slideIndex=0 起按 0、1、2… 顺序一页一页生成——slideIndex=0 替换骨架页，此后每页 slideIndex=当前页数（工具自动在末尾追加）；每次只生成一页，拿到成功结果再继续下一页（用户实时看到每一页成形）；某页失败只需修正该页 spec 重试，不影响已成的页。生成到第几页文件就有几页完整成形的页——绝不提前为后面的页建空壳。
+5. **完稿自检**：全部页生成完后、提交结果前，读 `skills/design-craft-ppt-skill/references/ai-tells.md` 对全篇逐条过（定调自查 + 逐页扫描），发现 AI 味页用 set_page 重生成该页。先查可数的项（字号、间距、强调色次数、相邻页预设重复、折行溢出），再查观感项。
+6. **提交**：按输出 Schema 调用 `subagent_submit_result` 完整提交 status、summary 等；summary 里说明设计简报定下的色板气质与视觉母题。
 
 ## plan 纪律（create）
 
@@ -66,8 +57,9 @@
 ## edit 作业纪律
 
 1. 调用 `context_room_slides_read` 获取大纲与 op 词汇（fileId 用输入携带值，缺省为 "active" 即当前桌面打开的那份；未打开会报错，如实回报）。
-2. 用大纲里的元素 id 组装 `context_room_slides_edit` 事务（fileId 同样可用 "active"）；只改 instruction 涉及的元素，用户能实时看到每笔修改。
-3. 文件以只读方式打开时（editable=false），不强行编辑，在 summary 里说明需先在产物库以可编辑方式重新打开。
+2. edit 不重新定调：沿用该 deck 既有色板、字号与母题（从大纲与现有页延续），只改 instruction 涉及的元素，保持全篇一致。
+3. 用大纲里的元素 id 组装 `context_room_slides_edit` 事务（fileId 同样可用 "active"）；用户能实时看到每笔修改。
+4. 文件以只读方式打开时（editable=false），不强行编辑，在 summary 里说明需先在产物库以可编辑方式重新打开。
 
 ## 通用约束
 

@@ -42,7 +42,7 @@ describe('slidesProgressFromToolCall', () => {
 })
 
 describe('SlidesProgressCard', () => {
-  it('草稿卡：打开草稿回传文档 id，确认表单合成 generate 消息（含风格）', () => {
+  it('草稿卡：打开草稿回传文档 id，确认表单合成 generate 消息', () => {
     const onOpenDraft = vi.fn()
     const onGenerate = vi.fn()
     const renderer = TestRenderer.create(
@@ -52,13 +52,10 @@ describe('SlidesProgressCard', () => {
     act(() => renderer.root.findByProps({ className: 'agent-slides-open-draft' }).props.onClick())
     expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1')
 
-    // 换风格 → 带风格键的模板。
-    const selects = renderer.root.findAllByType('select')
-    act(() => selects[2]!.props.onChange({ target: { value: 'japanese-style' } }))
     act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    const styledMessage = onGenerate.mock.calls[0]![0] as string
-    expect(styledMessage).toContain('slidesGenerateMessageStyled?')
-    expect(styledMessage).toContain('style=japanese-style')
+    const message = onGenerate.mock.calls[0]![0] as string
+    expect(message).toContain('slidesGenerateMessage?')
+    expect(message).toContain('documentId=doc-draft-1')
   })
 
   it('点「生成」后折成短卡：表单消失，头部按钮可重展页列表但不回显表单', () => {
@@ -67,14 +64,13 @@ describe('SlidesProgressCard', () => {
       <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
     )
 
-    // 默认档（受众=领导汇报/时长=15 分钟/风格=自动/详略=均衡）→ 不带 style 的模板。
+    // 默认档（受众=领导汇报/时长=15 分钟/详略=均衡）。
     act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
     expect(onGenerate).toHaveBeenCalledTimes(1)
     const message = onGenerate.mock.calls[0]![0] as string
     expect(message).toContain('slidesGenerateMessage?')
     expect(message).toContain('documentId=doc-draft-1')
     expect(message).toContain('title=季度汇报')
-    expect(message).not.toContain('Styled')
 
     // 确认后只剩短卡头部（按钮），页列表与表单都收起。
     expect(renderer.root.findAllByType('select')).toHaveLength(0)
@@ -117,7 +113,7 @@ describe('SlidesProgressCard', () => {
       <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
     ))
     expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('header')
-    expect(renderer.root.findAllByType('select')).toHaveLength(4)
+    expect(renderer.root.findAllByType('select')).toHaveLength(3)
   })
 
   it('生成卡：默认折成短卡，点头部展开看页进度（按 doneCount 打勾，进行中的页转圈）', () => {
