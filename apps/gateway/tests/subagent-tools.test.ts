@@ -1,10 +1,19 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { createCanvas } from '@napi-rs/canvas'
 import type { SubagentInvocation } from '@nxcore/agent-contract'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { RoomContextDigest } from '../src/modules/context-rooms/room-context-digest.js'
 import type { SubagentOrchestrator } from '../src/modules/subagents/orchestrator.js'
 import type { SubagentRegistry } from '../src/modules/subagents/registry.js'
 import { createSubagentPiTools } from '../src/modules/subagents/tools.js'
+import type { SlidesStyleStageDeps } from '../src/modules/subagents/slides-style-stage.js'
+import type { SlidesStyleImageGenerator } from '../src/modules/slides-style/image-gen.js'
+import { SlidesStyleSessionStore } from '../src/modules/slides-style/style-session.js'
+import type { DatabaseClient } from '../src/infrastructure/database/client.js'
+import { createDatabase } from '../src/infrastructure/database/client.js'
 
 function registryWith(agentIds: string[]): SubagentRegistry {
   return {
@@ -442,7 +451,6 @@ describe('createSubagentPiTools slides_draft', () => {
         task: 'generate',
         instruction: '受众是领导，15 分钟，内容均衡',
         draftDocumentId: 'doc-draft-1',
-        style: 'futuristic-tech-editorial',
       } as never,
       undefined,
       onUpdate,
@@ -457,7 +465,8 @@ describe('createSubagentPiTools slides_draft', () => {
       title: '业绩',
       data: 'Q1: 1.2 亿；Q2: 1.5 亿',
     })
-    expect(plannerInput.style).toBe('futuristic-tech-editorial')
+    // 预设风格字段已拆除（af1c1dac）：风格倾向走 instruction，不再有 style 入参。
+    expect(plannerInput.style).toBeUndefined()
 
     const builderDispatch = orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
     expect(builderDispatch).toMatchObject({ agentId: 'slides-builder', source: 'primary_agent' })
@@ -467,7 +476,6 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(builderInput).toMatchObject({
       task: 'create',
       title: '季度汇报',
-      style: 'futuristic-tech-editorial',
     })
     expect(builderInput.plan).toEqual(arrangePlan)
 
@@ -622,3 +630,276 @@ describe('createSubagentPiTools slides_draft', () => {
   })
 })
 
+describe('createSubagentPiTools slides_draft 风格阶段', () => {
+  const stylePlanParams = {
+    palette: {
+      background: '#f5f2ec', surface: '#faf9f6', primary: '#1e3a5f', accent: '#e0a03c',
+      text: '#2f2b28', textMuted: '#8f8a81', onDarkText: '#f2f4f7',
+      chartSeries: ['#1e3a5f', '#5a6f8a', '#8fa1b8', '#e0a03c', '#e8bd88'],
+    },
+    typography: {
+      fontHeading: 'PingFang SC', fontBody: 'PingFang SC',
+      sizes: { coverTitle: 64, sectionTitle: 40, pageTitle: 28, subtitle: 18, body: 14, caption: 11, kpi: 44, table: 13 },
+      headingBold: true,
+    },
+    spacing: { margin: 60, gutter: 20, cardPadding: 16, cornerRadius: 8 },
+    decoration: { cardStroke: null, cardStrokeWidthPt: 0.75, cardShadow: 'none', divider: 'line', imageFit: 'cover' },
+    motif: { kind: 'none', spec: {} },
+    layoutHints: {},
+    darkCover: true,
+    effectLines: ['主色 深藏青 #1E3A5F'],
+  }
+
+  function syntheticOverviewPng(): Buffer {
+    const canvas = createCanvas(320, 180)
+    const context = canvas.getContext('2d')
+    context.fillStyle = '#f5f2ec'
+    context.fillRect(0, 0, 320, 180)
+    context.fillStyle = '#1e3a5f'
+    context.fillRect(0, 0, 320, 52)
+    context.fillStyle = '#e0a03c'
+    context.fillRect(248, 70, 56, 100)
+    return canvas.toBuffer('image/png')
+  }
+
+  const databases: DatabaseClient[] = []
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    databases.splice(0).forEach((database) => database.sqlite.close())
+    await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  })
+
+  async function setupStyleDeps(options: {
+    settleOutput?: Record<string, unknown> | null
+    directionOutput?: Record<string, unknown> | null
+  } = {}): Promise<{
+    deps: SlidesStyleStageDeps
+    orchestrator: SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    generateImages: ReturnType<typeof vi.fn>
+    saveDemoPng: ReturnType<typeof vi.fn>
+  }> {
+    const dir = await mkdtemp(join(tmpdir(), 'nxcore-style-stage-test-'))
+    temporaryDirectories.push(dir)
+    const database = createDatabase(join(dir, 'gateway.sqlite'), resolve('drizzle'))
+    databases.push(database)
+    const generateImages = vi.fn(async (input: { count: number; idempotencyKey: string }) =>
+      Array.from({ length: input.count }, (_, index) => ({
+        contentHash: `${input.idempotencyKey}:${String(index)}`.padEnd(64, '0').slice(0, 64),
+        fileEntryId: `entry-${String(index)}`,
+      })))
+    const saveDemoPng = vi.fn(async () => ({ contentHash: 'd'.repeat(64), fileEntryId: 'demo-entry' }))
+    const deps: SlidesStyleStageDeps = {
+      sessions: new SlidesStyleSessionStore(database.db),
+      images: { generateOverviewImages: generateImages } as unknown as SlidesStyleImageGenerator,
+      vlm: {
+        model: 'test-vlm',
+        analyze: async () => ({ serif: false, weight: 'bold', geometric: 'neutral', rounded: false }),
+      },
+      readMaterialBytes: async () => ({ buffer: syntheticOverviewPng(), mime: 'image/png' }),
+      demoRenderer: {
+        renderPptx: async () => {
+          throw new Error('office_bridge_unavailable')
+        },
+      },
+      saveDemoPng,
+    }
+    const dispatchHandlers: Record<string, Partial<SubagentInvocation>> = {
+      'slides-styler': {
+        result: {
+          text: '',
+          structuredOutput: options.settleOutput ?? options.directionOutput ?? null,
+        },
+      },
+    }
+    const orchestrator = {
+      dispatch: vi.fn(async (input: { agentId: string; task?: string; input?: { task?: string }; onInvocationId?: (id: string) => void }) => {
+        const invocationId = `invocation-${input.agentId}`
+        input.onInvocationId?.(invocationId)
+        if (input.agentId === 'slides-styler' && input.input?.task === 'settle') {
+          return {
+            id: 'invocation-styler', agentDefinitionId: 'slides-styler', agentRevisionId: 'r1',
+            source: 'primary_agent', parentSessionId: 'session-1', parentRunId: 'run-1',
+            task: '风格参数复核', input: null, status: 'completed',
+            result: { text: '', structuredOutput: { task: 'settle', styleParams: stylePlanParams, notes: '' } },
+            errorCode: null, errorMessage: null,
+            createdAt: '', startedAt: '', completedAt: '',
+          }
+        }
+        return {
+          id: 'invocation-styler', agentDefinitionId: 'slides-styler', agentRevisionId: 'r1',
+          source: 'primary_agent', parentSessionId: 'session-1', parentRunId: 'run-1',
+          task: '纵览图生图提示词', input: null, status: 'completed',
+          result: { text: '', structuredOutput: options.directionOutput ?? null },
+          errorCode: null, errorMessage: null,
+          createdAt: '', startedAt: '', completedAt: '',
+        }
+      }),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    void dispatchHandlers
+    return { deps, orchestrator, generateImages, saveDemoPng }
+  }
+
+  it('style：styler 出提示词 → 生图 → 广播挑图卡并落库会话', async () => {
+    const { deps, orchestrator, generateImages } = await setupStyleDeps({
+      directionOutput: { task: 'direction', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，顶部标题区用灰色假字条……'.repeat(2), styleBrief: '深色科技' },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesStyle: deps,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const onUpdate = vi.fn()
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '做一份商务科技风的汇报', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+      onUpdate,
+    )
+
+    const payload = JSON.parse(result.content as string) as { status: string; styleSessionId: string; candidates: number }
+    expect(payload.status).toBe('style_images_ready')
+    expect(payload.candidates).toBe(3)
+    const broadcast = onUpdate.mock.calls.at(-1)?.[0] as { details: { stage: string; candidates: Array<{ url: string }> } }
+    expect(broadcast.details.stage).toBe('style_images_ready')
+    expect(broadcast.details.candidates).toHaveLength(3)
+    expect(broadcast.details.candidates[0]?.url.startsWith('everroom-material://')).toBe(true)
+    expect(generateImages).toHaveBeenCalledTimes(1)
+    const session = deps.sessions.byId(payload.styleSessionId)
+    expect(session?.stage).toBe('images_ready')
+    expect(session?.draftDocumentId).toBe('doc-draft-1')
+  })
+
+  it('style 重入：活跃挑图会话 + 新反馈 → 反馈累积、轮次 +1、重出候选', async () => {
+    const { deps, orchestrator, generateImages } = await setupStyleDeps({
+      directionOutput: { task: 'direction', imagePrompt: '一张深色科技风 PPT 风格参考图，版式完整……'.repeat(2), styleBrief: '' },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const first = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const firstPayload = JSON.parse(first.content as string) as { styleSessionId: string }
+
+    const second = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '不要太蓝，要更商务' } as never,
+      undefined, undefined,
+    )
+    const secondPayload = JSON.parse(second.content as string) as { styleSessionId: string; generation: number }
+    expect(secondPayload.styleSessionId).toBe(firstPayload.styleSessionId)
+    expect(secondPayload.generation).toBe(2)
+    const session = deps.sessions.byId(secondPayload.styleSessionId)
+    expect(session?.feedback).toEqual(['不要太蓝，要更商务'])
+    const secondCall = generateImages.mock.calls[1]?.[0] as { idempotencyKey: string }
+    expect(secondCall.idempotencyKey).toContain(':gen:2')
+  })
+
+  it('style_select：提取+复核+降级演示页 → 风格卡就绪；坏序号被拒', async () => {
+    const { deps, orchestrator, saveDemoPng } = await setupStyleDeps()
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const style = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
+
+    const bad = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 9 } as never,
+      undefined, undefined,
+    )
+    expect((JSON.parse(bad.content as string) as { status: string }).status).toBe('failed')
+
+    const onUpdate = vi.fn()
+    const selected = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 2 } as never,
+      undefined, onUpdate,
+    )
+    const payload = JSON.parse(selected.content as string) as { status: string; warnings?: string[] }
+    expect(payload.status).toBe('style_card_ready')
+    // 桌面渲染不可用 → 演示页降级（仍有风格卡），提示入 warnings。
+    expect(payload.warnings).toEqual(expect.arrayContaining([expect.stringContaining('演示页渲染')]))
+    expect(saveDemoPng).not.toHaveBeenCalled()
+    const broadcast = onUpdate.mock.calls.at(-1)?.[0] as { details: { stage: string; swatches: Array<{ hex: string }>; demoImageUrl: string | null } }
+    expect(broadcast.details.stage).toBe('style_card_ready')
+    expect(broadcast.details.swatches[1]?.hex).toBe('#1e3a5f')
+    expect(broadcast.details.demoImageUrl).toBeNull()
+    const session = deps.sessions.byId(styleSessionId)
+    expect(session?.stage).toBe('card_ready')
+    expect(session?.styleParams?.palette.primary).toBe('#1e3a5f')
+  })
+
+  it('generate：带 styleSessionId 时 builder 输入注入 styleParams；未到风格卡阶段的会话被拒', async () => {
+    const { deps, orchestrator } = await setupStyleDeps()
+    const planFixture = {
+      phase: 'arrange', title: '季度汇报', narrative: 'n',
+      pages: [{ title: '封面', role: 'cover', density: 'sparse', points: ['季度汇报'] },
+        { title: '业绩', role: 'data', density: 'dense', points: ['增长'], data: 'bar | categories: Q1, Q2 | 营收: 1, 2' }],
+      warnings: [], summary: '',
+    }
+    const buildResult = { status: 'completed', fileEntryId: 'file-1', fileName: '季度汇报.pptx', pages: 2, outline: ['封面', '业绩'], warnings: [], summary: 'ok' }
+    const orchestratorTwo = {
+      dispatch: vi.fn(async (input: { agentId: string; input?: { task?: string; phase?: string }; onInvocationId?: (id: string) => void }) => {
+        const invocationId = input.agentId === 'slides-planner' ? 'invocation-plan' : 'invocation-build'
+        input.onInvocationId?.(invocationId)
+        const result = input.agentId === 'slides-planner'
+          ? { text: '', structuredOutput: planFixture }
+          : { text: '', structuredOutput: buildResult }
+        return {
+          id: invocationId, agentDefinitionId: input.agentId, agentRevisionId: 'r1', source: 'primary_agent',
+          parentSessionId: 'session-1', parentRunId: 'run-1', task: 't', input: null, status: 'completed',
+          result, errorCode: null, errorMessage: null, createdAt: '', startedAt: '', completedAt: '',
+        }
+      }),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    void orchestrator
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorTwo, {
+      slidesStyle: deps,
+      resolveDocumentForDraft: () => ({
+        document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+        blocks: [],
+        markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1, Q2 | 营收: 1, 2\n',
+      }),
+      trashSlidesDraftDocument: async () => undefined,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    // 会话还在 images_ready → 拒绝。
+    const style = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
+    const early = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', styleSessionId } as never,
+      undefined, undefined,
+    )
+    expect((JSON.parse(early.content as string) as { errorCode: string }).errorCode).toBe('slides_style_session_invalid')
+
+    // 走到 card_ready → generate 注入 styleParams 给 builder。
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1 } as never,
+      undefined, undefined,
+    )
+    const generated = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', styleSessionId } as never,
+      undefined, undefined,
+    )
+    expect((JSON.parse(generated.content as string) as { status: string }).status).toBe('completed')
+    const builderCall = (orchestratorTwo.dispatch as ReturnType<typeof vi.fn>).mock.calls
+      .find((call) => (call[0] as { agentId: string }).agentId === 'slides-builder')
+    const builderInput = (builderCall?.[0] as { input?: { styleParams?: { palette: { primary: string } } } }).input
+    expect(builderInput?.styleParams?.palette.primary).toBe('#1e3a5f')
+    expect(deps.sessions.byId(styleSessionId)?.stage).toBe('confirmed')
+  })
+})

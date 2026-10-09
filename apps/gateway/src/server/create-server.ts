@@ -187,6 +187,9 @@ import type { LocalAgentDispatchSource } from "../modules/local-agents/dispatch-
 import { RuntimeConfigManager } from "../runtime-config.js";
 import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import { AiRelaySessionStore, relayPathPrefix } from "../modules/ai-relay/session.js";
+import { SlidesStyleImageGenerator } from "../modules/slides-style/image-gen.js";
+import { SlidesStyleSessionStore } from "../modules/slides-style/style-session.js";
+import type { SlidesStyleStageDeps } from "../modules/subagents/slides-style-stage.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
 import { WritingStyleLlm } from "../modules/writing-style/llm.js";
@@ -685,6 +688,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
   // registry 的 set_page 落页即广播快照，slides_draft 布闸挂转发。
   const slidesProgress = new SlidesProgressTracker();
+  // 无模版风格管线依赖 filesService/materials（晚于工具装配创建）：getter 惰性取。
+  const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
     documentService,
     contextRoomService,
@@ -1109,6 +1114,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             },
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
+            // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
+            slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
             // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
             createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
               const documentId = randomUUID();
@@ -1345,6 +1352,38 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
   const materialsService = new MaterialsService(db, config.dataDir);
   filesService.initializeCatalog();
+  // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
+  // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
+  const slidesStyleOfficeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
+  slidesStyleDepsRef.current = {
+    sessions: new SlidesStyleSessionStore(db),
+    images: new SlidesStyleImageGenerator(aiRelaySessions, filesService),
+    vlm: createVlmProvider(config),
+    readMaterialBytes: (hash) => materialsService.readByHash(hash),
+    demoRenderer: slidesStyleOfficeClient
+      ? {
+        renderPptx: async (title, pages) => slidesStyleOfficeClient.renderPptx({
+          title,
+          pages: pages.map((page) => JSON.stringify(page)),
+        }),
+      }
+      : {
+        renderPptx: async () => {
+          throw new Error("office_bridge_unavailable");
+        },
+      },
+    saveDemoPng: async (png, idempotencyKey) => {
+      const imported = await filesService.importFile({
+        sourceKind: "agent-generated",
+        sourceKey: idempotencyKey,
+        originalName: "slides-style-demo.png",
+        buffer: png,
+        mime: "image/png",
+        pipelines: { room: false, wiki: false, memory: false },
+      });
+      return { contentHash: imported.contentHash, fileEntryId: imported.fileEntryId };
+    },
+  };
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
   dataMigrationService.recover();

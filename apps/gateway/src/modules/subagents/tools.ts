@@ -19,6 +19,7 @@ import {
   slidesProgressPlanFrom,
 } from "./slides-draft-doc.js";
 import type { SlidesProgressEvent, SlidesProgressTracker } from "./slides-progress-tracker.js";
+import { runSlidesStyleStage, type SlidesStyleStageDeps } from "./slides-style-stage.js";
 
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
   return createHash("sha256")
@@ -308,6 +309,9 @@ export function createSubagentPiTools(
      * 失败/部分完成时草稿保留以便重试，不调用本项。
      */
     trashSlidesDraftDocument?: (documentId: string) => Promise<void>;
+    /** 无模版风格管线（slides_draft 的 style/style_select 阶段与 generate 风格注入）。
+     *  create-server 侧 filesService/materials 晚于工具装配创建：支持 getter 惰性取。 */
+    slidesStyle?: SlidesStyleStageDeps | null | (() => SlidesStyleStageDeps | null);
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -946,23 +950,34 @@ export function createSubagentPiTools(
     tools.push({
       name: "slides_draft",
       label: "Create or edit a slides deck",
-      description: "调度 slides 子代理按「草稿 → 用户确认 → 生成」三步产出或修改演示文稿（PPT）。"
+      description: "调度 slides 子代理按「草稿 → 风格 → 生成」三步产出或修改演示文稿（PPT）。"
         + "draft：先由 slides-planner 收集背景信息，产出内容草稿文档（一个章节 = 一页，含要点/数据/配图建议）——到此即停，"
-        + "用户在文档里确认修改内容后才会发起生成；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
-        + "generate：用户确认草稿后调用，传 draftDocumentId（草稿文档 id）——"
-        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图，再由 slides-builder 定调设计并一口气落完所有页"
-        + "（逐页进度实时展示，中途不再逐页询问）；确认卡的受众/时长/详略答案原样写进 instruction 转述，"
-        + "用户口头表达的风格倾向（如「商务一点」「不要蓝色」）也原样写进 instruction，没有预设风格可选。"
+        + "用户在文档里确认修改内容后才会进入下一步；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
+        + "style：用户确认草稿后调用，传 instruction（风格意向与确认卡答案转述）与 draftDocumentId（草稿文档 id）——"
+        + "生成 2~4 张风格纵览图候选并展示挑选卡，到此即停；用户挑一张（转为 candidateIndex）或说不满意（instruction 带反馈原话，反馈逐轮累积）。"
+        + "style_select：用户挑定后调用，传 styleSessionId 与 candidateIndex（1 起）——提取风格、生成风格卡（色板/字号/线框/演示页）并展示确认卡，到此即停；"
+        + "用户想改效果就在对话里说（如「标题改小点」），由 style 任务携带新反馈重出；确认后进入 generate。"
+        + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId）——"
+        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图，再由 slides-builder 按风格卡参数定调落完全部页"
+        + "（逐页进度实时展示，中途不再逐页询问）。"
         + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
         + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
         + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
         + "禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
       parameters: Type.Object({
-        task: Type.Union([Type.Literal("draft"), Type.Literal("generate"), Type.Literal("edit")]),
+        task: Type.Union([
+          Type.Literal("draft"),
+          Type.Literal("style"),
+          Type.Literal("style_select"),
+          Type.Literal("generate"),
+          Type.Literal("edit"),
+        ]),
         instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
         outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 24 })),
         draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        candidateIndex: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
         fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
       }, { additionalProperties: false }),
@@ -985,6 +1000,50 @@ export function createSubagentPiTools(
           && !run.availableRooms.some((room) => room.id === explicitRoomId)
           && !options.roomExists?.(explicitRoomId)) {
           throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+        }
+
+        // ── style / style_select：无模版风格阶段（纵览候选 → 提取定参 → 风格卡）。 ──
+        if (task === "style" || task === "style_select") {
+          const styleDeps = typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle;
+          if (!styleDeps) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_style_unavailable",
+                retryable: false,
+                message: "风格管线未配置；如实告知用户当前构建不支持无模版风格。",
+              }),
+              details: { errorCode: "slides_style_unavailable" },
+            };
+          }
+          const styleResult = await runSlidesStyleStage(
+            {
+              task,
+              run: { runId: run.runId, sessionId: run.sessionId, roomId },
+              instruction,
+              ...(titleArg ? { title: titleArg } : {}),
+              ...(typeof params.draftDocumentId === "string" && params.draftDocumentId.trim()
+                ? { draftDocumentId: params.draftDocumentId.trim() } : {}),
+              ...(typeof params.styleSessionId === "string" && params.styleSessionId.trim()
+                ? { styleSessionId: params.styleSessionId.trim() } : {}),
+              ...(typeof params.candidateIndex === "number" ? { candidateIndex: params.candidateIndex } : {}),
+              ...(signal ? { signal } : {}),
+              ...(onUpdate ? { onUpdate } : {}),
+              dispatch: (dispatchInput) => dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+                agentId: dispatchInput.agentId,
+                task: dispatchInput.task,
+                input: dispatchInput.input,
+                idempotencyKey: dispatchInput.idempotencyKey,
+                source: "primary_agent",
+                parentSessionId: run.sessionId,
+                parentRunId: run.runId,
+                ...(signal ? { signal } : {}),
+              })),
+            },
+            styleDeps,
+            orchestrator,
+          );
+          return styleResult;
         }
 
         // ── draft：先出内容草稿文档，到此暂停——等用户在文档里确认内容后再生成（2026-09 重设计）。 ──
@@ -1124,9 +1183,30 @@ export function createSubagentPiTools(
           };
         }
 
-        // ── generate：读回用户确认的草稿 → planner arrange（受众重排+密度+素材）→ builder 一口气落页。 ──
+        // ── generate：读回用户确认的草稿（风格会话可代取）→ planner arrange → builder 按风格参数落页。 ──
         if (task === "generate") {
-          const draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+          const styleSessionId = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
+          const styleSessions = styleSessionId
+            ? (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions ?? null
+            : null;
+          let styleSession: import("../slides-style/types.js").SlidesStyleSessionData | null = null;
+          if (styleSessionId && styleSessions) {
+            const session = styleSessions.byId(styleSessionId);
+            if (!session || session.roomId !== roomId || session.stage !== "card_ready" || !session.styleParams) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_style_session_invalid",
+                  retryable: false,
+                  message: "风格会话不存在、未确认到风格卡阶段或不属于当前 Room；请先走 style → style_select 产出风格卡。",
+                }),
+                details: { errorCode: "slides_style_session_invalid" },
+              };
+            }
+            styleSession = session;
+          }
+          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+          if (!draftDocumentId && styleSession?.draftDocumentId) draftDocumentId = styleSession.draftDocumentId;
           if (!draftDocumentId) {
             return {
               content: JSON.stringify({
@@ -1258,6 +1338,8 @@ export function createSubagentPiTools(
             roomId,
             title: gatePlan.title,
             plan,
+            // 风格卡参数是全篇风格唯一出处；无风格会话时 builder 走 design-craft 定调。
+            ...(styleSession?.styleParams ? { styleParams: styleSession.styleParams } : {}),
           };
           let builderInvocation;
           try {
@@ -1309,6 +1391,10 @@ export function createSubagentPiTools(
           // partial/failed 保留草稿便于重试。fire-and-forget，不影响结果返回。
           if (generateResult.status === "completed" && draftDocumentId) {
             void options.trashSlidesDraftDocument?.(draftDocumentId).catch(() => {});
+          }
+          // 风格会话随产物完成一并落定（fire-and-forget）。
+          if (generateResult.status === "completed" && styleSessionId && styleSessions) {
+            styleSessions.patch(styleSessionId, { stage: "confirmed" });
           }
           return { content: generateResult.content, details: generateResult.details };
         }

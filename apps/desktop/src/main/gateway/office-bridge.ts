@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 
@@ -42,6 +43,20 @@ export interface OfficeEditRequest {
   page?: { slideIndex: number; specJson: string }
   dryRun?: boolean
   isolation?: 'atomic' | 'per_op'
+}
+
+/** 只渲染不入库的请求（风格演示页自校用：PageSpec → pptx 字节）。 */
+export interface OfficeRenderRequest {
+  title: string
+  pages: string[]
+}
+
+function validRenderBody(value: unknown): value is OfficeRenderRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeRenderRequest>
+  if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
+  if (!Array.isArray(input.pages) || input.pages.length === 0 || input.pages.length > 4) return false
+  return input.pages.every((page) => typeof page === 'string' && page.length > 0)
 }
 
 const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx' }
@@ -158,7 +173,7 @@ export class OfficeBridgeServer {
 
   private async handle(request: IncomingMessage): Promise<{ status: number; body: Record<string, unknown> }> {
     if (request.method !== 'POST') return { status: 404, body: { message: 'Not found' } }
-    if (request.url !== '/v1/office-generate' && request.url !== '/v1/office-edit') {
+    if (request.url !== '/v1/office-generate' && request.url !== '/v1/office-edit' && request.url !== '/v1/office-render') {
       return { status: 404, body: { message: 'Not found' } }
     }
     if (!authorized(request, this.token)) return { status: 401, body: { message: 'Unauthorized' } }
@@ -167,6 +182,10 @@ export class OfficeBridgeServer {
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
       return this.edit(read.parsed)
+    }
+    if (request.url === '/v1/office-render') {
+      if (!validRenderBody(read.parsed)) return { status: 422, body: { message: 'Invalid office render request' } }
+      return this.render(read.parsed)
     }
     if (!validBody(read.parsed)) return { status: 422, body: { message: 'Invalid office generate request' } }
     return this.generate(read.parsed)
@@ -214,6 +233,23 @@ export class OfficeBridgeServer {
       return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.info ?? outcome.result ?? {} } }
+  }
+
+  /** /v1/office-render：只走生成管线出 pptx 字节，不 file-imports、不广播——风格演示页自校专用。 */
+  private async render(req: OfficeRenderRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    try {
+      const imageResolver = createEverroomMaterialResolver(this.filesBridge)
+      const generated = await generatePptxFromPageSpecs(
+        { title: req.title.trim(), pages: req.pages },
+        () => undefined,
+        imageResolver,
+      )
+      const bytes = await readFile(generated.filePath)
+      await rm(generated.filePath, { force: true }).catch(() => undefined)
+      return { status: 200, body: { data: { pptxBase64: bytes.toString('base64') } } }
+    } catch (error) {
+      return { status: 502, body: { message: error instanceof Error ? error.message : 'Office render failed' } }
+    }
   }
 
   private async generate(parsed: OfficeGenerateRequest): Promise<{ status: number; body: Record<string, unknown> }> {
