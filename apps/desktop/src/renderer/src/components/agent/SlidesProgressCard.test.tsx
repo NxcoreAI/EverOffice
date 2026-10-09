@@ -161,7 +161,7 @@ describe('SlidesProgressCard', () => {
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-running' })).toHaveLength(1)
   })
 
-  it('挑图卡：候选出图，点「用第 2 张」合成 style_select 消息并收起', () => {
+  it('挑图卡：候选出图，点第二张图即选定并合成 style_select 消息并收起', () => {
     const onGenerate = vi.fn()
     const renderer = TestRenderer.create(
       <SlidesProgressCard
@@ -190,6 +190,36 @@ describe('SlidesProgressCard', () => {
     expect(message).toContain('sessionId=style-9')
     // 选完即收起候选。
     expect(renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })).toHaveLength(0)
+  })
+
+  it('连续等待阶段（草稿确认 → 挑图）：上一阶段的折叠锁必须解开，候选重新展示', () => {
+    const onGenerate = vi.fn()
+    const renderer = TestRenderer.create(
+      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
+    )
+    // 草稿确认：点「生成 PPT」→ 卡片折叠锁定。
+    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
+
+    // 下一阶段直接是挑图（四步流程里等待阶段连续）：必须自动重新展开并显示候选。
+    act(() => renderer.update(
+      <SlidesProgressCard
+        state={{
+          stage: 'style_images_ready',
+          title: draftState.title,
+          styleSessionId: 'style-9',
+          styleCandidates: [{ url: 'everroom-material://aa', generation: 1 }],
+        }}
+        toolRunning={false}
+        onGenerate={onGenerate}
+      />,
+    ))
+    const candidates = renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })
+    expect(candidates).toHaveLength(1)
+    act(() => candidates[0]!.props.onClick())
+    expect(onGenerate).toHaveBeenCalledTimes(2)
+    const message = onGenerate.mock.calls[1]![0] as string
+    expect(message).toContain('index=1')
   })
 
   it('风格卡：色块/字号/线框/演示页齐上，确认按钮合成 generate 消息', () => {

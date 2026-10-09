@@ -84,25 +84,34 @@ export function SlidesProgressCard({
   // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
   const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
-  // 点「生成/使用/确认」即收起：卡片折成短卡；新一轮待确认节点到来才重新展开（渲染期重置）
+  // 点「生成/使用/确认」即收起：卡片折成短卡；新的等待目标到来才重新展开（渲染期重置）
   const [confirmed, setConfirmed] = useState(!awaitingUser)
   const [bodyOpen, setBodyOpen] = useState(awaitingUser)
-  const [prevAwaitingConfirm, setPrevAwaitingConfirm] = useState(awaitingUser)
+  const [prevAwaitingKey, setPrevAwaitingKey] = useState(
+    awaitingUser ? `${state.stage}:${state.styleSessionId ?? state.documentId ?? ''}` : null,
+  )
   if (prevDeckTitle !== state.title) {
     setPrevDeckTitle(state.title)
     setExpanded(new Set())
-  }
-  if (prevAwaitingConfirm !== awaitingUser) {
-    setPrevAwaitingConfirm(awaitingUser)
-    if (awaitingUser) {
-      setConfirmed(false)
-      setBodyOpen(true)
-    }
   }
   const pages = state.pages ?? []
   const total = state.totalPages ?? pages.length
   const doneCount = state.doneCount ?? 0
   const runningIndex = toolRunning ? doneCount : -1
+
+  // 等待目标变了（草稿确认 → 挑图 → 风格卡，四步流程里等待阶段是连续的）
+  // 就重新开卡：上一阶段点按钮触发的「已确认、折叠」锁必须解开，否则下一
+  // 阶段的候选/风格卡永远不显示（真机实锤：挑图卡只剩标题、点不开）。
+  const awaitingKey = awaitingUser
+    ? `${state.stage}:${state.styleSessionId ?? state.documentId ?? ''}`
+    : null
+  if (prevAwaitingKey !== awaitingKey) {
+    setPrevAwaitingKey(awaitingKey)
+    if (awaitingKey) {
+      setConfirmed(false)
+      setBodyOpen(true)
+    }
+  }
 
   const composeGenerateMessage = (): string => {
     return t('surface:agentChat.slidesGenerateMessage', {
