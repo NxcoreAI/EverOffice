@@ -2743,7 +2743,7 @@ export const slidesStyleSessions = sqliteTable(
     feedback: text("feedback", { mode: "json" }).$type<string[]>().notNull().default([]),
     /** 候选纵览图（contentHash 寻址回源 /v1/materials/:hash）。 */
     overviewImages: text("overview_images", { mode: "json" })
-      .$type<Array<{ contentHash: string; fileEntryId: string; generation: number }>>()
+      .$type<Array<{ contentHash: string; generation: number }>>()
       .notNull()
       .default([]),
     selectedImageHash: text("selected_image_hash"),

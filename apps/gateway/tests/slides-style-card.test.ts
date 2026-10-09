@@ -151,8 +151,8 @@ describe("style card payloads", () => {
     const payload = styleImagesPayload({
       id: "s1", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
       overviewImages: [
-        { contentHash: "a".repeat(64), fileEntryId: "e1", generation: 1 },
-        { contentHash: "b".repeat(64), fileEntryId: "e2", generation: 2 },
+        { contentHash: "a".repeat(64), generation: 1 },
+        { contentHash: "b".repeat(64), generation: 2 },
       ],
       selectedImageHash: null, styleParams: null, demoImageHash: null,
       stage: "images_ready", generation: 2,

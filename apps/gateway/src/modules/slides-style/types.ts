@@ -117,10 +117,9 @@ export interface StyleColorCluster {
   ratio: number;
 }
 
-/** 纵览图候选（已入库）。 */
+/** 纵览图候选（已按内容哈希入对象库）。 */
 export interface StyleOverviewImage {
   contentHash: string;
-  fileEntryId: string;
   /** 生成轮次（第几次「不满意」重生成）。 */
   generation: number;
 }

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AiRelaySessionStore } from "../src/modules/ai-relay/session.js";
 import { SlidesStyleImageGenerator } from "../src/modules/slides-style/image-gen.js";
-import type { FilesService } from "../src/modules/files/service.js";
 
 function fakeResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -30,14 +29,14 @@ function setupStore(active: boolean): AiRelaySessionStore {
 }
 
 function setupFiles() {
-  const imports: Array<{ sourceKey: string; originalName: string; buffer: Buffer; mime?: string }> = [];
-  const files = {
-    importFile: vi.fn(async (input: { sourceKey: string; originalName: string; buffer: Buffer; mime?: string }) => {
-      imports.push(input);
-      return { fileEntryId: `entry-${String(imports.length)}`, contentHash: `hash-${String(imports.length)}` };
+  const imports: Array<{ buffer: Buffer; mime: string }> = [];
+  const saver = {
+    saveImageBlob: vi.fn(async (buffer: Buffer, mime: string) => {
+      imports.push({ buffer, mime });
+      return { contentHash: `hash-${String(imports.length)}` };
     }),
   };
-  return { files: files as unknown as FilesService, imports };
+  return { files: saver, imports };
 }
 
 afterEach(() => {
@@ -64,9 +63,8 @@ describe("SlidesStyleImageGenerator", () => {
     expect(results).toHaveLength(2);
     expect(calls[0]).toBe("https://ai.example.com/v1/images/generations");
     expect(imports).toHaveLength(2);
-    expect(imports[0]?.sourceKey).toBe("slides-style:run-1:0");
-    expect(imports[1]?.sourceKey).toBe("slides-style:run-1:1");
-    expect(imports.every((item) => item.mime === "image/png")).toBe(true);
+    expect(imports).toHaveLength(2);
+    expect(imports.every((item) => item.mime === "image/png" && item.buffer.byteLength > 0)).toBe(true);
   });
 
   it("names jpeg results by magic bytes", async () => {
@@ -79,7 +77,6 @@ describe("SlidesStyleImageGenerator", () => {
     await generator.generateOverviewImages({ prompt: "p", count: 1, idempotencyKey: "k" });
 
     expect(imports[0]?.mime).toBe("image/jpeg");
-    expect(imports[0]?.originalName.endsWith(".jpg")).toBe(true);
   });
 
   it("rejects when the relay session is absent", async () => {

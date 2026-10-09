@@ -48,11 +48,11 @@ describe("SlidesStyleSessionStore", () => {
     expect(created.generation).toBe(1);
 
     store.patch(created.id, {
-      overviewImages: [{ contentHash: "h1", fileEntryId: "e1", generation: 1 }],
+      overviewImages: [{ contentHash: "h1", generation: 1 }],
       stage: "images_ready",
     });
     const loaded = store.byId(created.id);
-    expect(loaded?.overviewImages).toEqual([{ contentHash: "h1", fileEntryId: "e1", generation: 1 }]);
+    expect(loaded?.overviewImages).toEqual([{ contentHash: "h1", generation: 1 }]);
     expect(loaded?.stage).toBe("images_ready");
   });
 

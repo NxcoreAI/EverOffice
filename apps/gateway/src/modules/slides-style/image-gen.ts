@@ -1,16 +1,13 @@
 /**
  * 纵览图生成：经 ai-relay 会话直连中转的 /v1/images/generations
  * （qwen-image-3.0，1792×1024，prompt_extend:false 防改写版式规格，
- * watermark:false；单张 ~100s，候选并行生成）。产物走 FilesService
- * 入 file_blobs（agent-generated，sourceKey 含幂等键：重试同键同内容
- * 去重）。不挂 room 管线——纵览候选是过程产物，只按 hash 寻址供
- * 风格卡/提取用，不进产物库。
+ * watermark:false；单张 ~100s，候选并行生成）。产物按内容哈希进对象库
+ * （CAS 天然幂等），只按 hash 寻址供风格卡/提取用——不进文件库产物列表
+ * （file-imports 白名单本就只有文档格式，图片走素材体系）。
  */
 
-import { randomUUID } from "node:crypto";
 import type { AiRelaySessionStore } from "../ai-relay/session.js";
 import { relayPathPrefix } from "../ai-relay/session.js";
-import type { FilesService } from "../files/service.js";
 import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 
 /** 生图模型与出图规格（中转实测配方，勿改 prompt_extend/watermark）。 */
@@ -44,9 +41,14 @@ export interface OverviewImageInput {
   idempotencyKey: string;
 }
 
+/** 图片字节落库入口（MaterialsService.saveImageBlob）：生图产物按内容哈希
+ *  进对象库，不走 file-imports（白名单只有文档格式）。 */
+export interface OverviewImageSaver {
+  saveImageBlob(buffer: Buffer, mime: string): Promise<{ contentHash: string }>;
+}
+
 export interface OverviewImageResult {
   contentHash: string;
-  fileEntryId: string;
 }
 
 export class SlidesStyleImageGenerator {
@@ -54,7 +56,7 @@ export class SlidesStyleImageGenerator {
 
   constructor(
     private readonly sessions: AiRelaySessionStore,
-    private readonly files: FilesService,
+    private readonly saver: OverviewImageSaver,
     private readonly fetchImpl: FetchLike = proxyFetch as FetchLike,
     options: { retryDelaysMs?: number[] } = {},
   ) {
@@ -141,16 +143,8 @@ export class SlidesStyleImageGenerator {
     if (buffer.byteLength === 0) throw new Error("生图结果为空");
 
     const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8;
-    const extension = isJpeg ? "jpg" : "png";
-    const imported = await this.files.importFile({
-      sourceKind: "agent-generated",
-      sourceKey: `slides-style:${idempotencyKey}:${String(index)}`,
-      originalName: `style-overview-${randomUUID().slice(0, 8)}.${extension}`,
-      buffer,
-      mime: isJpeg ? "image/jpeg" : "image/png",
-      pipelines: { room: false, wiki: false, memory: false },
-    });
-    return { contentHash: imported.contentHash, fileEntryId: imported.fileEntryId };
+    const saved = await this.saver.saveImageBlob(buffer, isJpeg ? "image/jpeg" : "image/png");
+    return { contentHash: saved.contentHash };
   }
 
   private async downloadImage(url: unknown): Promise<Buffer> {

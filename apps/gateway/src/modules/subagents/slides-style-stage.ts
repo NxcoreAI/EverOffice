@@ -30,8 +30,8 @@ export interface SlidesStyleStageDeps {
   /** 按 hash 读素材字节（网关 /v1/materials/:hash 同源）。 */
   readMaterialBytes: (hash: string) => Promise<{ buffer: Buffer; mime: string } | null>;
   demoRenderer: DemoPptxRenderer;
-  /** 演示页 PNG 入库（幂等键去重），返回 hash 供风格卡寻址。 */
-  saveDemoPng: (png: Buffer, idempotencyKey: string) => Promise<{ contentHash: string; fileEntryId: string }>;
+  /** 演示页 PNG 入库（内容哈希幂等），返回 hash 供风格卡寻址。 */
+  saveDemoPng: (png: Buffer, idempotencyKey: string) => Promise<{ contentHash: string }>;
 }
 
 export interface SlidesStyleStageResult {
@@ -161,7 +161,7 @@ async function runStyleImages(
   }
 
   // 2. 生图（候选并行；中转不可用是真失败）。
-  let images: Array<{ contentHash: string; fileEntryId: string }>;
+  let images: Array<{ contentHash: string }>;
   try {
     images = await deps.images.generateOverviewImages({
       prompt,
@@ -176,7 +176,6 @@ async function runStyleImages(
   // 3. 会话推进 + 广播挑图卡。
   const overviewImages: StyleOverviewImage[] = images.map((image) => ({
     contentHash: image.contentHash,
-    fileEntryId: image.fileEntryId,
     generation: session.generation,
   }));
   deps.sessions.patch(session.id, { overviewImages, stage: "images_ready" });

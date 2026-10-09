@@ -1357,7 +1357,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const slidesStyleOfficeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
   slidesStyleDepsRef.current = {
     sessions: new SlidesStyleSessionStore(db),
-    images: new SlidesStyleImageGenerator(aiRelaySessions, filesService),
+    images: new SlidesStyleImageGenerator(aiRelaySessions, materialsService),
     vlm: createVlmProvider(config),
     readMaterialBytes: (hash) => materialsService.readByHash(hash),
     demoRenderer: slidesStyleOfficeClient
@@ -1372,17 +1372,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           throw new Error("office_bridge_unavailable");
         },
       },
-    saveDemoPng: async (png, idempotencyKey) => {
-      const imported = await filesService.importFile({
-        sourceKind: "agent-generated",
-        sourceKey: idempotencyKey,
-        originalName: "slides-style-demo.png",
-        buffer: png,
-        mime: "image/png",
-        pipelines: { room: false, wiki: false, memory: false },
-      });
-      return { contentHash: imported.contentHash, fileEntryId: imported.fileEntryId };
-    },
+    saveDemoPng: async (png) => materialsService.saveImageBlob(png, "image/png"),
   };
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
