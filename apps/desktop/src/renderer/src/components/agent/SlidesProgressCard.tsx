@@ -47,7 +47,6 @@ export interface SlidesProgressState {
 
 const PROGRESS_STAGES = new Set(['draft_ready', 'plan_ready', 'page_applied'])
 const STYLE_STAGES = new Set(['style_images_ready', 'style_card_ready'])
-
 /** 从 slides_draft 工具调用的 partialResult 还原进度载荷；不是进行中的 PPT 任务返回 null。 */
 export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefined): SlidesProgressState | null {
   if (!tool || tool.name !== 'slides_draft') return null
@@ -62,13 +61,6 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
   if (isStyleStage && typeof record.styleSessionId !== 'string') return null
   if (!isStyleStage && !Array.isArray(record.pages)) return null
   return record as unknown as SlidesProgressState
-}
-
-/** 草稿确认表单选项（值进确认消息，标签走 i18n）。 */
-interface GenerateFormState {
-  audience: number
-  duration: number
-  focus: number
 }
 
 export function SlidesProgressCard({
@@ -89,7 +81,6 @@ export function SlidesProgressCard({
   const isStyleImages = state.stage === 'style_images_ready'
   const isStyleCard = state.stage === 'style_card_ready'
   const awaitingUser = isDraft || isStyleImages || isStyleCard
-  const [form, setForm] = useState<GenerateFormState>({ audience: 0, duration: 1, focus: 2 })
   // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
   const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
@@ -113,31 +104,11 @@ export function SlidesProgressCard({
   const doneCount = state.doneCount ?? 0
   const runningIndex = toolRunning ? doneCount : -1
 
-  const audiences = [
-    t('surface:agentChat.slidesAudienceLeader'),
-    t('surface:agentChat.slidesAudienceClient'),
-    t('surface:agentChat.slidesAudienceTeam'),
-  ]
-  const durations = [
-    t('surface:agentChat.slidesDurationShort'),
-    t('surface:agentChat.slidesDurationMedium'),
-    t('surface:agentChat.slidesDurationLong'),
-  ]
-  const focusOptions = [
-    t('surface:agentChat.slidesFocusPoints'),
-    t('surface:agentChat.slidesFocusData'),
-    t('surface:agentChat.slidesFocusBalanced'),
-  ]
-
   const composeGenerateMessage = (): string => {
-    const params = {
+    return t('surface:agentChat.slidesGenerateMessage', {
       documentId: state.documentId ?? '',
       title: state.title ?? '',
-      audience: audiences[form.audience],
-      duration: durations[form.duration],
-      focus: focusOptions[form.focus],
-    }
-    return t('surface:agentChat.slidesGenerateMessage', params)
+    })
   }
 
   const statusOf = (index: number): 'done' | 'running' | 'pending' => {
@@ -340,38 +311,6 @@ export function SlidesProgressCard({
             <FileText aria-hidden="true" />
             {t('surface:agentChat.slidesOpenDraft')}
           </button>
-          <div className="agent-slides-form">
-            <label>
-              <span>{t('surface:agentChat.slidesFormAudience')}</span>
-              <select
-                value={form.audience}
-                disabled={busy}
-                onChange={(event) => setForm((prev) => ({ ...prev, audience: Number(event.target.value) }))}
-              >
-                {audiences.map((label, index) => <option key={label} value={index}>{label}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{t('surface:agentChat.slidesFormDuration')}</span>
-              <select
-                value={form.duration}
-                disabled={busy}
-                onChange={(event) => setForm((prev) => ({ ...prev, duration: Number(event.target.value) }))}
-              >
-                {durations.map((label, index) => <option key={label} value={index}>{label}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>{t('surface:agentChat.slidesFormFocus')}</span>
-              <select
-                value={form.focus}
-                disabled={busy}
-                onChange={(event) => setForm((prev) => ({ ...prev, focus: Number(event.target.value) }))}
-              >
-                {focusOptions.map((label, index) => <option key={label} value={index}>{label}</option>)}
-              </select>
-            </label>
-          </div>
           <button
             type="button"
             className="agent-slides-generate"

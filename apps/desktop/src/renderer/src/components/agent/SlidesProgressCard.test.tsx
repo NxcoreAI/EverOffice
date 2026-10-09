@@ -61,7 +61,7 @@ describe('slidesProgressFromToolCall', () => {
 })
 
 describe('SlidesProgressCard', () => {
-  it('草稿卡：打开草稿回传文档 id，确认表单合成 generate 消息', () => {
+  it('草稿卡：打开草稿回传文档 id，确认合成 style 阶段消息（无选项表单）', () => {
     const onOpenDraft = vi.fn()
     const onGenerate = vi.fn()
     const renderer = TestRenderer.create(
@@ -70,48 +70,46 @@ describe('SlidesProgressCard', () => {
 
     act(() => renderer.root.findByProps({ className: 'agent-slides-open-draft' }).props.onClick())
     expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1')
+    // 无三个下拉选项。
+    expect(renderer.root.findAllByType('select')).toHaveLength(0)
 
     act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
     const message = onGenerate.mock.calls[0]![0] as string
     expect(message).toContain('slidesGenerateMessage?')
     expect(message).toContain('documentId=doc-draft-1')
+    expect(message).toContain('title=季度汇报')
   })
 
-  it('点「生成」后折成短卡：表单消失，头部按钮可重展页列表但不回显表单', () => {
+  it('点「生成」后折成短卡：动作消失，头部按钮可重展页列表但不回显动作', () => {
     const onGenerate = vi.fn()
     const renderer = TestRenderer.create(
       <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
     )
 
-    // 默认档（受众=领导汇报/时长=15 分钟/详略=均衡）。
     act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
     expect(onGenerate).toHaveBeenCalledTimes(1)
-    const message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesGenerateMessage?')
-    expect(message).toContain('documentId=doc-draft-1')
-    expect(message).toContain('title=季度汇报')
 
-    // 确认后只剩短卡头部（按钮），页列表与表单都收起。
+    // 确认后只剩短卡头部（按钮），页列表与动作都收起。
     expect(renderer.root.findAllByType('select')).toHaveLength(0)
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(0)
     const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
     expect(header.type).toBe('button')
     expect(header.props['aria-expanded']).toBe(false)
 
-    // 重展：页列表回来，确认表单不回显。
+    // 重展：页列表回来，动作不回显。
     act(() => header.props.onClick())
     expect(header.props['aria-expanded']).toBe(true)
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(2)
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
   })
 
-  it('新一轮 draft_ready 到来：折起的卡片重新展开并恢复确认表单', () => {
+  it('新一轮 draft_ready 到来：折起的卡片重新展开并恢复动作', () => {
     const onGenerate = vi.fn()
     const renderer = TestRenderer.create(
       <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
     )
     act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
 
     // 生成中（plan_ready）：折叠保持。
     const planState: SlidesProgressState = {
@@ -124,15 +122,15 @@ describe('SlidesProgressCard', () => {
     act(() => renderer.update(
       <SlidesProgressCard state={planState} toolRunning={true} onGenerate={onGenerate} />,
     ))
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
     expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('button')
 
-    // 新一轮草稿确认到来 → 恢复展开 + 确认表单（与标题无关，看阶段翻转）。
+    // 新一轮草稿确认到来 → 恢复展开 + 动作（与标题无关，看阶段翻转）。
     act(() => renderer.update(
       <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
     ))
     expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('header')
-    expect(renderer.root.findAllByType('select')).toHaveLength(3)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(1)
   })
 
   it('生成卡：默认折成短卡，点头部展开看页进度（按 doneCount 打勾，进行中的页转圈）', () => {
@@ -148,7 +146,7 @@ describe('SlidesProgressCard', () => {
         toolRunning={true}
       />,
     )
-    // 未展开：无表单无页列表，头部是可点的按钮。
+    // 未展开：无动作无页列表，头部是可点的按钮。
     expect(renderer.root.findAllByType('select')).toHaveLength(0)
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(0)
     const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
@@ -159,7 +157,6 @@ describe('SlidesProgressCard', () => {
       expect.anything(),
       expect.anything(),
     ])
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })).toHaveLength(1)
     expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-running' })).toHaveLength(1)
   })
