@@ -47,6 +47,8 @@ export interface SlidesStyleStageInput {
   draftDocumentId?: string;
   styleSessionId?: string;
   candidateIndex?: number;
+  /** true = 用户明确不满意，累积反馈并重新生成；缺省 = 挑图未决时仅重新展示候选。 */
+  regenerate?: boolean;
   signal?: AbortSignal;
   onUpdate?: (update: { content: string; details: Record<string, unknown> }) => void;
   /** tools.ts 提供：带并发重试与幂等键的 dispatch 包装。 */
@@ -105,9 +107,24 @@ async function runStyleImages(
   deps: SlidesStyleStageDeps,
   orchestrator: SubagentOrchestrator,
 ): Promise<SlidesStyleStageResult> {
-  // 活跃会话在挑图阶段 = 用户不满意重出：本轮 instruction 是新反馈。
+  // 活跃会话在挑图阶段：重入默认只是把候选卡再亮出来（用户说「继续/看候选」），
+  // 只有明确表达不满意（regenerate）才累积反馈重新生成——不烧配额。
   const active = deps.sessions.findActive(input.run.roomId);
   let session: SlidesStyleSessionData;
+  if (active && active.stage === "images_ready" && !input.regenerate) {
+    const payload = styleImagesPayload(active, input.title?.trim().slice(0, 120));
+    input.onUpdate?.({ content: JSON.stringify(payload), details: payload as unknown as Record<string, unknown> });
+    return {
+      content: JSON.stringify({
+        status: "style_images_ready",
+        styleSessionId: active.id,
+        candidates: active.overviewImages.length,
+        generation: active.generation,
+        message: "风格纵览候选已在确认卡上重新展示。告诉用户：点一张图即选定；想换一批，就说「换一批」加具体反馈。",
+      }),
+      details: { stage: "style_images_ready", styleSessionId: active.id },
+    };
+  }
   if (active && active.stage === "images_ready") {
     const feedback = [...active.feedback, input.instruction.slice(0, 500)].slice(-20);
     deps.sessions.patch(active.id, { feedback, generation: active.generation + 1 });

@@ -1645,34 +1645,31 @@ button.agent-slides-progress-header {
   gap: 8px;
 }
 
-.agent-slides-style-candidate {
-  display: grid;
-  gap: 6px;
-  margin: 0;
+/* 图即按钮：点图挑选，悬停描边示意可选。 */
+button.agent-slides-style-candidate {
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+  overflow: hidden;
+  transition: border-color 0.12s ease;
+}
+
+button.agent-slides-style-candidate:hover:not(:disabled) {
+  border-color: #2f5a96;
+}
+
+button.agent-slides-style-candidate:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .agent-slides-style-candidate img {
   width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  border: 1px solid #e3e9f1;
-  border-radius: 6px;
-}
-
-.agent-slides-style-candidate button {
-  min-height: 28px;
-  border: 1px solid #c8d6ea;
-  border-radius: 6px;
-  background: #fff;
-  color: #2f5a96;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.agent-slides-style-candidate button:disabled {
-  cursor: wait;
-  opacity: 0.58;
 }
 
 .agent-slides-style-card {

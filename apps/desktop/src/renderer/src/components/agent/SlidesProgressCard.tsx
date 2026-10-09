@@ -167,23 +167,23 @@ export function SlidesProgressCard({
       {bodyOpen && isStyleImages && !confirmed && state.styleCandidates?.length ? (
         <div className="agent-slides-style-candidates">
           {state.styleCandidates.map((candidate, index) => (
-            <figure key={`${candidate.url}-${String(index)}`} className="agent-slides-style-candidate">
+            <button
+              key={`${candidate.url}-${String(index)}`}
+              type="button"
+              className="agent-slides-style-candidate"
+              aria-label={t('surface:agentChat.slidesStyleUse', { index: index + 1 })}
+              disabled={busy}
+              onClick={() => {
+                setConfirmed(true)
+                setBodyOpen(false)
+                onGenerate?.(t('surface:agentChat.slidesStylePickMessage', {
+                  index: index + 1,
+                  sessionId: state.styleSessionId ?? '',
+                }))
+              }}
+            >
               <img src={candidate.url} alt="" loading="lazy" />
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setConfirmed(true)
-                  setBodyOpen(false)
-                  onGenerate?.(t('surface:agentChat.slidesStylePickMessage', {
-                    index: index + 1,
-                    sessionId: state.styleSessionId ?? '',
-                  }))
-                }}
-              >
-                {t('surface:agentChat.slidesStyleUse', { index: index + 1 })}
-              </button>
-            </figure>
+            </button>
           ))}
         </div>
       ) : null}

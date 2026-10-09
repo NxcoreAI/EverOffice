@@ -178,11 +178,12 @@ describe('SlidesProgressCard', () => {
         onGenerate={onGenerate}
       />,
     )
-    const buttons = renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })
-      .map((node) => node.findByType('button'))
-    expect(buttons).toHaveLength(2)
+    // 图即按钮：候选本体就是可点的 button。
+    const candidates = renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })
+    expect(candidates).toHaveLength(2)
+    expect(candidates.every((node) => node.type === 'button')).toBe(true)
 
-    act(() => buttons[1]!.props.onClick())
+    act(() => candidates[1]!.props.onClick())
     const message = onGenerate.mock.calls[0]![0] as string
     expect(message).toContain('slidesStylePickMessage?')
     expect(message).toContain('index=2')

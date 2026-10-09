@@ -537,13 +537,22 @@ export function AgentChatView({
       Date.parse(entry.tool.startedAt) > Date.parse(latest.tool.startedAt) ? entry : latest)
   }, [toolCallsByRun])
   // PPT 卡是一次性的：工具结束后一旦对话已被后续用户消息推进（用户对卡采取过动作或聊了别的），整卡隐藏。
+  // 例外：挑图/风格卡是「等用户动作的问句」——闲聊不该把它顶掉（顶掉就无从挑选），
+  // 只有更新的 slides_draft 调用出现（已挑选/已重生成/流程推进）才隐藏。
   const slidesProgressVisible = useMemo(() => {
     if (!slidesProgress) return false
     const tool = slidesProgress.tool
     if (tool.status === 'running' || tool.status === 'pending') return true
+    const stage = slidesProgress.progress.stage
+    if (stage === 'style_images_ready' || stage === 'style_card_ready') {
+      const startedAt = Date.parse(tool.startedAt)
+      return !Object.values(toolCallsByRun)
+        .flat()
+        .some((other) => other.name === 'slides_draft' && other.id !== tool.id && Date.parse(other.startedAt) > startedAt)
+    }
     const toolTime = Date.parse(tool.completedAt ?? tool.startedAt)
     return !messages.some((message) => message.role === 'user' && Date.parse(message.createdAt) > toolTime)
-  }, [slidesProgress, messages])
+  }, [slidesProgress, messages, toolCallsByRun])
   const activeHasAssistant = activeRunId
     ? messages.some((message) => message.runId === activeRunId && message.role === 'assistant')
     : false

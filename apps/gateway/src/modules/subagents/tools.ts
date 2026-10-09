@@ -953,8 +953,9 @@ export function createSubagentPiTools(
       description: "调度 slides 子代理按「草稿 → 风格 → 生成」三步产出或修改演示文稿（PPT）。"
         + "draft：先由 slides-planner 收集背景信息，产出内容草稿文档（一个章节 = 一页，含要点/数据/配图建议）——到此即停，"
         + "用户在文档里确认修改内容后才会进入下一步；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
-        + "style：用户确认草稿后调用，传 instruction（风格意向与确认卡答案转述）与 draftDocumentId（草稿文档 id）——"
-        + "生成 2~4 张风格纵览图候选并展示挑选卡，到此即停；用户挑一张（转为 candidateIndex）或说不满意（instruction 带反馈原话，反馈逐轮累积）。"
+        + "style：用户确认草稿后调用，传 instruction（风格意向）与 draftDocumentId（草稿文档 id）——"
+        + "生成 2~4 张风格纵览图候选并展示挑选卡，到此即停；用户挑一张（转为 candidateIndex）；"
+        + "挑图未决时再次调用 style 只会重新展示候选（不重新生成），用户明确不满意/要换一批时传 regenerate=true（instruction 带反馈原话，反馈逐轮累积）。"
         + "style_select：用户挑定后调用，传 styleSessionId 与 candidateIndex（1 起）——提取风格、生成风格卡（色板/字号/线框/演示页）并展示确认卡，到此即停；"
         + "用户想改效果就在对话里说（如「标题改小点」），由 style 任务携带新反馈重出；确认后进入 generate。"
         + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId）——"
@@ -978,6 +979,7 @@ export function createSubagentPiTools(
         draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         candidateIndex: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
+        regenerate: Type.Optional(Type.Boolean()),
         fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
       }, { additionalProperties: false }),
@@ -1027,6 +1029,7 @@ export function createSubagentPiTools(
               ...(typeof params.styleSessionId === "string" && params.styleSessionId.trim()
                 ? { styleSessionId: params.styleSessionId.trim() } : {}),
               ...(typeof params.candidateIndex === "number" ? { candidateIndex: params.candidateIndex } : {}),
+              ...(params.regenerate === true ? { regenerate: true } : {}),
               ...(signal ? { signal } : {}),
               ...(onUpdate ? { onUpdate } : {}),
               dispatch: (dispatchInput) => dispatchWithConcurrencyRetry(() => orchestrator.dispatch({

@@ -770,7 +770,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     expect(session?.draftDocumentId).toBe('doc-draft-1')
   })
 
-  it('style 重入：活跃挑图会话 + 新反馈 → 反馈累积、轮次 +1、重出候选', async () => {
+  it('style 重入：默认只重新展示候选；regenerate=true 才累积反馈并重新生成', async () => {
     const { deps, orchestrator, generateImages } = await setupStyleDeps({
       directionOutput: { task: 'direction', imagePrompt: '一张深色科技风 PPT 风格参考图，版式完整……'.repeat(2), styleBrief: '' },
     })
@@ -782,10 +782,24 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       undefined, undefined,
     )
     const firstPayload = JSON.parse(first.content as string) as { styleSessionId: string }
+    expect(generateImages).toHaveBeenCalledTimes(1)
 
+    // 重入不带 regenerate：不生图、轮次不变，只重新广播候选。
+    const reShow = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '继续' } as never,
+      undefined, undefined,
+    )
+    const reShowPayload = JSON.parse(reShow.content as string) as { styleSessionId: string; generation: number; candidates: number }
+    expect(reShowPayload.styleSessionId).toBe(firstPayload.styleSessionId)
+    expect(reShowPayload.generation).toBe(1)
+    expect(reShowPayload.candidates).toBe(3)
+    expect(generateImages).toHaveBeenCalledTimes(1)
+
+    // 明确不满意：regenerate=true → 反馈累积、轮次 +1、重出候选。
     const second = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style', instruction: '不要太蓝，要更商务' } as never,
+      { task: 'style', instruction: '不要太蓝，要更商务', regenerate: true } as never,
       undefined, undefined,
     )
     const secondPayload = JSON.parse(second.content as string) as { styleSessionId: string; generation: number }
