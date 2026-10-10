@@ -61,8 +61,22 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
   if (isStyleStage && typeof record.styleSessionId !== 'string') return null
   if (!isStyleStage && !Array.isArray(record.pages)) return null
   // 网关载荷的候选字段叫 candidates，前端接口叫 styleCandidates——在此对齐。
-  if (isStyleStage && Array.isArray(record.candidates) && !record.styleCandidates) {
-    return { ...record, styleCandidates: record.candidates } as unknown as SlidesProgressState
+  // 风格卡字段网关平铺在顶层（swatches/typography/...），前端嵌在 styleCard 下——同样对齐。
+  if (isStyleStage) {
+    const mapped = { ...record } as Record<string, unknown>
+    if (Array.isArray(record.candidates) && !record.styleCandidates) {
+      mapped.styleCandidates = record.candidates
+    }
+    if (record.stage === 'style_card_ready' && !record.styleCard) {
+      mapped.styleCard = {
+        swatches: record.swatches ?? [],
+        typography: record.typography ?? [],
+        wireframes: record.wireframes ?? [],
+        demoImageUrl: record.demoImageUrl ?? null,
+        effectLines: record.effectLines ?? [],
+      }
+    }
+    return mapped as unknown as SlidesProgressState
   }
   return record as unknown as SlidesProgressState
 }
