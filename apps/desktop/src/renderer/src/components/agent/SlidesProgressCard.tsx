@@ -60,6 +60,10 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
   if (!isStyleStage && !PROGRESS_STAGES.has(record.stage)) return null
   if (isStyleStage && typeof record.styleSessionId !== 'string') return null
   if (!isStyleStage && !Array.isArray(record.pages)) return null
+  // 网关载荷的候选字段叫 candidates，前端接口叫 styleCandidates——在此对齐。
+  if (isStyleStage && Array.isArray(record.candidates) && !record.styleCandidates) {
+    return { ...record, styleCandidates: record.candidates } as unknown as SlidesProgressState
+  }
   return record as unknown as SlidesProgressState
 }
 
@@ -145,6 +149,7 @@ export function SlidesProgressCard({
             : isStyleCard
               ? t('surface:agentChat.slidesStyleCardTitle')
               : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
+        {isStyleImages ? <i aria-hidden="true" style={{ marginLeft: 4, fontSize: 9, color: '#4a90d9', fontStyle: 'normal' }}>·v3</i> : null}
       </small>
     </span>
   )
