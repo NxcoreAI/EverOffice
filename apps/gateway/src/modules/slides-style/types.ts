@@ -120,6 +120,8 @@ export interface StyleColorCluster {
 /** 纵览图候选（已按内容哈希入对象库）。 */
 export interface StyleOverviewImage {
   contentHash: string;
+  /** 风格方向短名（styler direction 候选或兜底变体名），挑图卡展示用。 */
+  label?: string;
   /** 生成轮次（第几次「不满意」重生成）。 */
   generation: number;
 }

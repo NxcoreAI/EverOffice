@@ -36,7 +36,7 @@ export interface StyleImagesPayload {
   styleSessionId: string;
   title?: string | undefined;
   generation: number;
-  candidates: Array<{ url: string; generation: number }>;
+  candidates: Array<{ url: string; label?: string; generation: number }>;
 }
 
 export interface StyleCardPayload {
@@ -72,6 +72,7 @@ export function styleImagesPayload(session: SlidesStyleSessionData, title?: stri
     generation: session.generation,
     candidates: session.overviewImages.map((image) => ({
       url: materialUrl(image.contentHash),
+      ...(image.label ? { label: image.label } : {}),
       generation: image.generation,
     })),
   };

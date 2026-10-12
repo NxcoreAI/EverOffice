@@ -189,6 +189,9 @@ import { runtimeConfigRoutes } from "../modules/runtime-config/routes.js";
 import { AiRelaySessionStore, relayPathPrefix } from "../modules/ai-relay/session.js";
 import { SlidesStyleImageGenerator } from "../modules/slides-style/image-gen.js";
 import { SlidesStyleSessionStore } from "../modules/slides-style/style-session.js";
+import { SlidesPageImageSessionStore } from "../modules/subagents/slides-page-images-store.js";
+import { SlidesPageImageRunner } from "../modules/subagents/slides-page-images-runner.js";
+import { slidesPageImagesRoutes } from "../modules/slides/page-images-routes.js";
 import type { SlidesStyleStageDeps } from "../modules/subagents/slides-style-stage.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
@@ -1355,6 +1358,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
   const slidesStyleOfficeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
+  // 配图会话存储与后台逐张生成循环（过目卡轮询路由共用存储实例）。
+  const pageImageSessionsStore = new SlidesPageImageSessionStore(db);
+  const pageImageRunner = new SlidesPageImageRunner();
   slidesStyleDepsRef.current = {
     sessions: new SlidesStyleSessionStore(db),
     images: new SlidesStyleImageGenerator(aiRelaySessions, materialsService),
@@ -1373,6 +1379,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         },
       },
     saveDemoPng: async (png) => materialsService.saveImageBlob(png, "image/png"),
+    pageImageSessions: pageImageSessionsStore,
+    pageImageRunner: pageImageRunner,
   };
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
   dataMigrationService.setFilesService(filesService);
@@ -1629,6 +1637,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
   await app.register(materialsRoutes(materialsService));
+  await app.register(slidesPageImagesRoutes(pageImageSessionsStore));
   await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档

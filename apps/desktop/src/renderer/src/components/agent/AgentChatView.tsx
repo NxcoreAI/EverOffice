@@ -544,7 +544,8 @@ export function AgentChatView({
     const tool = slidesProgress.tool
     if (tool.status === 'running' || tool.status === 'pending') return true
     const stage = slidesProgress.progress.stage
-    if (stage === 'style_images_ready' || stage === 'style_card_ready') {
+    if (stage === 'style_images_ready' || stage === 'style_card_ready'
+      || stage === 'page_images_confirm' || stage === 'page_images_review') {
       const startedAt = Date.parse(tool.startedAt)
       return !Object.values(toolCallsByRun)
         .flat()
@@ -553,6 +554,46 @@ export function AgentChatView({
     const toolTime = Date.parse(tool.completedAt ?? tool.startedAt)
     return !messages.some((message) => message.role === 'user' && Date.parse(message.createdAt) > toolTime)
   }, [slidesProgress, messages, toolCallsByRun])
+
+  // 配图后台逐张生成轮询：过目卡还有未完成张数时拉会话快照。工具调用的进度
+  // 通道在终态后被丢弃，轮询是后台推进期间唯一的刷新途径；旧响应（updatedAt
+  // 更小）不得覆盖更新的广播。
+  const pageImagesPollRef = useRef(0)
+  const pageImagesPollTarget = slidesProgress && slidesProgressVisible
+    && slidesProgress.progress.stage === 'page_images_review'
+    && typeof slidesProgress.progress.documentId === 'string'
+    && (slidesProgress.progress.pages ?? []).some((page) => !page.url && !page.failed)
+    ? slidesProgress.progress.documentId
+    : null
+  useEffect(() => {
+    if (typeof slidesProgress?.progress.updatedAt === 'number'
+      && slidesProgress.progress.updatedAt > pageImagesPollRef.current) {
+      pageImagesPollRef.current = slidesProgress.progress.updatedAt
+    }
+  })
+  const [pageImagesPollState, setPageImagesPollState] = useState<SlidesProgressState | null>(null)
+  useEffect(() => {
+    if (!pageImagesPollTarget) return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void window.nxcore?.slides.pageImagesStatus(pageImagesPollTarget)
+        .then((status) => {
+          if (cancelled || !status || status.stage !== 'page_images_review') return
+          if ((status.updatedAt ?? 0) < pageImagesPollRef.current) return
+          if (status.updatedAt) pageImagesPollRef.current = status.updatedAt
+          setPageImagesPollState(status as unknown as SlidesProgressState)
+        })
+        .catch(() => {})
+    }, 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [pageImagesPollTarget])
+  const pageImagesDisplayState = pageImagesPollTarget
+    ? (pageImagesPollState ?? slidesProgress?.progress)
+    : slidesProgress?.progress
+
   const activeHasAssistant = activeRunId
     ? messages.some((message) => message.runId === activeRunId && message.role === 'assistant')
     : false
@@ -1062,7 +1103,7 @@ export function AgentChatView({
           {composerNotice}
           {slidesProgress && slidesProgressVisible ? (
             <SlidesProgressCard
-              state={slidesProgress.progress}
+              state={pageImagesDisplayState ?? slidesProgress.progress}
               toolRunning={slidesProgress.tool.status === 'running' || slidesProgress.tool.status === 'pending'}
               busy={Boolean(activeRunId) || submitting}
               onOpenDraft={onOpenDraftDocument}

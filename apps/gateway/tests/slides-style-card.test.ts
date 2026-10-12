@@ -147,11 +147,11 @@ describe("runSelfCheck", () => {
 });
 
 describe("style card payloads", () => {
-  it("composes an images payload with material URLs", () => {
+  it("composes an images payload with material URLs and direction labels", () => {
     const payload = styleImagesPayload({
       id: "s1", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
       overviewImages: [
-        { contentHash: "a".repeat(64), generation: 1 },
+        { contentHash: "a".repeat(64), label: "深空科技", generation: 1 },
         { contentHash: "b".repeat(64), generation: 2 },
       ],
       selectedImageHash: null, styleParams: null, demoImageHash: null,
@@ -160,6 +160,9 @@ describe("style card payloads", () => {
     expect(payload.stage).toBe("style_images_ready");
     expect(payload.generation).toBe(2);
     expect(payload.candidates[0]?.url).toBe(`everroom-material://${"a".repeat(64)}`);
+    expect(payload.candidates[0]?.label).toBe("深空科技");
+    // 老会话无 label：字段省略而非空串。
+    expect(payload.candidates[1]).not.toHaveProperty("label");
   });
 
   it("composes a card payload from params", () => {

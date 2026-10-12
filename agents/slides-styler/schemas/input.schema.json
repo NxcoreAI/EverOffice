@@ -28,11 +28,6 @@
       "maxItems": 20,
       "description": "Accumulated user dissatisfaction notes; every entry must be honored as a hard constraint."
     },
-    "styleBrief": {
-      "type": "string",
-      "maxLength": 500,
-      "description": "One-line style direction produced by the direction task, replayed for settle."
-    },
     "clusters": {
       "type": "array",
       "items": {

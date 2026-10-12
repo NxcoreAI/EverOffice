@@ -33,10 +33,8 @@ function isRetryableGenerationError(message: string): boolean {
 }
 
 export interface OverviewImageInput {
-  /** 已含风格方向与累积负面反馈的完整生图提示词。 */
-  prompt: string;
-  /** 候选数（1~4，向上取整钳制）。 */
-  count: number;
+  /** 互不相同的候选：每条提示词各生成一张（差异化挑图的来源）。 */
+  candidates: Array<{ label?: string; prompt: string }>;
   /** 幂等键：同键同内容去重、同键新内容走版本链；重生成轮次由调用方拼进键。 */
   idempotencyKey: string;
 }
@@ -68,12 +66,14 @@ export class SlidesStyleImageGenerator {
     if (!session) {
       throw new Error("生图中转会话不可用：需要已订阅账号且网关在线");
     }
-    const count = Math.max(1, Math.min(MAX_OVERVIEW_CANDIDATES, Math.floor(input.count)));
-    const prompt = input.prompt.trim();
-    if (!prompt) throw new Error("生图提示词不能为空");
+    const prompts = input.candidates
+      .map((candidate) => candidate.prompt.trim())
+      .filter((prompt) => prompt.length > 0)
+      .slice(0, MAX_OVERVIEW_CANDIDATES);
+    if (prompts.length === 0) throw new Error("生图提示词不能为空");
     // 部分成功即接受：限流窗口内能出几张是几张（≥1 张用户就能挑/说不满意），
     // 只有全军覆没才向上抛。
-    const settled = await Promise.allSettled(Array.from({ length: count }, (_, index) =>
+    const settled = await Promise.allSettled(prompts.map((prompt, index) =>
       this.generateOneWithRetry(session, prompt, input.idempotencyKey, index)));
     const succeeded = settled
       .flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
@@ -85,14 +85,27 @@ export class SlidesStyleImageGenerator {
     return succeeded;
   }
 
+  /** 正文页配图单张生成：串行逐页调用，重试梯可独立收紧（页图量大，不宜沿用纵览三试）。 */
+  async generateImage(input: { prompt: string; retryDelaysMs?: number[] }): Promise<OverviewImageResult> {
+    const session = this.sessions.current();
+    if (!session) {
+      throw new Error("生图中转会话不可用：需要已订阅账号且网关在线");
+    }
+    const prompt = input.prompt.trim();
+    if (!prompt) throw new Error("生图提示词不能为空");
+    return this.generateOneWithRetry(session, prompt, "page", 0, input.retryDelaysMs);
+  }
+
   private async generateOneWithRetry(
     session: { baseUrl: string; token: string },
     prompt: string,
     idempotencyKey: string,
     index: number,
+    retryDelaysMs?: number[],
   ): Promise<OverviewImageResult> {
+    const delays = retryDelaysMs ?? this.retryDelaysMs;
     let lastError: unknown;
-    for (const delayMs of this.retryDelaysMs) {
+    for (const delayMs of delays) {
       if (delayMs > 0) await sleep(delayMs);
       try {
         return await this.generateOne(session, prompt, idempotencyKey, index);
@@ -129,6 +142,10 @@ export class SlidesStyleImageGenerator {
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
+      // 上游 404 model_not_found（模型下架/渠道未配置）翻成可读提示，其余带原文。
+      if (/model_not_found|Model not exist/i.test(detail)) {
+        throw new Error("生图模型在服务端不可用（可能已被上游下架，或渠道未配置）。请联系管理员检查生图模型配置后重试。");
+      }
       throw new Error(`生图请求失败（HTTP ${String(response.status)}）${detail.slice(0, 200)}`);
     }
     const body = await response.json() as { data?: Array<{ url?: unknown; b64_json?: unknown }> };

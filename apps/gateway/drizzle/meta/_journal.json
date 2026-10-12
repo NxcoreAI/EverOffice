@@ -491,6 +491,13 @@
       "when": 1791546704754,
       "tag": "0071_slides_style_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "6",
+      "when": 1791600000000,
+      "tag": "0072_slides_page_image_sessions",
+      "breakpoints": true
     }
   ]
 }

@@ -61,7 +61,7 @@
 
 ## edit 作业纪律
 
-1. 调用 `context_room_slides_read` 获取大纲与 op 词汇（fileId 用输入携带值，缺省为 "active" 即当前桌面打开的那份；未打开会报错，如实回报）。
+1. 调用 `context_room_slides_read` 获取大纲与 op 词汇（fileId 用输入携带值，缺省为 "active" 即当前桌面打开的那份；显式 fileEntryId 未打开时桌面端会自动以可编辑方式打开，仅 "active" 未命中才报错，如实回报）。
 2. edit 不重新定调：沿用该 deck 既有色板、字号与母题（从大纲与现有页延续），只改 instruction 涉及的元素，保持全篇一致。
 3. 用大纲里的元素 id 组装 `context_room_slides_edit` 事务（fileId 同样可用 "active"）；用户能实时看到每笔修改。
 4. 文件以只读方式打开时（editable=false），不强行编辑，在 summary 里说明需先在产物库以可编辑方式重新打开。

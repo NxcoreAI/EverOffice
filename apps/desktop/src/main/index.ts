@@ -64,6 +64,7 @@ import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
+import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
@@ -662,6 +663,11 @@ const DIARY_CHANNELS = {
   day: 'diary:day',
 } as const
 
+/** slides 配图过目卡：后台逐张生成期间的会话快照轮询。 */
+const SLIDES_CHANNELS = {
+  pageImagesStatus: 'slides:page-images-status',
+} as const
+
 const WRITING_STYLE_CHANNELS = {
   profile: 'writing-style:get',
   settings: 'writing-style:get-settings',
@@ -749,6 +755,7 @@ function installIpcRouters(): void {
     DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
     WRITING_STYLE_CHANNELS,
+    SLIDES_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -3914,6 +3921,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
+    // slides 配图过目卡轮询（后台逐张生成期间渲染层拉最新会话快照）。
+    const slidesGatewaySupervisor = gatewaySupervisor
+    handle(SLIDES_CHANNELS.pageImagesStatus, (_event, documentId: string) => {
+      if (!slidesGatewaySupervisor) throw new Error('gateway_not_ready')
+      return new SlidesGatewayBridge(slidesGatewaySupervisor).pageImagesStatus(documentId)
+    })
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))

@@ -19,6 +19,7 @@ import type {
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
+import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -439,6 +440,11 @@ const api: NxcoreDesktopApi = {
     update: (id, input) => invoke('agent-scheduler:update', id, input),
     remove: (id) => invoke('agent-scheduler:remove', id),
     runNow: (id) => invoke('agent-scheduler:run-now', id),
+  },
+  slides: {
+    /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
+    pageImagesStatus: (documentId: string) =>
+      invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
   },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),

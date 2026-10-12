@@ -80,6 +80,12 @@
             },
             "description": "arrange only. Material image links for this page; omit entirely when none were found."
           },
+          "imagePrompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "arrange only. Chinese image-generation prompt (subject/scene/composition/light/style, 120-400 chars, no real text in frame) for a page where material_search found nothing but an image is warranted; the gateway generates the image and fills materials. Omit when materials were found or the page needs no image."
+          },
           "notes": {
             "type": "string",
             "maxLength": 300,

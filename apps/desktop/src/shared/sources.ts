@@ -1065,6 +1065,9 @@ export interface NxcoreDesktopApi {
     remove(id: string): Promise<void>
     runNow(id: string): Promise<{ runId: string }>
   }
+  slides: {
+    pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
+  }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
     create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>

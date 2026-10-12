@@ -2,7 +2,7 @@
  * slides_draft 风格阶段编排：style（出纵览候选）与 style_select（提取→
  * 定参→自校→风格卡）。tools.ts 把工具参数翻译到这里，产物回填进度卡。
  *
- * 韧性：styler 是复核不是必经——direction 失败退确定性提示词模板、
+ * 韧性：styler 是复核不是必经——direction 失败或候选不足退确定性变体模板、
  * settle 失败退基线参数、演示页渲染失败退无图风格卡；只有中转会话
  * 不可用（无订阅）是真失败。
  */
@@ -32,6 +32,10 @@ export interface SlidesStyleStageDeps {
   demoRenderer: DemoPptxRenderer;
   /** 演示页 PNG 入库（内容哈希幂等），返回 hash 供风格卡寻址。 */
   saveDemoPng: (png: Buffer, idempotencyKey: string) => Promise<{ contentHash: string }>;
+  /** 正文配图会话存储（generate 的 confirm/review 两等待阶段）；缺省时退回自动生图直落。 */
+  pageImageSessions?: import("./slides-page-images-store.js").SlidesPageImageSessionStore | null;
+  /** 正文配图后台生成循环；缺省时 generate 决策同步生完全部再返回。 */
+  pageImageRunner?: import("./slides-page-images-runner.js").SlidesPageImageRunner | null;
 }
 
 export interface SlidesStyleStageResult {
@@ -80,18 +84,53 @@ function structured(invocation: Invocation): Record<string, unknown> | null {
   return null;
 }
 
-/** direction 失败时的确定性提示词模板（结构化中文版式规格，实测遵循度高）。 */
-function fallbackImagePrompt(instruction: string, feedback: string[]): string {
+/** direction 失败或有效候选不足时的确定性兜底：3 个固定方向种子，共用同一段负面反馈块。 */
+function fallbackCandidatePrompts(instruction: string, feedback: string[]): Array<{ label: string; prompt: string }> {
   const negatives = feedback.length ? `严格避免：${feedback.join("；")}。` : "";
-  return [
-    "这是一张 PPT 风格参考图（16:9 横版，完整单页样张），风格方向：" + instruction + "。",
-    "版式内容：顶部标题区用灰色假字条代替真文字；两三段正文块用细假字条；一两个色块或卡片；一个柱状图占位（示意，不用真实数据）；一处大数字装饰。",
-    "负面约束：不出现任何真实文字与字母单词（全部用假字条）；不加噪点纹理；不要照片拼贴；不要 3D 渲染感。",
-    negatives,
-  ].filter(Boolean).join("\n");
+  const seeds = [
+    { label: "冷静商务", direction: "浅灰白底 + 藏蓝主色 + 单点浅金强调，克制留白、直线分割的商务风" },
+    { label: "深色高对比", direction: "深炭黑底 + 亮青主色 + 琥珀强调，高对比、大数字醒目的科技发布风" },
+    { label: "暖调编辑", direction: "米白底 + 赭棕主色 + 砖红强调，杂志编辑排版、衬线气质的人文风" },
+  ];
+  const userDirection = instruction.trim().slice(0, 300);
+  return seeds.map((seed) => ({
+    label: seed.label,
+    prompt: [
+      `这是一张 PPT 风格参考图（16:9 横版，完整单页样张），风格方向：${userDirection ? userDirection + "，" : ""}${seed.direction}。`,
+      "版式内容：顶部标题区用灰色假字条代替真文字；两三段正文块用细假字条；一两个色块或卡片；一个柱状图占位（示意，不用真实数据）；一处大数字装饰。",
+      "负面约束：不出现任何真实文字与字母单词（全部用假字条）；不加噪点纹理；不要照片拼贴；不要 3D 渲染感。",
+      negatives,
+    ].filter(Boolean).join("\n"),
+  }));
 }
 
 const DEFAULT_CANDIDATES = 3;
+
+/** 解析 styler direction 输出为候选列表；无效项丢弃，不足 DEFAULT_CANDIDATES 由兜底变体补齐。 */
+function candidatesFromStyler(
+  output: Record<string, unknown> | null,
+  instruction: string,
+  feedback: string[],
+): { candidates: Array<{ label: string; prompt: string }>; fellBack: boolean } {
+  const raw = output?.candidates;
+  const parsed: Array<{ label: string; prompt: string }> = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+      const prompt = typeof (item as Record<string, unknown>).imagePrompt === "string"
+        ? ((item as Record<string, unknown>).imagePrompt as string).trim()
+        : "";
+      if (prompt.length < 40) continue;
+      const labelRaw = typeof (item as Record<string, unknown>).label === "string"
+        ? ((item as Record<string, unknown>).label as string).trim().slice(0, 12)
+        : "";
+      parsed.push({ label: labelRaw || `风格方向 ${String(parsed.length + 1)}`, prompt: prompt.slice(0, 1_200) });
+    }
+  }
+  const fallback = fallbackCandidatePrompts(instruction, feedback);
+  const candidates = [...parsed, ...fallback].slice(0, DEFAULT_CANDIDATES);
+  return { candidates, fellBack: parsed.length < DEFAULT_CANDIDATES };
+}
 
 export async function runSlidesStyleStage(
   input: SlidesStyleStageInput,
@@ -138,8 +177,8 @@ async function runStyleImages(
   }
   const title = input.title?.trim().slice(0, 120);
 
-  // 1. styler direction：凝生图提示词（失败退确定性模板）。
-  let prompt: string;
+  // 1. styler direction：凝 3 个互不相同的候选提示词（失败或不足退确定性变体）。
+  let candidates: Array<{ label: string; prompt: string }>;
   const directionInput = {
     task: "direction" as const,
     instruction: session.instruction,
@@ -160,29 +199,23 @@ async function runStyleImages(
       ...(input.signal ? { signal: input.signal } : {}),
     }) as unknown as Invocation;
     if (invocation.status === "completed") {
-      const output = structured(invocation);
-      const candidatePrompt = typeof output?.imagePrompt === "string" ? output.imagePrompt.trim() : "";
-      if (candidatePrompt.length >= 40) {
-        prompt = candidatePrompt.slice(0, 1_200);
-      } else {
-        stylerError = "styler_direction_prompt_invalid";
-        prompt = fallbackImagePrompt(session.instruction, session.feedback);
-      }
+      const outcome = candidatesFromStyler(structured(invocation), session.instruction, session.feedback);
+      candidates = outcome.candidates;
+      if (outcome.fellBack) stylerError = "styler_direction_candidates_invalid";
     } else {
       stylerError = invocation.errorCode ?? invocation.errorMessage ?? invocation.status;
-      prompt = fallbackImagePrompt(session.instruction, session.feedback);
+      candidates = fallbackCandidatePrompts(session.instruction, session.feedback);
     }
   } catch (error) {
     stylerError = error instanceof Error ? error.message : String(error);
-    prompt = fallbackImagePrompt(session.instruction, session.feedback);
+    candidates = fallbackCandidatePrompts(session.instruction, session.feedback);
   }
 
-  // 2. 生图（候选并行；中转不可用是真失败）。
+  // 2. 生图（每条候选提示词各出一张，并行；中转不可用是真失败）。
   let images: Array<{ contentHash: string }>;
   try {
     images = await deps.images.generateOverviewImages({
-      prompt,
-      count: DEFAULT_CANDIDATES,
+      candidates,
       idempotencyKey: `${input.run.runId}:style:gen:${session.generation}`,
     });
   } catch (error) {
@@ -190,9 +223,10 @@ async function runStyleImages(
     return failed("slides_style_image_failed", `纵览图生成失败：${message}。如实告知用户；若提示中转会话不可用，说明需要已订阅账号在线。`, true);
   }
 
-  // 3. 会话推进 + 广播挑图卡。
-  const overviewImages: StyleOverviewImage[] = images.map((image) => ({
+  // 3. 会话推进 + 广播挑图卡（部分候选生图失败时按成功张数对齐标签）。
+  const overviewImages: StyleOverviewImage[] = images.map((image, index) => ({
     contentHash: image.contentHash,
+    ...(candidates[index]?.label ? { label: candidates[index]?.label } : {}),
     generation: session.generation,
   }));
   deps.sessions.patch(session.id, { overviewImages, stage: "images_ready" });

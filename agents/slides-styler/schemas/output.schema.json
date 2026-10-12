@@ -6,16 +6,30 @@
       "enum": ["direction", "settle"],
       "description": "Which task this submission answers."
     },
-    "imagePrompt": {
-      "type": "string",
-      "minLength": 40,
-      "maxLength": 1200,
-      "description": "direction: complete Chinese prompt for the overview image generation (structured layout spec with fake-text-bar rules)."
-    },
-    "styleBrief": {
-      "type": "string",
-      "maxLength": 500,
-      "description": "direction: one-line style direction handed over to settle."
+    "candidates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 12,
+            "description": "User-facing short name of this style direction (e.g. 深空科技); the three labels must differ."
+          },
+          "imagePrompt": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 1200,
+            "description": "direction: complete Chinese prompt for this candidate's overview image (structured layout spec with fake-text-bar rules)."
+          }
+        },
+        "required": ["label", "imagePrompt"],
+        "additionalProperties": false
+      },
+      "description": "direction: exactly 3 mutually distinct style directions; any two must differ in at least two of color mood / light-dark base / layout temperament."
     },
     "styleParams": {
       "type": "object",

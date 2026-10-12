@@ -12,6 +12,8 @@ import { createSubagentPiTools } from '../src/modules/subagents/tools.js'
 import type { SlidesStyleStageDeps } from '../src/modules/subagents/slides-style-stage.js'
 import type { SlidesStyleImageGenerator } from '../src/modules/slides-style/image-gen.js'
 import { SlidesStyleSessionStore } from '../src/modules/slides-style/style-session.js'
+import { SlidesPageImageSessionStore } from '../src/modules/subagents/slides-page-images-store.js'
+import { SlidesPageImageRunner } from '../src/modules/subagents/slides-page-images-runner.js'
 import type { DatabaseClient } from '../src/infrastructure/database/client.js'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 
@@ -498,6 +500,85 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(trashDraft).toHaveBeenCalledWith('doc-draft-1')
   })
 
+  it('generate：素材缺口页按 imagePrompt 生图回填进 builder 收到的 plan（page_images 进度 + 二次 plan_ready）', async () => {
+    const arrangePlan = {
+      ...planFixture,
+      phase: 'arrange',
+      pages: [
+        { title: '封面', density: 'sparse', points: ['季度汇报'], imagePrompt: '深蓝科技感城市天际线，横幅构图，冷色光' },
+        { title: '业绩', role: 'data', density: 'dense', points: ['营收增长'], data: 'Q1: 1.2 亿', materials: [{ url: 'https://img.example.com/a.png', desc: '已有图' }] },
+        { title: '计划', density: 'standard', points: ['三线扩张'] },
+      ],
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
+      'slides-builder': { result: { text: '', structuredOutput: builderResultFixture } },
+    })
+    const generateImage = vi.fn(async (_input: { prompt: string; retryDelaysMs?: number[] }) => ({ contentHash: 'e'.repeat(64) }))
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      slidesStyle: { images: { generateImage } } as never,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const onUpdate = vi.fn()
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+      onUpdate,
+    )
+
+    expect(generateImage).toHaveBeenCalledTimes(1)
+    expect(generateImage.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining('城市天际线') })
+    const builderDispatch = orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toEqual([
+      { url: `everroom-material://${'e'.repeat(64)}`, desc: expect.stringContaining('AI 生成配图') },
+    ])
+    expect(builderPlan.pages[1]?.materials).toEqual([{ url: 'https://img.example.com/a.png', desc: '已有图' }])
+    expect(builderPlan.pages[2]?.materials).toBeUndefined()
+
+    const stages = onUpdate.mock.calls.map((call) => (call[0] as { details: Record<string, unknown> }).details.stage)
+    expect(stages).toEqual(['plan_ready', 'page_images', 'plan_ready'])
+    const imagesUpdate = onUpdate.mock.calls[1]![0] as { details: Record<string, unknown> }
+    expect(imagesUpdate.details).toMatchObject({ stage: 'page_images', totalPages: 1, doneCount: 1 })
+  })
+
+  it('generate：生图全部失败流程照常落页，缺口页保持退化', async () => {
+    const arrangePlan = {
+      ...planFixture,
+      phase: 'arrange',
+      pages: [
+        { title: '封面', density: 'sparse', points: ['季度汇报'], imagePrompt: '深蓝科技感城市天际线' },
+        { title: '计划', density: 'standard', points: ['三线扩张'] },
+      ],
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlan } },
+      'slides-builder': { result: { text: '', structuredOutput: builderResultFixture } },
+    })
+    const generateImage = vi.fn(async () => { throw new Error('生图请求失败（HTTP 500）') })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      slidesStyle: { images: { generateImage } } as never,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(2)
+    const builderDispatch = orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toBeUndefined()
+  })
+
   it('generate：落页部分完成时草稿保留（便于重试），不回收', async () => {
     const arrangePlan = {
       phase: 'arrange',
@@ -683,8 +764,8 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     temporaryDirectories.push(dir)
     const database = createDatabase(join(dir, 'gateway.sqlite'), resolve('drizzle'))
     databases.push(database)
-    const generateImages = vi.fn(async (input: { count: number; idempotencyKey: string }) =>
-      Array.from({ length: input.count }, (_, index) => ({
+    const generateImages = vi.fn(async (input: { candidates: Array<{ label?: string; prompt: string }>; idempotencyKey: string }) =>
+      input.candidates.map((candidate, index) => ({
         contentHash: `${input.idempotencyKey}:${String(index)}`.padEnd(64, '0').slice(0, 64),
         fileEntryId: `entry-${String(index)}`,
       })))
@@ -740,9 +821,16 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     return { deps, orchestrator, generateImages, saveDemoPng }
   }
 
-  it('style：styler 出提示词 → 生图 → 广播挑图卡并落库会话', async () => {
+  it('style：styler 出 3 条差异化提示词 → 各自生图 → 广播挑图卡并落库会话', async () => {
     const { deps, orchestrator, generateImages } = await setupStyleDeps({
-      directionOutput: { task: 'direction', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，顶部标题区用灰色假字条……'.repeat(2), styleBrief: '深色科技' },
+      directionOutput: {
+        task: 'direction',
+        candidates: [
+          { label: '深空科技', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，深炭黑底亮青主色，顶部标题区用灰色假字条……'.repeat(2) },
+          { label: '冷灰商务', imagePrompt: '一张浅色商务风 PPT 风格参考图，16:9 横版，灰白底藏蓝主色，顶部标题区用灰色假字条……'.repeat(2) },
+          { label: '暖调编辑', imagePrompt: '一张暖色人文风 PPT 风格参考图，16:9 横版，米白底赭棕主色，顶部标题区用灰色假字条……'.repeat(2) },
+        ],
+      },
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
       slidesStyle: deps,
@@ -760,9 +848,15 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const payload = JSON.parse(result.content as string) as { status: string; styleSessionId: string; candidates: number }
     expect(payload.status).toBe('style_images_ready')
     expect(payload.candidates).toBe(3)
-    const broadcast = onUpdate.mock.calls.at(-1)?.[0] as { details: { stage: string; candidates: Array<{ url: string }> } }
+    // 每张候选各用自己的提示词（差异化机制），三条互不相同。
+    const genInput = generateImages.mock.calls[0]?.[0] as { candidates: Array<{ label: string; prompt: string }> }
+    const prompts = genInput.candidates.map((candidate) => candidate.prompt)
+    expect(prompts).toHaveLength(3)
+    expect(new Set(prompts).size).toBe(3)
+    const broadcast = onUpdate.mock.calls.at(-1)?.[0] as { details: { stage: string; candidates: Array<{ url: string; label?: string }> } }
     expect(broadcast.details.stage).toBe('style_images_ready')
     expect(broadcast.details.candidates).toHaveLength(3)
+    expect(broadcast.details.candidates.map((candidate) => candidate.label)).toEqual(['深空科技', '冷灰商务', '暖调编辑'])
     expect(broadcast.details.candidates[0]?.url.startsWith('everroom-material://')).toBe(true)
     expect(generateImages).toHaveBeenCalledTimes(1)
     const session = deps.sessions.byId(payload.styleSessionId)
@@ -770,9 +864,49 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     expect(session?.draftDocumentId).toBe('doc-draft-1')
   })
 
+  it('style：styler 只回 2 条有效候选 → 兜底变体补足 3 条且告警', async () => {
+    const { deps, orchestrator, generateImages } = await setupStyleDeps({
+      directionOutput: {
+        task: 'direction',
+        candidates: [
+          { label: '深空科技', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，深炭黑底亮青主色，顶部标题区用灰色假字条……'.repeat(2) },
+          { label: '冷灰商务', imagePrompt: '一张浅色商务风 PPT 风格参考图，16:9 横版，灰白底藏蓝主色，顶部标题区用灰色假字条……'.repeat(2) },
+          { label: '', imagePrompt: '太短' },
+        ],
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesStyle: deps,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '做一份商务科技风的汇报', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+
+    const payload = JSON.parse(result.content as string) as { candidates: number; warnings?: string[] }
+    expect(payload.candidates).toBe(3)
+    expect(payload.warnings).toEqual(['风格提示词由默认模板生成'])
+    const genInput = generateImages.mock.calls[0]?.[0] as { candidates: Array<{ label: string; prompt: string }> }
+    expect(genInput.candidates).toHaveLength(3)
+    // 第三条由兜底种子补足（按序取第一个）。
+    expect(genInput.candidates[2]?.label).toBe('冷静商务')
+    // 三条仍互不相同。
+    expect(new Set(genInput.candidates.map((candidate) => candidate.prompt)).size).toBe(3)
+  })
+
   it('style 重入：默认只重新展示候选；regenerate=true 才累积反馈并重新生成', async () => {
     const { deps, orchestrator, generateImages } = await setupStyleDeps({
-      directionOutput: { task: 'direction', imagePrompt: '一张深色科技风 PPT 风格参考图，版式完整……'.repeat(2), styleBrief: '' },
+      directionOutput: {
+        task: 'direction',
+        candidates: [
+          { label: '深空科技', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，版式完整……'.repeat(2) },
+          { label: '冷灰商务', imagePrompt: '一张浅色商务风 PPT 风格参考图，16:9 横版，版式完整……'.repeat(2) },
+          { label: '暖调编辑', imagePrompt: '一张暖色人文风 PPT 风格参考图，16:9 横版，版式完整……'.repeat(2) },
+        ],
+      },
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -915,5 +1049,831 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const builderInput = (builderCall?.[0] as { input?: { styleParams?: { palette: { primary: string } } } }).input
     expect(builderInput?.styleParams?.palette.primary).toBe('#1e3a5f')
     expect(deps.sessions.byId(styleSessionId)?.stage).toBe('confirmed')
+  })
+})
+
+describe('createSubagentPiTools slides_draft 配图交互', () => {
+  const arrangePlanWithGaps = {
+    phase: 'arrange',
+    title: '季度汇报',
+    narrative: '业绩回顾',
+    pages: [
+      { title: '封面', density: 'sparse', points: ['季度汇报'], imagePrompt: '深蓝科技感城市天际线，横幅构图，冷色光' },
+      { title: '业绩', role: 'data', density: 'dense', points: ['营收增长'], data: 'Q1: 1.2 亿' },
+      { title: '计划', density: 'standard', points: ['三线扩张'], imagePrompt: '团队协作白板特写，暖光' },
+    ],
+    warnings: [],
+    summary: '3 页方案',
+  }
+
+  const builderDone = {
+    status: 'completed',
+    fileEntryId: 'file-1',
+    fileName: '季度汇报.pptx',
+    pages: 3,
+    outline: ['封面', '业绩', '计划'],
+    warnings: [],
+    summary: '已生成 3 页',
+  }
+
+  const draftSnapshot = {
+    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    blocks: [],
+    markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：Q1: 1.2 亿\n\n## 计划\n- 三线扩张\n',
+  }
+
+  function orchestratorByAgent(handlers: Record<string, Partial<SubagentInvocation>>): SubagentOrchestrator & {
+    dispatch: ReturnType<typeof vi.fn>
+  } {
+    return {
+      dispatch: vi.fn(async (input: { agentId: string; onInvocationId?: (id: string) => void }) => {
+        const invocationId = input.agentId === 'slides-planner' ? 'invocation-plan' : 'invocation-build'
+        input.onInvocationId?.(invocationId)
+        return {
+          id: invocationId,
+          agentDefinitionId: input.agentId,
+          agentRevisionId: 'revision-1',
+          source: 'primary_agent',
+          parentSessionId: 'session-1',
+          parentRunId: 'run-1',
+          task: '演示文稿',
+          input: null,
+          status: 'completed',
+          result: { text: '' },
+          errorCode: null,
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          ...handlers[input.agentId],
+        }
+      }),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+  }
+
+  const databases: DatabaseClient[] = []
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    databases.splice(0).forEach((database) => database.sqlite.close())
+    await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  })
+
+  interface PageImagesSetup {
+    orchestrator: SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    generateImage: ReturnType<typeof vi.fn>;
+    deps: SlidesStyleStageDeps;
+  }
+
+  async function setupPageImages(
+    options: { outcomes?: Array<{ ok: true; hash: string } | { ok: false; error: Error }> } = {},
+  ): Promise<PageImagesSetup> {
+    const dir = await mkdtemp(join(tmpdir(), 'nxcore-page-images-test-'))
+    temporaryDirectories.push(dir)
+    const database = createDatabase(join(dir, 'gateway.sqlite'), resolve('drizzle'))
+    databases.push(database)
+    const outcomes = options.outcomes ?? []
+    let call = 0
+    const generateImage = vi.fn(async () => {
+      const outcome = outcomes[call] ?? { ok: true, hash: `${String(call + 1)}f`.repeat(8).slice(0, 64) }
+      call += 1
+      if (!outcome.ok) throw outcome.error
+      return { contentHash: outcome.hash }
+    })
+    const deps: SlidesStyleStageDeps = {
+      sessions: new SlidesStyleSessionStore(database.db),
+      images: { generateImage } as unknown as SlidesStyleImageGenerator,
+      vlm: null,
+      readMaterialBytes: async () => null,
+      demoRenderer: { renderPptx: async () => { throw new Error('office_bridge_unavailable') } },
+      saveDemoPng: async () => ({ contentHash: 'd'.repeat(64) }),
+      pageImageSessions: new SlidesPageImageSessionStore(database.db),
+    }
+    const orchestrator = orchestratorByAgent({
+      'slides-planner': { result: { text: '', structuredOutput: arrangePlanWithGaps } },
+      'slides-builder': { result: { text: '', structuredOutput: builderDone } },
+    })
+    return { orchestrator, generateImage, deps }
+  }
+
+  function buildTools(setup: PageImagesSetup) {
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), setup.orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: async () => {},
+      slidesStyle: setup.deps,
+    })
+    return tools.find((tool) => tool.name === 'slides_draft')!
+  }
+
+  it('缺口页停确认卡：fresh generate 返回 page_images_confirm，会话落库，builder 未调度', async () => {
+    const setup = await setupPageImages()
+    const slidesDraft = buildTools(setup)
+    const onUpdate = vi.fn()
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+      onUpdate,
+    )
+
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1) // 只编排未落页
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_confirm')
+    expect(payload.pages).toBe(2)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.stage).toBe('confirm')
+    expect(session?.pages).toHaveLength(2)
+    expect(session?.pages[0]).toMatchObject({ pageIndex: 0, title: '封面', contentHash: null })
+    const stages = onUpdate.mock.calls.map((call) => (call[0] as { details: Record<string, unknown> }).details.stage)
+    expect(stages).toEqual(['plan_ready', 'page_images_confirm'])
+    const confirmPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> }
+    expect(confirmPayload.details).toMatchObject({ stage: 'page_images_confirm', documentId: 'doc-draft-1', totalPages: 2 })
+    expect(setup.generateImage).not.toHaveBeenCalled()
+  })
+
+  it('重入只重展示：无参重调不重排不烧配额', async () => {
+    const setup = await setupPageImages()
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
+
+    const again = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '再看下配图', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
+    const payload = JSON.parse((again as { content: string }).content)
+    expect(payload.status).toBe('page_images_confirm')
+    expect(setup.generateImage).not.toHaveBeenCalled()
+  })
+
+  it('decision=generate：串行生图转 review，会话带哈希，builder 未调度', async () => {
+    const setup = await setupPageImages({ outcomes: [
+      { ok: true, hash: 'a'.repeat(64) },
+      { ok: true, hash: 'b'.repeat(64) },
+    ] })
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+
+    const onUpdate = vi.fn()
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+      onUpdate,
+    )
+
+    expect(setup.generateImage).toHaveBeenCalledTimes(2)
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_review')
+    expect(payload.generated).toBe(2)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.stage).toBe('review')
+    expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
+    expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
+    const stages = onUpdate.mock.calls.map((call) => (call[0] as { details: Record<string, unknown> }).details.stage)
+    expect(stages[0]).toBe('page_images')
+    expect(stages.at(-1)).toBe('page_images_review')
+    const reviewPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: { pages: Array<{ title?: string; url?: string }> } }
+    expect(reviewPayload.details.pages[0]).toMatchObject({ title: '封面', url: `everroom-material://${'a'.repeat(64)}` })
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('regeneratePageImage=2：只重生那张，generation 递增重广播 review', async () => {
+    const setup = await setupPageImages({ outcomes: [
+      { ok: true, hash: 'a'.repeat(64) },
+      { ok: true, hash: 'b'.repeat(64) },
+      { ok: true, hash: 'c'.repeat(64) },
+    ] })
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+    )
+
+    const onUpdate = vi.fn()
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '第二张重来', draftDocumentId: 'doc-draft-1', regeneratePageImage: 2, regenerateFeedback: '要更明亮' } as never,
+      undefined,
+      onUpdate,
+    )
+
+    expect(setup.generateImage).toHaveBeenCalledTimes(3)
+    const regenerateCall = setup.generateImage.mock.calls[2]![0] as { prompt: string }
+    expect(regenerateCall.prompt).toContain('团队协作白板特写')
+    expect(regenerateCall.prompt).toContain('用户反馈：要更明亮')
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_review')
+    expect(payload.regenerated).toBe(2)
+    expect(payload.generation).toBe(2)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages[1]?.contentHash).toBe('c'.repeat(64))
+    expect(session?.generation).toBe(2)
+    const reviewPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> }
+    expect(reviewPayload.details.generation).toBe(2)
+    expect((reviewPayload.details.pages as Array<{ url?: string }>)[1]?.url).toBe(`everroom-material://${'c'.repeat(64)}`)
+  })
+
+  it('decision=accept：builder 收到注入配图的 plan，完成后会话 resolved', async () => {
+    const setup = await setupPageImages({ outcomes: [
+      { ok: true, hash: 'a'.repeat(64) },
+      { ok: true, hash: 'b'.repeat(64) },
+    ] })
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+    )
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
+      undefined,
+    )
+
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(2)
+    const builderDispatch = setup.orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toEqual([
+      { url: `everroom-material://${'a'.repeat(64)}`, desc: expect.stringContaining('AI 生成配图') },
+    ])
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('completed')
+    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('resolved')
+  })
+
+  it('decision=skip：不生图直接落页，plan 无注入', async () => {
+    const setup = await setupPageImages()
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '跳过', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'skip' } as never,
+      undefined,
+    )
+
+    expect(setup.generateImage).not.toHaveBeenCalled()
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(2)
+    const builderDispatch = setup.orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toBeUndefined()
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('completed')
+  })
+
+  it('生图全失败：返回 failed 带 skip 指引，会话留在 confirm', async () => {
+    const setup = await setupPageImages({ outcomes: [
+      { ok: false, error: new Error('生图中转会话不可用：需要已订阅账号且网关在线') },
+    ] })
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+    )
+
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('failed')
+    expect(payload.errorCode).toBe('slides_page_images_generation_failed')
+    expect(payload.message).toContain('skip')
+    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('confirm')
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('阶段冲突与会话不存在：返回 failed', async () => {
+    const setup = await setupPageImages()
+    const slidesDraft = buildTools(setup)
+
+    const noSession = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
+      undefined,
+    )
+    expect(JSON.parse((noSession as { content: string }).content)).toMatchObject({
+      status: 'failed',
+      errorCode: 'slides_page_images_session_invalid',
+    })
+
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    const conflict = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '确认', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
+      undefined,
+    )
+    expect(JSON.parse((conflict as { content: string }).content)).toMatchObject({
+      status: 'failed',
+      errorCode: 'slides_page_images_stage_conflict',
+    })
+  })
+})
+
+describe('createSubagentPiTools slides_draft 配图打回', () => {
+  const arrangePlanWithGaps = {
+    phase: 'arrange',
+    title: '季度汇报',
+    pages: [
+      { title: '封面', density: 'sparse', points: ['季度汇报'], imagePrompt: '深蓝科技感城市天际线' },
+      { title: '计划', density: 'standard', points: ['三线扩张'], imagePrompt: '团队协作白板特写' },
+    ],
+    warnings: [],
+    summary: '2 页方案',
+  }
+
+  const builderDone = {
+    status: 'completed',
+    fileEntryId: 'file-1',
+    fileName: '季度汇报.pptx',
+    pages: 2,
+    outline: ['封面', '计划'],
+    warnings: [],
+    summary: '已生成 2 页',
+  }
+
+  const draftSnapshot = {
+    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    blocks: [],
+    markdown: '## 封面\n- 季度汇报\n\n## 计划\n- 三线扩张\n',
+  }
+
+  const databases: DatabaseClient[] = []
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    databases.splice(0).forEach((database) => database.sqlite.close())
+    await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  })
+
+  async function setupToReview() {
+    const dir = await mkdtemp(join(tmpdir(), 'nxcore-page-reject-test-'))
+    temporaryDirectories.push(dir)
+    const database = createDatabase(join(dir, 'gateway.sqlite'), resolve('drizzle'))
+    databases.push(database)
+    const hashes = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)]
+    let call = 0
+    const generateImage = vi.fn(async () => {
+      const hash = hashes[call] ?? 'd'.repeat(64)
+      call += 1
+      return { contentHash: hash }
+    })
+    const deps: SlidesStyleStageDeps = {
+      sessions: new SlidesStyleSessionStore(database.db),
+      images: { generateImage } as unknown as SlidesStyleImageGenerator,
+      vlm: null,
+      readMaterialBytes: async () => null,
+      demoRenderer: { renderPptx: async () => { throw new Error('office_bridge_unavailable') } },
+      saveDemoPng: async () => ({ contentHash: 'd'.repeat(64) }),
+      pageImageSessions: new SlidesPageImageSessionStore(database.db),
+    }
+    const orchestrator = {
+      dispatch: vi.fn(async (input: { agentId: string; onInvocationId?: (id: string) => void }) => {
+        const invocationId = input.agentId === 'slides-planner' ? 'invocation-plan' : 'invocation-build'
+        input.onInvocationId?.(invocationId)
+        const handler = input.agentId === 'slides-planner'
+          ? { result: { text: '', structuredOutput: arrangePlanWithGaps } }
+          : { result: { text: '', structuredOutput: builderDone } }
+        return {
+          id: invocationId,
+          agentDefinitionId: input.agentId,
+          agentRevisionId: 'revision-1',
+          source: 'primary_agent',
+          parentSessionId: 'session-1',
+          parentRunId: 'run-1',
+          task: '演示文稿',
+          input: null,
+          status: 'completed',
+          errorCode: null,
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          ...handler,
+        }
+      }),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: async () => {},
+      slidesStyle: deps,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+    )
+    return { orchestrator, generateImage, deps, slidesDraft }
+  }
+
+
+  it('打回第 1 张：会话标记 + 载荷带 rejected + builder 未调度', async () => {
+    const { orchestrator, deps, slidesDraft } = await setupToReview()
+    const onUpdate = vi.fn()
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '打回第一张', draftDocumentId: 'doc-draft-1', rejectPageImage: 1 } as never,
+      undefined,
+      onUpdate,
+    )
+
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_review')
+    expect(payload.rejected).toBe(1)
+    const session = deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages[0]?.rejected).toBe(true)
+    expect(session?.pages[1]?.rejected).toBeFalsy()
+    const reviewPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: { pages: Array<{ rejected?: boolean }> } }
+    expect(reviewPayload.details.pages[0]?.rejected).toBe(true)
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('打回后 accept：打回页 materials 被剥、其余页保留', async () => {
+    const { orchestrator, generateImage, slidesDraft } = await setupToReview()
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 1 } as never,
+      undefined,
+    )
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
+      undefined,
+    )
+
+    expect(generateImage).toHaveBeenCalledTimes(2)
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(2)
+    const builderDispatch = orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toBeUndefined()
+    expect(builderPlan.pages[1]?.materials).toEqual([
+      { url: `everroom-material://${'b'.repeat(64)}`, desc: expect.stringContaining('AI 生成配图') },
+    ])
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('completed')
+  })
+
+  it('恢复撤销打回；重生成该张也撤销打回', async () => {
+    const { generateImage, deps, slidesDraft } = await setupToReview()
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 1 } as never,
+      undefined,
+    )
+
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '恢复', draftDocumentId: 'doc-draft-1', restorePageImage: 1 } as never,
+      undefined,
+    )
+    expect(deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.pages[0]?.rejected).toBeFalsy()
+
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 2 } as never,
+      undefined,
+    )
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '重做', draftDocumentId: 'doc-draft-1', regeneratePageImage: 2 } as never,
+      undefined,
+    )
+    const session = deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages[1]?.rejected).toBeFalsy()
+    expect(session?.pages[1]?.contentHash).toBe('c'.repeat(64))
+    expect(generateImage).toHaveBeenCalledTimes(3)
+  })
+
+  it('打回越界或阶段不符返回 failed', async () => {
+    const { slidesDraft } = await setupToReview()
+    const outOfRange = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 5 } as never,
+      undefined,
+    )
+    expect(JSON.parse((outOfRange as { content: string }).content)).toMatchObject({
+      status: 'failed',
+      errorCode: 'slides_page_image_invalid',
+    })
+
+    const noSession = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-other', rejectPageImage: 1 } as never,
+      undefined,
+    )
+    expect(JSON.parse((noSession as { content: string }).content)).toMatchObject({
+      status: 'failed',
+      errorCode: 'slides_page_images_session_invalid',
+    })
+  })
+})
+
+describe('createSubagentPiTools slides_draft 配图后台流水', () => {
+  const arrangePlanWithGaps = {
+    phase: 'arrange',
+    title: '季度汇报',
+    pages: [
+      { title: '封面', density: 'sparse', points: ['季度汇报'], imagePrompt: '深蓝科技感城市天际线' },
+      { title: '计划', density: 'standard', points: ['三线扩张'], imagePrompt: '团队协作白板特写' },
+    ],
+    warnings: [],
+    summary: '2 页方案',
+  }
+
+  const builderDone = {
+    status: 'completed',
+    fileEntryId: 'file-1',
+    fileName: '季度汇报.pptx',
+    pages: 2,
+    outline: ['封面', '计划'],
+    warnings: [],
+    summary: '已生成 2 页',
+  }
+
+  const draftSnapshot = {
+    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    blocks: [],
+    markdown: '## 封面\n- 季度汇报\n\n## 计划\n- 三线扩张\n',
+  }
+
+  const databases: DatabaseClient[] = []
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    databases.splice(0).forEach((database) => database.sqlite.close())
+    await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  })
+
+  interface Deferred<T> {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+  }
+
+  function deferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => { resolve = res })
+    return { promise, resolve }
+  }
+
+  async function setupBackground(options: {
+    generateImage: ReturnType<typeof vi.fn>;
+  }) {
+    const dir = await mkdtemp(join(tmpdir(), 'nxcore-page-bg-test-'))
+    temporaryDirectories.push(dir)
+    const database = createDatabase(join(dir, 'gateway.sqlite'), resolve('drizzle'))
+    databases.push(database)
+    const runner = new SlidesPageImageRunner()
+    const deps: SlidesStyleStageDeps = {
+      sessions: new SlidesStyleSessionStore(database.db),
+      images: { generateImage: options.generateImage } as unknown as SlidesStyleImageGenerator,
+      vlm: null,
+      readMaterialBytes: async () => null,
+      demoRenderer: { renderPptx: async () => { throw new Error('office_bridge_unavailable') } },
+      saveDemoPng: async () => ({ contentHash: 'd'.repeat(64) }),
+      pageImageSessions: new SlidesPageImageSessionStore(database.db),
+      pageImageRunner: runner,
+    }
+    const orchestrator = {
+      dispatch: vi.fn(async (input: { agentId: string; onInvocationId?: (id: string) => void }) => {
+        const invocationId = input.agentId === 'slides-planner' ? 'invocation-plan' : 'invocation-build'
+        input.onInvocationId?.(invocationId)
+        const handler = input.agentId === 'slides-planner'
+          ? { result: { text: '', structuredOutput: arrangePlanWithGaps } }
+          : { result: { text: '', structuredOutput: builderDone } }
+        return {
+          id: invocationId,
+          agentDefinitionId: input.agentId,
+          agentRevisionId: 'revision-1',
+          source: 'primary_agent',
+          parentSessionId: 'session-1',
+          parentRunId: 'run-1',
+          task: '演示文稿',
+          input: null,
+          status: 'completed',
+          errorCode: null,
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          ...handler,
+        }
+      }),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      resolveDocumentForDraft: () => draftSnapshot,
+      trashSlidesDraftDocument: async () => {},
+      slidesStyle: deps,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    return { orchestrator, deps, runner, slidesDraft }
+  }
+
+  async function reachReviewBackground(setup: Awaited<ReturnType<typeof setupBackground>>) {
+    const { slidesDraft } = setup
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+    return slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+    )
+  }
+
+  it('generate 立即返回后台生成；settle 后逐张入会话，builder 不被阻塞调度', async () => {
+    const hashes = ['a'.repeat(64), 'b'.repeat(64)]
+    let call = 0
+    const generateImage = vi.fn(async () => {
+      const hash = hashes[call] ?? 'd'.repeat(64)
+      call += 1
+      return { contentHash: hash }
+    })
+    const setup = await setupBackground({ generateImage })
+
+    const result = await reachReviewBackground(setup)
+
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_review')
+    expect(payload.message).toContain('后台')
+    // 立即返回时可能已在生成第一张，但会话已转 review、builder 未调度。
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
+    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('review')
+
+    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    await setup.runner.settle(sessionId)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
+    expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
+    expect(generateImage).toHaveBeenCalledTimes(2)
+  })
+
+  it('生成中 accept：取消剩余，未完成页无图落页；迟到的生成结果被丢弃', async () => {
+    const gate = deferred<{ contentHash: string }>()
+    const generateImage = vi.fn(() => gate.promise)
+    const setup = await setupBackground({ generateImage })
+    await reachReviewBackground(setup)
+
+    const result = await setup.slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
+      undefined,
+    )
+
+    expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'completed' })
+    const builderDispatch = setup.orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toBeUndefined()
+    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('resolved')
+
+    // 迟到的后台生成结果：会话已 resolved，写入被丢弃。
+    gate.resolve({ contentHash: 'c'.repeat(64) })
+    const sessionId = 'stale'
+    void sessionId
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages.every((page) => !page.contentHash)).toBe(true)
+  })
+
+  it('生成中单页失败打标记继续下一页；失败页可重生成', async () => {
+    const hashes = ['a'.repeat(64)]
+    let call = 0
+    const generateImage = vi.fn(async () => {
+      call += 1
+      if (call === 1) throw new Error('生图请求失败（HTTP 500）')
+      return { contentHash: hashes[call - 2] ?? 'b'.repeat(64) }
+    })
+    const setup = await setupBackground({ generateImage })
+    await reachReviewBackground(setup)
+
+    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    await setup.runner.settle(sessionId)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages[0]?.failed).toBe(true)
+    expect(session?.pages[0]?.contentHash).toBeNull()
+    expect(session?.pages[1]?.contentHash).toBe('a'.repeat(64))
+
+    const result = await setup.slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '补第一张', draftDocumentId: 'doc-draft-1', regeneratePageImage: 1 } as never,
+      undefined,
+    )
+    expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'page_images_review' })
+    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.pages[0]?.failed).toBeFalsy()
+  })
+
+  it('review 阶段 skip：取消后台并剥掉已生成的图', async () => {
+    const hashes = ['a'.repeat(64), 'b'.repeat(64)]
+    let call = 0
+    const generateImage = vi.fn(async () => {
+      const hash = hashes[call] ?? 'd'.repeat(64)
+      call += 1
+      return { contentHash: hash }
+    })
+    const setup = await setupBackground({ generateImage })
+    await reachReviewBackground(setup)
+    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    await setup.runner.settle(sessionId)
+
+    const result = await setup.slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '不要配图了', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'skip' } as never,
+      undefined,
+    )
+
+    expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'completed' })
+    const builderDispatch = setup.orchestrator.dispatch.mock.calls[1]![0] as Record<string, unknown>
+    const builderPlan = (builderDispatch.input as Record<string, unknown>).plan as {
+      pages: Array<Record<string, unknown>>
+    }
+    expect(builderPlan.pages[0]?.materials).toBeUndefined()
+    expect(builderPlan.pages[1]?.materials).toBeUndefined()
+  })
+
+  it('生成中重生成已出的页：与后台循环互不覆盖', async () => {
+    const hashes = ['a'.repeat(64)]
+    const slowGate = deferred<{ contentHash: string }>()
+    let slowCall = 0
+    const generateImage = vi.fn(async (input: { prompt: string }) => {
+      if (input.prompt.includes('白板')) {
+        slowCall += 1
+        return slowGate.promise
+      }
+      return { contentHash: hashes[0]! }
+    })
+    const setup = await setupBackground({ generateImage })
+    await reachReviewBackground(setup)
+    // 第一张（封面）后台即出；第二张（白板）卡在慢门上。
+
+    const regen = await setup.slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '封面重做', draftDocumentId: 'doc-draft-1', regeneratePageImage: 1, regenerateFeedback: '更亮' } as never,
+      undefined,
+    )
+    expect(JSON.parse((regen as { content: string }).content)).toMatchObject({
+      status: 'page_images_review',
+      generation: 2,
+    })
+
+    slowGate.resolve({ contentHash: 'b'.repeat(64) })
+    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    await setup.runner.settle(sessionId)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    // 重生成的新封面哈希（a）未被后台循环覆盖；慢门页拿到自己的哈希（b）。
+    expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
+    expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
+    expect(session?.generation).toBe(2)
   })
 })
