@@ -47,9 +47,10 @@ const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签：
 const PAGESPEC_GUIDE = "每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
   + '{"background":"#RRGGBB"(可选),"elements":[…按绘制顺序排列…]}。'
   + "元素按数组顺序绘制：背景/装饰形状在前、图片其次、文本最后（文本绝不能被形状盖住）。"
-  + "元素六种："
+  + "元素七种："
   + "文本 {\"type\":\"text\",\"x\",\"y\",\"w\",\"h\",\"valign\":\"top|middle|bottom\",\"shadow\":\"soft|medium|strong\"(可选),\"paragraphs\":[{\"align\":\"left|center|right\",\"lineSpacingPct\":110,\"spaceAfterPt\":6,\"bullet\":true,\"runs\":[{\"text\",\"sizePt\",\"bold\",\"italic\",\"color\",\"font\"}]}]}；"
   + "形状 {\"type\":\"shape\",\"shape\":\"rect|roundRect|ellipse|triangle|rightArrow|leftArrow|upArrow|downArrow|chevron|diamond|parallelogram|trapezoid|hexagon|pentagon|pie|donut|star5|heart|cloud|line|lineArrow\",\"fill\":\"#RRGGBB 或 #RRGGBBAA（AA=透明度，00 全透明）\",\"gradient\":{\"stops\":[{\"pos\":0~1,\"color\":\"#RRGGBB\"},…恰好 2~3 个],\"angle\":90}(可选线性渐变，有 gradient 时忽略 fill),\"shadow\":\"soft|medium|strong\"(可选),\"stroke\":{\"color\",\"widthPt\"},\"paragraphs\":…(可选，形状内文字垂直居中)}；"
+  + "自由路径 {\"type\":\"path\",\"x\",\"y\",\"w\",\"h\",\"d\":\"SVG path 字符串(M/L/C/Q/Z；相对命令与 H/V/S/A 自动归一)\",\"fill\":\"#RRGGBBAA\"(可选),\"fillRule\":\"evenodd\"(可选,挖洞图形用),\"stroke\":{\"color\",\"widthPt\"}(可选),\"shadow\":…(可选)}——fill 与 stroke 至少给一个；坐标空间自定，引擎取包围盒拉伸填满 x/y/w/h 盒子(不保比例)；d ≤2000 字符、每页最多 4 个；仅用于预设形状画不出的装饰轮廓(波浪、弧形分隔、有机形状)，直线用 shape line、小图标用 icon；"
   + "图片 {\"type\":\"image\",\"x\",\"y\",\"w\",\"h\",\"url\":\"https://…\",\"fit\":\"cover|contain\",\"shadow\":\"soft|medium|strong\"(可选)}(仅 http(s)，每页最多 8 张；fit 默认 cover 居中裁剪填满框，主体可能被裁边；产品图等主体必须完整时用 contain 整图缩放居中留白)；"
   + "图表 {\"type\":\"chart\",\"chart\":\"bar|barStacked|line|pie|doughnut|scatter|comboBarLine\",\"title\":\"标题\"(可选≤80字符；页面已有大标题时留空，避免双标题),\"categories\":[\"Q1\",\"Q2\"…](2~24 个),\"series\":[{\"name\":\"系列名\",\"values\":[数字…]}](1~6 个；每个 values 长度必须等于 categories，全为有限数字，否则整页拒绝),\"colors\":[\"#RRGGBB\"…](可选，多系列按系列、饼/环按扇区；不传时用统一蓝灰板),\"legend\":true|false(可选；默认自动——多系列或饼/环显示、单系列不显示),\"dataLabels\":true(可选，仅当点数 ≤8 时才开),\"gridlines\":true(可选)}——scatter 是 XY 散点/定位图：categories 填 x 轴数值（数字字符串），series 的 values 是对应 y 值，点位标签用独立 text 元素叠在图上；"
   + "comboBarLine 是柱+折线双轴组合图（如收入+增长率）：除最后一个系列为折线走右轴外都是柱，必须 ≥2 个系列；"
