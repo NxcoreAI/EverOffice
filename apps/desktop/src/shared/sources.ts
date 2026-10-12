@@ -938,8 +938,9 @@ export interface NxcoreDesktopApi {
   }
   externalDocuments: {
     importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
-    /** 连接器页按连接全量列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存。 */
-    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean): Promise<ExternalDocumentListResponse>
+    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
+     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
     /** 目标 Room 已导入检查：返回这批远端文档中已在该 Room 落 primary 的 remoteDocumentId。 */
     importExistingInRoom(provider: ExternalDocumentProvider, roomId: string, remoteDocumentIds: string[]): Promise<{ existingRemoteIds: string[] }>
     importBatch(input: {

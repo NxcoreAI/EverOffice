@@ -2132,11 +2132,12 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的导入搜索请求。')
     return bridge.importSearch(provider as 'feishu' | 'notion', query)
   })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importList, (_event, provider: unknown, connectionName: unknown, cachedOnly: unknown) => {
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importList, (_event, provider: unknown, connectionName: unknown, cachedOnly: unknown, mode: unknown) => {
     if (typeof provider !== 'string') throw new Error('无效的文档列举请求。')
     if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
     if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
-    return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly)
+    if (mode !== undefined && mode !== 'full' && mode !== 'delta') throw new Error('无效的列举模式。')
+    return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly, mode as 'full' | 'delta' | undefined)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importExistingInRoom, (_event, provider: unknown, roomId: unknown, ids: unknown) => {
     if (typeof provider !== 'string' || typeof roomId !== 'string' || !Array.isArray(ids)) throw new Error('无效的已导入检查请求。')
