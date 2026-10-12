@@ -1,7 +1,7 @@
-import { dialog, shell } from 'electron'
+import { app, dialog, shell } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, extname, relative, resolve, sep } from 'node:path'
+import { copyFile, mkdir, readdir, readFile, stat } from 'node:fs/promises'
+import { basename, extname, join, relative, resolve, sep } from 'node:path'
 import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
   FileDto,
@@ -363,6 +363,17 @@ export class FilesGatewayBridge {
     const storagePath = await this.storagePath(fileId)
     const error = await shell.openPath(storagePath)
     if (error) throw new Error(error)
+  }
+
+  /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+  async exportReveal(fileId: string, originalName: string): Promise<void> {
+    const storagePath = await this.storagePath(fileId)
+    const safeName = originalName.replace(/[/\\]/g, '_').trim() || 'export.bin'
+    const dir = join(app.getPath('downloads'), 'EverRoom')
+    await mkdir(dir, { recursive: true })
+    const target = join(dir, safeName)
+    await copyFile(storagePath, target)
+    shell.showItemInFolder(target)
   }
 
   /**

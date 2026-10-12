@@ -85,6 +85,8 @@
   "artifactLibrary.filterCloudDoc": "Cloud docs",
   "artifactLibrary.filterOffice": "Office artifacts",
   "artifactLibrary.agentGenerated": "AI generated",
+  "artifactLibrary.revealInFolder": "Reveal in Folder",
+  "artifactLibrary.revealFailed": "Could not reveal in folder",
   "artifactLibrary.newArtifact": "New artifact",
   "artifactLibrary.newLightDoc": "Light document",
   "artifactLibrary.newLightDocHint": "Markdown syntax, great for notes and co-editing",

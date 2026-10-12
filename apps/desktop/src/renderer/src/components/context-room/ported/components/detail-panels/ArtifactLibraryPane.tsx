@@ -1,11 +1,12 @@
 import * as Popover from '@radix-ui/react-popover';
-import { FileText, FileSpreadsheet, FileUp, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileUp, FolderOpen, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
 import { getEmbeddedOffice } from '../../embeddedOffice';
+import { showToast } from '@/state/toast';
 import type {
   ContextRoomCloudDocResource,
   ContextRoomKnowledgeFileResource,
@@ -363,6 +364,27 @@ export function ArtifactLibraryPane({
               </button>
               {office || backendDocument ? (
                 <span className="context-room-artifact-acts">
+                  {office ? (
+                    <button
+                      type="button"
+                      className="context-room-artifact-reveal"
+                      aria-label={t('contextRoom:artifactLibrary.revealInFolder')}
+                      title={t('contextRoom:artifactLibrary.revealInFolder')}
+                      onClick={async () => {
+                        try {
+                          await window.nxcore?.files?.exportReveal(office.fileId, office.originalName)
+                        } catch (error) {
+                          showToast({
+                            title: t('contextRoom:artifactLibrary.revealFailed'),
+                            message: error instanceof Error ? error.message : String(error),
+                            variant: 'error',
+                          })
+                        }
+                      }}
+                    >
+                      <FolderOpen aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <Popover.Root
                     open={pendingDelete?.key === key}
                     onOpenChange={(open) => {

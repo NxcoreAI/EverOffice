@@ -2731,10 +2731,67 @@ export interface LocalAgentDispatchMaterialRecord {
   sourceDispatchId: string | null;
 }
 
-export const localAgentDispatches = sqliteTable(
-  "local_agent_dispatches",
+/** slides 风格会话（无模版风格管线的跨轮次状态）。 */
+export const slidesStyleSessions = sqliteTable(
+  "slides_style_sessions",
   {
     id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id"),
+    instruction: text("instruction").notNull().default(""),
+    /** 用户累积反馈（「不要太蓝」等），逐条进入下轮生图提示词。 */
+    feedback: text("feedback", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** 候选纵览图（contentHash 寻址回源 /v1/materials/:hash）。 */
+    overviewImages: text("overview_images", { mode: "json" })
+      .$type<Array<{ contentHash: string; generation: number }>>()
+      .notNull()
+      .default([]),
+    selectedImageHash: text("selected_image_hash"),
+    styleParams: text("style_params", { mode: "json" }).$type<unknown>(),
+    demoImageHash: text("demo_image_hash"),
+    stage: text("stage", { enum: ["images_ready", "extracting", "card_ready", "confirmed"] }).notNull(),
+    /** 第几次「不满意」重生成（提示词反馈累积层数）。 */
+    generation: integer("generation").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_style_sessions_room_idx").on(table.roomId, table.stage),
+  ],
+);
+
+/** slides 正文配图会话（配图缺口的确认/过目两等待阶段的跨轮次状态）。 */
+export const slidesPageImageSessions = sqliteTable(
+  "slides_page_image_sessions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id").notNull(),
+    styleSessionId: text("style_session_id"),
+    stage: text("stage", { enum: ["confirm", "review", "resolved"] }).notNull(),
+    /** 第几轮重生成（单张重掷递增，前端凭它重开过目卡）。 */
+    generation: integer("generation").notNull().default(1),
+    /** arrange 全量落页方案（等待期间唯一事实来源，resume 不重排）。 */
+    plan: text("plan", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 待配图页：pageIndex 指向 plan.pages 下标；rejected=过目打回（落页时剥图）。 */
+    pages: text("pages", { mode: "json" })
+      .$type<Array<{ pageIndex: number; title: string; imagePrompt: string; contentHash: string | null; rejected?: boolean }>>()
+      .notNull()
+      .default([]),
+    /** 创建时从风格卡固化的调色板（重生成复用，避免跨存储回查）。 */
+    stylePalette: text("style_palette", { mode: "json" })
+      .$type<{ primary?: string; accent?: string; background?: string } | null>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_page_image_sessions_draft_idx").on(table.roomId, table.draftDocumentId),
+  ],
+);
+
+export const localAgentDispatches = sqliteTable(
+  "local_agent_dispatches",
+  {    id: text("id").primaryKey(),
     sessionId: text("session_id")
       .notNull()
       .references(() => agentSessions.id, { onDelete: "cascade" }),

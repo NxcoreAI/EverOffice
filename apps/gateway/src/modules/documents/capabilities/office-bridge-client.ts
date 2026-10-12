@@ -98,6 +98,28 @@ export class OfficeBridgeClient {
     };
   }
 
+  /** /v1/office-render：PageSpec → pptx 字节，不入库不广播（风格演示页自校专用）。 */
+  async renderPptx(input: { title: string; pages: string[] }): Promise<Buffer> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-render`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // 单页渲染（秒级）；soffice/sips 转换在调用方。
+      signal: AbortSignal.timeout(2 * 60_000),
+    });
+    const body = await response.json().catch(() => ({})) as { message?: unknown; data?: Record<string, unknown> };
+    if (!response.ok) {
+      throw new Error(typeof body.message === "string" ? body.message : `Office render failed (${response.status})`);
+    }
+    const base64 = body.data?.pptxBase64;
+    if (typeof base64 !== "string" || base64.length === 0) throw new Error("Office render 返回缺少 pptx 字节");
+    return Buffer.from(base64, "base64");
+  }
+
   /** 读取已打开 PPT 产物的活会话大纲 + op 词汇表（fileId 'active' = 当前打开的那个）。 */
   async readDeck(fileId: string): Promise<OfficeSlidesDeckInfo> {
     const data = await this.postEdit({ mode: "read", fileId });

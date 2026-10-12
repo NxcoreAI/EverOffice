@@ -35,6 +35,8 @@ import './RuntimeConfigGate.css'
  * 未配置时提供「登录 SaaS」与「手动配置」两条路，保存后必须通过
  * gateway 连通测试（POST /v1/runtime-config/test）才放行进入应用。
  * 手动配置含 LLM（必填）与 embedding（可选，填了才测 /embeddings）两个 tab。
+ * 已登录用户撞上 SaaS 权威额度判定（402/403）不挡门：降级放行进应用，
+ * AI 调用在应用内报已本地化的 402 提示，设置页可兑换。
  */
 type GateMode = 'checking' | 'app' | 'login' | 'manual' | 'validating' | 'unavailable' | 'authNetwork'
 type ManualTab = 'llm' | 'embedding'
@@ -100,6 +102,15 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     }, wait)
   }, [])
 
+  /** SaaS 权威额度判定（主进程 keeper 标记）；查不到按未耗尽处理。 */
+  const isQuotaExhausted = useCallback(async (): Promise<boolean> => {
+    try {
+      return (await window.nxcore?.aiRelay?.verdict())?.quotaExhausted === true
+    } catch {
+      return false
+    }
+  }, [])
+
   const check = useCallback(async () => {
     setMode('checking')
     window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'checking' }))
@@ -136,6 +147,13 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         setMode('authNetwork')
         scheduleSplashExit()
         window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'missing' }))
+      } else if (accountNow?.authenticated === true && await isQuotaExhausted()) {
+        // SaaS 已权威判定额度耗尽（402/403）：不把人挡在门外——本地功能照常
+        // 进应用（降级），AI 调用在应用内报已本地化的 402 提示，设置页可兑换；
+        // 兑换成功后续签恢复（session-activated 清降级态）。
+        scheduleSplashExit()
+        setMode('app')
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'degraded' }))
       } else if (relayGraceRef.current < RELAY_GRACE_RETRIES) {
         // 登录态未落定或已认证：配置未就绪是瞬态（中转续签、gateway 重启换
         // 端口后槽位重灌）。停留 checking（闪屏/安静），2s 后重查，最多 ~30s；
@@ -164,9 +182,38 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
         window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'error' }))
       }
     }
-  }, [scheduleSplashExit])
+  }, [scheduleSplashExit, isQuotaExhausted])
 
   useEffect(() => { void check() }, [check, checkRequest])
+
+  // 中转事件：额度耗尽且未进应用 → 降级放行（已进应用由应用内 402 文案
+  // 处理，不重放）；会话重新激活（兑换后续签/额度周期重置的 20min 兜底）→
+  // 未进应用则重查走正常放行；已进应用则清降级态（连通测试失败会再降级）。
+  useEffect(() => {
+    const off = window.nxcore?.aiRelay?.onEvent((event) => {
+      if (event.type === 'quota-exhausted') {
+        if (modeRef.current === 'app' || configReady) return
+        scheduleSplashExit()
+        setMode('app')
+        window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'degraded' }))
+      } else if (event.type === 'session-activated') {
+        if (modeRef.current === 'app') {
+          window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'ready' }))
+          void window.nxcore?.runtimeConfig?.test()
+            .then((result) => {
+              const failed = result?.valid !== true || gateTestError(result, t) !== null
+              if (failed) window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'degraded' }))
+            })
+            .catch(() => {
+              window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'degraded' }))
+            })
+        } else {
+          setCheckRequest((value) => value + 1)
+        }
+      }
+    })
+    return () => off?.()
+  }, [configReady, scheduleSplashExit, t])
 
   useEffect(() => {
     const outcome = startupGateOutcome({

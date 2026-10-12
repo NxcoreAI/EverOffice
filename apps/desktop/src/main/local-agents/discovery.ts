@@ -33,6 +33,8 @@ export interface LocalAgentDiscoveryOptions {
   resolveLoginShellPath?: boolean
   /** app 私有适配器安装目录（一键安装落点）；探测时作为 PATH 之后的兜底。 */
   adaptersRoot?: string
+  /** 打包内置适配器目录；探测时作为私有目录之后的兜底。 */
+  bundledRoot?: string
 }
 
 function loginShellPath(env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string | null> {
@@ -209,11 +211,12 @@ export async function resolveCommandPath(
  * 检测某个本机 Agent 的 ACP 适配器是否可用（安装向导用）。
  * 先用当前 PATH 快速探测，未命中再合并登录 shell PATH 复查——
  * 用户在终端 `npm i -g` 装完后无需重启应用即可被检出；
- * 最后看 app 私有安装目录（一键安装的落点，用户自装的优先）。
+ * 再看 app 私有安装目录（一键安装的落点，用户自装的优先），
+ * 最后看打包内置目录（保底，未传 bundledRoot 时跳过）。
  */
 export async function probeLocalAgentAcpAdapter(
   installation: Pick<LocalAgentInstallation, 'provider' | 'executablePath' | 'callable'>,
-  options: Pick<LocalAgentDiscoveryOptions, 'env' | 'home' | 'platform' | 'probeTimeoutMs' | 'adaptersRoot'> = {},
+  options: Pick<LocalAgentDiscoveryOptions, 'env' | 'home' | 'platform' | 'probeTimeoutMs' | 'adaptersRoot' | 'bundledRoot'> = {},
 ): Promise<LocalAgentAcpAdapterInfo> {
   const env = options.env ?? process.env
   const home = options.home ?? homedir()
@@ -242,6 +245,12 @@ export async function probeLocalAgentAcpAdapter(
     const privateInstall = await findPrivateAdapterInstall(options.adaptersRoot, installation.provider as LocalAcpProvider)
     if (privateInstall) {
       return { command: privateInstall.entry, installed: true, installCommand: adapter.installCommand }
+    }
+  }
+  if (options.bundledRoot !== undefined) {
+    const bundled = await findPrivateAdapterInstall(options.bundledRoot, installation.provider as LocalAcpProvider)
+    if (bundled) {
+      return { command: bundled.entry, installed: true, installCommand: adapter.installCommand }
     }
   }
   return { command: adapter.command, installed: false, installCommand: adapter.installCommand }
@@ -333,7 +342,7 @@ export function createLocalAgentDiscovery(options: LocalAgentDiscoveryOptions = 
         const acpAdapter = invocationSupported
           ? await probeLocalAgentAcpAdapter(
             { provider, executablePath: executable, callable },
-            { env: searchEnv, home, platform, probeTimeoutMs, ...(options.adaptersRoot !== undefined ? { adaptersRoot: options.adaptersRoot } : {}) },
+            { env: searchEnv, home, platform, probeTimeoutMs, ...(options.adaptersRoot !== undefined ? { adaptersRoot: options.adaptersRoot } : {}), ...(options.bundledRoot !== undefined ? { bundledRoot: options.bundledRoot } : {}) },
           )
           : undefined
         return {

@@ -335,6 +335,9 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       if (result.applied) {
         redeemCode.markDone('applied')
         await refreshAccountStatus()
+        // 兑换即恢复额度：立即触发一次续签回灌槽位（relayReady 内含
+        // renewNow），不等 keeper 的 20min 周期；失败静默，周期兜底。
+        void window.nxcore.runtimeConfig?.relayReady().catch(() => undefined)
       } else {
         redeemCode.markDone('already-pro')
       }

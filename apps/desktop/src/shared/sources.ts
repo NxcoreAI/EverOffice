@@ -413,7 +413,7 @@ export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
-export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored' | 'session-activated'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -1065,6 +1065,9 @@ export interface NxcoreDesktopApi {
     remove(id: string): Promise<void>
     runNow(id: string): Promise<{ runId: string }>
   }
+  slides: {
+    pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
+  }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
     create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
@@ -1119,6 +1122,8 @@ export interface NxcoreDesktopApi {
   aiRelay: {
     /** 中转额度视图（订阅周期开窗）；未登录/未配置时为 null。 */
     status(): Promise<AiGatewayStatus | null>
+    /** SaaS 权威额度判定；keeper 未启动/未判定时 false。 */
+    verdict(): Promise<{ quotaExhausted: boolean }>
     onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
   }
   notifications: {
@@ -1432,6 +1437,8 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
+    /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+    exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
      * options.editable：Room 产物 docx 的编辑预览（保存回填版本链）；缺省只读。 */

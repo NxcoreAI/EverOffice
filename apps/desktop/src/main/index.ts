@@ -64,6 +64,7 @@ import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
+import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
 import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
 import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
 import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
@@ -137,7 +138,7 @@ import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
 import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
-import { bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
+import { bundledAcpAdaptersRoot, bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
 import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
@@ -209,6 +210,11 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: OBSIDIAN_VAULT_ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+  {
+    // 网关素材按内容哈希寻址（slides 素材图、风格卡候选/演示页图共用）。
+    scheme: 'everroom-material',
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
 ])
@@ -494,6 +500,9 @@ const ACCOUNT_CHANNELS = {
    *  通道不在 channelGroups 中就不会安装 ipcMain.handle（引入提交漏了这行，
    *  已登录开设置页每次都报 No handler registered）。 */
   aiRelayStatus: 'ai-relay:status',
+  /** SaaS 权威额度判定（402/403 后置 true）：启动闸门用它区分「额度耗尽」
+   *  与「服务未就绪」，keeper 未起/未判定返回 false。 */
+  aiRelayVerdict: 'ai-relay:verdict',
 } as const
 
 const TRANSCRIPTION_CHANNELS = {
@@ -606,6 +615,7 @@ const FILES_CHANNELS = {
   pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
   reveal: 'files:reveal',
+  exportReveal: 'files:export-reveal',
   openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
   pickPaths: 'files:pick-paths',
@@ -652,6 +662,11 @@ const DIARY_CHANNELS = {
   activeRun: 'diary:active-run',
   days: 'diary:days',
   day: 'diary:day',
+} as const
+
+/** slides 配图过目卡：后台逐张生成期间的会话快照轮询。 */
+const SLIDES_CHANNELS = {
+  pageImagesStatus: 'slides:page-images-status',
 } as const
 
 const WRITING_STYLE_CHANNELS = {
@@ -741,6 +756,7 @@ function installIpcRouters(): void {
     DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
     WRITING_STYLE_CHANNELS,
+    SLIDES_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -2255,7 +2271,7 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
-  const localAgentDiscovery = createLocalAgentDiscovery({ adaptersRoot: localAgentAdaptersRoot() })
+  const localAgentDiscovery = createLocalAgentDiscovery({ adaptersRoot: localAgentAdaptersRoot(), bundledRoot: bundledAcpAdaptersRoot() })
   let localAgents: LocalAgentInstallation[] = []
   // 派发 target 的适配器 spawn 覆盖缓存（登录 shell PATH 探测较慢，命中后复用；
   // 安装/复检/重扫后失效）。
@@ -2300,7 +2316,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       agentId: agent.id,
       provider: agent.provider,
       displayName: agent.displayName,
-      adapter: await probeLocalAgentAcpAdapter(agent, { adaptersRoot: localAgentAdaptersRoot() }),
+      adapter: await probeLocalAgentAcpAdapter(agent, { adaptersRoot: localAgentAdaptersRoot(), bundledRoot: bundledAcpAdaptersRoot() }),
     })))
   })
   handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
@@ -2315,6 +2331,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     }
     const result = await installLocalAgentAcpAdapter(installation, {
       adaptersRoot: localAgentAdaptersRoot(),
+      bundledRoot: bundledAcpAdaptersRoot(),
       npmCliPath: bundledNpmCliPath(),
       proxyEnv: await detectSystemProxyEnvironment(),
     })
@@ -2431,11 +2448,11 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         ?? unboundWorkspaceRoot(installation.id, targetSessionId)
       await mkdir(workingDirectory, { recursive: true })
       // gateway 继承 GUI 瘦 PATH，bare bin 名常常解析不到——把桌面端（登录 shell
-      // 合并 PATH + 私有安装目录）解析出的绝对路径 spawn 覆盖随 target 下发。
+      // 合并 PATH + 私有安装/内置目录）解析出的绝对路径 spawn 覆盖随 target 下发。
       if (!adapterSpawnCache.has(installation.provider)) {
         adapterSpawnCache.set(
           installation.provider,
-          await resolveLocalAcpAdapterSpawn(installation, { adaptersRoot: localAgentAdaptersRoot() })
+          await resolveLocalAcpAdapterSpawn(installation, { adaptersRoot: localAgentAdaptersRoot(), bundledRoot: bundledAcpAdaptersRoot() })
             .catch(() => null),
         )
       }
@@ -2750,6 +2767,8 @@ function registerFilesHandlers(
     bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  handle(FILES_CHANNELS.exportReveal, (_event, fileId: string, originalName: string) =>
+    bridge.exportReveal(fileId, originalName))
   handle(FILES_CHANNELS.openOriginal, async (
     event,
     fileId: string,
@@ -3641,6 +3660,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
+  protocol.handle('everroom-material', async (request) => {
+    // everroom-material://<64位sha256> → 网关 /v1/materials/:hash（文件桥惰性取）。
+    try {
+      const url = new URL(request.url)
+      const hash = `${url.hostname}${url.pathname}`.replace(/\/+$/, '').toLowerCase()
+      if (!/^[a-f0-9]{64}$/.test(hash) || !officeFilesBridge) {
+        return new Response('Not found', { status: 404 })
+      }
+      const content = await officeFilesBridge.readMaterial(hash)
+      if (!content) return new Response('Not found', { status: 404 })
+      return new Response(new Uint8Array(content.buffer), {
+        headers: { 'Content-Type': content.mime, 'Cache-Control': 'private, max-age=86400' },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
   installIpcRouters()
   registerObsidianHandlers(obsidianVaultService)
   registerSystemClipboardHandler()
@@ -3680,6 +3716,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     if (!client) return Promise.resolve(null)
     return rateLimitAware(() => client.aiGatewayStatus())
   })
+  handle(ACCOUNT_CHANNELS.aiRelayVerdict, () => ({ quotaExhausted: aiRelayKeeper?.isQuotaExhausted() ?? false }))
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))
@@ -3888,6 +3925,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       },
     )
     registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
+    // slides 配图过目卡轮询（后台逐张生成期间渲染层拉最新会话快照）。
+    const slidesGatewaySupervisor = gatewaySupervisor
+    handle(SLIDES_CHANNELS.pageImagesStatus, (_event, documentId: string) => {
+      if (!slidesGatewaySupervisor) throw new Error('gateway_not_ready')
+      return new SlidesGatewayBridge(slidesGatewaySupervisor).pageImagesStatus(documentId)
+    })
     realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
     registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))

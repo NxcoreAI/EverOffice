@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { contentHashOf, storageRelPath, storeFileBlob } from "../files/storage.js";
 import {
   clipperAssets,
   clipperCaptures,
@@ -56,6 +57,25 @@ export class MaterialsService {
   }
 
   /** 按内容哈希取图：file_blobs（截图/照片/剪藏）优先，回退 document-artifacts（文档内嵌图）。 */
+  /** 存图片字节进对象库（CAS + file_blobs 行，幂等）：生图产物（风格纵览/演示页）
+   *  不走 file-imports——那条通道的白名单只有文档格式，图片本来就不进文件库，
+   *  素材体系按内容哈希寻址即可。返回 hash 供 everroom-material:// 引用。 */
+  async saveImageBlob(buffer: Buffer, mime: string): Promise<{ contentHash: string }> {
+    if (!mime.startsWith("image/") || buffer.byteLength === 0) {
+      throw new Error("仅接受非空图片数据");
+    }
+    const contentHash = contentHashOf(buffer);
+    await storeFileBlob(this.dataDir, contentHash, buffer);
+    this.db.insert(fileBlobs).values({
+      contentHash,
+      storagePath: storageRelPath(contentHash),
+      byteSize: buffer.byteLength,
+      mime,
+      createdAt: new Date(),
+    }).onConflictDoNothing().run();
+    return { contentHash };
+  }
+
   async readByHash(hash: string): Promise<{ buffer: Buffer; mime: string } | null> {
     if (!/^[a-f0-9]{64}$/.test(hash)) return null;
     const blob = this.db.select({ storagePath: fileBlobs.storagePath, mime: fileBlobs.mime })

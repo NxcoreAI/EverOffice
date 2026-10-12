@@ -86,6 +86,7 @@ window.nxcore = new Proxy(base, {
       case 'aiRelay':
         return {
           status: async () => ({ configured: true, subscriptionStatus: 'active', llmCredits: 15_000_000, usedCredits: 9_250_000, remainingCredits: 5_750_000, periodEnd: iso(-3600_000 * 24 * 90) }),
+          verdict: async () => ({ quotaExhausted: false }),
           onEvent: () => () => {},
         }
       case 'transcriptions':

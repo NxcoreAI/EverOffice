@@ -1637,6 +1637,168 @@ button.agent-slides-progress-header {
   line-height: 16px;
 }
 
+/* —— 风格阶段：挑图与风格卡 —— */
+
+.agent-slides-style-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+/* 图即按钮：点图挑选，悬停描边示意可选；图下方向短名是真实数据小字。 */
+button.agent-slides-style-candidate {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.12s ease;
+}
+
+button.agent-slides-style-candidate:hover:not(:disabled) {
+  border-color: #2f5a96;
+}
+
+button.agent-slides-style-candidate:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.agent-slides-style-candidate img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.agent-slides-style-candidate-label {
+  padding: 4px 6px 5px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  color: #565e6a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-slides-style-card {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-slides-style-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-slides-style-swatch {
+  display: grid;
+  gap: 3px;
+  width: 84px;
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.agent-slides-style-swatch i {
+  height: 28px;
+  border: 1px solid #e3e9f1;
+  border-radius: 5px;
+}
+
+.agent-slides-style-swatch b {
+  color: #3c4654;
+}
+
+.agent-slides-style-swatch small {
+  color: #7c8695;
+  font-family: ui-monospace, monospace;
+}
+
+.agent-slides-style-typography {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.agent-slides-style-typography div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  border-bottom: 1px dashed #e8edf4;
+  padding-bottom: 4px;
+}
+
+.agent-slides-style-typography dt {
+  color: #5a6472;
+}
+
+.agent-slides-style-typography dd {
+  margin: 0;
+  color: #2b3442;
+  font-weight: 650;
+}
+
+.agent-slides-style-wireframes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-slides-style-wireframe {
+  border: 1px solid #e3e9f1;
+  border-radius: 6px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.agent-slides-style-demo {
+  width: 100%;
+  border: 1px solid #e3e9f1;
+  border-radius: 6px;
+}
+
+.agent-slides-style-lines {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: #3c4654;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.agent-slides-style-confirm {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #2f5a96;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.agent-slides-style-confirm:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.agent-slides-style-confirm svg {
+  width: 13px;
+  height: 13px;
+}
+
 .agent-slides-confirm {
   display: grid;
   gap: 8px;
@@ -1676,40 +1838,6 @@ button.agent-slides-progress-header {
 
 .agent-slides-open-draft:hover:not(:disabled) {
   background: #f0f5fb;
-}
-
-.agent-slides-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 8px;
-}
-
-.agent-slides-form label {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.agent-slides-form label span {
-  color: #7c8695;
-  font-size: 10px;
-  line-height: 14px;
-}
-
-.agent-slides-form select {
-  width: 100%;
-  min-height: 28px;
-  padding: 3px 7px;
-  border: 1px solid #d8e0ea;
-  border-radius: 6px;
-  background: #fff;
-  color: #27313f;
-  font-size: 12px;
-}
-
-.agent-slides-form select:focus {
-  border-color: #9db8dc;
-  outline: none;
 }
 
 .agent-slides-generate {
@@ -2842,3 +2970,116 @@ button.agent-slides-progress-header {
   }
 }
 
+
+/* 配图过目卡：逐张图 + 单张重生成。 */
+.agent-slides-page-review-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-slides-page-review {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-slides-page-review img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e8edf4;
+}
+
+.agent-slides-page-regenerate {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid #d5dee9;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 11px;
+  color: #445;
+  cursor: pointer;
+  justify-self: start;
+}
+
+.agent-slides-page-regenerate:hover:not(:disabled) {
+  border-color: #2f5a96;
+  color: #2f5a96;
+}
+
+.agent-slides-page-regenerate:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.agent-slides-page-regenerate svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 打回态：置灰示「不用」，按钮行并排。 */
+.agent-slides-page-review.is-rejected img {
+  opacity: 0.4;
+  filter: grayscale(0.8);
+}
+
+.agent-slides-page-review-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.agent-slides-page-reject,
+.agent-slides-page-restore {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid #d5dee9;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 11px;
+  color: #445;
+  cursor: pointer;
+}
+
+.agent-slides-page-reject:hover:not(:disabled) {
+  border-color: #b3432e;
+  color: #b3432e;
+}
+
+.agent-slides-page-restore:hover:not(:disabled) {
+  border-color: #2f5a96;
+  color: #2f5a96;
+}
+
+.agent-slides-page-reject:disabled,
+.agent-slides-page-restore:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+/* 后台生成中的占位行：标题 + 状态小字；失败行可重生成。 */
+.agent-slides-page-review.is-pending {
+  padding: 6px 2px;
+}
+
+.agent-slides-page-review.is-pending .agent-slides-page-review-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.agent-slides-page-review.is-pending .agent-slides-page-review-title small {
+  color: #8f8a81;
+  font-size: 11px;
+}
+
+.agent-slides-page-review.is-failed .agent-slides-page-review-title small {
+  color: #b3432e;
+}

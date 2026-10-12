@@ -659,6 +659,21 @@ export function App() {
         window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
         return
       }
+      if (payload.type === 'open-edit') {
+        // 桌面端 Agent 编辑未打开的产物：以可编辑方式打开 + 顶栏出标签（编辑实时可见）。
+        const files = window.nxcore?.files
+        if (!payload.fileId || !payload.originalName || !files) return
+        void files.openOriginal(payload.fileId, payload.originalName, undefined, { editable: true })
+          .then((result) => {
+            if (result?.openedWith === 'office') {
+              openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })
+            }
+          })
+          .catch((error) => {
+            console.error('Failed to open the Office preview for agent edit.', error)
+          })
+        return
+      }
       const kind = t(`surface:agentOffice.kind.${payload.format ?? 'docx'}`)
       if (payload.type === 'phase') {
         const phaseKey = payload.phase === 'rendering'
@@ -688,7 +703,7 @@ export function App() {
         })
       }
     })
-  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab, t])
+  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab, openOfficeTab, t])
 
   // slides「AI 修改」弹层转发（office 桥）：切到元素所属 Room，把组装好的
   // 修改指令自动发给 Agent（AgentPanel 按 roomId 匹配后消费，自动发送）。

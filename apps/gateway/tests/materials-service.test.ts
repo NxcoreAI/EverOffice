@@ -232,3 +232,27 @@ describe("materialsRoutes（GET /v1/materials/:hash）", () => {
     await app.close();
   });
 });
+
+describe("MaterialsService.saveImageBlob", () => {
+  it("stores bytes into CAS + file_blobs idempotently and rejects non-image input", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nxcore-materials-save-"));
+    const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+    const service = new MaterialsService(database.db, dir);
+    const image = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(32, 9)]);
+
+    const saved = await service.saveImageBlob(image, "image/png");
+    // 同字节再存：幂等，不炸不重。
+    await service.saveImageBlob(image, "image/png");
+    const rows = database.db.select().from(fileBlobs).all()
+      .filter((row) => row.contentHash === saved.contentHash);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.mime).toBe("image/png");
+    // 存进去的图能按 hash 读回（everroom-material:// 链路）。
+    const read = await service.readByHash(saved.contentHash);
+    expect(read?.buffer.equals(image)).toBe(true);
+
+    await expect(service.saveImageBlob(Buffer.from("x"), "text/plain")).rejects.toThrow(/图片/);
+    database.sqlite.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+});

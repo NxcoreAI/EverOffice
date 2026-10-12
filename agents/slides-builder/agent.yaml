@@ -10,13 +10,6 @@ systemPrompt: ./SYSTEM.md
 skills:
   - ./skills/design-craft-ppt-skill
   - ./skills/layout-ppt-skill
-  - ./skills/japanese-style-ppt-skill
-  - ./skills/japanese-lifestyle-ppt-skill
-  - ./skills/soft-3d-clay-ppt-skill
-  - ./skills/futuristic-tech-editorial-ppt-skill
-  - ./skills/minimalist-luxury-branding-ppt-skill
-  - ./skills/modern-illustration-editorial-ppt-skill
-  - ./skills/japanese-hand-drawn-editorial-ppt-skill
 
 mcp: []
 
@@ -26,7 +19,7 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 2
-  # 逐页生成预算：create 1 + set_page ≤24 页（含失败重试）+ 定调/布局/风格 skill 读取 ~10 + 提交。
+  # 逐页生成预算：create 1 + set_page ≤24 页（含失败重试）+ 定调/布局技能读取 ~5 + 提交。
   maxToolCalls: 64
   # 一口气落完：24 页逐页 set_page + 完稿自检，正常十几分钟内完成。
   timeoutSeconds: 1800

@@ -19,6 +19,7 @@ import type {
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
+import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -440,6 +441,11 @@ const api: NxcoreDesktopApi = {
     remove: (id) => invoke('agent-scheduler:remove', id),
     runNow: (id) => invoke('agent-scheduler:run-now', id),
   },
+  slides: {
+    /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
+    pageImagesStatus: (documentId: string) =>
+      invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
+  },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),
     create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
@@ -509,17 +515,18 @@ const api: NxcoreDesktopApi = {
   },
   aiRelay: {
     status: () => invokeQuietly('ai-relay:status'),
+    verdict: () => invokeQuietly('ai-relay:verdict'),
     onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
       const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
         const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
-        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored') return
+        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored' && eventType !== 'session-activated') return
         listener({ type: eventType })
       }
-      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']) {
         ipcRenderer.on(channel, handle)
       }
       return () => {
-        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']) {
           ipcRenderer.removeListener(channel, handle)
         }
       }
@@ -899,6 +906,8 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
+    exportReveal: (fileId: string, originalName: string) =>
+      invoke('files:export-reveal', fileId, originalName),
     openOriginal: (
       fileId: string,
       originalName?: string,

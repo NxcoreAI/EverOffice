@@ -1109,7 +1109,7 @@ export class PiAgentRuntime implements AgentRuntime {
         active.toolLimitExceeded
           ? new Error(this.toolLimitErrorMessage())
           : sessionError
-            ? new Error(sessionError)
+            ? new Error(friendlyRunError(sessionError))
             : outputLimitReached
               ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
               : undefined,
@@ -1243,6 +1243,15 @@ export class PiAgentRuntime implements AgentRuntime {
     })();
     return active.finishPromise;
   }
+}
+
+/** 运行失败文案翻译：上游 provider 的原始报错（如 404 model_not_found 的 JSON 串）
+ *  对用户不可读，收口成可行动的提示；未识别的保持原文。 */
+export function friendlyRunError(raw: string): string {
+  if (/model_not_found|Model not exist/i.test(raw)) {
+    return "当前配置的模型在服务端不可用（可能已被上游下架，或渠道未配置）。请联系管理员检查模型配置后重试。";
+  }
+  return raw;
 }
 
 function withAbortSignal<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {

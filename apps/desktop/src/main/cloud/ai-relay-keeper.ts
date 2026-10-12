@@ -25,8 +25,9 @@ const http = createLoggedHttpClient('ai-relay-keeper')
 /**
  * new-api 中转会话保活：SaaS 签发短期令牌后经 gateway 会话端点推入内存，
  * gateway 随即重写 LLM 槽位指向本地 /ai-relay 代理出口。约定：
- * - SaaS 403（无订阅/额度尽）是权威判定：清掉 gateway 会话并通知 renderer，
- *   不计网络失败、绝不回落 user 源（中转 402 同理，只在出口透传给消费方）。
+ * - SaaS 403（无订阅）/ 402（周期额度不足）是权威判定：清掉 gateway 会话并
+ *   通知 renderer，不计网络失败、绝不回落 user 源（中转 402 同理，只在出口
+ *   透传给消费方）。
  * - 连续网络失败 ≥3 次且当前为 default 源（中转驱动）时临时切 user 源保
  *   可用，恢复后自动切回 default；user 源不存在则保持现状下轮重试。
  */
@@ -42,6 +43,8 @@ export class AiRelayKeeper {
   private fellBackToUser = false
   /** 最近一次成功推送的场景模型 JSON；续签时检测 SaaS 侧套餐模型变更。 */
   private lastModelsJson: string | null = null
+  /** SaaS 已权威判定额度耗尽（402/403）：兑换/周期重置后续签成功才清除。 */
+  private quotaExhaustedFlag = false
 
   constructor(
     private readonly client: SaasClient,
@@ -68,11 +71,17 @@ export class AiRelayKeeper {
     this.sessionActiveUntil = 0
     this.fellBackToUser = false
     this.lastModelsJson = null
+    this.quotaExhaustedFlag = false
     await this.clearGatewaySession().catch(() => undefined)
   }
 
   renewNow(): Promise<void> {
     return this.cycle()
+  }
+
+  /** SaaS 权威判定额度耗尽且尚未恢复；keeper 未启动/未判定时为 false。 */
+  isQuotaExhausted(): boolean {
+    return this.quotaExhaustedFlag
   }
 
   private cycle(): Promise<void> {
@@ -88,6 +97,7 @@ export class AiRelayKeeper {
         this.sessionActiveUntil = Date.parse(issued.expiresAt) || 0
         this.consecutiveFailures = 0
         this.retryAttempts = 0
+        this.quotaExhaustedFlag = false
         if (!wasActive) this.onEvent({ type: 'session-activated' })
         const modelsJson = JSON.stringify(issued.models ?? null)
         if (wasActive && this.lastModelsJson !== null && modelsJson !== this.lastModelsJson) {
@@ -96,8 +106,11 @@ export class AiRelayKeeper {
         this.lastModelsJson = modelsJson
         if (this.fellBackToUser) await this.restoreDefaultSource()
       } catch (error) {
-        if (error instanceof SaasRequestError && error.status === 403) {
+        // 403（无订阅）与 402（周期额度不足，isSaasPermanentError）同为 SaaS
+        // 权威判定：清会话、通知 renderer，不计网络失败、绝不回落 user 源。
+        if (error instanceof SaasRequestError && (error.status === 403 || error.status === 402)) {
           await this.clearGatewaySession().catch(() => undefined)
+          this.quotaExhaustedFlag = true
           this.onEvent({ type: 'quota-exhausted' })
           return
         }
