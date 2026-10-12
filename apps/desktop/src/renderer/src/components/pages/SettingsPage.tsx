@@ -39,6 +39,7 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import { ScreenMemorySettingsSection } from '../settings/ScreenMemorySettingsSection'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -924,6 +925,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </div>
         </div>
       </section>
+
+      <ScreenMemorySettingsSection />
 
       <section id="settings-capture" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-capture-settings-title">
         <header>

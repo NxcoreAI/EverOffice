@@ -124,6 +124,7 @@ import { IngestFilterService } from "../modules/ingest/filter-agent.js";
 import { FilterRulesStore } from "../modules/ingest/rules.js";
 import { FilterInsightJob } from "../modules/ingest/rules-insight.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
+import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-history-backfill-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
@@ -145,6 +146,9 @@ import { realityRoutes } from "../modules/reality/routes.js";
 import { RealityService } from "../modules/reality/service.js";
 import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
+import { screenMemoryRoutes } from "../modules/screen-memory/routes.js";
+import { ScreenMemoryService } from "../modules/screen-memory/service.js";
+import { createScreenMemorySearchPiTools } from "../modules/screen-memory/agent-tool.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
 import {
@@ -1048,10 +1052,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
+  // diaryService 在其后构造，用晚绑定引用注入标脏回调。
+  const screenMemoryMarkDiaryStaleRef: { current: ((at: Date) => void) | null } = { current: null };
+  const screenMemoryMaterialsRef: { current: MaterialsService | null } = { current: null };
+  const screenMemoryService = new ScreenMemoryService(db, app.log, agentResolver, undefined, (at) => screenMemoryMarkDiaryStaleRef.current?.(at), (buffer, mime) => {
+    const materials = screenMemoryMaterialsRef.current;
+    if (!materials) throw new Error("materials_service_unavailable");
+    return materials.saveImageBlob(buffer, mime);
+  }, config.dataDir);
+  screenMemoryService.initialize();
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
     tools: [
       ...createRoomOverviewAgentTools(roomOverviewService),
+      ...createScreenMemorySearchPiTools(screenMemoryService),
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
       ...(subagentConfig.enabled
@@ -1354,6 +1368,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 本地素材库（PPT 配图）：检索走结构化表（perception/剪藏/文档内嵌图），
   // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
   const materialsService = new MaterialsService(db, config.dataDir);
+  screenMemoryMaterialsRef.current = materialsService;
   filesService.initializeCatalog();
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
@@ -1486,6 +1501,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const agentSchedulerService = new AgentSchedulerService(db, diaryService, agentService);
   agentSchedulerService.initialize();
   diaryService.initialize();
+  screenMemoryMarkDiaryStaleRef.current = (at) => diaryService.markStaleAt(at);
   const perceptionService = new PerceptionService(db, filesService, createVlmProvider(config), app.log, (at) => diaryService.markStaleAt(at));
   runtimeConfigManager.onChange(() => perceptionService.replaceVlm(createVlmProvider(config)));
   const purgedUnsupportedFiles = await filesService.purgeUnsupportedFiles();
@@ -1510,6 +1526,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     );
   }
   let documentOutboxWorker: DocumentOutboxWorker | null = null;
+  let documentListSyncWorker: DocumentListSyncWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   let writingStyleWorker: WritingStyleWorker | null = null;
   let roomMemoryDeriveWorker: RoomMemoryDeriveWorker | null = null;
@@ -1530,6 +1547,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentOutboxWorker?.dispose();
+    await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
     await writingStyleWorker?.dispose();
     await roomMemoryDeriveWorker?.dispose();
@@ -1835,6 +1853,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     });
   });
   perceptionService.initialize();
+  // 屏幕记忆下沉：摘要就绪且过新颖度三规则的区间进记忆链路（room/wiki 不走，加入 Room 由用户显式操作）。
+  screenMemoryService.setIntervalSink(async (unit) => {
+    if (!memoryService.enabled) return;
+    await ingestService.ingestScreenInterval({
+      sourceId: unit.id,
+      sourceVersion: unit.version,
+      title: unit.title,
+      markdown: unit.markdown,
+      occurredAt: unit.occurredAt,
+      pipelines: { room: false, wiki: false, memory: memoryService.enabled },
+    });
+  });
   // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
   // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
   // 日历事件走独立 sourceKind "calendar-event"（与 CLI 引用路径同词表），
@@ -1867,6 +1897,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
   );
   documentOutboxWorker.start();
+  // 文档列举后台增量同步（15 分钟 delta + 每日全量对账）：只处理已有缓存行的
+  // 连接，连接断开等预期失败在 worker 内静默跳过。
+  documentListSyncWorker = new DocumentListSyncWorker(db, documentImportService, app.log);
+  documentListSyncWorker.start();
   documentHistoryBackfillWorker = new DocumentHistoryBackfillWorker(
     db,
     documentService,
@@ -1937,6 +1971,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService, conversationSuggestionService));
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));
+  await app.register(screenMemoryRoutes(screenMemoryService));
   await app.register(diaryRoutes(diaryService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));

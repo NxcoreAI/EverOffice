@@ -514,6 +514,113 @@ export type WindowScreenshotResult =
       message: string
     }
 
+
+export interface ScreenMemorySettingsDto {
+  enabled: boolean
+  paused: boolean
+  allowedApps: string[]
+  excludedApps: string[]
+}
+
+export interface ScreenMemorySchedulerStatusDto {
+  running: boolean
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
+  helperAvailable: boolean
+  paused: boolean
+  enabled: boolean
+  currentBundleId: string | null
+  currentAppName: string | null
+  openIntervalSince: string | null
+  currentKeyframes: number
+  heartbeatMs: number
+  lastBeatAt: string | null
+  lastError: string | null
+}
+
+export interface ScreenMemoryStatusDto extends ScreenMemorySchedulerStatusDto {
+  directory: string
+  deviceReady: ScreenMemoryDeviceReadinessDto
+}
+
+export interface ScreenMemoryKeyframeDto {
+  id: string
+  capturedAt: string
+  imagePath: string
+  imageBytes: number
+  perceptualHash: string | null
+  width: number | null
+  height: number | null
+  lineCount: number
+  elapsedMs: number | null
+}
+
+export interface ScreenMemoryIntervalDto {
+  id: string
+  bundleId: string
+  appName: string
+  windowTitle: string | null
+  title: string
+  startedAt: string
+  endedAt: string
+  endReason: string
+  keyframeCount: number
+  textLines: string[]
+  summaryStatus: 'pending' | 'processing' | 'ready' | 'waiting' | 'failed'
+  summary: string | null
+  summaryKeyPoints: string[]
+  userEdited: boolean
+  keyframes?: ScreenMemoryKeyframeDto[]
+}
+
+export interface ScreenMemorySearchQuery {
+  q: string
+  bundleId?: string
+  from?: string
+  to?: string
+  limit?: number
+}
+
+export interface ScreenMemoryListQuery {
+  from?: string
+  to?: string
+  bundleId?: string
+  summaryStatus?: string
+  limit?: number
+  offset?: number
+}
+
+export interface ScreenMemoryStatsDto {
+  intervals: number
+  keyframes: number
+  pendingSummaries: number
+  summariesToday: number
+  dailySummaryCap: number
+  dispatchAllowed: boolean
+}
+
+export interface ScreenMemoryStorageDto {
+  imagesBytes: number
+}
+
+export interface ScreenMemoryDeviceReadinessDto {
+  archOk: boolean
+  memoryOk: boolean
+  diskOk: boolean
+}
+
+export interface ScreenMemoryBackfillSummaryDto {
+  processed: number
+  intervals: number
+  keyframes: number
+}
+
+export interface ScreenMemoryFrontmostDto {
+  bundleId: string | null
+  appName: string | null
+  pid: number | null
+  windowTitle: string | null
+}
+
 export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
@@ -1035,6 +1142,21 @@ export interface NxcoreDesktopApi {
       deletedAssets: string[]
       retainedAssets: string[]
     }>
+  }
+  screenMemory: {
+    status(): Promise<ScreenMemoryStatusDto>
+    settings(): Promise<ScreenMemorySettingsDto>
+    updateSettings(patch: Partial<ScreenMemorySettingsDto>): Promise<ScreenMemorySettingsDto>
+    search(query: ScreenMemorySearchQuery): Promise<{ items: ScreenMemoryIntervalDto[] }>
+    listIntervals(query?: ScreenMemoryListQuery): Promise<{ total: number; items: ScreenMemoryIntervalDto[] }>
+    getInterval(id: string): Promise<ScreenMemoryIntervalDto>
+    stats(): Promise<ScreenMemoryStatsDto>
+    correctInterval(input: { id: string; title?: string; textLines?: string[] }): Promise<ScreenMemoryIntervalDto>
+    storage(): Promise<ScreenMemoryStorageDto>
+    frontmost(): Promise<ScreenMemoryFrontmostDto>
+    registerMaterial(intervalId: string): Promise<{ ref: string }>
+    backfillEstimate(input: { from: string; to: string }): Promise<{ count: number }>
+    backfillRun(input: { from: string; to: string; maxItems: number }): Promise<ScreenMemoryBackfillSummaryDto>
   }
   diary: {
     settings(): Promise<DiarySettings>

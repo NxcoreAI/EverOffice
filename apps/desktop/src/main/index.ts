@@ -105,6 +105,17 @@ import {
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
+import { readdir, readFile, stat as statFile } from 'node:fs/promises'
+import {
+  createScreenMemoryController,
+  SCREEN_MEMORY_CHANNELS,
+  type ScreenMemoryController,
+  type ScreenMemoryIntervalPersistence,
+} from './screen-memory/screen-memory-controller'
+import { VisionOcrClient } from './vision-ocr/vision-ocr-client'
+import { ScreenMemoryGatewayBridge } from './screen-memory/screen-memory-gateway-bridge'
+import { getScreenMemoryDirectory } from './screen-memory/screen-memory-settings'
+import { runScreenMemoryBackfill } from './screen-memory/screen-memory-backfill'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 import { registerSystemClipboardHandler } from './system-clipboard'
 import { installCrossOriginIsolation } from './cross-origin-isolation'
@@ -210,6 +221,10 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: OBSIDIAN_VAULT_ASSET_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+  {
+    scheme: 'screen-memory-asset',
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
@@ -887,6 +902,15 @@ const captureAndQueueCurrentWindow = async () => {
   return result
 }
 const screenshotScheduler = createWindowScreenshotScheduler(captureAndQueueCurrentWindow)
+
+const visionOcrClient = new VisionOcrClient()
+let screenMemoryPersistence: ScreenMemoryIntervalPersistence = { saveInterval: async () => undefined }
+let screenMemoryControllerSummaryDispatch: ((allowed: boolean) => Promise<void>) | undefined
+const screenMemoryController: ScreenMemoryController = createScreenMemoryController({
+  ocr: visionOcrClient,
+  persist: { saveInterval: (interval) => screenMemoryPersistence.saveInterval(interval) },
+  setSummaryDispatch: (allowed) => screenMemoryControllerSummaryDispatch?.(allowed) ?? Promise.resolve(),
+})
 
 function sendPendingAgentNotificationTarget(): void {
   const target = pendingAgentNotificationTarget
@@ -3290,6 +3314,97 @@ function registerScreenCaptureHandlers(): void {
   })
 }
 
+function registerScreenMemoryHandlers(): void {
+  const gatewayJson = async (path: string, init?: { method?: string; body?: unknown }): Promise<unknown> => {
+    const supervisor = gatewaySupervisor
+    if (!supervisor) throw new Error('网关未就绪。')
+    const connection = await supervisor.ensureConnection()
+    const response = await fetch(`${connection.baseUrl}${path}`, {
+      method: init?.method ?? 'GET',
+      headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
+      ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+    })
+    if (!response.ok) throw new Error(`screen-memory gateway ${String(response.status)}`)
+    return response.json()
+  }
+  handle(SCREEN_MEMORY_CHANNELS.status, () => screenMemoryController.getStatus())
+  handle(SCREEN_MEMORY_CHANNELS.settings, () => screenMemoryController.getSettings())
+  handle(SCREEN_MEMORY_CHANNELS.updateSettings, (_event, patch: unknown) => {
+    if (!patch || typeof patch !== 'object') return screenMemoryController.getSettings()
+    const row = patch as Record<string, unknown>
+    const next: Record<string, unknown> = {}
+    if (typeof row.enabled === 'boolean') next.enabled = row.enabled
+    if (typeof row.paused === 'boolean') next.paused = row.paused
+    if (Array.isArray(row.allowedApps)) next.allowedApps = row.allowedApps.filter((item): item is string => typeof item === 'string')
+    if (Array.isArray(row.excludedApps)) next.excludedApps = row.excludedApps.filter((item): item is string => typeof item === 'string')
+    return screenMemoryController.updateSettings(next)
+  })
+  handle(SCREEN_MEMORY_CHANNELS.search, (_event, query: { q: string; bundleId?: string; from?: string; to?: string; limit?: number }) => {
+    const params = new URLSearchParams({ q: String(query.q ?? '') })
+    if (query.bundleId) params.set('bundleId', query.bundleId)
+    if (query.from) params.set('from', query.from)
+    if (query.to) params.set('to', query.to)
+    if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+    return gatewayJson(`/v1/screen-memory/search?${params.toString()}`)
+  })
+  handle(SCREEN_MEMORY_CHANNELS.intervals, (_event, query: { from?: string; to?: string; bundleId?: string; summaryStatus?: string; limit?: number; offset?: number }) => {
+    const params = new URLSearchParams()
+    if (query.from) params.set('from', query.from)
+    if (query.to) params.set('to', query.to)
+    if (query.bundleId) params.set('bundleId', query.bundleId)
+    if (query.summaryStatus) params.set('summaryStatus', query.summaryStatus)
+    if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+    if (typeof query.offset === 'number') params.set('offset', String(query.offset))
+    return gatewayJson(`/v1/screen-memory/intervals?${params.toString()}`)
+  })
+  handle(SCREEN_MEMORY_CHANNELS.interval, (_event, id: string) => {
+    if (typeof id !== 'string' || id.length < 8) throw new Error('无效的区间 id。')
+    return gatewayJson(`/v1/screen-memory/intervals/${encodeURIComponent(id)}`)
+  })
+  handle(SCREEN_MEMORY_CHANNELS.stats, () => gatewayJson('/v1/screen-memory/stats'))
+  handle(SCREEN_MEMORY_CHANNELS.correct, (_event, input: { id: string; title?: string; textLines?: string[] }) => {
+    return gatewayJson(`/v1/screen-memory/intervals/${encodeURIComponent(input.id)}`, { method: 'PATCH', body: input })
+  })
+  handle(SCREEN_MEMORY_CHANNELS.frontmost, async () => {
+    return visionOcrClient.frontmost()
+  })
+  handle(SCREEN_MEMORY_CHANNELS.registerMaterial, (_event, id: string) => {
+    if (typeof id !== 'string' || id.length < 8) throw new Error('无效的区间 id。')
+    return gatewayJson(`/v1/screen-memory/intervals/${encodeURIComponent(id)}/register-material`, { method: 'POST' })
+  })
+  handle(SCREEN_MEMORY_CHANNELS.backfillEstimate, (_event, input: { from: string; to: string }) => {
+    return gatewayJson('/v1/screen-memory/backfill/estimate', { method: 'POST', body: input })
+  })
+  handle(SCREEN_MEMORY_CHANNELS.backfillRun, async (_event, input: { from: string; to: string; maxItems: number }) => {
+    return runScreenMemoryBackfill(
+      {
+        ocr: visionOcrClient,
+        persist: { saveInterval: (interval) => screenMemoryPersistence.saveInterval(interval) },
+        gatewayJson,
+        baseDirectory: getScreenMemoryDirectory(),
+        onError: (message) => console.warn(`[screen-memory] ${message}`),
+      },
+      { from: input.from, to: input.to, maxItems: Math.min(500, Math.max(1, input.maxItems)) },
+    )
+  })
+  handle(SCREEN_MEMORY_CHANNELS.storage, async () => {
+    const imagesRoot = join(getScreenMemoryDirectory(), 'images')
+    const totalBytes = await computeDirectorySize(imagesRoot)
+    return { imagesBytes: totalBytes }
+  })
+}
+
+async function computeDirectorySize(root: string): Promise<number> {
+  let total = 0
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    const entryPath = join(root, entry.name)
+    if (entry.isDirectory()) total += await computeDirectorySize(entryPath)
+    else if (entry.isFile()) total += (await statFile(entryPath)).size
+  }
+  return total
+}
+
 function registerWritingStyleHandlers(): void {
   handle(WRITING_STYLE_CHANNELS.profile, () => {
     if (!writingStyleGatewayBridge) throw new Error('写作风格服务尚未就绪。')
@@ -3661,6 +3776,26 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
+  protocol.handle('screen-memory-asset', async (request) => {
+    // screen-memory-asset://local/<YYYY-MM>/<file>.jpg → 本地屏幕记忆压缩原图。
+    try {
+      const url = new URL(request.url)
+      if (url.hostname !== 'local') return new Response('Not found', { status: 404 })
+      const relative = decodeURIComponent(url.pathname.replace(/^\//, ''))
+      if (!/^\d{4}-\d{2}\/[A-Za-z0-9._-]+\.jpg$/.test(relative)) {
+        return new Response('Bad request', { status: 400 })
+      }
+      const imagesRoot = join(getScreenMemoryDirectory(), 'images')
+      const filePath = join(imagesRoot, relative)
+      if (!filePath.startsWith(imagesRoot)) return new Response('Forbidden', { status: 403 })
+      const data = await readFile(filePath)
+      return new Response(new Uint8Array(data), {
+        headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+  })
   protocol.handle('everroom-material', async (request) => {
     // everroom-material://<64位sha256> → 网关 /v1/materials/:hash（文件桥惰性取）。
     try {
@@ -3718,6 +3853,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     return rateLimitAware(() => client.aiGatewayStatus())
   })
   handle(ACCOUNT_CHANNELS.aiRelayVerdict, () => ({ quotaExhausted: aiRelayKeeper?.isQuotaExhausted() ?? false }))
+  // 屏幕记忆/截图通道同理：首页一挂载就查 status/settings，注册晚于窗口
+  // 创建必报 No handler registered。依赖均为模块级或调用期懒解析，可提前注册。
+  registerScreenCaptureHandlers()
+  registerScreenMemoryHandlers()
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))
@@ -3888,6 +4027,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     void screenshotOutbox.flush()
     perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
+    const screenMemoryBridge = new ScreenMemoryGatewayBridge(() => gatewaySupervisor, (message) => console.warn(`[screen-memory] ${message}`))
+    screenMemoryPersistence = screenMemoryBridge
+    screenMemoryControllerSummaryDispatch = (allowed) => screenMemoryBridge.setSummaryDispatch(allowed)
     runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
     // 冷启动 MemoryCore/补全服务只带 .env 透传；gateway 就绪后按已存 runtime
     // config 补一次（把“每次冷启动回退 .env”的窗口收窄到 gateway ready 之前）。
@@ -3903,6 +4045,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
     if (perceptionSettings?.captureEnabled) {
       await screenshotScheduler.start(perceptionSettings.captureIntervalSeconds * 1_000)
+      void screenMemoryController.ensureRunningState().catch(() => undefined)
     } else if (perceptionSettings) {
       // Keep the local scheduler's interval in sync even while capture is off.
       // Otherwise the settings page falls back to the five-minute default and
@@ -4147,7 +4290,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
     registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync,recordingSegmentUploader ?? undefined),recordingSegmentUploader!)
     registerPrivateAudioHandlers(privateAudioSync)
-    registerScreenCaptureHandlers()
 
     const fileCapabilities = await filesGatewayBridge.capabilities().catch((error) => {
       console.warn('Unable to load file capabilities; automatic local scanning stays disabled.', error)
@@ -4294,6 +4436,7 @@ app.on('before-quit', (event) => {
   saasClient = null
   screenshotOutbox = null
   screenshotScheduler.stop()
+  void screenMemoryController.dispose()
   privateSyncScheduler = null
   agentNotificationBridgeServer = null
   macosPushNotifications = null

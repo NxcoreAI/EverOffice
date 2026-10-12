@@ -2,6 +2,7 @@ import { and, asc, eq, gte, inArray, isNull, lt } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
+  screenIntervals,
   connectorCalendarEvents,
   connectorDocuments,
   connectorEmails,
@@ -113,6 +114,47 @@ export class DiarySourceCollector {
         insightTags,
         ...(observation ? { assetFileId: observation.fileId } : {}),
       });
+    }
+
+    // 屏幕记忆：同应用连续区间（间隔 <15min）聚合为一个应用会话来源，避免日记被逐卡淹没。
+    {
+      const intervals = this.db.select().from(screenIntervals)
+        .where(and(
+          lt(screenIntervals.startedAt, end), gte(screenIntervals.endedAt, start),
+          isNull(screenIntervals.deletedAt),
+        ))
+        .orderBy(asc(screenIntervals.startedAt)).all();
+      const SESSION_GAP_MS = 15 * 60_000;
+      type Session = { bundleId: string; appName: string; first: typeof intervals[number]; last: typeof intervals[number]; count: number; lines: string[]; summaries: string[] };
+      const sessions: Session[] = [];
+      for (const row of intervals) {
+        const last = sessions.at(-1);
+        if (last && last.bundleId === row.bundleId && row.startedAt.getTime() - last.last.endedAt.getTime() < SESSION_GAP_MS) {
+          last.last = row;
+          last.count += 1;
+          last.lines.push(...row.textLines.slice(0, 8));
+          if (row.summary) last.summaries.push(row.summary);
+        } else {
+          sessions.push({ bundleId: row.bundleId, appName: row.appName, first: row, last: row, count: 1, lines: [...row.textLines.slice(0, 8)], summaries: row.summary ? [row.summary] : [] });
+        }
+      }
+      for (const session of sessions) {
+        const occurredAt = clampDate(session.first.startedAt, start, end);
+        const endedAt = clampDate(session.last.endedAt, occurredAt, end);
+        const minutes = Math.max(1, Math.round((session.last.endedAt.getTime() - session.first.startedAt.getTime()) / 60_000));
+        const title = `${session.appName} · ${String(minutes)} 分钟`;
+        const digest = [
+          session.summaries.length > 0 ? session.summaries.slice(0, 3).join("；") : "",
+          session.lines.length > 0 ? `片段：${session.lines.slice(0, 12).join(" / ").slice(0, 400)}` : "",
+        ].filter(Boolean).join("\n");
+        add({
+          sourceId: sourceRef("screen_session", `${session.first.id}:${session.last.id}`), kind: "screen_interval", version: String(session.count),
+          occurredAt: iso(occurredAt), endedAt: iso(endedAt), timeBasis: "screen_capture_range",
+          fingerprint: hash([session.first.id, session.last.id, session.count, session.lines.join("|")]),
+          evidenceSummary: `${title}（${String(session.count)} 个片段）`,
+          content: digest || title,
+        });
+      }
     }
 
     for (const row of this.db.select().from(realityEvents)

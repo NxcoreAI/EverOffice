@@ -304,5 +304,19 @@
   "reality.noUnresolvedQuestions": "No unresolved questions",
   "diary.dayTrace": "DAY TRACE",
   "diary.todayShort": "Today",
-  "recording.english": "English"
+  "recording.english": "English",
+  "screenMemory.title": "Screen Memory",
+  "screenMemory.searchPlaceholder": "Search what you viewed by content or app",
+  "screenMemory.searchAction": "Search",
+  "screenMemory.disabledHint": "Off",
+  "screenMemory.keyframeCount": "{{count}} frames",
+  "screenMemory.summaryWaiting": "Summary waiting",
+  "screenMemory.summaryEmpty": "—",
+  "screenMemory.correct": "Correct",
+  "screenMemory.saveCorrection": "Save",
+  "screenMemory.cancel": "Cancel",
+  "screenMemory.empty": "No records yet",
+  "screenMemory.addToRoom": "Add to Room",
+  "screenMemory.handToAgent": "Hand to Agent",
+  "screenMemory.copied": "Reference copied"
 }

@@ -1809,5 +1809,22 @@
   "agentComposer.mentionedFileUnavailable": "引用的文件当前不可用，请重新选择。",
   "agentComposer.mentionTabAll": "全部",
   "agentComposer.mentionCategoryLabel": "引用分类",
-  "connectorSync.showMore": "显示更多（还有 {count} 篇）"
+  "screenMemory.title": "屏幕记忆",
+  "screenMemory.enable": "记录我正在看的内容",
+  "screenMemory.paused": "暂停采集",
+  "screenMemory.permission": "屏幕录制权限",
+  "screenMemory.permissionGranted": "已授权",
+  "screenMemory.permissionMissing": "未授权",
+  "screenMemory.allowedApps": "允许采集的应用",
+  "screenMemory.excludedApps": "排除的应用",
+  "screenMemory.add": "添加",
+  "screenMemory.addCurrent": "添加当前应用",
+  "screenMemory.remove": "移除",
+  "screenMemory.storage": "本地图库占用",
+  "connectorSync.showMore": "显示更多（还有 {count} 篇）",
+  "screenMemory.backfill": "历史截图补处理",
+  "screenMemory.backfillEstimate": "预计处理量",
+  "screenMemory.backfillRun": "开始处理",
+  "screenMemory.backfillCount": "共 {{count}} 张截图",
+  "screenMemory.backfillDone": "已处理 {{processed}} 张，生成 {{intervals}} 个区间、{{keyframes}} 帧关键帧"
 }

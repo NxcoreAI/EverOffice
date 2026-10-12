@@ -1617,3 +1617,9 @@
   font-size: 12px;
   opacity: 0.8;
 }
+
+.screen-memory-app-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.screen-memory-app-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.screen-memory-app-list li button { font-size: 12px; }
+.screen-memory-app-add { display: flex; gap: 6px; margin-top: 6px; }
+.screen-memory-app-add input { flex: 1; min-width: 160px; }

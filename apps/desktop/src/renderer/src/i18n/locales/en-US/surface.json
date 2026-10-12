@@ -1809,5 +1809,22 @@
   "agentComposer.mentionedFileUnavailable": "A mentioned file is unavailable. Please reselect.",
   "agentComposer.mentionTabAll": "All",
   "agentComposer.mentionCategoryLabel": "Mention categories",
-  "connectorSync.showMore": "Show more ({count} more)"
+  "screenMemory.title": "Screen Memory",
+  "screenMemory.enable": "Record what I am viewing",
+  "screenMemory.paused": "Pause capture",
+  "screenMemory.permission": "Screen recording permission",
+  "screenMemory.permissionGranted": "Granted",
+  "screenMemory.permissionMissing": "Not granted",
+  "screenMemory.allowedApps": "Allowed apps",
+  "screenMemory.excludedApps": "Excluded apps",
+  "screenMemory.add": "Add",
+  "screenMemory.addCurrent": "Add current app",
+  "screenMemory.remove": "Remove",
+  "screenMemory.storage": "Local image storage",
+  "connectorSync.showMore": "Show more ({count} more)",
+  "screenMemory.backfill": "Backfill history screenshots",
+  "screenMemory.backfillEstimate": "Estimate",
+  "screenMemory.backfillRun": "Run",
+  "screenMemory.backfillCount": "{{count}} screenshots",
+  "screenMemory.backfillDone": "Processed {{processed}}, {{intervals}} intervals, {{keyframes}} keyframes"
 }

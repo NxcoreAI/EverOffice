@@ -15,6 +15,8 @@ import {
   uploadedFiles,
   visualNodes,
   visualObservations,
+  screenIntervals,
+  screenKeyframes,
 } from "../../infrastructure/database/schema.js";
 
 /** 素材检索命中项：ref 即 slides PageSpec image 元素可直接使用的引用。 */
@@ -51,6 +53,7 @@ export class MaterialsService {
       ...this.searchPerception(terms),
       ...this.searchClipper(terms),
       ...this.searchDocumentAssets(terms),
+      ...this.searchScreenIntervals(terms),
     ];
     hits.sort((left, right) => right.rank - left.rank);
     return hits.slice(0, capped);
@@ -129,6 +132,38 @@ export class MaterialsService {
         desc,
         meta: `${row.kind === "screenshot" ? "截图" : "照片"}${size}`,
         rank: matched * 2 + (row.width && row.width >= 600 ? 1 : 0),
+      });
+    }
+    return hits;
+  }
+
+  /** 屏幕记忆：加入素材库的压缩关键帧（materialHash 非空），用区间标题/摘要/原文检索。 */
+  private searchScreenIntervals(terms: string[]): MaterialHit[] {
+    const rows = this.db.select({
+      hash: screenKeyframes.materialHash,
+      width: screenKeyframes.width,
+      height: screenKeyframes.height,
+      title: screenIntervals.title,
+      summary: screenIntervals.summary,
+      textLines: screenIntervals.textLines,
+      appName: screenIntervals.appName,
+    }).from(screenKeyframes)
+      .innerJoin(screenIntervals, eq(screenKeyframes.intervalId, screenIntervals.id))
+      .where(isNotNull(screenKeyframes.materialHash))
+      .all();
+    const hits: MaterialHit[] = [];
+    for (const row of rows) {
+      const primary = [row.title ?? "", row.summary ?? ""].join(" ");
+      const secondary = [...(row.textLines ?? []).slice(0, 10), row.appName ?? ""].join(" ");
+      const matched = matchTerms(terms, primary, secondary);
+      if (matched === 0) continue;
+      const size = row.width && row.height ? ` ${String(row.width)}×${String(row.height)}` : "";
+      hits.push({
+        ref: `everroom-material://${row.hash}`,
+        kind: "screenshot",
+        desc: row.title || row.summary || "屏幕记忆素材",
+        meta: `屏幕记忆${size}`,
+        rank: matched * 2,
       });
     }
     return hits;

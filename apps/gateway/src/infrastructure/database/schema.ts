@@ -1386,6 +1386,12 @@ export const documentImportListCache = sqliteTable(
       .default([]),
     itemCount: integer("item_count").notNull().default(0),
     fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    /** 最近一次写入的同步方式：full=全量替换（清删除），delta=增量合并。 */
+    syncMode: text("sync_mode", { enum: ["full", "delta"] }),
+    /** 增量水位线（取已见条目最大 updatedAt）：delta 从此时间往前 5 分钟重叠窗拉取。 */
+    watermarkAt: integer("watermark_at", { mode: "timestamp_ms" }),
+    /** 最近一次全量对账时间：超过 24h 由同步 worker 触发全量，清掉远端已删文档。 */
+    lastFullAt: integer("last_full_at", { mode: "timestamp_ms" }),
   },
   (table) => [primaryKey({ columns: [table.provider, table.connectionName] })],
 );
@@ -1679,7 +1685,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1733,7 +1739,7 @@ export const roomSourceMemberships = sqliteTable(
     id: text("id").primaryKey(),
     roomId: text("room_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1770,7 +1776,7 @@ export const roomEntityMentions = sqliteTable(
     roomId: text("room_id").notNull(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1816,7 +1822,7 @@ export const roomEntityFacts = sqliteTable(
     /** 涉及实体（抽取名称经 resolveMentionEntity 解析后的 id；解析不到的不进表）。 */
     entityIds: text("entity_ids", { mode: "json" }).$type<string[]>(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1950,7 +1956,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -2435,6 +2441,61 @@ export const visualProcessingJobs = sqliteTable(
   ],
 );
 
+export const screenIntervals = sqliteTable(
+  "screen_intervals",
+  {
+    id: text("id").primaryKey(),
+    bundleId: text("bundle_id").notNull(),
+    appName: text("app_name").notNull(),
+    windowTitle: text("window_title"),
+    title: text("title").notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }).notNull(),
+    endReason: text("end_reason", {
+      enum: ["app-switch", "lock", "suspend", "idle", "out-of-scope", "paused", "stopped"],
+    }).notNull(),
+    keyframeCount: integer("keyframe_count").notNull().default(0),
+    textLines: text("text_lines", { mode: "json" }).$type<string[]>().notNull().default([]),
+    summaryStatus: text("summary_status", {
+      enum: ["pending", "processing", "ready", "waiting", "failed"],
+    }).notNull().default("pending"),
+    summary: text("summary"),
+    summaryKeyPoints: text("summary_key_points", { mode: "json" }).$type<string[]>().notNull().default([]),
+    summaryCompletedAt: integer("summary_completed_at", { mode: "timestamp_ms" }),
+    userEdited: integer("user_edited", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("screen_intervals_range_idx").on(table.startedAt, table.endedAt),
+    index("screen_intervals_app_idx").on(table.bundleId, table.startedAt),
+    index("screen_intervals_summary_idx").on(table.summaryStatus, table.updatedAt),
+  ],
+);
+
+export const screenKeyframes = sqliteTable(
+  "screen_keyframes",
+  {
+    id: text("id").primaryKey(),
+    intervalId: text("interval_id").notNull().references(() => screenIntervals.id, { onDelete: "cascade" }),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    imagePath: text("image_path").notNull(),
+    imageBytes: integer("image_bytes").notNull().default(0),
+    perceptualHash: text("perceptual_hash"),
+    width: integer("width"),
+    height: integer("height"),
+    lineCount: integer("line_count").notNull().default(0),
+    elapsedMs: real("elapsed_ms"),
+    materialHash: text("material_hash"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("screen_keyframes_interval_idx").on(table.intervalId, table.capturedAt),
+    index("screen_keyframes_material_idx").on(table.materialHash),
+  ],
+);
+
 export const diarySchedules = sqliteTable("diary_schedules", {
   ownerId: text("owner_id").primaryKey().default("local-user"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
@@ -2610,7 +2671,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),

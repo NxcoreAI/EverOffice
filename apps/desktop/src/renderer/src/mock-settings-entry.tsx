@@ -96,6 +96,22 @@ window.nxcore = new Proxy(base, {
         }
       case 'privateAudio':
         return { list: async () => ({ assets: [{ status: 'uploaded' }, { status: 'uploaded' }, { status: 'pending' }] }) }
+      case 'screenMemory':
+        return {
+          settings: async () => ({ enabled: false, paused: false, allowedApps: ['com.apple.Safari'], excludedApps: [] }),
+          updateSettings: async (patch: Record<string, unknown>) => ({ enabled: false, paused: false, allowedApps: [], excludedApps: [], ...patch }),
+          status: async () => ({
+            running: false, permission: 'not-determined', helperAvailable: true, paused: false, enabled: false,
+            currentBundleId: null, currentAppName: null, openIntervalSince: null, currentKeyframes: 0,
+            heartbeatMs: 5000, lastBeatAt: null, lastError: null,
+            directory: '/Users/xjwang/Library/Application Support/EverRoom/screen-memory',
+            deviceReady: { archOk: true, memoryOk: true, diskOk: true },
+          }),
+          storage: async () => ({ imagesBytes: 0 }),
+          frontmost: async () => null,
+          backfillEstimate: async () => ({ count: 0 }),
+          backfillRun: async () => ({ processed: 0, intervals: 0 }),
+        }
       case 'screenCapture':
         return {
           status: async () => ({ enabled: true, intervalMs: 300_000, lastResult: null }),
