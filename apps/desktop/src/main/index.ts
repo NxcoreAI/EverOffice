@@ -4039,7 +4039,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       void syncAccountMonitoring(client.status()).catch(() => undefined)
     }, 5 * 60_000)
     sentryAccountResyncTimer.unref()
-    aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, runtimeConfigBridge, (event: AiRelayKeeperEvent) => {
+    aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, (event: AiRelayKeeperEvent) => {
       if (event.type === 'session-activated' || event.type === 'models-changed') {
         // relay 会话就绪后 gateway 才把槽位重写为 /ai-relay——补一次子进程
         // env 同步，闭合「boot 时会话未就绪 → MemoryCore/KS 缺 embedding/LLM」

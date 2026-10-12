@@ -1350,11 +1350,11 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0 16px;
+  padding: 0 18px;
 }
 
 /* actions/message 自带 16px 水平 padding，抵消 .rc-form 的缩进避免双重 32px */
-.rc-form .runtime-config-actions { margin: 0 -16px; }
+.rc-form .runtime-config-actions { margin: 0 -18px; }
 .rc-form .runtime-config-message { margin: 0 -16px; }
 
 .rc-form-field {
@@ -1387,6 +1387,105 @@
   color: var(--text-muted, #7c8798);
   font-size: 11px;
 }
+
+.rc-mode-switch {
+  padding: 12px 18px 10px;
+}
+
+.rc-group-title {
+  margin: 12px 0 4px;
+  color: var(--text-muted, #536070);
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing: 0.02em;
+}
+
+.rc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+
+.rc-span-2 {
+  grid-column: 1 / -1;
+}
+
+.rc-scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rc-scenario-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rc-scenario-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.rc-scenario-row select {
+  height: 30px;
+  width: 132px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong, #d8dee7);
+  border-radius: 6px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #151a22);
+  font-size: 12px;
+}
+
+.rc-scenario-name {
+  flex: 0 0 88px;
+  color: var(--text-primary, #151a22);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.rc-scenario-model {
+  flex: 1 1 auto;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong, #d8dee7);
+  border-radius: 6px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #151a22);
+  font-size: 12px;
+}
+
+.rc-own-connection {
+  margin-left: 96px;
+}
+
+.rc-own-connection summary {
+  color: var(--text-muted, #7c8798);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.rc-own-connection .rc-grid {
+  margin-top: 6px;
+}
+
+.rc-special-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-left: 96px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong, #e3e8ef);
+}
+
+.rc-search-delete {
+  align-self: flex-start;
+}
+
 
 .rc-form-error {
   color: #b4232a;
@@ -1425,7 +1524,7 @@
 }
 
 .rc-json-details {
-  margin: 14px 16px 16px;
+  margin: 14px 18px 16px;
 }
 
 .rc-json-details .runtime-config-actions {

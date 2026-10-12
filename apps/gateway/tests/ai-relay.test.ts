@@ -475,7 +475,7 @@ describe("runtime config relay plan models", () => {
     expect(embedding?.dimensions).toBeUndefined();
   });
 
-  it("user source ignores SaaS plan models", async () => {
+  it("user-owned slots keep their own model while unset slots fall back to official", async () => {
     const { manager } = await managerWithPayload({
       schemaVersion: 1,
       primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
@@ -483,8 +483,14 @@ describe("runtime config relay plan models", () => {
 
     const snapshot = manager.snapshot(false);
     expect(snapshot.selectedSource).toBe("user");
-    expect(snapshot.config.primary?.model).toBe("my-model");
-    expect(snapshot.config.lite).toBeUndefined();
+    // 用户槽位：SaaS 模型与中转重写均跳过，保持直连值。
+    expect(snapshot.config.primary).toMatchObject({ model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" });
+    // 未配置槽位：回落官方——SaaS 下发 lite 模型并接中转出口。
+    expect(snapshot.config.lite).toMatchObject({
+      model: "saas-lite-z",
+      baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
+      apiKey: "gw-self-token-51",
+    });
   });
 
   it("falls back to built-in models once the session is cleared", async () => {
@@ -498,6 +504,69 @@ describe("runtime config relay plan models", () => {
     const snapshot = manager.snapshot(false);
     expect(snapshot.config.primary?.model).toBe("deepseek-v4-flash");
     expect(snapshot.config.lite).toBeUndefined();
+  });
+
+  it("mixes user-owned slots with official slots per slot", async () => {
+    const { manager, sessions } = await managerWithPayload({
+      schemaVersion: 1,
+      primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
+      vlm: { provider: "openai-compatible", api: "openai-completions", model: "my-vlm", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
+    }, { models: planModels });
+
+    let snapshot = manager.snapshot(false);
+    // 用户槽位直连；未配置槽位（background/lite/cursorCompletion）走官方中转。
+    expect(snapshot.config.primary?.baseUrl).toBe("https://api.my-provider.com/v1");
+    expect(snapshot.config.vlm?.baseUrl).toBe("https://api.my-provider.com/v1");
+    expect(snapshot.config.background?.model).toBe("saas-bg-y");
+    expect(snapshot.config.background?.baseUrl).toBe("http://127.0.0.1:49152/ai-relay/v1");
+    expect(snapshot.config.cursorCompletion?.model).toBe("saas-complete-w");
+
+    // 中转会话失效后：官方槽位回内置未配置态，用户槽位不受影响。
+    sessions.clear();
+    manager.refresh();
+    snapshot = manager.snapshot(false);
+    expect(snapshot.config.primary?.baseUrl).toBe("https://api.my-provider.com/v1");
+    expect(snapshot.config.background?.baseUrl).toBe("");
+    // 快照同时暴露原始 user payload（未脱敏出口）。
+    expect(snapshot.userConfig).toMatchObject({ primary: { model: "my-model" }, vlm: { model: "my-vlm" } });
+  });
+
+  it("inherits the generic connection for model-only scenario slots", async () => {
+    const { manager } = await managerWithPayload({
+      schemaVersion: 1,
+      primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
+      background: { provider: "openai-compatible", model: "bg-model" },
+      lite: { provider: "openai-compatible", model: "lite-model", baseUrl: "https://lite.example.com/v1", apiKey: "lite-key" },
+    }, { models: planModels });
+
+    const snapshot = manager.snapshot(false);
+    expect(snapshot.selectedSource).toBe("user");
+    // background 只存模型：连接整体继承通用模型（primary）。
+    expect(snapshot.config.background).toMatchObject({
+      model: "bg-model",
+      provider: "openai-compatible",
+      baseUrl: "https://api.my-provider.com/v1",
+      apiKey: "my-key",
+    });
+    // lite 独立连接：不继承、也不被中转重写。
+    expect(snapshot.config.lite).toMatchObject({
+      model: "lite-model",
+      baseUrl: "https://lite.example.com/v1",
+      apiKey: "lite-key",
+    });
+  });
+
+  it("exposes userConfig masked in redacted snapshots and null without a user source", async () => {
+    const { manager } = await managerWithPayload({
+      schemaVersion: 1,
+      primary: { provider: "openai-compatible", api: "openai-completions", model: "my-model", baseUrl: "https://api.my-provider.com/v1", apiKey: "my-key" },
+    });
+    const redacted = manager.snapshot(true);
+    expect(redacted.userConfig?.primary?.apiKey).toBe("********");
+    expect(redacted.userConfig?.primary?.model).toBe("my-model");
+
+    const { manager: emptyManager } = await managerWithPayload(null);
+    expect(emptyManager.snapshot(true).userConfig).toBeNull();
   });
 });
 

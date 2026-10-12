@@ -519,14 +519,14 @@ const api: NxcoreDesktopApi = {
     onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
       const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
         const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
-        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored' && eventType !== 'session-activated') return
+        if (eventType !== 'quota-exhausted' && eventType !== 'session-activated') return
         listener({ type: eventType })
       }
-      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']) {
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
         ipcRenderer.on(channel, handle)
       }
       return () => {
-        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']) {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
           ipcRenderer.removeListener(channel, handle)
         }
       }

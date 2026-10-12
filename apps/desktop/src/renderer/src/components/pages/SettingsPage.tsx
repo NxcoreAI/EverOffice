@@ -191,7 +191,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
     refresh()
     const removeListener = window.nxcore.aiRelay.onEvent((event) => {
-      if (event.type === 'quota-exhausted' || event.type === 'fallback-restored') refresh()
+      if (event.type === 'quota-exhausted') refresh()
     })
     return () => { cancelled = true; removeListener() }
   }, [account?.authenticated, account?.user?.id])

@@ -413,7 +413,7 @@ export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
-export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored' | 'session-activated'
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'session-activated'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -530,6 +530,8 @@ export interface PerceptionSettings {
 
 export interface RuntimeConfigSnapshot {
   config: Record<string, unknown>
+  /** user 源原始 payload（脱敏后）；从未保存过自定义配置时为 null。 */
+  userConfig: Record<string, unknown> | null
   source: 'user' | 'default'
   selectedSource: 'user' | 'default'
   availableSources: Array<'user' | 'default'>

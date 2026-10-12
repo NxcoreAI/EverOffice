@@ -151,27 +151,35 @@ window.nxcore = new Proxy(base, {
           }),
           saveServers: async () => ({ configPath: '/Users/xjwang/Library/Application Support/EverRoom/mcp.json', servers: {} }),
         }
-      case 'runtimeConfig':
+      case 'runtimeConfig': {
+        let selectedSource: 'default' | 'user' = 'user'
+        let savedPayload: Record<string, unknown> | null = null
+        const buildSnapshot = () => ({
+          config: {
+            primary: { provider: 'openai-compatible', model: 'glm-4-flash', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+          },
+          userConfig: savedPayload ?? {
+            schemaVersion: 1,
+            primary: { provider: 'openai-compatible', model: 'glm-4-flash', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: 'sk-***' },
+            knowledge: { embedding: { provider: 'openai-compatible', model: 'text-embedding-3-small', baseUrl: 'https://api.example.com/v1', apiKey: '********' } },
+          },
+          source: selectedSource,
+          selectedSource,
+          availableSources: ['default', 'user'],
+          configVersion: 5,
+          updatedAt: iso(3600_000 * 5),
+          primaryConfigured: true,
+          webSearchCredential: { configured: true, source: 'user' as const },
+        })
         return {
-          get: async () => ({
-            config: {
-              primary: { provider: 'openai-compatible', model: 'glm-4-flash', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-              embedding: { provider: 'openai-compatible', model: 'text-embedding-3-small', baseUrl: 'https://api.example.com/v1' },
-            },
-            source: 'user',
-            selectedSource: 'user',
-            availableSources: ['default', 'user'],
-            configVersion: 5,
-            updatedAt: iso(3600_000 * 5),
-            primaryConfigured: true,
-            webSearchCredential: { configured: true, source: 'user' },
-          }),
-          saveUser: async () => null,
-          clearUser: async () => null,
-          relayReady: async () => null,
-          selectSource: async () => null,
+          get: async () => buildSnapshot(),
+          saveUser: async (payload: Record<string, unknown>) => { savedPayload = payload; return buildSnapshot() },
+          clearUser: async () => { selectedSource = 'default'; return buildSnapshot() },
+          relayReady: async () => buildSnapshot(),
+          selectSource: async (source: 'default' | 'user') => { selectedSource = source; return buildSnapshot() },
           test: async () => ({ valid: true }),
         }
+      }
       case 'externalCalls':
         return {
           listPolicies: async () => ({
