@@ -138,7 +138,7 @@ import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
 import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
-import { bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
+import { bundledAcpAdaptersRoot, bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
 import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-binding-store'
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
@@ -2271,7 +2271,7 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
 }
 
 function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator: MigrationCoordinator): void {
-  const localAgentDiscovery = createLocalAgentDiscovery({ adaptersRoot: localAgentAdaptersRoot() })
+  const localAgentDiscovery = createLocalAgentDiscovery({ adaptersRoot: localAgentAdaptersRoot(), bundledRoot: bundledAcpAdaptersRoot() })
   let localAgents: LocalAgentInstallation[] = []
   // 派发 target 的适配器 spawn 覆盖缓存（登录 shell PATH 探测较慢，命中后复用；
   // 安装/复检/重扫后失效）。
@@ -2316,7 +2316,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
       agentId: agent.id,
       provider: agent.provider,
       displayName: agent.displayName,
-      adapter: await probeLocalAgentAcpAdapter(agent, { adaptersRoot: localAgentAdaptersRoot() }),
+      adapter: await probeLocalAgentAcpAdapter(agent, { adaptersRoot: localAgentAdaptersRoot(), bundledRoot: bundledAcpAdaptersRoot() }),
     })))
   })
   handle(AGENT_CHANNELS.installLocalAgentAdapter, async (_event, agentId: string) => {
@@ -2331,6 +2331,7 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     }
     const result = await installLocalAgentAcpAdapter(installation, {
       adaptersRoot: localAgentAdaptersRoot(),
+      bundledRoot: bundledAcpAdaptersRoot(),
       npmCliPath: bundledNpmCliPath(),
       proxyEnv: await detectSystemProxyEnvironment(),
     })
@@ -2447,11 +2448,11 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
         ?? unboundWorkspaceRoot(installation.id, targetSessionId)
       await mkdir(workingDirectory, { recursive: true })
       // gateway 继承 GUI 瘦 PATH，bare bin 名常常解析不到——把桌面端（登录 shell
-      // 合并 PATH + 私有安装目录）解析出的绝对路径 spawn 覆盖随 target 下发。
+      // 合并 PATH + 私有安装/内置目录）解析出的绝对路径 spawn 覆盖随 target 下发。
       if (!adapterSpawnCache.has(installation.provider)) {
         adapterSpawnCache.set(
           installation.provider,
-          await resolveLocalAcpAdapterSpawn(installation, { adaptersRoot: localAgentAdaptersRoot() })
+          await resolveLocalAcpAdapterSpawn(installation, { adaptersRoot: localAgentAdaptersRoot(), bundledRoot: bundledAcpAdaptersRoot() })
             .catch(() => null),
         )
       }

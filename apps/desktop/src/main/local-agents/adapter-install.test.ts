@@ -202,6 +202,32 @@ describe('resolveLocalAcpAdapterSpawn', () => {
     expect(spawn).toBeNull()
   })
 
+  it('runs a bundled adapter through the runtime when private installs miss', async () => {
+    const root = await temporaryRoot()
+    const bundledRoot = join(root, 'bundled')
+    const pkgDir = join(bundledRoot, 'claude', 'node_modules', '@zed-industries', 'claude-agent-acp')
+    await mkdir(dirname(join(pkgDir, 'bin', 'x')), { recursive: true })
+    const entry = join(pkgDir, 'bin', 'claude-agent-acp.js')
+    await writeFile(entry, '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@zed-industries/claude-agent-acp',
+      version: '0.23.1',
+      bin: { 'claude-agent-acp': 'bin/claude-agent-acp.js' },
+    }), 'utf8')
+
+    const spawn = await resolveLocalAcpAdapterSpawn(CLAUDE_INSTALLATION, {
+      adaptersRoot: join(root, 'adapters'),
+      bundledRoot,
+      env: { PATH: '/usr/bin:/bin' },
+      home: join(root, 'home'),
+      platform: 'win32',
+      probeTimeoutMs: 1,
+    })
+    expect(spawn?.command).toBe(process.execPath)
+    expect(spawn?.args).toEqual([entry])
+    expect(spawn?.env?.ELECTRON_RUN_AS_NODE).toBe('1')
+  })
+
   it('private install points CLAUDE_CODE_EXECUTABLE at the native claude binary', async () => {
     const root = await temporaryRoot()
     const adaptersRoot = join(root, 'adapters')

@@ -163,6 +163,44 @@ describe('probeLocalAgentAcpAdapter', () => {
     expect(withoutRoot.installed).toBe(false)
   })
 
+  it('falls back to bundled adapters after PATH and private installs miss', async () => {
+    const root = await temporaryRoot()
+    const bundledRoot = join(root, 'bundled')
+    const pkgDir = join(bundledRoot, 'codex', 'node_modules', '@agentclientprotocol', 'codex-acp')
+    await mkdir(pkgDir, { recursive: true })
+    const entry = join(pkgDir, 'bin', 'codex-acp.js')
+    await mkdir(dirname(entry), { recursive: true })
+    await writeFile(entry, '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(pkgDir, 'package.json'), JSON.stringify({
+      name: '@agentclientprotocol/codex-acp',
+      version: '2.1.1',
+      bin: { 'codex-acp': 'bin/codex-acp.js' },
+    }), 'utf8')
+
+    const result = await probeLocalAgentAcpAdapter(
+      { provider: 'codex', executablePath: '/usr/local/bin/codex', callable: true },
+      { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32', adaptersRoot: join(root, 'adapters'), bundledRoot },
+    )
+    expect(result.installed).toBe(true)
+    expect(result.command).toBe(entry)
+
+    // 私有目录命中时优先于内置目录（用户主动装的版本优先）。
+    const privatePkgDir = join(root, 'adapters', 'codex', 'node_modules', '@agentclientprotocol', 'codex-acp')
+    const privateEntry = join(privatePkgDir, 'bin', 'codex-acp.js')
+    await mkdir(dirname(privateEntry), { recursive: true })
+    await writeFile(privateEntry, '#!/usr/bin/env node\n', 'utf8')
+    await writeFile(join(privatePkgDir, 'package.json'), JSON.stringify({
+      name: '@agentclientprotocol/codex-acp',
+      version: '9.9.9',
+      bin: { 'codex-acp': 'bin/codex-acp.js' },
+    }), 'utf8')
+    const prioritized = await probeLocalAgentAcpAdapter(
+      { provider: 'codex', executablePath: '/usr/local/bin/codex', callable: true },
+      { env: { PATH: '/usr/bin:/bin' }, home: join(root, 'home'), platform: 'win32', adaptersRoot: join(root, 'adapters'), bundledRoot },
+    )
+    expect(prioritized.command).toBe(privateEntry)
+  })
+
   it('treats openclaw as always installed and honors adapter command overrides', async () => {
     const root = await temporaryRoot()
     const openclaw = await probeLocalAgentAcpAdapter(
