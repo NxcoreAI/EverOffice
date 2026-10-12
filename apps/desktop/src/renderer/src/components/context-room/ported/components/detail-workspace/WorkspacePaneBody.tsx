@@ -192,6 +192,7 @@ export function WorkspacePaneBody({
       return (
         <MemoryPane
           room={room}
+          rooms={rooms}
           onUpdateRoom={onUpdateRoom}
           onOpenRoom={onOpenRoom}
           onOpenSource={onOpenSource}

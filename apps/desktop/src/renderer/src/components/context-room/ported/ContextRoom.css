@@ -6155,9 +6155,16 @@
   color: #fff;
 }
 
-.context-room-primary:hover {
+.context-room-primary:hover:not(:disabled) {
   border-color: var(--cr-blue-hover);
   background: var(--cr-blue-hover);
+}
+
+.context-room-primary:disabled {
+  border-color: var(--cr-border-control);
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  cursor: not-allowed;
 }
 
 .context-room-secondary {
