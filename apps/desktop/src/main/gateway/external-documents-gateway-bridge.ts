@@ -31,11 +31,13 @@ export class ExternalDocumentsGatewayBridge {
     })
   }
 
-  /** 连接器页按连接全量列举（同步调用，几百篇数秒级；上限截断见 truncated）。 */
+  /** 连接器页按连接全量列举（同步调用，几百篇数秒级；上限截断见 truncated）。
+   *  mode=delta 有缓存时走增量合并，不可用回退全量。 */
   async importList(
     provider: ExternalDocumentProvider,
     connectionName?: string,
     cachedOnly?: boolean,
+    mode?: 'full' | 'delta',
   ): Promise<ExternalDocumentListResponse> {
     return this.request('/v1/document-import/list', {
       method: 'POST',
@@ -43,6 +45,7 @@ export class ExternalDocumentsGatewayBridge {
         provider,
         ...(connectionName ? { connectionName } : {}),
         ...(cachedOnly ? { cachedOnly: true } : {}),
+        ...(mode ? { mode } : {}),
       }),
     })
   }

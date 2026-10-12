@@ -260,6 +260,9 @@
   cursor: pointer;
 }
 .context-room-external-import-filter button svg { width: 12px; height: 12px; }
+.context-room-external-import-show-more { display: grid; place-items: center; }
+.context-room-external-import-show-more button { border: 0; background: none; padding: 10px 0; color: var(--muted, #6a737d); font: inherit; font-size: 12px; cursor: pointer; width: 100%; }
+.context-room-external-import-show-more button:hover { color: var(--accent, #0c66e4); }
 .context-room-external-import-item-title {
   display: flex;
   align-items: center;

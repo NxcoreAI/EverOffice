@@ -577,12 +577,12 @@
   "externalImportDialog.filterPlaceholder": "Filter the list…",
   "externalImportDialog.importedAsVersion1": "Imported as a new document (version 1)",
   "externalImportDialog.importedBadge": "Imported",
+  "externalImportDialog.showImported": "Show imported ({count})",
   "externalImportDialog.joinHint": "Joining the Room creates a local document at version 1. Future changes on the source will not sync automatically.",
   "externalImportDialog.joinRoom": "Add to Room",
   "externalImportDialog.listEmpty": "No document list fetched for this provider yet",
   "externalImportDialog.listMeta": "{count} docs · fetched {time}",
   "externalImportDialog.listMetaNoTime": "{count} docs",
-  "externalImportDialog.listTruncated": "List truncated at the limit",
   "externalImportDialog.loadDocuments": "Fetch document list",
   "externalImportDialog.loadingList": "Fetching document list…",
   "externalImportDialog.loadingPreview": "Loading preview…",
@@ -1626,5 +1626,6 @@
   "artifactLibrary.deleteFileIrreversible": "This cannot be undone.",
   "artifactLibrary.delete": "Delete",
   "artifactLibrary.deleting": "Deleting…",
-  "artifactLibrary.failedToDeleteFile": "Failed to delete file"
+  "artifactLibrary.failedToDeleteFile": "Failed to delete file",
+  "externalImportDialog.showMore": "Show more ({count} more)"
 }

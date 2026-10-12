@@ -227,7 +227,7 @@ describe('document-import list', () => {
     expect(response.items[0]).toMatchObject({ origin: 'drive', title: '云空间版本' })
   })
 
-  it('feishu：知识库空间超过上限置 truncated 并警告', async () => {
+  it('feishu：知识库空间不再按小上限截断（13 个全列）；仅 1000 安全上限生效', async () => {
     const manySpaces = Array.from({ length: 13 }, (_value, index) => ({ space_id: `sp${index}`, name: `空间${index}` }))
     const actions: FakeAction = {
       'feishu.list_drive_files': { items: [], hasMore: false },
@@ -236,8 +236,16 @@ describe('document-import list', () => {
     }
     const { imports } = makeServices(fakeRunner(actions))
     const response = await imports.listAllDocuments('feishu')
-    expect(response.truncated).toBe(true)
-    expect(response.warnings.some((warning) => warning.code === 'list_truncated')).toBe(true)
+    expect(response.truncated).toBe(false)
+    expect(response.warnings.some((warning) => warning.code === 'list_truncated')).toBe(false)
+
+    const tooMany = Array.from({ length: 1001 }, (_value, index) => ({ space_id: `sp${index}`, name: `空间${index}` }))
+    const capped = await makeServices(fakeRunner({
+      ...actions,
+      'feishu.list_wiki_spaces': { items: tooMany, hasMore: false },
+    })).imports.listAllDocuments('feishu')
+    expect(capped.truncated).toBe(true)
+    expect(capped.warnings.some((warning) => warning.code === 'list_truncated')).toBe(true)
   })
 
   it('notion：空 query 全量翻页（next_cursor 带出第二页）并给空范围提示', async () => {

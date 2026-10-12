@@ -129,7 +129,7 @@
 .connector-doc-info:hover { color: var(--text); }
 .connector-doc-warning { display: flex; align-items: flex-start; gap: 7px; margin: 6px 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, #b3860b 35%, var(--border)); border-radius: 7px; background: color-mix(in srgb, #b3860b 7%, var(--surface)); color: #8a6a0a; font-size: 10px; line-height: 1.5; }
 .connector-doc-warning > svg { flex: 0 0 13px; width: 13px; height: 13px; margin-top: 1px; }
-.connector-doc-filter { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--subtle); }
+.connector-doc-filter { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--subtle); flex: 1 1 140px; min-width: 120px; }
 .connector-doc-filter:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .connector-doc-filter > svg { flex: 0 0 13px; width: 13px; height: 13px; }
 .connector-doc-filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 10.5px; }
@@ -167,9 +167,9 @@
 .connector-doc-list-empty { display: grid; gap: 8px; justify-items: center; padding: 26px 12px; color: var(--subtle); font-size: 10.5px; text-align: center; }
 .connector-doc-list-empty button { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 .connector-doc-list-empty button:hover { text-decoration: underline; }
-.connector-doc-actions { display: flex; align-items: center; gap: 8px; padding: 11px 0 2px; flex-wrap: wrap; }
-.connector-doc-count { margin-right: auto; color: var(--subtle); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.connector-doc-count[data-active='true'] { padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent); font-weight: 600; }
+.connector-doc-show-more { display: grid; place-items: center; min-height: 38px; border: 0; border-bottom: 0; background: none; color: var(--muted); font: inherit; font-size: 10.5px; cursor: pointer; }
+.connector-doc-show-more:hover { color: var(--accent); background: var(--surface-alt); }
+.connector-doc-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 11px 0 2px; flex-wrap: wrap; }
 .connector-doc-actions .primary-button, .connector-doc-actions .secondary-button { min-height: 30px; font-size: 10.5px; }
 .connector-doc-progress { display: grid; flex: 1; min-width: 0; gap: 7px; }
 .connector-doc-progress-row { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 10.5px; font-variant-numeric: tabular-nums; }
@@ -217,7 +217,6 @@
 .connector-sync-section[data-embedded='true'] .connector-doc-list { max-height: min(340px, 44vh); }
 @media (max-width: 560px) {
   .connector-doc-actions { align-items: stretch; flex-direction: column; }
-  .connector-doc-count { margin-right: 0; text-align: center; }
   .connector-doc-actions .primary-button, .connector-doc-actions .secondary-button { width: 100%; justify-content: center; }
   .connector-doc-progress { justify-items: center; }
 }
