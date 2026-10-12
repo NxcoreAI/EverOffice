@@ -73,6 +73,19 @@ describe("UnconfiguredAgentRuntime", () => {
     for await (const event of run.events) events.push(event.type);
     expect(events).toEqual(["run.started", "run.failed"]);
   });
+
+  it("start() without a prior ref returns empty string, never the runtime id", async () => {
+    const runtime = new UnconfiguredAgentRuntime("main");
+    const run = await runtime.start({
+      runId: "run-3",
+      sessionId: "session-1",
+      runtimeSessionRef: null,
+      prompt: "ping",
+      pageLabel: "test",
+      roomId: null,
+    });
+    expect(run.runtimeSessionRef).toBe("");
+  });
 });
 
 describe("runtime factory degraded gates", () => {
