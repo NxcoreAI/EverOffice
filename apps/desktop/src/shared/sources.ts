@@ -413,7 +413,7 @@ export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
-export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored' | 'session-activated'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -1122,6 +1122,8 @@ export interface NxcoreDesktopApi {
   aiRelay: {
     /** 中转额度视图（订阅周期开窗）；未登录/未配置时为 null。 */
     status(): Promise<AiGatewayStatus | null>
+    /** SaaS 权威额度判定；keeper 未启动/未判定时 false。 */
+    verdict(): Promise<{ quotaExhausted: boolean }>
     onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
   }
   notifications: {

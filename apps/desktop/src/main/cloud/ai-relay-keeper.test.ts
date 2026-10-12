@@ -159,6 +159,35 @@ describe('AiRelayKeeper', () => {
     }
   })
 
+  it('treats 402 quota exhaustion as authoritative and tracks the verdict flag', async () => {
+    let exhausted = true
+    const { keeper, onEvent, runtimeConfig } = createKeeper({
+      issue: async () => {
+        if (exhausted) throw new SaasRequestError('AI credit quota for this period is exhausted', 402)
+        return {
+          token: 'sk-relay-52',
+          expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+          baseUrl: 'https://relay.example.com',
+        }
+      },
+    })
+    try {
+      await keeper.renewNow()
+      expect(sessionRequests('DELETE')).toHaveLength(1)
+      expect(onEvent).toHaveBeenCalledWith({ type: 'quota-exhausted' })
+      expect(onEvent).not.toHaveBeenCalledWith({ type: 'fallback-user' })
+      expect(runtimeConfig.selectSource).not.toHaveBeenCalled()
+      expect(keeper.isQuotaExhausted()).toBe(true)
+
+      // 兑换/周期重置后续签成功：判定清除。
+      exhausted = false
+      await keeper.renewNow()
+      expect(keeper.isQuotaExhausted()).toBe(false)
+    } finally {
+      keeper.stop()
+    }
+  })
+
   it('falls back to the user source exactly once after 3 consecutive network failures', async () => {
     let calls = 0
     const { keeper, runtimeConfig, onEvent } = createKeeper({

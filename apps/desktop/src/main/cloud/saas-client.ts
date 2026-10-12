@@ -503,7 +503,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 function saasCompatibleSession(
   session: AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>,
 ): AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'> {
-  const { activeAgentId: _activeAgentId, ...rest } = session
+  const { activeAgentId: _activeAgentId, channelAgentId: _channelAgentId, ...rest } = session
   return {
     ...rest,
     messages: session.messages.map(({ authorAgentId: _authorAgentId, ...message }) => message),
