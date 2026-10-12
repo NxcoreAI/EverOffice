@@ -14,8 +14,17 @@ import type {
   StyleTypography,
 } from "./types.js";
 import { normalizeStyleHex } from "./types.js";
-import type { PaletteRoles } from "./extract.js";
-import { hexToRgb, mix, rgbToHex } from "./extract.js";
+import type { PaletteRoles, Rgb } from "./extract.js";
+import {
+  contrast,
+  hexToRgb,
+  hueDistance,
+  luminance,
+  mix,
+  rgbToHex,
+  rotateHue,
+  saturation,
+} from "./extract.js";
 
 /** 引擎可用字体词表（macOS 内置栈；styler 只能从这里选）。 */
 export const STYLE_FONT_OPTIONS = [
@@ -28,8 +37,8 @@ export const STYLE_FONT_OPTIONS = [
 ] as const;
 const DEFAULT_FONT = "PingFang SC";
 
-/** layout 技能预设 id 形态（P1a / T3 / D2 / F6…）。 */
-const LAYOUT_HINT_PATTERN = /^[PDTF]\d[ab]?$/;
+/** layout 技能预设 id 形态（P1a / T3 / D2 / F6 / R1…）。 */
+const LAYOUT_HINT_PATTERN = /^[PDTFR]\d[ab]?$/;
 
 function clampNumber(value: unknown, min: number, max: number, field: string, fallback: number): number {
   const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -70,20 +79,136 @@ export function deriveChartSeries(primary: string, accent: string, background: s
   ];
 }
 
-export function normalizeStyleParams(raw: unknown): StyleParams {
+/**
+ * 色板关系闸门（美学硬约束的确定性修复层）。
+ * 单个色号合法不等于整块色板可用：正文压底色对比不足、主色艳到廉价、
+ * 强调色撞主色、卡面与页底无层次——这些关系问题不整体打回（会丢掉
+ * styler 的整体意图），而是逐项修复并记录，修复本身确定性可复现。
+ */
+const PRIMARY_SATURATION_CAP = 0.72;
+const ACCENT_SATURATION_CAP = 0.8;
+const INK: Rgb = { r: 17, g: 17, b: 17 };
+const PURE_WHITE: Rgb = { r: 255, g: 255, b: 255 };
+
+/** HSV 降饱和（保明度）：往同明度灰混，S(1-t)=cap 闭式解一步到位。 */
+function desaturateToCap(rgb: Rgb, cap: number): Rgb {
+  const s = saturation(rgb);
+  if (s <= cap) return rgb;
+  const m = Math.max(rgb.r, rgb.g, rgb.b);
+  if (m <= 0) return rgb;
+  return mix(rgb, { r: m, g: m, b: m }, Math.min(1, 1 - cap / s));
+}
+
+/** 朝指定方向步进混色，直到与底色对比度达标；到头仍不达标给终值（纯黑/白几乎总能过）。 */
+function stepToContrast(rgb: Rgb, bg: Rgb, target: number, toward: Rgb): Rgb {
+  let best = rgb;
+  for (let t = 0.05; t <= 1.0001; t += 0.05) {
+    best = mix(rgb, toward, t);
+    if (contrast(best, bg) >= target) return best;
+  }
+  return best;
+}
+
+/** 卡面色标准推导：按底色明暗定方向与档位；flat（无描边无阴影）时加大档位保分离。 */
+function surfaceTarget(bg: Rgb, flat: boolean): Rgb {
+  const bgL = luminance(bg);
+  // 深底的 WCAG 亮度对混白不敏感（非线性），档位给大些才落得进层次带。
+  if (bgL < 0.35) return mix(bg, PURE_WHITE, flat ? 0.18 : 0.09);
+  if (bgL >= 0.96) return mix(bg, { r: 34, g: 34, b: 38 }, flat ? 0.05 : 0.025);
+  return mix(bg, PURE_WHITE, flat ? 0.85 : 0.6);
+}
+
+export function sanitizePaletteRelations(
+  palette: StylePalette,
+  decoration: StyleDecoration,
+  notes: string[] = [],
+): StylePalette {
+  const bg = hexToRgb(palette.background);
+  const lightBg = luminance(bg) >= 0.35;
+
+  let primary = hexToRgb(palette.primary);
+  if (saturation(primary) > PRIMARY_SATURATION_CAP) {
+    primary = desaturateToCap(primary, PRIMARY_SATURATION_CAP);
+    notes.push(`primary 饱和度超过 ${String(PRIMARY_SATURATION_CAP)}，已降饱和（保明度）`);
+  }
+  if (lightBg && contrast(primary, bg) < 3) {
+    primary = stepToContrast(primary, bg, 3, INK);
+    notes.push("primary 与浅底对比度不足 3:1（浅底页标题用主色），已加深");
+  }
+
+  let accent = hexToRgb(palette.accent);
+  if (saturation(accent) > ACCENT_SATURATION_CAP) {
+    accent = desaturateToCap(accent, ACCENT_SATURATION_CAP);
+    notes.push(`accent 饱和度超过 ${String(ACCENT_SATURATION_CAP)}，已降饱和`);
+  }
+  if (hueDistance(accent, primary) < 40) {
+    accent = rotateHue(accent, 170, bg);
+    notes.push("accent 与 primary 色距不足 40°（撞色），已旋转分离");
+  }
+  if (contrast(accent, bg) < 2.5) {
+    accent = stepToContrast(accent, bg, 2.5, lightBg ? INK : PURE_WHITE);
+    notes.push("accent 与底色对比度不足 2.5:1，已加深/提亮");
+  }
+
+  let text = hexToRgb(palette.text);
+  if (contrast(text, bg) < 4.5) {
+    text = stepToContrast(text, bg, 4.5, lightBg ? INK : PURE_WHITE);
+    notes.push("text 与底色对比度不足 4.5:1，已加深/提亮");
+  }
+
+  let textMuted = hexToRgb(palette.textMuted);
+  if (contrast(textMuted, bg) < 3) {
+    for (let t = 0.1; t <= 1.0001; t += 0.1) {
+      textMuted = mix(textMuted, text, t);
+      if (contrast(textMuted, bg) >= 3) break;
+    }
+    notes.push("textMuted 与底色对比度不足 3:1，已向正文色拉近");
+  }
+
+  let onDarkText = hexToRgb(palette.onDarkText);
+  const deepCover = mix(primary, INK, 0.75);
+  if (contrast(onDarkText, deepCover) < 3.5) {
+    onDarkText = stepToContrast(onDarkText, deepCover, 3.5, PURE_WHITE);
+    notes.push("onDarkText 在深底封面上对比度不足 3.5:1，已提亮");
+  }
+
+  const flat = decoration.cardShadow === "none" && decoration.cardStroke == null;
+  const bgL = luminance(bg);
+  const sL = luminance(hexToRgb(palette.surface));
+  const whiteBg = lightBg && bgL >= 0.96;
+  const delta = whiteBg ? bgL - sL : sL - bgL;
+  const minDelta = flat ? (lightBg ? 0.05 : 0.03) : (lightBg ? 0.03 : 0.015);
+  const maxDelta = lightBg ? 0.3 : 0.14;
+  const surfaceHex = delta >= minDelta && delta <= maxDelta
+    ? palette.surface
+    : rgbToHex(surfaceTarget(bg, flat));
+  if (surfaceHex !== palette.surface) {
+    notes.push(whiteBg
+      ? "surface 与白色页底层次不足（或跳档过大），已按底色重推卡面色"
+      : "surface 与页底层次越界（无描边无阴影时要求更宽档位），已按底色重推卡面色");
+  }
+
+  return {
+    ...palette,
+    primary: rgbToHex(primary),
+    accent: rgbToHex(accent),
+    text: rgbToHex(text),
+    textMuted: rgbToHex(textMuted),
+    onDarkText: rgbToHex(onDarkText),
+    surface: surfaceHex,
+  };
+}
+
+export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleParams {
   if (!raw || typeof raw !== "object") throw new Error("风格参数必须是对象");
   const row = raw as Record<string, unknown>;
 
   const paletteRow = row.palette as Record<string, unknown> | undefined;
   if (!paletteRow) throw new Error("风格参数缺少 palette");
-  const chartSeries = Array.isArray(paletteRow.chartSeries) && paletteRow.chartSeries.length >= 3
+  const explicitChartSeries = Array.isArray(paletteRow.chartSeries) && paletteRow.chartSeries.length >= 3
     ? (paletteRow.chartSeries as unknown[]).slice(0, 6).map((item, index) => optionalHex(item, `chartSeries[${String(index)}]`))
-    : deriveChartSeries(
-      optionalHex(paletteRow.primary, "palette.primary"),
-      optionalHex(paletteRow.accent, "palette.accent"),
-      optionalHex(paletteRow.background, "palette.background"),
-    );
-  const palette: StylePalette = {
+    : null;
+  const basePalette: StylePalette = {
     background: optionalHex(paletteRow.background, "palette.background"),
     surface: optionalHex(paletteRow.surface, "palette.surface"),
     primary: optionalHex(paletteRow.primary, "palette.primary"),
@@ -91,7 +216,7 @@ export function normalizeStyleParams(raw: unknown): StyleParams {
     text: optionalHex(paletteRow.text, "palette.text"),
     textMuted: optionalHex(paletteRow.textMuted, "palette.textMuted"),
     onDarkText: optionalHex(paletteRow.onDarkText, "palette.onDarkText"),
-    chartSeries,
+    chartSeries: [],
   };
 
   const typoRow = row.typography as Record<string, unknown> | undefined;
@@ -128,6 +253,10 @@ export function normalizeStyleParams(raw: unknown): StyleParams {
     divider: optionalEnum(decoRow.divider ?? "line", ["line", "none"] as const, "decoration.divider"),
     imageFit: optionalEnum(decoRow.imageFit ?? "cover", ["cover", "contain"] as const, "decoration.imageFit"),
   };
+
+  const palette = sanitizePaletteRelations(basePalette, decoration, notes);
+  palette.chartSeries = explicitChartSeries
+    ?? deriveChartSeries(palette.primary, palette.accent, palette.background);
 
   const motifRow = (row.motif ?? {}) as Record<string, unknown>;
   const motifSpecRaw = (motifRow.spec ?? {}) as Record<string, unknown>;
