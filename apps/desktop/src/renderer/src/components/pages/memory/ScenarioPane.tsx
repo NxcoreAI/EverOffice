@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, FileText, Folder } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MemoryScenarioEntryDto } from '../../../../../shared/memory'
@@ -116,14 +116,23 @@ function stripMetaHeader(content: string): string {
   return match ? content.slice(match[0].length).trimStart() : content
 }
 
-export function ScenarioPane() {
+export function ScenarioPane({ refreshTick }: { refreshTick?: number } = {}) {
   const { locale, t } = useLocale()
-  const { data, failure, loading } = useAsyncData(() => window.nxcore!.memory.listScenarios())
+  const { data, failure, loading, refresh } = useAsyncData(() => window.nxcore!.memory.listScenarios())
   const [selectedPath, setSelectedPath] = useState('')
   const file = useAsyncData(
     () => selectedPath ? window.nxcore!.memory.readScenario(selectedPath) : Promise.resolve(null),
     [selectedPath],
   )
+
+  // 顶部全局刷新：列表与当前选中场景一起重载。
+  useEffect(() => {
+    if (refreshTick) {
+      void refresh()
+      void file.refresh()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   const root = useMemo(() => buildTree(data?.entries ?? []), [data])
   const selectedEntry = (data?.entries ?? []).find((entry) => entry.path === selectedPath)

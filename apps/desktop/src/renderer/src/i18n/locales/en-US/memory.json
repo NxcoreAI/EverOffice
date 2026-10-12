@@ -61,6 +61,8 @@
   "memory.memory": "Memory",
   "memory.memoryLevels": "Memory levels",
   "memory.refresh": "Refresh",
+  "memory.refreshed": "Refreshed",
+  "memory.refreshFailed": "Refresh failed",
   "memory.searchFailed": "Search failed.",
   "memory.searching": "Searching…",
   "memory.searchMemoryAndConversations": "Search memory and conversations",

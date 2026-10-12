@@ -61,6 +61,8 @@
   "memory.memory": "记忆",
   "memory.memoryLevels": "记忆层级",
   "memory.refresh": "刷新",
+  "memory.refreshed": "已刷新",
+  "memory.refreshFailed": "刷新失败",
   "memory.searchFailed": "搜索失败。",
   "memory.searching": "搜索中…",
   "memory.searchMemoryAndConversations": "搜索记忆与历史对话",

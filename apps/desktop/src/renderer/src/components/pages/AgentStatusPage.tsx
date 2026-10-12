@@ -385,6 +385,8 @@ export function AgentStatusPage() {
       setError(t('surface:agentStatus.theAgentServiceIsOnlyAvailableInThe'))
       return
     }
+    // 手动刷新至少转 600ms：本地响应几十毫秒+3s 轮询常新，否则点击像没反应。
+    const startedAt = Date.now()
     if (!quiet) setRefreshing(true)
     try {
       const next = await api.getStatus()
@@ -398,7 +400,12 @@ export function AgentStatusPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('surface:agentStatus.failedToLoadAgentStatus'))
     } finally {
-      setRefreshing(false)
+      if (quiet) {
+        setRefreshing(false)
+        return
+      }
+      const wait = Math.max(0, 600 - (Date.now() - startedAt))
+      window.setTimeout(() => setRefreshing(false), wait)
     }
   }, [t])
 

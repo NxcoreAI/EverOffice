@@ -7,6 +7,7 @@ import { MemoryMarkdown } from './MemoryMarkdown'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, memoryFailureText, scrollPaneToTop, useAsyncData } from './useMemoryData'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 
 /** 粘贴导入的字符上限（与 gateway / MemoryCore 的 2MB 一致）。 */
 const MAX_IMPORT_CHARS = 2 * 1024 * 1024
@@ -200,7 +201,7 @@ function DocumentDetail({ document, onBack, onDeleted }: {
   )
 }
 
-export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | null }) {
+export function DocumentPane({ focusDocumentId, refreshTick }: { focusDocumentId?: string | null; refreshTick?: number }) {
   const { locale, t } = useLocale()
   const [reloadTick, setReloadTick] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -213,10 +214,23 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const { data, failure, loading } = useAsyncData(
+  const { data, failure, loading, refresh } = useAsyncData(
     () => window.nxcore!.memory.listDocuments(PAGE_SIZE, page * PAGE_SIZE),
     [reloadTick, page],
   )
+
+  // 手动刷新完成后 Toast 收口（本地请求太快，转圈肉眼难辨）。
+  const doRefresh = async (): Promise<void> => {
+    const ok = await refresh()
+    showToast(ok
+      ? { title: t('memory:memory.refreshed') }
+      : { title: t('memory:memory.refreshFailed'), variant: 'error' })
+  }
+
+  useEffect(() => {
+    if (refreshTick) void doRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   // 溯源跳转：原子记忆 → 文档详情。目标可能不在当前页：先在页内找，
   // 找不到直接用跳转传来的最小信息渲染详情（详情数据自己拉取）。
@@ -332,7 +346,7 @@ export function DocumentPane({ focusDocumentId }: { focusDocumentId?: string | n
           <button type="button" onClick={importPicked} disabled={importing}>
             <Upload aria-hidden="true" strokeWidth={1.7} />{t('memory:document.selectMarkdownFiles')}
           </button>
-          <button type="button" onClick={() => setReloadTick((tick) => tick + 1)} disabled={loading}>
+          <button type="button" onClick={() => void doRefresh()} disabled={loading}>
             <RefreshCw aria-hidden="true" strokeWidth={1.7} className={loading ? 'mem-spin' : undefined} />{t('memory:document.refresh')}
           </button>
         </span>

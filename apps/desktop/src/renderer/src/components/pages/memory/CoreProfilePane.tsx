@@ -6,7 +6,7 @@ import { MemoryEmptyView } from './MemoryStatusViews'
 import { MemoryMarkdown } from './MemoryMarkdown'
 import { formatDate, memoryFailureText, useAsyncData } from './useMemoryData'
 
-export function CoreProfilePane() {
+export function CoreProfilePane({ refreshTick }: { refreshTick?: number } = {}) {
   const { locale, t } = useLocale()
   const { data, failure, loading, refresh } = useAsyncData(() => window.nxcore!.memory.readCore())
   const [editing, setEditing] = useState(false)
@@ -17,6 +17,12 @@ export function CoreProfilePane() {
   useEffect(() => {
     if (data && !editing) setDraft(data.content ?? '')
   }, [data, editing])
+
+  // 顶部全局刷新：重读画像。
+  useEffect(() => {
+    if (refreshTick) void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   const save = async () => {
     const content = draft.trim()

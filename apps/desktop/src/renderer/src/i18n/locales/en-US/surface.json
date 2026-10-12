@@ -1080,6 +1080,8 @@
   "wiki.noWikisYetTheyAreGeneratedAsRooms": "No wikis yet. They are generated as Rooms accumulate knowledge.",
   "wiki.pages": "Pages",
   "wiki.refresh": "Refresh",
+  "wiki.refreshed": "Refreshed",
+  "wiki.refreshFailed": "Refresh failed",
   "wiki.roomWikiList": "Room wiki list",
   "wiki.selectAPageFromTheTreeToRead": "Select a page from the tree to read it.",
   "wiki.theKnowledgeBaseIsBeingBuiltRefreshIn": "The knowledge base is being built. Refresh in a moment.",

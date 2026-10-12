@@ -1080,6 +1080,8 @@
   "wiki.noWikisYetTheyAreGeneratedAsRooms": "还没有 wiki：Room 里沉淀资料后自动生成。",
   "wiki.pages": "目录",
   "wiki.refresh": "刷新",
+  "wiki.refreshed": "已刷新",
+  "wiki.refreshFailed": "刷新失败",
   "wiki.roomWikiList": "Room wiki 清单",
   "wiki.selectAPageFromTheTreeToRead": "从目录选择一个页面阅读。",
   "wiki.theKnowledgeBaseIsBeingBuiltRefreshIn": "知识库正在构建中，稍后刷新查看。",
