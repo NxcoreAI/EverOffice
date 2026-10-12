@@ -83,7 +83,8 @@ export function RoomNodeInspector({
 }: {
   contextLabel?: string
   onClose: () => void
-  onOpenRoom: (roomId: string) => void
+  /** 当前 Room 自身不传：检查器不渲染「打开 Room」按钮。 */
+  onOpenRoom?: (roomId: string) => void
   relationshipSummary?: string | null
   room: ContextRoomRecord
 }) {
@@ -106,11 +107,11 @@ export function RoomNodeInspector({
       onClose={onClose}
       title={room.title}
       tone={roomKindTone(room.kind)}
-      footer={(
+      footer={onOpenRoom ? (
         <button type="button" className="context-room-primary" onClick={() => onOpenRoom(room.id)}>
           {t('contextRoom:relations.openRoom')}<ChevronRight aria-hidden="true" />
         </button>
-      )}
+      ) : undefined}
     >
       <section className="context-room-node-overview">
         <div className="context-room-node-meta">

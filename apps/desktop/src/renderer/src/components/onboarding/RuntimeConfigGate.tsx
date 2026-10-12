@@ -18,7 +18,7 @@ import { QrLoginPanel } from '@/components/account/QrLoginPanel'
 import { useLocale } from '@/i18n/LocaleContext'
 import { useAccount } from '@/state/AccountContext'
 import {
-  buildUserConfig,
+  buildManualEntryPayload,
   configTestErrorMessage,
   embeddingFieldsFromSnapshot,
   emptyAiFields,
@@ -399,7 +399,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     setFieldError(null)
     setTestError(null)
     try {
-      const next = await runtimeConfig.saveUser(buildUserConfig(snapshot, { primary: fields, embedding }))
+      const next = await runtimeConfig.saveUser(buildManualEntryPayload(snapshot, { primary: fields, embedding }))
       await validateAndEnter(next, 'manual')
     } catch (saveError) {
       setTestError(saveError instanceof Error ? saveError.message : t('surface:configGate.testFailedGeneric'))

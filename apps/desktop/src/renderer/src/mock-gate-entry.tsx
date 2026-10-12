@@ -39,6 +39,7 @@ const state = {
 
 const mockSnapshot = (configured: boolean) => ({
   config: {},
+  userConfig: null,
   source: 'default',
   selectedSource: 'default',
   availableSources: ['default'],

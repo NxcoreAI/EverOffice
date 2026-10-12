@@ -46,6 +46,7 @@ import { RecordingPage } from '../recording/RecordingPage'
 import { SpeakerLabel, speakerLabel } from '../recording/SpeakerLabel'
 import { mergeRealityEvent, mergeRealitySnapshot } from './reality-event-state'
 import { perceptionDisplayText, realityTagKindLabel, VisualDetail } from './VisualPerceptionPanel'
+import { ScreenMemoryPanel } from './ScreenMemoryPanel'
 import './RealityPage.css'
 
 type DetailTab = 'insights' | 'transcript'
@@ -764,6 +765,7 @@ export function RealityPage({ onOpenSettings }: { onOpenSettings: () => void }) 
         </div>
       ) : null}
 
+      <ScreenMemoryPanel />
       <main className="reality-timeline">
         {loading || visualLoading ? <div className="reality-empty"><LoaderCircle className="spin" />{t('diaryReality:reality.loadingTimeline')}</div> : null}
         {!loading && !visualLoading && grouped.length === 0 ? (

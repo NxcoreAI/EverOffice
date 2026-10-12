@@ -81,7 +81,8 @@ export type LedgerSourceKind =
   | "calendar-event"
   | "todo"
   | "connector-record"
-  | "visual-event";
+  | "visual-event"
+  | "screen-interval";
 
 export interface IngestResult {
   eventId: string;
@@ -268,6 +269,31 @@ export class IngestService {
         sourceId: unit.sourceId,
         sourceVersion: unit.sourceVersion,
         dataType: "perception-event",
+        detectedBy: "source-kind",
+        title: unit.title,
+        markdown: unit.markdown,
+        occurredAt: unit.occurredAt,
+        contentHash: contentHashOf(Buffer.from(unit.markdown, "utf8")),
+        origin: "reality",
+      },
+    );
+  }
+
+  async ingestScreenInterval(unit: {
+    sourceId: string;
+    sourceVersion: number;
+    title: string;
+    markdown: string;
+    occurredAt: string;
+    pipelines: Pipelines;
+  }): Promise<IngestResult> {
+    return this.processNormalized(
+      { pipelines: unit.pipelines },
+      {
+        sourceKind: "screen-interval",
+        sourceId: unit.sourceId,
+        sourceVersion: unit.sourceVersion,
+        dataType: "screen-activity",
         detectedBy: "source-kind",
         title: unit.title,
         markdown: unit.markdown,

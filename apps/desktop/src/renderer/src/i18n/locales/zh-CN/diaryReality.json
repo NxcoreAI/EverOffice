@@ -304,5 +304,19 @@
   "reality.noUnresolvedQuestions": "暂无未解决问题",
   "diary.dayTrace": "当日轨迹",
   "diary.todayShort": "今",
-  "recording.english": "英语"
+  "recording.english": "英语",
+  "screenMemory.title": "屏幕记忆",
+  "screenMemory.searchPlaceholder": "按内容、应用搜索看过什么",
+  "screenMemory.searchAction": "搜索",
+  "screenMemory.disabledHint": "未开启",
+  "screenMemory.keyframeCount": "{{count}} 帧",
+  "screenMemory.summaryWaiting": "摘要等待中",
+  "screenMemory.summaryEmpty": "—",
+  "screenMemory.correct": "纠正",
+  "screenMemory.saveCorrection": "保存",
+  "screenMemory.cancel": "取消",
+  "screenMemory.empty": "暂无记录",
+  "screenMemory.addToRoom": "加入 Room",
+  "screenMemory.handToAgent": "交给 Agent",
+  "screenMemory.copied": "已复制引用"
 }

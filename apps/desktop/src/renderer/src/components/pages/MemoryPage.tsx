@@ -1,5 +1,5 @@
 import { Pause, Play, RefreshCw, Search } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { MEMORY_PAUSE_EVENT, MEMORY_TAB_EVENT } from '../MemoryPipelineStatus'
 import { AtomicMemoryPane } from './memory/AtomicMemoryPane'
@@ -73,6 +73,25 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
   // 记忆引擎暂停闸（顶部「继续/暂停」）：null = 状态未知（gateway 不可达，按钮禁用）。
   const [ingestPaused, setIngestPaused] = useState<boolean | null>(null)
   const [ingestBusy, setIngestBusy] = useState(false)
+  // 顶部全局刷新：除总览计数外，驱动当前挂载面板重载自身数据（面板接 refreshTick）。
+  const [paneRefreshTick, setPaneRefreshTick] = useState(0)
+  const [headerRefreshing, setHeaderRefreshing] = useState(false)
+  const headerSpinTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (headerSpinTimerRef.current !== null) window.clearTimeout(headerSpinTimerRef.current)
+    }
+  }, [])
+
+  // 本地网关响应几十毫秒，转圈短于感知阈值：手动刷新至少转 500ms。
+  const refreshPage = () => {
+    overview.refresh()
+    setPaneRefreshTick((value) => value + 1)
+    setHeaderRefreshing(true)
+    if (headerSpinTimerRef.current !== null) window.clearTimeout(headerSpinTimerRef.current)
+    headerSpinTimerRef.current = window.setTimeout(() => setHeaderRefreshing(false), 500)
+  }
 
   useEffect(() => {
     let active = true
@@ -189,10 +208,10 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
             type="button"
             className="mem-icon-button"
             title={t('memory:memory.refresh')}
-            onClick={overview.refresh}
-            disabled={overview.loading}
+            onClick={refreshPage}
+            disabled={overview.loading || headerRefreshing}
           >
-            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={overview.loading ? 'mem-spin' : undefined} />
+            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={overview.loading || headerRefreshing ? 'mem-spin' : undefined} />
           </button>
         </div>
       </header>
@@ -222,7 +241,7 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
         <p className="mem-loading">{t('memory:memory.searching')}</p>
       ) : section === 'timeline' ? (
         <div className="mem-content">
-          <AtomicMemoryPane focusItemId={focusAtomicId} onOpenDocument={openDocument} onOpenConversation={openConversation} />
+          <AtomicMemoryPane focusItemId={focusAtomicId} onOpenDocument={openDocument} onOpenConversation={openConversation} refreshTick={paneRefreshTick} />
         </div>
       ) : section === 'sources' ? (
         <div className="mem-content mem-subpage">
@@ -241,9 +260,9 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
             ))}
           </div>
           {sourceTab === 'conversation' ? (
-            <ConversationPane focusSessionId={conversationFocus} />
+            <ConversationPane focusSessionId={conversationFocus} refreshTick={paneRefreshTick} />
           ) : (
-            <DocumentPane focusDocumentId={documentFocus} />
+            <DocumentPane focusDocumentId={documentFocus} refreshTick={paneRefreshTick} />
           )}
         </div>
       ) : (
@@ -263,12 +282,12 @@ export function MemoryPage({ focusAtomicId }: { focusAtomicId?: string | null } 
             ))}
           </aside>
           <div className="mem-subpage-body">
-            {organizeTab === 'scenario' ? <ScenarioPane /> : null}
-            {organizeTab === 'core' ? <CoreProfilePane /> : null}
-            {organizeTab === 'writing-style' ? <WritingStylePane /> : null}
-            {organizeTab === 'ledger' ? <IngestLedgerPane /> : null}
-            {organizeTab === 'filter-rules' ? <FilterRulesPane /> : null}
-            {organizeTab === 'org-preferences' ? <OrganizationPreferencePane /> : null}
+            {organizeTab === 'scenario' ? <ScenarioPane refreshTick={paneRefreshTick} /> : null}
+            {organizeTab === 'core' ? <CoreProfilePane refreshTick={paneRefreshTick} /> : null}
+            {organizeTab === 'writing-style' ? <WritingStylePane refreshTick={paneRefreshTick} /> : null}
+            {organizeTab === 'ledger' ? <IngestLedgerPane refreshTick={paneRefreshTick} /> : null}
+            {organizeTab === 'filter-rules' ? <FilterRulesPane refreshTick={paneRefreshTick} /> : null}
+            {organizeTab === 'org-preferences' ? <OrganizationPreferencePane refreshTick={paneRefreshTick} /> : null}
           </div>
         </div>
       )}

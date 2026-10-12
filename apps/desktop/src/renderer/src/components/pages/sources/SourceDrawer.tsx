@@ -321,7 +321,6 @@ export function SourceDrawer({
         )}
         <div className="src-drawer-list">
           <div className="src-drawer-doc-import">
-            <div className="src-list-head"><h4>{t('surface:connectorSync.documentImport')}</h4></div>
             <ConnectorDocumentImportPanel provider="feishu" standalone embedded />
           </div>
         </div>
@@ -378,7 +377,6 @@ export function SourceDrawer({
         <div className="src-drawer-list">
           {(connection.provider === 'notion' || connection.provider === 'feishu') ? (
             <div className="src-drawer-doc-import">
-              <div className="src-list-head"><h4>{t('surface:connectorSync.documentImport')}</h4></div>
               <ConnectorDocumentImportPanel
                 provider={connection.provider}
                 connectionName={connection.connectionName || undefined}

@@ -40,14 +40,19 @@ interface AsyncState<T> {
   loading: boolean
 }
 
-/** 极简异步加载 hook：手动 refresh + 卸载后忽略结果。 */
+/** 极简异步加载 hook：手动 refresh + 卸载后忽略结果。refresh 可等待，返回本次加载成败。 */
 export function useAsyncData<T>(
   loader: () => Promise<T>,
   deps: unknown[] = [],
-): AsyncState<T> & { refresh: () => void } {
+): AsyncState<T> & { refresh: () => Promise<boolean> } {
   const [state, setState] = useState<AsyncState<T>>({ data: null, failure: null, loading: true })
   const aliveRef = useRef(true)
+  const settleRef = useRef<Array<(ok: boolean) => void>>([])
   const [tick, setTick] = useState(0)
+
+  const settle = (ok: boolean) => {
+    settleRef.current.splice(0).forEach((resolve) => resolve(ok))
+  }
 
   useEffect(() => {
     aliveRef.current = true
@@ -55,17 +60,25 @@ export function useAsyncData<T>(
     loader()
       .then((data) => {
         if (aliveRef.current) setState({ data, failure: null, loading: false })
+        settle(true)
       })
       .catch((error: unknown) => {
         if (aliveRef.current) setState({ data: null, failure: toMemoryFailure(error), loading: false })
+        settle(false)
       })
     return () => {
       aliveRef.current = false
+      // cleanup 在重跑时也会触发；只有真卸载（alive 无人复位）才判失败，
+      // 否则交给新一轮加载落定时结算。
+      queueMicrotask(() => { if (!aliveRef.current) settle(false) })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, ...deps])
 
-  const refresh = useCallback(() => setTick((value) => value + 1), [])
+  const refresh = useCallback(() => new Promise<boolean>((resolve) => {
+    settleRef.current.push(resolve)
+    setTick((value) => value + 1)
+  }), [])
   return { ...state, refresh }
 }
 
@@ -109,7 +122,7 @@ export function useSnapshottedAsyncData<T>(
   snapshotKey: string,
   loader: () => Promise<T>,
   deps: unknown[] = [],
-): AsyncState<T> & { refresh: () => void; stale: boolean; snapshotAt: number | null } {
+): AsyncState<T> & { refresh: () => Promise<boolean>; stale: boolean; snapshotAt: number | null } {
   const [state, setState] = useState<AsyncState<T> & { stale: boolean; snapshotAt: number | null }>({
     data: null,
     failure: null,
@@ -118,7 +131,12 @@ export function useSnapshottedAsyncData<T>(
     snapshotAt: null,
   })
   const aliveRef = useRef(true)
+  const settleRef = useRef<Array<(ok: boolean) => void>>([])
   const [tick, setTick] = useState(0)
+
+  const settle = (ok: boolean) => {
+    settleRef.current.splice(0).forEach((resolve) => resolve(ok))
+  }
 
   useEffect(() => {
     aliveRef.current = true
@@ -130,6 +148,7 @@ export function useSnapshottedAsyncData<T>(
           if (!aliveRef.current) return
           writeSnapshot(snapshotKey, data)
           setState({ data, failure: null, loading: false, stale: false, snapshotAt: null })
+          settle(true)
         })
         .catch((error: unknown) => {
           if (!aliveRef.current) return
@@ -147,17 +166,22 @@ export function useSnapshottedAsyncData<T>(
           } else {
             setState({ data: null, failure: toMemoryFailure(error), loading: false, stale: false, snapshotAt: null })
           }
+          settle(false)
         })
     }
     run()
     return () => {
       aliveRef.current = false
       if (retryTimer) window.clearTimeout(retryTimer)
+      queueMicrotask(() => { if (!aliveRef.current) settle(false) })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, snapshotKey, ...deps])
 
-  const refresh = useCallback(() => setTick((value) => value + 1), [])
+  const refresh = useCallback(() => new Promise<boolean>((resolve) => {
+    settleRef.current.push(resolve)
+    setTick((value) => value + 1)
+  }), [])
   return { ...state, refresh }
 }
 

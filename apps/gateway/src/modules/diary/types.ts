@@ -2,7 +2,7 @@ import type { RealityTag } from "@nxcore/reality-contract";
 import type { Logger } from "pino";
 import type { DiaryPayload } from "../../infrastructure/database/schema.js";
 
-export type DiarySourceKind = "document_version" | "file" | "visual_node" | "recording" | "connector_email" | "connector_document" | "connector_calendar" | "memory";
+export type DiarySourceKind = "document_version" | "file" | "visual_node" | "screen_interval" | "recording" | "connector_email" | "connector_document" | "connector_calendar" | "memory";
 
 export interface DiaryKnowledgeEntity {
   entityId: string;

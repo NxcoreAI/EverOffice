@@ -2,6 +2,7 @@ import {
   ArrowRight,
   GitMerge,
   Layers3,
+  Plus,
   RotateCcw,
   Search,
   Trash2,
@@ -160,6 +161,17 @@ export function HomeView({
                   <h2>{t('contextRoom:home.myRooms')}</h2>
                 </div>
                 <div className="context-room-my-actions" aria-label={t('contextRoom:home.roomActions')}>
+                  <button
+                    type="button"
+                    aria-label={t('contextRoom:home.newRoom')}
+                    title={t('contextRoom:home.newRoom')}
+                    className="context-room-new-room-button"
+                    data-testid="context-room-new-room-button"
+                    onClick={() => setNewRoomOpen(true)}
+                  >
+                    <Plus aria-hidden="true" />
+                    {t('contextRoom:home.newRoom')}
+                  </button>
                   <button type="button" aria-label={t('surface:obsidian.mount')} title={t('surface:obsidian.mount')} className="context-room-add-room" onClick={() => void onMountObsidian()}>
                     <img className="obsidian-app-icon" src={obsidianLogo} alt="" />
                   </button>
@@ -213,6 +225,15 @@ export function HomeView({
                   <Layers3 aria-hidden="true" />
                   <h3>{t('contextRoom:home.noMatchingRooms')}</h3>
                   <p>{t('contextRoom:home.tryAnotherSearchTermOrCreateANew')}</p>
+                  <button
+                    type="button"
+                    className="context-room-new-room-button"
+                    data-testid="context-room-new-room-empty-button"
+                    onClick={() => setNewRoomOpen(true)}
+                  >
+                    <Plus aria-hidden="true" />
+                    {t('contextRoom:home.newRoom')}
+                  </button>
                 </div>
               ) : null}
             </div>

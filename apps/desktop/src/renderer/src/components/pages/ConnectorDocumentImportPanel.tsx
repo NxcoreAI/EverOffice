@@ -101,12 +101,13 @@ export function ConnectorDocumentImportPanel({
   }, [activeConnections, lockedConnectionName])
 
   const [items, setItems] = useState<ExternalDocumentListItem[]>([])
-  const [truncated, setTruncated] = useState(false)
   const [warnings, setWarnings] = useState<string[]>([])
-  const [fetchedAt, setFetchedAt] = useState<string | null>(null)
   const [listLoading, setListLoading] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [showImported, setShowImported] = useState(false)
+  /** 渲染窗口：上万行列表只先渲染前 200 行，"显示更多"逐批放出。 */
+  const [visibleCount, setVisibleCount] = useState(200)
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   /** 聚合批次视图：一次导入动作可能拆多批（单批上限 50），跨批聚合进度与明细。 */
@@ -150,17 +151,19 @@ export function ConnectorDocumentImportPanel({
     }
   }, [])
 
-  const loadDocuments = useCallback(async () => {
+  /** 缓存回显超过 10 分钟视为过期：后台增量刷新（delta 有缓存时秒级）。 */
+  const LIST_STALE_MS = 10 * 60 * 1000
+  const RENDER_BATCH = 200
+
+  const loadDocuments = useCallback(async (mode: 'full' | 'delta' = 'full') => {
     if (!external || listLoading) return
     setListLoading(true)
     setListError(null)
     try {
-      const response = await external.importList(provider, connectionName || undefined)
+      const response = await external.importList(provider, connectionName || undefined, undefined, mode)
       setItems(response.items)
-      setTruncated(response.truncated)
       setWarnings(response.warnings.map((warning) => warning.message))
-      setFetchedAt(response.fetchedAt ?? new Date().toISOString())
-      setSelected(new Set())
+      if (mode === 'full') setSelected(new Set())
     } catch (error) {
       setListError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -168,29 +171,41 @@ export function ConnectorDocumentImportPanel({
     }
   }, [external, provider, connectionName, listLoading])
 
-  // 打开/切换 provider 或连接时先回显上次列举缓存（秒开，不拉远端）；
-  // imported 徽标由服务端按当前库重算，导入后无需重拉。
+  // 打开/切换 provider 或连接时先回显上次列举缓存（秒开）；缓存过期则后台
+  // 增量刷新，导入后无需手动全量。imported 徽标由服务端按当前库重算。
   useEffect(() => {
     if (!external) return
+    setShowImported(false)
+    setVisibleCount(RENDER_BATCH)
     void external.importList(provider, connectionName || undefined, true)
       .then((response) => {
         if (response.fetchedAt && response.items.length > 0) {
           setItems(response.items)
-          setTruncated(response.truncated)
           setWarnings(response.warnings.map((warning) => warning.message))
-          setFetchedAt(response.fetchedAt)
           setSelected(new Set())
+          if (Date.now() - new Date(response.fetchedAt).getTime() > LIST_STALE_MS) {
+            void loadDocuments('delta')
+          }
+        } else {
+          void loadDocuments('full')
         }
       })
-      .catch(() => undefined)
-  }, [external, provider, connectionName])
+      .catch(() => {
+        void loadDocuments('full')
+      })
+  }, [external, provider, connectionName, loadDocuments])
 
+  // 已导入的默认收起：列表只呈现增量，开关放出全量（重导入走候选版本语义）。
+  const importedCount = useMemo(() => items.filter((item) => item.imported).length, [items])
   const visibleItems = useMemo(() => {
     const keyword = filter.trim().toLowerCase()
-    if (!keyword) return items
-    return items.filter((item) => item.title.toLowerCase().includes(keyword)
-      || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword))
-  }, [items, filter])
+    return items.filter((item) => (showImported || !item.imported)
+      && (!keyword
+        || item.title.toLowerCase().includes(keyword)
+        || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword)))
+  }, [items, filter, showImported])
+  // 过滤词变化重置渲染窗口：新结果集从第一批放起。
+  useEffect(() => setVisibleCount(200), [filter])
   const batchStatusById = useMemo(() => new Map((run?.items ?? []).map((item) => [item.remoteDocumentId, item])), [run])
   /** 明细行显示名：批量项 title 常为 null（失败/跳过发生在标题回填前），回退到列表项标题。 */
   const listTitleById = useMemo(() => new Map(items.map((item) => [item.remoteDocumentId, item.title])), [items])
@@ -300,7 +315,7 @@ export function ConnectorDocumentImportPanel({
         const cancelled = view.status === 'cancelled'
         setRun({ status: cancelled ? 'cancelled' : 'completed', total: view.total, processed: view.processed, ...counts, items: view.items })
         showBatchResultToast(counts, cancelled)
-        void loadDocuments()
+        void loadDocuments('delta')
         return
       }
     } finally {
@@ -392,7 +407,7 @@ export function ConnectorDocumentImportPanel({
       // 终态进度用实际完成数（items 全部已终态）：中途取消/熔断时不跳满。
       setRun({ status: cancelled ? 'cancelled' : 'completed', total: ids.length, processed: agg.items.length, ...agg })
       showBatchResultToast(agg, cancelled)
-      void loadDocuments()
+      void loadDocuments('delta')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('BATCH_AUTO_UNAVAILABLE')) {
@@ -499,12 +514,7 @@ export function ConnectorDocumentImportPanel({
 
   const renderRow = (item: ExternalDocumentListItem) => {
     const status = batchStatusById.get(item.remoteDocumentId)
-    const originLabel = t({
-      drive: 'surface:connectorSync.originDrive',
-      wiki: 'surface:connectorSync.originWiki',
-      page: 'surface:connectorSync.originPage',
-    }[item.origin])
-    const meta = [originLabel, item.ownerName, item.updatedAt ? formatTime(item.updatedAt, locale) : null].filter(Boolean).join(' · ')
+    const meta = [item.ownerName, item.updatedAt ? formatTime(item.updatedAt, locale) : null].filter(Boolean).join(' · ')
     return (
       <label key={item.remoteDocumentId} className="connector-doc-row" data-selected={String(selected.has(item.remoteDocumentId))}>
         <input
@@ -551,20 +561,18 @@ export function ConnectorDocumentImportPanel({
     <section className="connector-sync-section" data-embedded={String(embedded)}>
       {embedded ? null : (
         <div className="connector-section-heading">
-          <div>
-            <h2>{t('surface:connectorSync.documentImport')}</h2>
-            <p>{t('surface:connectorSync.documentImportDesc')}</p>
-          </div>
+          <h2>{t('surface:connectorSync.documentImport')}</h2>
         </div>
       )}
 
       <div className="connector-doc-toolbar">
-        {lockedProvider ? (
+        {lockedProvider && !embedded ? (
           <span className="connector-doc-provider-chip">
             <SourceIcon kind={lockedProvider} />
             {t(lockedProvider === 'feishu' ? 'surface:connectorSync.providerFeishu' : 'surface:connectorSync.providerNotion')}
           </span>
-        ) : (
+        ) : null}
+        {!lockedProvider ? (
           <div className="connector-segmented">
             {providerOptions.map((service) => (
               <button key={service} type="button" data-active={String(provider === service)} onClick={() => setProvider(service)}>
@@ -572,7 +580,7 @@ export function ConnectorDocumentImportPanel({
               </button>
             ))}
           </div>
-        )}
+        ) : null}
         {activeConnections.length > 1 && lockedConnectionName === undefined ? (
           <select value={connectionName} onChange={(event) => setConnectionName(event.target.value)}>
             <option value="">{t('surface:connectorSync.defaultConnection')}</option>
@@ -582,6 +590,38 @@ export function ConnectorDocumentImportPanel({
               </option>
             ))}
           </select>
+        ) : null}
+        {items.length > 0 ? (
+          <div className="connector-doc-filter">
+            <Search aria-hidden="true" />
+            <input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder={t('surface:connectorSync.filterDocuments')}
+            />
+            {filter ? (
+              <button
+                type="button"
+                className="connector-doc-filter-clear"
+                onClick={() => setFilter('')}
+                aria-label={t('surface:connectorSync.filterClear')}
+                title={t('surface:connectorSync.filterClear')}
+              >
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {importedCount > 0 ? (
+          <button
+            type="button"
+            className="connector-text-btn"
+            onClick={() => setShowImported((previous) => !previous)}
+          >
+            {showImported
+              ? t('surface:connectorSync.hideImported')
+              : t('surface:connectorSync.showImported', { count: String(importedCount) })}
+          </button>
         ) : null}
         <button
           type="button"
@@ -610,10 +650,10 @@ export function ConnectorDocumentImportPanel({
           </div>
         </div>
       ) : null}
-      {truncated || warnings.length > 0 ? (
+      {warnings.length > 0 ? (
         <div className="connector-doc-warning">
           <TriangleAlert aria-hidden="true" />
-          <span>{[truncated ? t('surface:connectorSync.listTruncated') : null, ...warnings].filter(Boolean).join('；')}</span>
+          <span>{warnings.join(' · ')}</span>
         </div>
       ) : null}
       {listError ? (
@@ -625,37 +665,6 @@ export function ConnectorDocumentImportPanel({
 
       {items.length > 0 ? (
         <>
-          <div className="connector-doc-meta-row">
-            <span>
-              {fetchedAt
-                ? t('surface:connectorSync.docListMeta', { count: String(items.length), time: new Date(fetchedAt).toLocaleString(locale, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) })
-                : t('surface:connectorSync.docListMetaNoTime', { count: String(items.length) })}
-            </span>
-            {provider === 'notion' ? (
-              <span className="connector-doc-info" role="note" title={t('surface:connectorSync.notionScopeHint')}>
-                <Info aria-hidden="true" />
-              </span>
-            ) : null}
-          </div>
-          <div className="connector-doc-filter">
-            <Search aria-hidden="true" />
-            <input
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder={t('surface:connectorSync.filterDocuments')}
-            />
-            {filter ? (
-              <button
-                type="button"
-                className="connector-doc-filter-clear"
-                onClick={() => setFilter('')}
-                aria-label={t('surface:connectorSync.filterClear')}
-                title={t('surface:connectorSync.filterClear')}
-              >
-                <X aria-hidden="true" />
-              </button>
-            ) : null}
-          </div>
           <div className="connector-doc-list" data-embedded={String(embedded)} data-running={String(batchRunning)}>
             <label className="connector-doc-row connector-doc-row-head">
               <input
@@ -666,15 +675,36 @@ export function ConnectorDocumentImportPanel({
                 aria-label={t('surface:connectorSync.selectAllDocuments')}
               />
               <span>{t('surface:connectorSync.selectAllDocuments')}</span>
-              <span className="connector-doc-head-count">{t('surface:connectorSync.selectedCount', { count: String(selected.size) })}</span>
+              <span className="connector-doc-head-count">{t('surface:connectorSync.headCount', { selected: String(selected.size), total: String(visibleSelectableIds.length) })}</span>
             </label>
             {visibleItems.length === 0 ? (
               <div className="connector-doc-list-empty">
-                <span>{t('surface:connectorSync.filterNoMatch', { query: filter.trim() })}</span>
-                <button type="button" onClick={() => setFilter('')}>{t('surface:connectorSync.filterClear')}</button>
+                <span>
+                  {filter.trim()
+                    ? t('surface:connectorSync.filterNoMatch', { query: filter.trim() })
+                    : t('surface:connectorSync.allImported', { count: String(importedCount) })}
+                </span>
+                {filter.trim() ? (
+                  <button type="button" onClick={() => setFilter('')}>{t('surface:connectorSync.filterClear')}</button>
+                ) : (
+                  <button type="button" onClick={() => setShowImported(true)}>
+                    {t('surface:connectorSync.showImported', { count: String(importedCount) })}
+                  </button>
+                )}
               </div>
             ) : (
-              visibleItems.map(renderRow)
+              <>
+                {visibleItems.slice(0, visibleCount).map(renderRow)}
+                {visibleItems.length > visibleCount ? (
+                  <button
+                    type="button"
+                    className="connector-doc-show-more"
+                    onClick={() => setVisibleCount((count) => count + 200)}
+                  >
+                    {t('surface:connectorSync.showMore', { count: String(visibleItems.length - visibleCount) })}
+                  </button>
+                ) : null}
+              </>
             )}
           </div>
 
@@ -704,9 +734,6 @@ export function ConnectorDocumentImportPanel({
               </div>
             ) : (
               <>
-                <span className="connector-doc-count" data-active={String(selected.size > 0)}>
-                  {t('surface:connectorSync.selectedCount', { count: String(selected.size) })}
-                </span>
                 <button
                   type="button"
                   className="primary-button"
@@ -768,9 +795,7 @@ export function ConnectorDocumentImportPanel({
       ) : !listError ? (
         <div className="connector-doc-empty">
           <Files aria-hidden="true" />
-          <p>{items.length === 0 && (truncated || warnings.length > 0)
-            ? t('surface:connectorSync.documentListEmpty')
-            : t('surface:connectorSync.documentListEmptyHint')}</p>
+          <p>{t('surface:connectorSync.documentListEmpty')}</p>
           <button type="button" className="primary-button" disabled={batchRunning} onClick={() => void loadDocuments()}>
             <RefreshCw aria-hidden="true" />
             {t('surface:connectorSync.loadDocuments')}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { RuntimeConfigSnapshot } from '../../../../shared/sources'
 
 import {
-  buildUserConfig,
+  buildManualEntryPayload,
   configTestErrorMessage,
   embeddingFieldsFromSnapshot,
   isRuntimeConfigReady,
@@ -13,9 +13,10 @@ import {
   type ManualAiConfigFields,
 } from './runtimeConfigGateState'
 
-function snapshot(config: Record<string, unknown> = {}, extra: Partial<RuntimeConfigSnapshot> = {}): RuntimeConfigSnapshot {
+function snapshot(userConfig: Record<string, unknown> | null = null, extra: Partial<RuntimeConfigSnapshot> = {}): RuntimeConfigSnapshot {
   return {
-    config,
+    config: {},
+    userConfig,
     source: 'default',
     selectedSource: 'default',
     availableSources: ['default'],
@@ -46,7 +47,7 @@ describe('runtime config gate state', () => {
     expect(isRuntimeConfigReady(snapshot({}, { primaryConfigured: true }))).toBe(true)
   })
 
-  it('seeds manual fields from an existing primary section, keeping masked secrets blank', () => {
+  it('seeds manual fields from the saved user primary, keeping masked secrets blank', () => {
     const current = snapshot({
       primary: { provider: 'glm', model: 'glm-4', baseUrl: 'https://api.example.com/v1', apiKey: '********' },
     })
@@ -67,9 +68,9 @@ describe('runtime config gate state', () => {
     })
   })
 
-  it('builds a user config that preserves unrelated sections', () => {
+  it('builds a user payload that preserves unrelated sections', () => {
     const current = snapshot({ asr: { provider: 'aliyun' }, primary: { provider: 'old' } })
-    const next = buildUserConfig(current, {
+    const next = buildManualEntryPayload(current, {
       primary: {
         provider: 'openai-compatible',
         model: 'm',
@@ -81,7 +82,7 @@ describe('runtime config gate state', () => {
       schemaVersion: number
       asr: unknown
       primary: Record<string, string>
-      knowledge: Record<string, unknown>
+      knowledge: Record<string, unknown> | undefined
     }
     expect(next.schemaVersion).toBe(1)
     expect(next.asr).toEqual({ provider: 'aliyun' })
@@ -91,12 +92,11 @@ describe('runtime config gate state', () => {
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'sk-new',
     })
-    expect(next.knowledge).toEqual({
-      embedding: { provider: 'openai-compatible', model: '', baseUrl: '', apiKey: '' },
-    })
+    // embedding 留空 = 回落官方：payload 不带 knowledge.embedding。
+    expect(next.knowledge).toBeUndefined()
   })
 
-  it('seeds embedding fields from knowledge.embedding, keeping masked secrets blank', () => {
+  it('seeds embedding fields from the saved user knowledge.embedding, keeping masked secrets blank', () => {
     const current = snapshot({
       knowledge: {
         enabled: 'true',
@@ -111,11 +111,11 @@ describe('runtime config gate state', () => {
     })
   })
 
-  it('builds a user config with embedding merged into an existing knowledge section', () => {
+  it('builds a user payload with embedding merged into an existing knowledge section', () => {
     const current = snapshot({
       knowledge: { enabled: 'true', serviceId: 'everroom', embedding: { provider: 'old', model: 'old-vec', baseUrl: 'old', apiKey: 'old-key' } },
     })
-    const next = buildUserConfig(current, {
+    const next = buildManualEntryPayload(current, {
       primary: primary('new', 'https://api.example.com/v1', 'sk-new'),
       embedding: {
         provider: 'qwen',
@@ -137,17 +137,15 @@ describe('runtime config gate state', () => {
     })
   })
 
-  it('clearing embedding overwrites a previously stored value with empty strings', () => {
+  it('clearing embedding falls back to official (key removed from payload)', () => {
     const current = snapshot({
       knowledge: { embedding: { provider: 'qwen', model: 'v4', baseUrl: 'https://old', apiKey: 'old-key' } },
     })
-    const next = buildUserConfig(current, {
+    const next = buildManualEntryPayload(current, {
       primary: primary('m', 'https://api.example.com/v1', 'sk'),
       embedding: emptyEmbedding(),
-    }) as {
-      knowledge: { embedding: Record<string, string> }
-    }
-    expect(next.knowledge.embedding.model).toBe('')
+    }) as { knowledge?: { embedding?: Record<string, string> } }
+    expect(next.knowledge?.embedding).toBeUndefined()
   })
 
   it('maps connection test failures to readable messages', () => {

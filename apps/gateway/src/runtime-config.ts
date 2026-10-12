@@ -72,6 +72,8 @@ export interface RuntimeConfigRelayOverride {
 
 export interface RuntimeConfigSnapshot {
   config: RuntimeConfig;
+  /** user 源原始 payload（redacted 快照会打码并剥除 webSearch 密钥）；从未保存过自定义配置时为 null。 */
+  userConfig: RuntimeConfig | null;
   source: RuntimeConfigSource;
   selectedSource: RuntimeConfigSource;
   availableSources: RuntimeConfigSource[];
@@ -110,19 +112,6 @@ function stripWebSearchApiKey(config: RuntimeConfig): RuntimeConfig {
     output.webSearch = webSearch as RuntimeAiConfig;
   }
   return output;
-}
-
-function merge(base: RuntimeConfig, override: Partial<RuntimeConfig>): RuntimeConfig {
-  const result = clone(base);
-  for (const [key, value] of Object.entries(override)) {
-    if (value && typeof value === "object" && !Array.isArray(value)
-      && result[key] && typeof result[key] === "object" && !Array.isArray(result[key])) {
-      result[key] = { ...(result[key] as Record<string, unknown>), ...(value as Record<string, unknown>) };
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
 }
 
 function preserveMasked(value: unknown, existing: unknown): unknown {
@@ -237,9 +226,9 @@ export class RuntimeConfigManager {
     private readonly environmentSearch: RuntimeAiConfig | null = null,
     /**
      * AI 中转覆盖提供者（ai-relay 会话激活时返回重写目标）。在 resolve 出口
-     * 统一重写 LLM 槽位，使探测端点、边车 env 派生、GatewayConfig 三条消费
-     * 路径自动全部指向本地 /ai-relay 代理出口；selectedSource === "user"
-     * （用户显式 BYOK）时不重写。
+     * 统一重写官方 LLM 槽位，使探测端点、边车 env 派生、GatewayConfig 三条
+     * 消费路径自动全部指向本地 /ai-relay 代理出口；user 源 payload 里出现
+     * 的槽位（用户显式直连）不重写，未出现的槽位回落官方。
      */
     private readonly relayOverride: (() => RuntimeConfigRelayOverride | null) | null = null,
   ) {
@@ -251,7 +240,10 @@ export class RuntimeConfigManager {
 
   snapshot(redacted = false): RuntimeConfigSnapshot {
     const result = clone(this.current);
-    if (redacted) result.config = stripWebSearchApiKey(redact(result.config) as RuntimeConfig);
+    if (redacted) {
+      result.config = stripWebSearchApiKey(redact(result.config) as RuntimeConfig);
+      if (result.userConfig) result.userConfig = stripWebSearchApiKey(redact(result.userConfig) as RuntimeConfig);
+    }
     return result;
   }
 
@@ -341,9 +333,10 @@ export class RuntimeConfigManager {
     const storedSelection = this.selectedSource();
     const selectedSource = storedSelection === "user" && user ? "user" : storedSelection === "default" ? "default" : user ? "user" : "default";
     const selected = selectedSource === "user" ? user : undefined;
-    let config = defaults;
+    const config = clone(defaults);
+    const userOwned = new Set<string>();
     if (selectedSource === "user" && user) {
-      config = merge(config, user.payload as RuntimeConfig);
+      this.applyUserOverrides(config, user.payload as RuntimeConfig, userOwned);
     }
     const credential = this.searchCredential(selectedSource);
     const selectedSearch = config.webSearch ?? {} as RuntimeAiConfig;
@@ -356,9 +349,10 @@ export class RuntimeConfigManager {
     }
     const updatedAt = selected?.updatedAt?.toISOString() ?? new Date().toISOString();
     const version = Math.max(minimumVersion, selected?.configVersion ?? 1);
-    this.rewriteSlotsForRelay(config, selectedSource);
+    this.rewriteSlotsForRelay(config, userOwned);
     return {
       config: { ...config, configVersion: version, updatedAt },
+      userConfig: user ? clone(user.payload as RuntimeConfig) : null,
       source: selectedSource,
       selectedSource,
       availableSources,
@@ -366,6 +360,48 @@ export class RuntimeConfigManager {
       updatedAt,
       webSearchCredential: { configured: Boolean(credential.value), source: credential.source },
     };
+  }
+
+  /** user 源槽位级覆盖清单：payload 里出现的键整体替换默认段并记为 userOwned
+   *  （中转重写与 SaaS 模型覆盖跳过）；knowledge.llm/embedding 为子槽位。 */
+  private static readonly USER_SLOT_KEYS = ["primary", "background", "transcriptionSummary", "lite", "cursorCompletion", "vlm", "webSearch", "asr"] as const;
+
+  /** user payload 槽位级覆盖默认配置：出现的 AI 槽位整体替换（不做字段级合并，
+   *  防止默认段的模型名/参数与用户直连端点混搭）；memory 与 knowledge 的服务
+   *  字段（enabled/baseUrl/serviceId 等）保持字段级合并。 */
+  private applyUserOverrides(config: RuntimeConfig, payload: RuntimeConfig, userOwned: Set<string>): void {
+    const record = payload as Record<string, unknown>;
+    for (const key of RuntimeConfigManager.USER_SLOT_KEYS) {
+      if (record[key] !== undefined) {
+        (config as Record<string, unknown>)[key] = clone(record[key]);
+        userOwned.add(key);
+      }
+    }
+    // 文本场景槽位连接留空（只存模型）时继承通用模型（primary）的连接：
+    // 密钥只在通用模型存一份，轮换后所有跟随场景自动同步；独立连接
+    // （baseUrl 非空）不动。官方槽位不参与继承（空连接走中转重写）。
+    const genericSource = config.primary;
+    if (genericSource) {
+      for (const key of ["background", "transcriptionSummary", "lite", "cursorCompletion"] as const) {
+        const slot = (config as Record<string, unknown>)[key] as RuntimeAiConfig | undefined;
+        if (!userOwned.has(key) || !slot || typeof slot !== "object" || slot.baseUrl) continue;
+        for (const field of ["provider", "baseUrl", "api", "apiKey"] as const) {
+          if (!slot[field] && genericSource[field]) (slot as Record<string, unknown>)[field] = genericSource[field];
+        }
+      }
+    }
+    if (record.memory !== undefined) {
+      config.memory = { ...(config.memory ?? {}), ...(record.memory as Record<string, unknown>) };
+    }
+    const userKnowledge = record.knowledge as Record<string, unknown> | undefined;
+    if (userKnowledge !== undefined) {
+      const knowledge = { ...(config.knowledge ?? {}) } as Record<string, unknown>;
+      for (const [key, value] of Object.entries(userKnowledge)) {
+        if (value !== undefined) knowledge[key] = clone(value);
+        if ((key === "llm" || key === "embedding") && value !== undefined) userOwned.add(`knowledge.${key}`);
+      }
+      config.knowledge = knowledge;
+    }
   }
 
   private searchCredential(selectedSource: RuntimeConfigSource): {
@@ -434,20 +470,21 @@ export class RuntimeConfigManager {
   }
 
   /**
-   * relay 激活且非 user 源时，把 LLM 槽位重写到本地代理出口（幂等不必要——
-   * resolve 每次从内置默认 + user 存储重建）。内置 JSON 只声明 model/api，
-   * baseUrl/apiKey 留空：重写判定看 model 非空——有模型即补齐代理出口与会话
-   * 令牌；asr 与 memory/knowledge 服务地址不重写。host 与路径整体换成中转站
-   * 出口（路径 = 会话 baseUrl 推导的规范前缀，缺省 /v1），不继承槽位旧
-   * pathname。relay 失效时槽位回到未配置态（或 user 源自填直连值）。
+   * relay 激活时把官方槽位重写到本地代理出口（幂等不必要——resolve 每次从
+   * 内置默认 + user 存储重建）。user 源槽位级语义：payload 里出现的槽位由
+   * 用户直连（跳过重写），未出现的槽位回落官方（内置默认 + 中转重写）。
+   * 内置 JSON 只声明 model/api，baseUrl/apiKey 留空：重写判定看 model 非空
+   * ——有模型即补齐代理出口与会话令牌；asr 与 memory/knowledge 服务地址不重写。
+   * host 与路径整体换成中转站出口（路径 = 会话 baseUrl 推导的规范前缀，缺省
+   * /v1），不继承槽位旧 pathname。relay 失效时官方槽位回到未配置态。
    * SaaS 下发了场景模型时先覆盖 model 再进重写判定——覆盖后的 model 非空
    * 即接代理出口，内置无槽位的 lite 由 SaaS 模型补建。
    */
-  private rewriteSlotsForRelay(config: RuntimeConfig, selectedSource: RuntimeConfigSource): void {
+  private rewriteSlotsForRelay(config: RuntimeConfig, userOwned: ReadonlySet<string>): void {
     const override = this.relayOverride?.() ?? null;
-    if (!override || selectedSource === "user") return;
+    if (!override) return;
     const proxyBase = `${override.proxyOrigin.replace(/\/+$/, "")}/ai-relay${override.pathPrefix ?? "/v1"}`;
-    this.applyRelayModels(config, override.models);
+    this.applyRelayModels(config, override.models, userOwned);
     const rewrite = (slot: unknown): void => {
       if (!slot || typeof slot !== "object") return;
       const item = slot as Record<string, unknown>;
@@ -455,35 +492,37 @@ export class RuntimeConfigManager {
       item.baseUrl = proxyBase;
       item.apiKey = override.token;
     };
-    for (const slot of [config.primary, config.background, config.lite, config.cursorCompletion, config.vlm, config.webSearch]) {
-      rewrite(slot);
+    for (const key of ["primary", "background", "lite", "cursorCompletion", "vlm", "webSearch"] as const) {
+      if (!userOwned.has(key)) rewrite((config as Record<string, unknown>)[key]);
     }
-    rewrite(config.knowledge?.llm);
-    rewrite(config.knowledge?.embedding);
+    if (!userOwned.has("knowledge.llm")) rewrite(config.knowledge?.llm);
+    if (!userOwned.has("knowledge.embedding")) rewrite(config.knowledge?.embedding);
   }
 
-  /** SaaS 套餐场景模型覆盖：只写 SaaS 明确下发的场景，其余槽位模型保持本地
-   *  内置值。lite 内置 JSON 无槽位，缺槽时克隆 primary（或 background）结构
+  /** SaaS 套餐场景模型覆盖：只写 SaaS 明确下发的场景，且只作用于官方槽位
+   *  （userOwned 的槽位模型是用户自选，不覆盖）；其余槽位模型保持本地内置值。
+   *  lite 内置 JSON 无槽位，缺槽且非用户槽时克隆 primary（或 background）结构
    *  换 model——lite 档随 SaaS 下发自动可用。 */
-  private applyRelayModels(config: RuntimeConfig, models: RelayModels | undefined): void {
+  private applyRelayModels(config: RuntimeConfig, models: RelayModels | undefined, userOwned: ReadonlySet<string>): void {
     if (!models) return;
-    const setModel = (slot: RuntimeAiConfig | undefined, model: string | undefined): void => {
-      if (slot && typeof model === "string" && model.trim()) slot.model = model.trim();
+    const setModel = (slotKey: string, slot: RuntimeAiConfig | undefined, model: string | undefined): void => {
+      if (!slot || userOwned.has(slotKey)) return;
+      if (typeof model === "string" && model.trim()) slot.model = model.trim();
     };
-    setModel(config.primary, models.primary);
-    setModel(config.background, models.background);
-    setModel(config.lite, models.lite);
-    if (!config.lite && typeof models.lite === "string" && models.lite.trim()) {
+    setModel("primary", config.primary, models.primary);
+    setModel("background", config.background, models.background);
+    setModel("lite", config.lite, models.lite);
+    if (!config.lite && !userOwned.has("lite") && typeof models.lite === "string" && models.lite.trim()) {
       const source = config.primary ?? config.background
         ?? { provider: "openai", model: "", baseUrl: "", api: "openai-completions", apiKey: "" } as RuntimeAiConfig;
       config.lite = { ...clone(source), model: models.lite.trim() };
     }
-    setModel(config.cursorCompletion, models.cursorCompletion);
-    setModel(config.vlm, models.vlm);
-    setModel(config.webSearch, models.webSearch);
+    setModel("cursorCompletion", config.cursorCompletion, models.cursorCompletion);
+    setModel("vlm", config.vlm, models.vlm);
+    setModel("webSearch", config.webSearch, models.webSearch);
     const knowledge = config.knowledge as { embedding?: RuntimeAiConfig } | undefined;
     if (knowledge?.embedding) {
-      setModel(knowledge.embedding, models.embedding);
+      setModel("knowledge.embedding", knowledge.embedding, models.embedding);
       const dimensions = models.embeddingDimensions;
       if (typeof dimensions === "number" && Number.isInteger(dimensions) && dimensions > 0) {
         knowledge.embedding.dimensions = dimensions;

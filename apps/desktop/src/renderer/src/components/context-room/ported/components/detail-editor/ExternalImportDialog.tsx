@@ -32,11 +32,11 @@ export function ExternalImportDialog({
   const [provider, setProvider] = useState<ExternalDocumentProvider>('feishu')
   const [items, setItems] = useState<ExternalDocumentListItem[]>([])
   const [fetchedAt, setFetchedAt] = useState<string | null>(null)
-  const [truncated, setTruncated] = useState(false)
   const [warnings, setWarnings] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [showImported, setShowImported] = useState(false)
   const [preview, setPreview] = useState<ExternalDocumentPreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [committing, setCommitting] = useState(false)
@@ -48,18 +48,18 @@ export function ExternalImportDialog({
     if (!open) return
     setPreview(null)
     setFilter('')
+    setShowImported(false)
     setListError(null)
   }, [open, provider])
 
-  const loadList = useCallback(async () => {
+  const loadList = useCallback(async (mode: 'full' | 'delta' = 'full') => {
     if (!external) return
     setLoading(true)
     setListError(null)
     try {
-      const response = await external.importList(provider)
+      const response = await external.importList(provider, undefined, undefined, mode)
       setItems(response.items)
       setFetchedAt(response.fetchedAt ?? new Date().toISOString())
-      setTruncated(response.truncated)
       setWarnings(response.warnings.map((warning) => warning.message))
     } catch (error) {
       setListError(error instanceof Error ? error.message : String(error))
@@ -68,8 +68,8 @@ export function ExternalImportDialog({
     }
   }, [external, provider])
 
-  // 缓存秒显（imported 徽标由服务端按当前库重算，导入后无需重拉）；
-  // 无缓存时自动全量拉一次，之后由"重新获取"手动刷新。
+  // 缓存秒显（imported 徽标由服务端按当前库重算）；无缓存自动全量，缓存超过
+  // 10 分钟后台增量刷新。"重新获取"手动全量（对账，清远端已删）。
   useEffect(() => {
     if (!open || !external) return
     let cancelled = false
@@ -79,26 +79,34 @@ export function ExternalImportDialog({
         if (response.fetchedAt && response.items.length > 0) {
           setItems(response.items)
           setFetchedAt(response.fetchedAt)
-          setTruncated(response.truncated)
           setWarnings(response.warnings.map((warning) => warning.message))
+          if (Date.now() - new Date(response.fetchedAt).getTime() > 10 * 60 * 1000) {
+            void loadList('delta')
+          }
         } else {
-          void loadList()
+          void loadList('full')
         }
       })
       .catch(() => {
-        if (!cancelled) void loadList()
+        if (!cancelled) void loadList('full')
       })
     return () => {
       cancelled = true
     }
   }, [open, provider, external, loadList])
 
+  // 已导入的默认收起：列表只呈现增量，开关放出全量（重导入走候选版本语义）。
+  const importedCount = useMemo(() => items.filter((item) => item.imported).length, [items])
   const visibleItems = useMemo(() => {
     const keyword = filter.trim().toLowerCase()
-    if (!keyword) return items
-    return items.filter((item) => item.title.toLowerCase().includes(keyword)
-      || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword))
-  }, [items, filter])
+    return items.filter((item) => (showImported || !item.imported)
+      && (!keyword
+        || item.title.toLowerCase().includes(keyword)
+        || (item.wikiSpaceName ?? '').toLowerCase().includes(keyword)))
+  }, [items, filter, showImported])
+  // 渲染窗口：长列表先渲染前 200 行，"显示更多"逐批放出；过滤变化重置。
+  const [visibleCount, setVisibleCount] = useState(200)
+  useEffect(() => setVisibleCount(200), [filter])
 
   const loadPreview = async (remoteDocumentId: string) => {
     if (!external) return
@@ -209,6 +217,17 @@ export function ExternalImportDialog({
                       ? t('contextRoom:externalImportDialog.listMetaNoTime', { count: String(items.length) })
                       : ''}
                 </span>
+                {importedCount > 0 ? (
+                  <button
+                    type="button"
+                    className="context-room-external-import-refresh"
+                    onClick={() => setShowImported((previous) => !previous)}
+                  >
+                    {showImported
+                      ? t('contextRoom:externalImportDialog.hideImported')
+                      : t('contextRoom:externalImportDialog.showImported', { count: String(importedCount) })}
+                  </button>
+                ) : null}
                 <div className="context-room-external-import-filter">
                   <Search aria-hidden="true" />
                   <input
@@ -228,14 +247,14 @@ export function ExternalImportDialog({
               {listError?.includes('IMPORT_CONNECTION_REQUIRED') ? (
                 <p className="context-room-external-import-hint">{t('contextRoom:externalImportDialog.connectionHint')}</p>
               ) : null}
-              {truncated || warnings.length > 0 ? (
+              {warnings.length > 0 ? (
                 <p className="context-room-external-import-warning">
-                  ⚠ {[truncated ? t('contextRoom:externalImportDialog.listTruncated') : null, ...warnings].filter(Boolean).join('；')}
+                  ⚠ {warnings.join(' · ')}
                 </p>
               ) : null}
               {items.length > 0 ? (
                 <ul className="context-room-external-import-results">
-                  {visibleItems.map((item) => (
+                  {visibleItems.slice(0, visibleCount).map((item) => (
                     <li key={item.remoteDocumentId}>
                       <button type="button" onClick={() => void loadPreview(item.remoteDocumentId)}>
                         <span className="context-room-external-import-item-title">
@@ -249,9 +268,18 @@ export function ExternalImportDialog({
                       </button>
                     </li>
                   ))}
+                  {visibleItems.length > visibleCount ? (
+                    <li className="context-room-external-import-show-more">
+                      <button type="button" onClick={() => setVisibleCount((count) => count + 200)}>
+                        {t('contextRoom:externalImportDialog.showMore', { count: String(visibleItems.length - visibleCount) })}
+                      </button>
+                    </li>
+                  ) : null}
                   {visibleItems.length === 0 ? (
                     <li className="context-room-external-import-filter-empty">
-                      {t('contextRoom:externalImportDialog.filterNoMatch', { query: filter.trim() })}
+                      {filter.trim()
+                        ? t('contextRoom:externalImportDialog.filterNoMatch', { query: filter.trim() })
+                        : t('contextRoom:externalImportDialog.allImported', { count: String(importedCount) })}
                     </li>
                   ) : null}
                 </ul>

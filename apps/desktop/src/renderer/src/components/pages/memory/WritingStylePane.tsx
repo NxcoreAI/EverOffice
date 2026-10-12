@@ -1,6 +1,7 @@
 import { Pencil, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 
 import type {
   WritingStyleCorpusEntryDto,
@@ -26,7 +27,7 @@ const USER_CONTENT_MAX = 2_000
  * 个人风格正文可自由编辑（保存 = PUT 全量替换，对齐 CoreProfile 体验）；
  * 系统沉淀段只读（统计摘要由增量管线自动刷新，保证可复现）。
  */
-export function WritingStylePane() {
+export function WritingStylePane({ refreshTick }: { refreshTick?: number } = {}) {
   const { locale, t } = useLocale()
   // 离线快照（2026-09-03）：网关断联时回落到本地最后一份好数据，
   // 恢复后自动回到实时（useSnapshottedAsyncData 的 stale 重试）。
@@ -57,6 +58,25 @@ export function WritingStylePane() {
     () => window.nxcore!.writingStyle.corpus(),
     [showCorpus],
   )
+
+  // 全量重载（顶部全局刷新入口）：完成后 Toast 收口。
+  const reloadAll = async (): Promise<void> => {
+    const results = await Promise.all([
+      profile.refresh(),
+      settings.refresh(),
+      content.refresh(),
+      insights.refresh(),
+      corpus.refresh(),
+    ])
+    showToast(results.every(Boolean)
+      ? { title: t('memory:memory.refreshed') }
+      : { title: t('memory:memory.refreshFailed'), variant: 'error' })
+  }
+
+  useEffect(() => {
+    if (refreshTick) void reloadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   useEffect(() => {
     if (content.data && !editing) setDraft(content.data.content)

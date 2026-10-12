@@ -22,6 +22,8 @@ import { scheduleRoomMarkdownSweep } from '../knowledgeMarkdownImport'
 import { createEmptyContextRoom } from './contextRoomFactory'
 import { mergeRoomMemoryItems } from './attributedRoomMemories'
 import { ROOM_MEMORY_CHANGED_EVENT } from '../roomMemoryChange'
+import { showToast } from '@/state/toast'
+import type { KnowledgeRoomDto } from '../../../../../shared/knowledge'
 import type { MemoryRoomMemoryItemDto } from '../../../../../shared/memory'
 
 const AllRoomsView = lazy(() =>
@@ -329,10 +331,47 @@ export function PortedContextRoom({
     })
   }
 
+  const roomsRef = useRef(state.rooms)
+  const deletedRoomsRef = useRef(state.deletedRooms)
+  roomsRef.current = state.rooms
+  deletedRoomsRef.current = state.deletedRooms
+
+  // 跳转目标可能存在于 knowledge 后端而本地快照滞后：找不到时按后端名单补一次合并，
+  // 仍无才提示——已删除的 Room 不再静默吞掉点击。
   const openRoom = (roomId: string) => {
-    const room = state.rooms.find((item) => item.id === roomId)
-    if (!room) return
-    onOpenRoomTab({ id: room.id, title: room.title })
+    const room = roomsRef.current.find((item) => item.id === roomId)
+    if (room) {
+      onOpenRoomTab({ id: room.id, title: room.title })
+      return
+    }
+    void (async () => {
+      let reloaded: ContextRoomRecord | undefined
+      let remoteItems: KnowledgeRoomDto[] | undefined
+      try {
+        const remote = await window.nxcore?.knowledge?.listRooms()
+        remoteItems = remote?.items
+      } catch {
+        remoteItems = undefined
+      }
+      if (remoteItems) {
+        reloaded = mergeKnowledgeRooms(roomsRef.current, deletedRoomsRef.current, remoteItems)
+          .find((item) => item.id === roomId)
+        if (reloaded) {
+          setState((current) => {
+            const rooms = mergeKnowledgeRooms(current.rooms, current.deletedRooms, remoteItems!)
+            return rooms === current.rooms ? current : { ...current, rooms }
+          })
+        }
+      }
+      if (reloaded) {
+        onOpenRoomTab({ id: reloaded.id, title: reloaded.title })
+        return
+      }
+      showToast({
+        title: t('contextRoom:relations.openRoomFailed'),
+        message: t('contextRoom:relations.openRoomMissing'),
+      })
+    })()
   }
 
   const renameRoom = (roomId: string, name: string) => setState((current) => ({

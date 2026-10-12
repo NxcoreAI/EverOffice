@@ -15,6 +15,7 @@ import type {
 } from '../../../../shared/knowledge'
 import './WikiPage.css'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 import { localizedRoomKind } from '../context-room/ported/adapters'
 import { formatRelative } from './sources/sourceKinds'
 
@@ -119,8 +120,8 @@ export function WikiPage() {
     return () => clearTimeout(timer)
   }, [revealPath])
 
-  const refreshList = useCallback(async () => {
-    if (!knowledge) return
+  const refreshList = useCallback(async (): Promise<boolean> => {
+    if (!knowledge) return false
     try {
       const [wikiData, roomData] = await Promise.all([
         knowledge.listWikis(),
@@ -132,8 +133,10 @@ export function WikiPage() {
         current && wikiData.items.some((wiki) => wiki.roomId === current)
           ? current
           : wikiData.items[0]?.roomId ?? null)
+      return true
     } catch {
-      setWikis([])
+      // 刷新失败不清空已有清单（静默清空会被当成"点了没反应"）。
+      return false
     } finally {
       setLoaded(true)
     }
@@ -146,7 +149,33 @@ export function WikiPage() {
     return () => window.removeEventListener('everroom:knowledge-changed', onChanged)
   }, [refreshList])
 
-  // 选中 Room 的页面清单（懒加载：只拉当前 Room）
+  // 手动刷新：按钮转圈（本地响应快，至少转 500ms）+ 清单/页面/正文/图谱全量重载。
+  const [refreshing, setRefreshing] = useState(false)
+  const [contentTick, setContentTick] = useState(0)
+  const selectedPathRef = useRef<string | null>(null)
+  selectedPathRef.current = selectedPage?.path ?? null
+  const refreshTimerRef = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current)
+  }, [])
+
+  const refreshAll = useCallback(async (): Promise<void> => {
+    if (!knowledge || refreshing) return
+    const startedAt = Date.now()
+    setRefreshing(true)
+    const listOk = await refreshList()
+    setGraph(null)
+    setContentTick((value) => value + 1)
+    showToast(listOk
+      ? { title: t('surface:wiki.refreshed') }
+      : { title: t('surface:wiki.refreshFailed'), variant: 'error' })
+    const wait = Math.max(0, 500 - (Date.now() - startedAt))
+    if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current)
+    refreshTimerRef.current = window.setTimeout(() => setRefreshing(false), wait)
+  }, [knowledge, refreshing, refreshList, t])
+
+  // 选中 Room 的页面清单（懒加载：只拉当前 Room）；手动刷新（contentTick）按路径保住阅读位置
   useEffect(() => {
     setSelectedPage(null)
     setMarkdown(null)
@@ -161,9 +190,12 @@ export function WikiPage() {
         if (cancelled) return
         setPageStatus(data.status)
         setPages(data.items)
-        // 默认落地概览页：消灭"从目录选择一个页面阅读"空态，第一屏就是可读内容
+        // 按路径找回原页（换 Room 找不到则回落概览页）：第一屏就是可读内容
         setSelectedPage((current) =>
-          current ?? data.items.find((page) => page.path.endsWith('overview.md')) ?? null)
+          current
+          ?? data.items.find((page) => page.path === selectedPathRef.current)
+          ?? data.items.find((page) => page.path.endsWith('overview.md'))
+          ?? null)
       })
       .catch(() => {
         if (!cancelled) setPageStatus('error')
@@ -172,7 +204,7 @@ export function WikiPage() {
         if (!cancelled) setPagesLoading(false)
       })
     return () => { cancelled = true }
-  }, [knowledge, selectedRoomId])
+  }, [knowledge, selectedRoomId, contentTick])
 
   // 页面正文（选中页时拉取）
   useEffect(() => {
@@ -500,12 +532,12 @@ export function WikiPage() {
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => void refreshList()}
-                disabled={!knowledge}
+                onClick={() => void refreshAll()}
+                disabled={!knowledge || refreshing}
                 title={t('surface:wiki.refresh')}
                 aria-label={t('surface:wiki.refresh')}
               >
-                <RefreshCw aria-hidden="true" strokeWidth={1.8} />
+                <RefreshCw aria-hidden="true" strokeWidth={1.8} className={refreshing ? 'wiki-refresh-spin' : undefined} />
               </button>
             </span>
           </div>

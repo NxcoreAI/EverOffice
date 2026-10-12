@@ -72,7 +72,7 @@ async function fetchConversations(focusSessionId: string | null | undefined): Pr
   return { messages: all, focusedDocumentMessages }
 }
 
-export function ConversationPane({ focusSessionId }: { focusSessionId?: string | null }) {
+export function ConversationPane({ focusSessionId, refreshTick }: { focusSessionId?: string | null; refreshTick?: number }) {
   const { locale, t } = useLocale()
   const [reloadTick, setReloadTick] = useState(0)
   const [sessionFilter, setSessionFilter] = useState('')
@@ -84,6 +84,11 @@ export function ConversationPane({ focusSessionId }: { focusSessionId?: string |
     () => fetchConversations(focusSessionId),
     [reloadTick, focusSessionId],
   )
+
+  // 顶部全局刷新：等价于本面板手动刷新。
+  useEffect(() => {
+    if (refreshTick) setReloadTick((tick) => tick + 1)
+  }, [refreshTick])
 
   // 溯源跳转：原子记忆 → 按会话过滤并展开
   useEffect(() => {

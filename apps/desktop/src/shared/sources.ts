@@ -413,7 +413,7 @@ export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
-export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored' | 'session-activated'
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'session-activated'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -514,6 +514,113 @@ export type WindowScreenshotResult =
       message: string
     }
 
+
+export interface ScreenMemorySettingsDto {
+  enabled: boolean
+  paused: boolean
+  allowedApps: string[]
+  excludedApps: string[]
+}
+
+export interface ScreenMemorySchedulerStatusDto {
+  running: boolean
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
+  helperAvailable: boolean
+  paused: boolean
+  enabled: boolean
+  currentBundleId: string | null
+  currentAppName: string | null
+  openIntervalSince: string | null
+  currentKeyframes: number
+  heartbeatMs: number
+  lastBeatAt: string | null
+  lastError: string | null
+}
+
+export interface ScreenMemoryStatusDto extends ScreenMemorySchedulerStatusDto {
+  directory: string
+  deviceReady: ScreenMemoryDeviceReadinessDto
+}
+
+export interface ScreenMemoryKeyframeDto {
+  id: string
+  capturedAt: string
+  imagePath: string
+  imageBytes: number
+  perceptualHash: string | null
+  width: number | null
+  height: number | null
+  lineCount: number
+  elapsedMs: number | null
+}
+
+export interface ScreenMemoryIntervalDto {
+  id: string
+  bundleId: string
+  appName: string
+  windowTitle: string | null
+  title: string
+  startedAt: string
+  endedAt: string
+  endReason: string
+  keyframeCount: number
+  textLines: string[]
+  summaryStatus: 'pending' | 'processing' | 'ready' | 'waiting' | 'failed'
+  summary: string | null
+  summaryKeyPoints: string[]
+  userEdited: boolean
+  keyframes?: ScreenMemoryKeyframeDto[]
+}
+
+export interface ScreenMemorySearchQuery {
+  q: string
+  bundleId?: string
+  from?: string
+  to?: string
+  limit?: number
+}
+
+export interface ScreenMemoryListQuery {
+  from?: string
+  to?: string
+  bundleId?: string
+  summaryStatus?: string
+  limit?: number
+  offset?: number
+}
+
+export interface ScreenMemoryStatsDto {
+  intervals: number
+  keyframes: number
+  pendingSummaries: number
+  summariesToday: number
+  dailySummaryCap: number
+  dispatchAllowed: boolean
+}
+
+export interface ScreenMemoryStorageDto {
+  imagesBytes: number
+}
+
+export interface ScreenMemoryDeviceReadinessDto {
+  archOk: boolean
+  memoryOk: boolean
+  diskOk: boolean
+}
+
+export interface ScreenMemoryBackfillSummaryDto {
+  processed: number
+  intervals: number
+  keyframes: number
+}
+
+export interface ScreenMemoryFrontmostDto {
+  bundleId: string | null
+  appName: string | null
+  pid: number | null
+  windowTitle: string | null
+}
+
 export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
@@ -530,6 +637,8 @@ export interface PerceptionSettings {
 
 export interface RuntimeConfigSnapshot {
   config: Record<string, unknown>
+  /** user 源原始 payload（脱敏后）；从未保存过自定义配置时为 null。 */
+  userConfig: Record<string, unknown> | null
   source: 'user' | 'default'
   selectedSource: 'user' | 'default'
   availableSources: Array<'user' | 'default'>
@@ -938,8 +1047,9 @@ export interface NxcoreDesktopApi {
   }
   externalDocuments: {
     importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
-    /** 连接器页按连接全量列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存。 */
-    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean): Promise<ExternalDocumentListResponse>
+    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
+     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
     /** 目标 Room 已导入检查：返回这批远端文档中已在该 Room 落 primary 的 remoteDocumentId。 */
     importExistingInRoom(provider: ExternalDocumentProvider, roomId: string, remoteDocumentIds: string[]): Promise<{ existingRemoteIds: string[] }>
     importBatch(input: {
@@ -1032,6 +1142,21 @@ export interface NxcoreDesktopApi {
       deletedAssets: string[]
       retainedAssets: string[]
     }>
+  }
+  screenMemory: {
+    status(): Promise<ScreenMemoryStatusDto>
+    settings(): Promise<ScreenMemorySettingsDto>
+    updateSettings(patch: Partial<ScreenMemorySettingsDto>): Promise<ScreenMemorySettingsDto>
+    search(query: ScreenMemorySearchQuery): Promise<{ items: ScreenMemoryIntervalDto[] }>
+    listIntervals(query?: ScreenMemoryListQuery): Promise<{ total: number; items: ScreenMemoryIntervalDto[] }>
+    getInterval(id: string): Promise<ScreenMemoryIntervalDto>
+    stats(): Promise<ScreenMemoryStatsDto>
+    correctInterval(input: { id: string; title?: string; textLines?: string[] }): Promise<ScreenMemoryIntervalDto>
+    storage(): Promise<ScreenMemoryStorageDto>
+    frontmost(): Promise<ScreenMemoryFrontmostDto>
+    registerMaterial(intervalId: string): Promise<{ ref: string }>
+    backfillEstimate(input: { from: string; to: string }): Promise<{ count: number }>
+    backfillRun(input: { from: string; to: string; maxItems: number }): Promise<ScreenMemoryBackfillSummaryDto>
   }
   diary: {
     settings(): Promise<DiarySettings>

@@ -639,6 +639,39 @@
   margin: 0;
 }
 
+/* 新建 Room 主按钮（我的 Room 工具栏与列表空状态共用）：主色底 + 图标文字双编码。 */
+.context-room-new-room-button {
+  display: inline-flex;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--cr-blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.context-room-new-room-button:hover {
+  background: var(--cr-blue-hover);
+}
+
+.context-room-new-room-button svg {
+  width: 14px;
+  height: 14px;
+  margin-bottom: 0;
+}
+
+.context-room-home-empty .context-room-new-room-button {
+  height: 34px;
+  margin: 16px 0 0;
+}
+
 .context-room-home-empty h3 {
   font-size: 14px;
 }
@@ -6122,9 +6155,16 @@
   color: #fff;
 }
 
-.context-room-primary:hover {
+.context-room-primary:hover:not(:disabled) {
   border-color: var(--cr-blue-hover);
   background: var(--cr-blue-hover);
+}
+
+.context-room-primary:disabled {
+  border-color: var(--cr-border-control);
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  cursor: not-allowed;
 }
 
 .context-room-secondary {

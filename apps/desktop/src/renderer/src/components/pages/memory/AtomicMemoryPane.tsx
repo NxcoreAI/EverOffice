@@ -294,10 +294,11 @@ function timeBucket(updatedAt: string): TimelineBucketId {
   return 'earlier'
 }
 
-export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversation }: {
+export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversation, refreshTick }: {
   focusItemId?: string | null
   onOpenDocument?: (documentId: string) => void
   onOpenConversation?: (sessionId: string) => void
+  refreshTick?: number
 } = {}) {
   const { locale, t } = useLocale()
   const [type, setType] = useState<string>('all')
@@ -311,6 +312,9 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
   const [featuredDismissed, setFeaturedDismissed] = useState(false)
+  // 动态类型 chips 从「累计见过的类型」推导而非当前 items：items 会被类型过滤收窄，
+  // 否则一切换筛选，其余动态类型标签会跟着消失，看起来像标签栏自动收起。
+  const [knownTypes, setKnownTypes] = useState<string[]>([])
   const focusAppliedRef = useRef(false)
 
   const load = useCallback(async (offset: number, replace: boolean) => {
@@ -324,6 +328,11 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
       })
       setFailure(null)
       setTotal(page.total)
+      setKnownTypes((current) => {
+        const merged = new Set(current)
+        for (const item of page.items) merged.add(item.type)
+        return merged.size === current.length ? current : [...merged]
+      })
       setItems((current) => {
         if (replace) return page.items
         const seen = new Set(current.map((item) => item.id))
@@ -346,6 +355,11 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
   useEffect(() => {
     if (reloadTick > 0) void load(0, true)
   }, [load, reloadTick])
+
+  // 顶部全局刷新：等价于本面板手动刷新。
+  useEffect(() => {
+    if (refreshTick) setReloadTick((tick) => tick + 1)
+  }, [refreshTick])
 
   useEffect(() => {
     if (!focusItemId || focusAppliedRef.current || items.length === 0) return
@@ -386,13 +400,14 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
   }, [filtered, t])
 
   // 类型 chips 数据驱动：基础三型之外，数据里出现的新类型（如 work_*）自动补进筛选。
-  const extraTypeChips = useMemo(() => {
-    const seen = new Set<string>()
-    for (const item of items) {
-      if (!TYPE_FILTERS.some((filter) => filter.value === item.type)) seen.add(item.type)
-    }
-    return [...seen].sort().map((value) => ({ value, label: typeLabel(value) }))
-  }, [items])
+  const extraTypeChips = useMemo(
+    () =>
+      knownTypes
+        .filter((value) => !TYPE_FILTERS.some((filter) => filter.value === value))
+        .sort()
+        .map((value) => ({ value, label: typeLabel(value) })),
+    [knownTypes]
+  )
 
   if (failure && items.length === 0) {
     return <div className="mem-pane-error">{memoryFailureText(failure, t)}</div>

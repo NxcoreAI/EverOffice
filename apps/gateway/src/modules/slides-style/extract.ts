@@ -271,7 +271,7 @@ export function assignPaletteRoles(clusters: StyleColorCluster[]): PaletteRoles 
 }
 
 /** 保持饱和度/亮度、旋转色相（强调色推导用）。 */
-function rotateHue(source: Rgb, degrees: number, base: Rgb): Rgb {
+export function rotateHue(source: Rgb, degrees: number, base: Rgb): Rgb {
   const max = Math.max(source.r, source.g, source.b) / 255;
   const min = Math.min(source.r, source.g, source.b) / 255;
   const lightness = (max + min) / 2;

@@ -1,6 +1,7 @@
-import { ChevronLeft, ChevronRight, Eye, RotateCcw, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 
 import type { IngestEventDto, IngestFilterVerdictDto } from '../../../../../shared/ingest'
 import { formatDate, memoryFailureText, scrollPaneToTop } from './useMemoryData'
@@ -14,7 +15,7 @@ const PAGE_SIZE = 50
  * 的误杀样本）。分页翻全量台账，来源下拉收窄（gateway 单页上限 200，
  * 这里每页 50 条走翻页）。
  */
-export function IngestLedgerPane() {
+export function IngestLedgerPane({ refreshTick }: { refreshTick?: number } = {}) {
   const { locale, t } = useLocale()
   const [rows, setRows] = useState<IngestEventDto[]>([])
   const [total, setTotal] = useState(0)
@@ -26,7 +27,7 @@ export function IngestLedgerPane() {
   const [message, setMessage] = useState<string | null>(null)
   const [detail, setDetail] = useState<IngestEventDto | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     setLoading(true)
     try {
       const result = await window.nxcore!.ingest.listEvents({
@@ -37,14 +38,29 @@ export function IngestLedgerPane() {
       setRows(result.items)
       setTotal(result.total)
       setFailure(null)
+      return true
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error))
+      return false
     } finally {
       setLoading(false)
     }
   }, [page, sourceKind])
 
   useEffect(() => { void load() }, [load])
+
+  // 手动刷新（本页按钮 + 顶部全局刷新）：完成 Toast；已有数据时失败原本静默。
+  const doRefresh = useCallback(async (): Promise<void> => {
+    const ok = await load()
+    showToast(ok
+      ? { title: t('memory:memory.refreshed') }
+      : { title: t('memory:memory.refreshFailed'), variant: 'error' })
+  }, [load, t])
+
+  useEffect(() => {
+    if (refreshTick) void doRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   // 换筛选条件回第一页；翻页/换筛选后滚动容器回顶（表格在 .mem-content 里滚动）
   const changeSource = (kind: string) => {
@@ -101,7 +117,9 @@ export function IngestLedgerPane() {
             <option value="everroom-doc">{t('memory:ledger.sourceEverroomDoc')}</option>
             <option value="connector-record">{t('memory:ledger.sourceConnectorRecord')}</option>
           </select>
-          <button type="button" onClick={() => void load()} disabled={loading}>{t('memory:ledger.refresh')}</button>
+          <button type="button" onClick={() => void doRefresh()} disabled={loading}>
+            <RefreshCw aria-hidden="true" strokeWidth={1.7} className={loading ? 'mem-spin' : undefined} />{t('memory:ledger.refresh')}
+          </button>
         </span>
       </div>
       <p className="mem-rules-hint">{t('memory:ledger.hint')}</p>

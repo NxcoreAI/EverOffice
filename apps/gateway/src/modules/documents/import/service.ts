@@ -37,7 +37,7 @@ import { parseImportedMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
 import { artifactHashOf, readArtifact, storeArtifact } from "./artifact-store.js";
 import { ImportConnectorError, runImportConnectorAction, type ImportActionRunner } from "./oo-runner.js";
-import { importAdapterOf, type ExternalDocumentProviderAdapter, type ImportActionFn } from "./providers.js";
+import { DeltaUnsupportedError, importAdapterOf, type ExternalDocumentProviderAdapter, type ImportActionFn } from "./providers.js";
 import {
   createLarkImportActionRunner,
   downloadLarkMediaToFile,
@@ -367,6 +367,13 @@ function warningsOf(value: unknown): ExternalDocumentWarning[] {
   return Array.isArray(value) ? (value as ExternalDocumentWarning[]) : [];
 }
 
+/** 缓存警告合并：按 code 去重，后者（增量新警告）覆盖前者。 */
+function mergeWarnings(cached: ExternalDocumentWarning[], incoming: ExternalDocumentWarning[]): ExternalDocumentWarning[] {
+  const byCode = new Map(cached.map((warning) => [warning.code, warning]));
+  for (const warning of incoming) byCode.set(warning.code, warning);
+  return [...byCode.values()];
+}
+
 /**
  * 飞书 / Notion 文档导入编排。导入只经 OpenConnector 读 action；快照不可变，
  * Room 落地全部走 DocumentService（DocumentCommitService 乐观锁），不做任何
@@ -422,45 +429,145 @@ export class DocumentImportService {
       });
   }
 
+  /** 增量水位线回看重叠窗：远端时钟与本地取时之间的边界抖动靠它兜住，
+   * 重复条目按 remoteDocumentId 幂等合并。 */
+  private static readonly DELTA_OVERLAP_MS = 5 * 60 * 1000;
+
   /**
-   * 按连接全量列举可导入文档（连接器页批量导入入口）。列举本身在 provider
-   * 适配层完成；这里回填 imported 标记——该来源已有落 Room 的导入记录时置
-   * true（重导入走现有候选版本语义，UI 仅提示不禁选）。成功结果写入列举
-   * 缓存，供面板下次打开直接回显。
+   * 按连接列举可导入文档。mode=full：全量列举并整体替换缓存（清掉远端已删
+   * 文档）；mode=delta：有缓存且水位线可用时只拉水位线（含重叠窗）之后的
+   * 变动合并进缓存——无缓存、缓存被截断或增量通道不可用（含失败）自动回退
+   * 全量。imported 标记回填同旧语义。成功结果写入列举缓存，供面板下次直接回显。
    */
   async listAllDocuments(
     provider: ExternalDocumentProvider,
     connectionName?: string,
+    mode: "full" | "delta" = "full",
   ): Promise<ExternalDocumentListResponse> {
     const adapter = this.adapterOf(provider, connectionName);
+    if (mode === "delta") {
+      const cached = this.readCacheRow(provider, connectionName);
+      if (cached?.watermarkAt && !cached.truncated) {
+        try {
+          const watermark = new Date(cached.watermarkAt.getTime() - DocumentImportService.DELTA_OVERLAP_MS);
+          const delta = await adapter.listModifiedSince(watermark.toISOString());
+          const merged = DocumentImportService.mergeListItems(cached.itemsJson, delta.items);
+          const items = this.markImported(provider, merged);
+          const watermarkAt = new Date(Math.max(
+            cached.watermarkAt.getTime(),
+            ...items.map((item) => (item.updatedAt ? new Date(item.updatedAt).getTime() : 0)),
+          ));
+          this.writeCacheRow(provider, connectionName, {
+            items,
+            truncated: false,
+            warnings: mergeWarnings(cached.warningsJson, delta.warnings),
+            syncMode: "delta",
+            watermarkAt,
+          });
+          return { provider, items, truncated: false, warnings: delta.warnings, fetchedAt: null };
+        } catch (error) {
+          if (!(error instanceof DeltaUnsupportedError)) {
+            // 增量失败回退全量重试一次；全量再失败则把原始错误抛给调用方。
+            try {
+              return await this.listAllDocuments(provider, connectionName, "full");
+            } catch {
+              throw error;
+            }
+          }
+          // DeltaUnsupportedError 同样回退全量（search 时间过滤不可用时这是常态路径）。
+        }
+      }
+    }
     const listed = await adapter.listAllDocuments().catch((error) => {
       throw this.mapConnectorError(error, provider);
     });
     const items = this.markImported(provider, listed.items);
+    const watermarkAt = new Date(Math.max(
+      Date.now(),
+      ...items.map((item) => (item.updatedAt ? new Date(item.updatedAt).getTime() : 0)),
+    ));
+    this.writeCacheRow(provider, connectionName, {
+      items,
+      truncated: listed.truncated,
+      warnings: listed.warnings,
+      syncMode: "full",
+      watermarkAt,
+      lastFullAt: new Date(),
+    });
+    return { provider, items, truncated: listed.truncated, warnings: listed.warnings, fetchedAt: null };
+  }
+
+  /** 增量合并：按 remoteDocumentId 覆盖或追加；搜索结果把 wiki 文档标成
+   * drive（无归属信息），保留缓存里更具体的 wiki origin/知识库名。 */
+  private static mergeListItems(
+    cached: ExternalDocumentListItem[],
+    incoming: ExternalDocumentListItem[],
+  ): ExternalDocumentListItem[] {
+    const byId = new Map(cached.map((item) => [item.remoteDocumentId, item]));
+    for (const item of incoming) {
+      const existing = byId.get(item.remoteDocumentId);
+      if (existing && existing.origin === "wiki" && item.origin === "drive") {
+        byId.set(item.remoteDocumentId, { ...item, origin: "wiki", wikiSpaceName: existing.wikiSpaceName });
+      } else {
+        byId.set(item.remoteDocumentId, item);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private readCacheRow(
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+  ) {
+    return this.db.select().from(documentImportListCache)
+      .where(and(
+        eq(documentImportListCache.provider, provider),
+        eq(documentImportListCache.connectionName, connectionName ?? ""),
+      ))
+      .get() ?? null;
+  }
+
+  private writeCacheRow(
+    provider: ExternalDocumentProvider,
+    connectionName: string | undefined,
+    row: {
+      items: ExternalDocumentListItem[];
+      truncated: boolean;
+      warnings: ExternalDocumentWarning[];
+      syncMode: "full" | "delta";
+      watermarkAt: Date;
+      lastFullAt?: Date;
+    },
+  ): void {
     const fetchedAt = new Date();
     this.db
       .insert(documentImportListCache)
       .values({
         provider,
         connectionName: connectionName ?? "",
-        itemsJson: items,
-        truncated: listed.truncated,
-        warningsJson: listed.warnings,
-        itemCount: items.length,
+        itemsJson: row.items,
+        truncated: row.truncated,
+        warningsJson: row.warnings,
+        itemCount: row.items.length,
         fetchedAt,
+        syncMode: row.syncMode,
+        watermarkAt: row.watermarkAt,
+        ...(row.lastFullAt ? { lastFullAt: row.lastFullAt } : {}),
       })
       .onConflictDoUpdate({
         target: [documentImportListCache.provider, documentImportListCache.connectionName],
         set: {
-          itemsJson: items,
-          truncated: listed.truncated,
-          warningsJson: listed.warnings,
-          itemCount: items.length,
+          itemsJson: row.items,
+          truncated: row.truncated,
+          warningsJson: row.warnings,
+          itemCount: row.items.length,
           fetchedAt,
+          syncMode: row.syncMode,
+          watermarkAt: row.watermarkAt,
+          ...(row.lastFullAt ? { lastFullAt: row.lastFullAt } : {}),
         },
       })
       .run();
-    return { provider, items, truncated: listed.truncated, warnings: listed.warnings, fetchedAt: null };
   }
 
   /**
@@ -529,34 +636,25 @@ export class DocumentImportService {
   }
 
   /** imported 标记回填：已落 Room、或批次成功导入/孵化（auto 模式无目标 Room
-   *  时全部孵化，不产生落 Room 记录）时置 true。 */
+   *  时全部孵化，不产生落 Room 记录）时置 true。落地集合按 provider 一次
+   *  join 查询取回（不做对列举 ids 的 inArray——全量上限放开后上万条会超
+   *  SQLite 变量上限）。 */
   private markImported(
     provider: ExternalDocumentProvider,
     items: ExternalDocumentListItem[],
   ): ExternalDocumentListItem[] {
-    const remoteIds = [...new Set(items.map((item) => item.remoteDocumentId))];
-    if (remoteIds.length === 0) return items;
-    const sources = this.db.select({
-      id: documentImportSources.id,
-      remoteDocumentId: documentImportSources.remoteDocumentId,
-    }).from(documentImportSources)
+    if (items.length === 0) return items;
+    const landedRemoteIds = this.db
+      .select({ remoteDocumentId: documentImportSources.remoteDocumentId })
+      .from(documentRoomImports)
+      .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
+      .innerJoin(documentImportSources, eq(documentImportRuns.sourceId, documentImportSources.id))
       .where(and(
         eq(documentImportSources.ownerId, "local-user"),
         eq(documentImportSources.provider, provider),
-        inArray(documentImportSources.remoteDocumentId, remoteIds),
-      )).all();
-    const sourceIds = sources.map((source) => source.id);
-    const landedSourceIds = new Set(sourceIds.length > 0
-      ? this.db.select({ sourceId: documentImportRuns.sourceId })
-        .from(documentRoomImports)
-        .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
-        .where(inArray(documentImportRuns.sourceId, sourceIds))
-        .all()
-        .map((row) => row.sourceId)
-      : []);
-    const landedRemoteIds = new Set(
-      sources.filter((source) => landedSourceIds.has(source.id)).map((source) => source.remoteDocumentId),
-    );
+      ))
+      .all()
+      .reduce((set, row) => set.add(row.remoteDocumentId), new Set<string>());
     const batchImported = this.batchImportedRemoteIds(provider);
     for (const item of items) {
       if (landedRemoteIds.has(item.remoteDocumentId) || batchImported.has(item.remoteDocumentId)) item.imported = true;

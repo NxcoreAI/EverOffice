@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultStyleParams, deriveChartSeries, normalizeStyleParams } from "../src/modules/slides-style/validate.js";
 import type { PaletteRoles } from "../src/modules/slides-style/extract.js";
+import { contrast, hexToRgb, hueDistance, luminance, saturation } from "../src/modules/slides-style/extract.js";
 
 const roles: PaletteRoles = {
   background: "#f5f2ec",
@@ -109,5 +110,95 @@ describe("deriveChartSeries", () => {
     expect(series[0]).toBe("#1e3a5f");
     expect(series[3]).toBe("#e0a03c");
     expect(new Set(series).size).toBe(5);
+  });
+});
+
+describe("色板关系闸门（确定性修复）", () => {
+  it("过饱和主色降到 0.72 以内并记录修复", () => {
+    const notes: string[] = [];
+    const params = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, primary: "#ff00ff" } },
+      notes,
+    );
+    expect(saturation(hexToRgb(params.palette.primary))).toBeLessThanOrEqual(0.72);
+    expect(notes.some((note) => note.includes("饱和度"))).toBe(true);
+  });
+
+  it("浅底上对比不足的正文色加深到 4.5:1", () => {
+    const params = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, text: "#b8b4ac" } },
+    );
+    expect(contrast(hexToRgb(params.palette.text), hexToRgb("#f5f2ec"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("次级文字对比不足时向正文色拉近到 3:1", () => {
+    const params = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, textMuted: "#d8d4cc" } },
+    );
+    expect(contrast(hexToRgb(params.palette.textMuted), hexToRgb("#f5f2ec"))).toBeGreaterThanOrEqual(3);
+  });
+
+  it("强调色撞主色时旋转分离，且与底色对比达标", () => {
+    const params = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, accent: "#26466b" } },
+    );
+    expect(hueDistance(hexToRgb(params.palette.accent), hexToRgb("#1e3a5f"))).toBeGreaterThanOrEqual(40);
+    expect(contrast(hexToRgb(params.palette.accent), hexToRgb("#f5f2ec"))).toBeGreaterThanOrEqual(2.5);
+  });
+
+  it("卡面与页底无层次时按底色重推", () => {
+    const params = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, surface: "#f5f3ee" } },
+    );
+    const delta = luminance(hexToRgb(params.palette.surface)) - luminance(hexToRgb("#f5f2ec"));
+    expect(delta).toBeGreaterThanOrEqual(0.03);
+  });
+
+  it("无描边无阴影时卡面档位收紧", () => {
+    const params = normalizeStyleParams({
+      ...validParams,
+      palette: { ...validParams.palette, surface: "#f8f5f0" },
+      decoration: { ...validParams.decoration, cardStroke: null, cardShadow: "none" },
+    });
+    const delta = luminance(hexToRgb(params.palette.surface)) - luminance(hexToRgb("#f5f2ec"));
+    expect(delta).toBeGreaterThanOrEqual(0.045);
+  });
+
+  it("深底链路：正文提亮到 4.5:1，卡面按深底档位重推", () => {
+    const params = normalizeStyleParams({
+      ...validParams,
+      palette: {
+        background: "#0c2233",
+        surface: "#0d2436",
+        primary: "#145374",
+        accent: "#e8a13c",
+        text: "#22303c",
+        textMuted: "#5b6b78",
+        onDarkText: "#f2f4f7",
+      },
+    });
+    expect(contrast(hexToRgb(params.palette.text), hexToRgb("#0c2233"))).toBeGreaterThanOrEqual(4.5);
+    const delta = luminance(hexToRgb(params.palette.surface)) - luminance(hexToRgb("#0c2233"));
+    expect(delta).toBeGreaterThanOrEqual(0.015);
+  });
+
+  it("onDarkText 在深底封面上过暗时提亮", () => {
+    const params = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, onDarkText: "#5a5f66" } },
+    );
+    const deepCover = hexToRgb("#1e3a5f");
+    const deep = {
+      r: deepCover.r * 0.25 + 17 * 0.75,
+      g: deepCover.g * 0.25 + 17 * 0.75,
+      b: deepCover.b * 0.25 + 17 * 0.75,
+    };
+    expect(contrast(hexToRgb(params.palette.onDarkText), deep)).toBeGreaterThanOrEqual(3.5);
+  });
+
+  it("修复幂等：再归一一次结果不变", () => {
+    const once = normalizeStyleParams(
+      { ...validParams, palette: { ...validParams.palette, primary: "#ff00ff", surface: "#f5f3ee" } },
+    );
+    expect(normalizeStyleParams(once)).toEqual(once);
   });
 });

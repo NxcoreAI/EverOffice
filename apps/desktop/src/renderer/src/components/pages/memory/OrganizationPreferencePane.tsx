@@ -12,7 +12,7 @@ import { formatDate, useAsyncData } from './useMemoryData'
  * + 用户偏好段（编辑即接管，注入时优先）。学习与注入双开关：关注入 =
  * 抽取与同一性判定回到无偏好行为。
  */
-export function OrganizationPreferencePane() {
+export function OrganizationPreferencePane({ refreshTick }: { refreshTick?: number } = {}) {
   const { locale, t } = useLocale()
   const { data, failure, loading, refresh } = useAsyncData<KnowledgePreferencesDto>(
     () => window.nxcore!.knowledge.getPreferences(),
@@ -26,6 +26,12 @@ export function OrganizationPreferencePane() {
   useEffect(() => {
     if (data && !editing) setDraft(data.userPreference)
   }, [data, editing])
+
+  // 顶部全局刷新：重读整理偏好。
+  useEffect(() => {
+    if (refreshTick) void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   const save = async () => {
     setBusy(true)

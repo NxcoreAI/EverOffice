@@ -55,16 +55,20 @@ export interface SettleOutcome {
   /** true = styler 输出不可用，回落到确定性基线。 */
   fellBack: boolean;
   reason?: string;
+  /** 色板关系闸门的确定性修复记录（排查用，不进用户面）。 */
+  repairs?: string[];
 }
 
-/** styler settle 输出 → StyleParams：先严格归一，失败降级基线。 */
+/** styler settle 输出 → StyleParams：先严格归一+关系修复，失败降级基线。 */
 export function styleParamsFromStyler(
   raw: unknown,
   extraction: OverviewExtraction,
 ): SettleOutcome {
   const candidate = (raw as { styleParams?: unknown } | null)?.styleParams ?? raw;
   try {
-    return { params: normalizeStyleParams(candidate), fellBack: false };
+    const repairs: string[] = [];
+    const params = normalizeStyleParams(candidate, repairs);
+    return { params, fellBack: false, ...(repairs.length > 0 ? { repairs } : {}) };
   } catch (error) {
     const fallback = defaultStyleParams(
       extraction.roles,

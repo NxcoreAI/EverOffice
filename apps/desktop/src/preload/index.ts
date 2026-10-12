@@ -362,7 +362,7 @@ const api: NxcoreDesktopApi = {
   },
   externalDocuments: {
     importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
-    importList: (provider, connectionName, cachedOnly) => invoke('external-documents:import-list', provider, connectionName, cachedOnly),
+    importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
     importExistingInRoom: (provider, roomId, remoteDocumentIds) => invoke('external-documents:import-existing-in-room', provider, roomId, remoteDocumentIds),
     importBatch: (input) => invoke('external-documents:import-batch', input),
     importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
@@ -408,6 +408,21 @@ const api: NxcoreDesktopApi = {
     getPerceptionNode: (id) => invokeQuietly('perception:node', id),
     retryPerceptionNode: (id) => invoke('perception:retry', id),
     deletePerceptionNode: (id, deleteAssets) => invoke('perception:delete', id, deleteAssets),
+  },
+  screenMemory: {
+    status: () => invoke('screen-memory:status'),
+    settings: () => invoke('screen-memory:settings'),
+    updateSettings: (patch) => invoke('screen-memory:update-settings', patch),
+    search: (query) => invokeQuietly('screen-memory:search', query),
+    listIntervals: (query) => invokeQuietly('screen-memory:intervals', query),
+    getInterval: (id) => invokeQuietly('screen-memory:interval', id),
+    stats: () => invokeQuietly('screen-memory:stats'),
+    correctInterval: (input) => invoke('screen-memory:correct', input),
+    storage: () => invokeQuietly('screen-memory:storage'),
+    frontmost: () => invoke('screen-memory:frontmost'),
+    registerMaterial: (intervalId) => invoke('screen-memory:register-material', intervalId),
+    backfillEstimate: (input) => invoke('screen-memory:backfill-estimate', input),
+    backfillRun: (input) => invoke('screen-memory:backfill-run', input),
   },
   diary: {
     settings: () => invoke('diary:settings'),
@@ -519,14 +534,14 @@ const api: NxcoreDesktopApi = {
     onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
       const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
         const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
-        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored' && eventType !== 'session-activated') return
+        if (eventType !== 'quota-exhausted' && eventType !== 'session-activated') return
         listener({ type: eventType })
       }
-      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']) {
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
         ipcRenderer.on(channel, handle)
       }
       return () => {
-        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored', 'ai-relay:session-activated']) {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
           ipcRenderer.removeListener(channel, handle)
         }
       }
