@@ -409,18 +409,18 @@ export function officePlugin(
   const slidesRead: DocumentCapabilityTool = {
     name: "context_room_slides_read",
     title: "读取 PPT 大纲与操作词汇",
-    description: "读取一份已在 Room 产物库打开的 .pptx 产物的大纲与可编辑操作词汇表。"
-      + "fileId 缺省（或 \"active\"）= 用户当前打开的那个 PPT，无需知道文件 id。"
+    description: "读取一份 Room 产物库中的 .pptx 产物的大纲与可编辑操作词汇表。"
+      + "fileId 缺省（或 \"active\"）= 用户当前打开的那个 PPT；传显式 fileEntryId 时未打开的 PPT 会自动以可编辑方式打开（应用重启后同会话也能继续改）。"
       + "大纲列出每页的元素（id | 类型 | 文本摘要），是编辑时定位元素的唯一依据；"
       + "opVocabulary 列出 context_room_slides_edit 可用的全部操作及其签名。"
-      + "文件未打开会报错并列出当前打开的 Office 文件；editable=false 表示只读打开（能读大纲，"
+      + "文件不存在会报错并列出当前打开的 Office 文件；editable=false 表示只读打开（能读大纲，"
       + "要编辑需用户在产物库重新以可编辑方式打开）。"
       + "编辑前先读本工具，之后按大纲里的元素 id 发编辑事务。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；缺省或 \"active\" = 当前打开的那个 PPT" },
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；缺省或 \"active\" = 当前打开的那个 PPT；显式 id 未打开会自动打开" },
       },
       required: [],
     },
@@ -444,17 +444,18 @@ export function officePlugin(
   const slidesEdit: DocumentCapabilityTool = {
     name: "context_room_slides_edit",
     title: "编辑已打开的 PPT",
-    description: "向一份已在 Room 产物库打开的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
+    description: "向一份 Room 产物库中的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
+      + "fileId 可用 \"active\"（当前打开的那个）或显式 fileEntryId（未打开会自动以可编辑方式打开）。"
       + "常用操作：setText/setFont/setFill 改已有元素，addElement/addSlideWithLayout 新增，"
       + "deleteElement/deleteSlide 删除，moveSlide 调序，findReplace 全稿替换，setNotes 备注页；"
       + "完整词汇与签名见 context_room_slides_read 返回的 opVocabulary（每项自带用法，失败信息也会带用法提示）。"
       + "元素用 read 大纲里的 id 定位（target.slide 从 0 计）；一次事务 1~50 个 op。"
-      + "编辑会实时显示在用户打开的视图上并自动保存（版本链 +1）。返回新 outline，可直接链式编辑。",
+      + "编辑会实时显示在打开的视图上并自动保存（版本链 +1）。返回新 outline，可直接链式编辑。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；\"active\" = 当前打开的那个 PPT" },
+        fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；\"active\" = 当前打开的那个 PPT；显式 id 未打开会自动打开" },
         ops: {
           type: "array",
           minItems: 1,

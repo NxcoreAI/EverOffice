@@ -905,6 +905,8 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
+    exportReveal: (fileId: string, originalName: string) =>
+      invoke('files:export-reveal', fileId, originalName),
     openOriginal: (
       fileId: string,
       originalName?: string,

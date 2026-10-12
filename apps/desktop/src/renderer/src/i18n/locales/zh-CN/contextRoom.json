@@ -85,6 +85,8 @@
   "artifactLibrary.filterCloudDoc": "云文档",
   "artifactLibrary.filterOffice": "Office 产物",
   "artifactLibrary.agentGenerated": "AI 生成",
+  "artifactLibrary.revealInFolder": "在文件夹中显示",
+  "artifactLibrary.revealFailed": "在文件夹中显示失败",
   "artifactLibrary.newArtifact": "新建产物",
   "artifactLibrary.newLightDoc": "轻文档",
   "artifactLibrary.newLightDocHint": "Markdown 语法，适合笔记与协作编辑",

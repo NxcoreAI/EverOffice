@@ -615,6 +615,7 @@ const FILES_CHANNELS = {
   pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
   reveal: 'files:reveal',
+  exportReveal: 'files:export-reveal',
   openOriginal: 'files:open-original',
   pickAndImport: 'files:pick-and-import',
   pickPaths: 'files:pick-paths',
@@ -2765,6 +2766,8 @@ function registerFilesHandlers(
     bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
+  handle(FILES_CHANNELS.exportReveal, (_event, fileId: string, originalName: string) =>
+    bridge.exportReveal(fileId, originalName))
   handle(FILES_CHANNELS.openOriginal, async (
     event,
     fileId: string,
