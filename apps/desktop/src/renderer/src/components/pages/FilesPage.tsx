@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Search, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Image as ImageIcon, Search, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -702,13 +702,17 @@ export function FilesPage({
   )
 }
 
+const IMAGE_ICON_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic'])
+
 function FileTypeIcon({ file }: { file: FileCatalogDto }) {
   const extension = file.originalName.split('.').pop()?.toLowerCase()
-  const Icon = extension === 'xlsx' || extension === 'xls' || extension === 'csv'
-    ? FileSpreadsheet
-    : extension === 'pdf'
-      ? FileType2
-      : FileTextIcon
+  const Icon = IMAGE_ICON_EXTENSIONS.has(extension ?? '')
+    ? ImageIcon
+    : extension === 'xlsx' || extension === 'xls' || extension === 'csv'
+      ? FileSpreadsheet
+      : extension === 'pdf'
+        ? FileType2
+        : FileTextIcon
   return <Icon className="file-type-icon" aria-hidden="true" strokeWidth={1.8} />
 }
 
