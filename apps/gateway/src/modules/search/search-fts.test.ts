@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { tokenizeJoined } from "./tokenizer";
+import { tokenizeJoined } from "./tokenizer.js";
 
 /** 直接执行 0078 迁移 SQL，验证建表语句与 FTS5 roundtrip（不依赖完整 nxcore.db）。 */
 function applyMigration(): Database.Database {
