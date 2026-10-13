@@ -20,6 +20,7 @@ import type {
 } from '@nxcore/agent-contract'
 
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
+import type { SearchItemType, SearchRequestDto } from '../shared/search'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
 import { officePreviewKindForFileName } from '../shared/sources'
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
@@ -42,6 +43,7 @@ import { startDesktopUpdater } from './updater'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
 import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
+import { SearchGatewayBridge } from './gateway/search-gateway-bridge'
 import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
 import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
 import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
@@ -101,7 +103,7 @@ import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
 import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
 import { PrivateAudioSyncService } from './transcription/private-audio-sync'
 import {
-  captureCurrentWindow,
+  captureUserScreen,
   createWindowScreenshotScheduler,
 } from './screenshot/window-screenshot-service'
 import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
@@ -144,7 +146,7 @@ import type {
 } from '../shared/agent-auth'
 import { BrowserExtensionService } from './browser-extension/browser-extension-service'
 import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
-import { OBSIDIAN_VAULT_ASSET_SCHEME } from '../shared/obsidian'
+import { OBSIDIAN_VAULT_ASSET_SCHEME, type ObsidianImportResult, type ObsidianImportTarget } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
 import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
@@ -257,7 +259,6 @@ const SOURCE_CHANNELS = {
 } as const
 
 const OBSIDIAN_CHANNELS = {
-  pickAndMount: 'obsidian:pick-and-mount',
   discover: 'obsidian:discover',
   pickCandidate: 'obsidian:pick-candidate',
   importCandidate: 'obsidian:import-candidate',
@@ -554,6 +555,13 @@ const MEMORY_CHANNELS = {
   deleteDocument: 'memory:documents:delete',
   atomicProvenance: 'memory:atomic-provenance',
   captureDocumentRewrite: 'memory:capture-document-rewrite',
+} as const
+
+const SEARCH_CHANNELS = {
+  invoke: 'search:invoke',
+  status: 'search:status',
+  prioritize: 'search:prioritize',
+  messageContext: 'search:message-context',
 } as const
 
 const MCP_CHANNELS = {
@@ -898,7 +906,7 @@ function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
 const queuedProtocolUrls: string[] = []
 let screenshotOutbox: ScreenshotOutbox | null = null
 const captureAndQueueCurrentWindow = async () => {
-  const result = await captureCurrentWindow()
+  const result = await captureUserScreen()
   if (result.ok) await screenshotOutbox?.enqueue(result).catch(() => undefined)
   return result
 }
@@ -1091,6 +1099,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     vaultId: string
     roomId: string
     mountMode: 'dedicated' | 'embedded' | 'memory'
+    sourceType: 'obsidian-vault' | 'local-directory'
     projectionFileIds: string[]
     memoryProjectionFileIds: string[]
   }, attemptsRemaining = 120): Promise<void> => {
@@ -1106,7 +1115,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     const files = new FilesGatewayBridge(gatewaySupervisor)
     const fileIds = new Set([...event.projectionFileIds, ...event.memoryProjectionFileIds])
     for (const fileId of fileIds) await files.delete(fileId).catch(() => undefined)
-    await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(event.vaultId).catch(() => undefined)
+    await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(event.vaultId, undefined, event.sourceType).catch(() => undefined)
     if (event.mountMode === 'dedicated') {
       await new KnowledgeGatewayBridge(gatewaySupervisor).deleteRoom(event.roomId).catch(() => undefined)
     }
@@ -1130,16 +1139,8 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const outcome of outcomes) {
       if (outcome.fileId) await service.setMemoryProjectionFileId(vaultId, outcome.filename, outcome.fileId)
     }
-    // 图片附件注册进看图理解：导入链路本身不看图（只有截图管线会），而 PPT
-    // 素材检索按 VLM 中文描述搜图——vault 图不入 perception 就永远搜不到。
-    // 同一 fileId 重复注册幂等（服务端命中既有 observation 直接返回）。
-    const kindByPath = new Map(resources.map((resource) => [resource.relativePath, resource.kind]))
-    for (const outcome of outcomes) {
-      if (!outcome.fileId || kindByPath.get(outcome.filename) !== 'image') continue
-      await bridge.registerVisualObservation({ fileId: outcome.fileId }).catch((error) => {
-        console.warn('Unable to register vault image observation', { vaultId, filename: outcome.filename, error })
-      })
-    }
+    // vault 图片的视觉库注册由网关导入链路完成（VLM 描述在 file.ingest 内生成，
+    // 结果直接落 visual_nodes），桌面端不再补注册。
     for (const fileId of service.takeRemovedMemoryProjectionFileIds(vaultId)) {
       await bridge.delete(fileId).catch(() => undefined)
     }
@@ -1162,7 +1163,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
       })
       await service.readNote(vaultId, note.resourceId).then(async (snapshot) => {
         const projected = await documents.syncExternalProjection({
-          sourceKind: 'obsidian-vault',
+          sourceKind: vault.sourceType,
           sourceId: vaultId,
           resourceId: note.resourceId,
           roomId: note.roomId,
@@ -1185,6 +1186,28 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send('knowledge:changed')
     }
+  }
+  // 用户主动挂载完成后的收尾：投影落库后触发一次概览再生（一次性，不接增量）。
+  const projectRoomVaultAndKickOverview = async (vaultId: string): Promise<void> => {
+    await projectRoomVault(vaultId)
+    if (!gatewaySupervisor) return
+    const vault = service.list().find((item) => item.id === vaultId)
+    if (!vault || vault.mountMode === 'memory') return
+    if (service.projectionNotes(vaultId).length === 0) return
+    void new ContextRoomGatewayBridge(gatewaySupervisor)
+      .refreshOverview(vault.roomId)
+      .catch((error) => console.warn('Overview refresh after mount failed', { vaultId, error }))
+  }
+  const mountAsNewRoom = async (rootPath: string, registryId: string | null) => {
+    if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
+    const vault = await service.mount(rootPath, undefined, 'dedicated', registryId)
+    await new KnowledgeGatewayBridge(gatewaySupervisor).upsertRoom({
+      id: vault.roomId,
+      title: vault.name,
+      kind: '项目',
+    })
+    await projectRoomVaultAndKickOverview(vault.id)
+    return vault
   }
   service.onChanged((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -1210,37 +1233,11 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     if (vault.memoryEnabled) void syncMemoryVault(vault.id)
     if (vault.mountMode !== 'memory') void projectRoomVault(vault.id)
   }
-  handle(OBSIDIAN_CHANNELS.pickAndMount, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender)
-    const selection = parent && !parent.isDestroyed()
-      ? await dialog.showOpenDialog(parent, {
-        title: '选择 Obsidian Vault',
-        buttonLabel: '挂载为 Room',
-        properties: ['openDirectory'],
-      })
-      : await dialog.showOpenDialog({
-        title: '选择 Obsidian Vault',
-        buttonLabel: '挂载为 Room',
-        properties: ['openDirectory'],
-      })
-    const rootPath = selection.filePaths[0]
-    if (selection.canceled || !rootPath) return null
-    const vault = await service.mount(rootPath)
-    if (gatewaySupervisor) {
-      await new KnowledgeGatewayBridge(gatewaySupervisor).upsertRoom({
-        id: vault.roomId,
-        title: vault.name,
-        kind: '项目',
-      })
-      void projectRoomVault(vault.id)
-    }
-    return vault
-  })
   handle(OBSIDIAN_CHANNELS.discover, () => service.discover())
   handle(OBSIDIAN_CHANNELS.pickCandidate, async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options: Electron.OpenDialogOptions = {
-      title: '选择 Obsidian Vault',
+      title: '选择目录',
       buttonLabel: '添加到列表',
       properties: ['openDirectory'],
     }
@@ -1253,16 +1250,20 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
   handle(OBSIDIAN_CHANNELS.importCandidate, async (
     _event,
     candidateId: string,
-    target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string },
-  ) => {
+    target: ObsidianImportTarget,
+  ): Promise<ObsidianImportResult> => {
     if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
     const rootPath = service.candidatePath(candidateId)
     const registryId = service.candidateRegistryId(candidateId)
     const candidate = await service.registerCandidate(rootPath)
+    if (target.kind === 'new-room') {
+      const vault = await mountAsNewRoom(rootPath, registryId)
+      return { kind: 'new-room', vault }
+    }
     if (target.kind === 'room') {
       if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('请选择目标 Room。')
       const vault = await service.mount(rootPath, target.roomId, 'embedded', registryId)
-      void projectRoomVault(vault.id)
+      await projectRoomVaultAndKickOverview(vault.id)
       return { kind: 'room' as const, vault }
     }
     const vault = await service.mount(rootPath, undefined, 'memory', registryId)
@@ -2567,13 +2568,13 @@ function registerDocumentHandlers(
       title: string
       markdown: string
     }) => {
-      const roomId = vaults.list().find((vault) => vault.id === input.vaultId)?.roomId
-      if (!roomId) throw new Error(`Vault room not found for ${input.vaultId}`)
+      const vault = vaults.list().find((item) => item.id === input.vaultId)
+      if (!vault) throw new Error(`Vault room not found for ${input.vaultId}`)
       await bridge.syncExternalProjection({
-        sourceKind: 'obsidian-vault',
+        sourceKind: vault.sourceType,
         sourceId: input.vaultId,
         resourceId: input.resourceId,
-        roomId,
+        roomId: vault.roomId,
         relativePath: input.relativePath,
         sourceHash: input.sourceHash,
         title: input.title,
@@ -2994,6 +2995,23 @@ async function waitForCloudMaterializeGate(): Promise<void> {
   await Promise.race([gate, timeout])
 }
 
+function registerSearchHandlers(bridge: SearchGatewayBridge): void {
+  handle(SEARCH_CHANNELS.invoke, (_event, request: SearchRequestDto) =>
+    bridge.invoke(request))
+  handle(SEARCH_CHANNELS.status, () => bridge.status())
+  handle(
+    SEARCH_CHANNELS.prioritize,
+    (_event, itemType: SearchItemType, refId: string) =>
+      bridge.prioritize(itemType, refId),
+  )
+  handle(
+    SEARCH_CHANNELS.messageContext,
+    (_event, messageId: string, before?: number, after?: number) =>
+      bridge.messageContext(messageId, before, after),
+  )
+}
+
+
 function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
   handle(MEMORY_CHANNELS.overview, () => bridge.overview())
   ipcMain.on(MEMORY_CHANNELS.onboardingFinished, () => openCloudMaterializeGate())
@@ -3336,6 +3354,7 @@ function registerScreenMemoryHandlers(): void {
     const next: Record<string, unknown> = {}
     if (typeof row.enabled === 'boolean') next.enabled = row.enabled
     if (typeof row.paused === 'boolean') next.paused = row.paused
+    if (row.scopeMode === 'all' || row.scopeMode === 'allowlist') next.scopeMode = row.scopeMode
     if (Array.isArray(row.allowedApps)) next.allowedApps = row.allowedApps.filter((item): item is string => typeof item === 'string')
     if (Array.isArray(row.excludedApps)) next.excludedApps = row.excludedApps.filter((item): item is string => typeof item === 'string')
     return screenMemoryController.updateSettings(next)
@@ -3368,6 +3387,9 @@ function registerScreenMemoryHandlers(): void {
   })
   handle(SCREEN_MEMORY_CHANNELS.frontmost, async () => {
     return visionOcrClient.frontmost()
+  })
+  handle(SCREEN_MEMORY_CHANNELS.openPermissionSettings, () => {
+    return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
   })
   handle(SCREEN_MEMORY_CHANNELS.registerMaterial, (_event, id: string) => {
     if (typeof id !== 'string' || id.length < 8) throw new Error('无效的区间 id。')
@@ -4109,6 +4131,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     const memoryGatewayBridge = new MemoryGatewayBridge(gatewaySupervisor)
     registerMemoryHandlers(memoryGatewayBridge)
+    registerSearchHandlers(new SearchGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
     registerExternalDocumentHandlers(new ExternalDocumentsGatewayBridge(gatewaySupervisor))
