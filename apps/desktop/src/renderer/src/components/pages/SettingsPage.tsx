@@ -950,6 +950,20 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
+        {screenCaptureStatus?.permission !== undefined && screenCaptureStatus.permission !== 'granted' ? (
+          <div className="reality-setting-row">
+            <div>
+              <strong>{t('surface:screenMemory.permission')}</strong>
+              <span className="settings-value-text">{t('surface:screenMemory.permissionMissing')}</span>
+              <span className="screen-memory-permission-actions">
+                <button type="button" onClick={() => void window.nxcore?.screenMemory.openPermissionSettings()}>
+                  {t('surface:screenMemory.openPermission')}
+                </button>
+                <span className="settings-value-text">{t('surface:screenMemory.permissionRestartHint')}</span>
+              </span>
+            </div>
+          </div>
+        ) : null}
         <div className="reality-setting-row">
           <div><strong>{t('surface:settings.visualUnderstanding')}</strong></div>
           <button
