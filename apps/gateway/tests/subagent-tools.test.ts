@@ -768,6 +768,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       input.candidates.map((candidate, index) => ({
         contentHash: `${input.idempotencyKey}:${String(index)}`.padEnd(64, '0').slice(0, 64),
         fileEntryId: `entry-${String(index)}`,
+        index,
       })))
     const saveDemoPng = vi.fn(async () => ({ contentHash: 'd'.repeat(64), fileEntryId: 'demo-entry' }))
     const deps: SlidesStyleStageDeps = {
@@ -784,6 +785,9 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
         },
       },
       saveDemoPng,
+      resolveDraftDocument: () => ({
+        markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1 | 营收: 1\n\n## 结尾\n- 谢谢\n',
+      }),
     }
     const dispatchHandlers: Record<string, Partial<SubagentInvocation>> = {
       'slides-styler': {
@@ -945,6 +949,40 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     expect(secondCall.idempotencyKey).toContain(':gen:2')
   })
 
+  it('style：同 Room 换草稿不复用旧会话——按新草稿新建（复用会让 generate 读错草稿文档）', async () => {
+    const { deps, orchestrator, generateImages } = await setupStyleDeps({
+      directionOutput: {
+        task: 'direction',
+        candidates: [
+          { label: '深空科技', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，版式完整……'.repeat(2) },
+          { label: '冷灰商务', imagePrompt: '一张浅色商务风 PPT 风格参考图，16:9 横版，版式完整……'.repeat(2) },
+          { label: '暖调编辑', imagePrompt: '一张暖色人文风 PPT 风格参考图，16:9 横版，版式完整……'.repeat(2) },
+        ],
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    const first = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const firstSessionId = (JSON.parse(first.content as string) as { styleSessionId: string }).styleSessionId
+
+    // 同 Room 的新草稿：不得把旧候选重新亮出来，须按新草稿新建会话并重新生成。
+    const second = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '新一版', draftDocumentId: 'doc-draft-2' } as never,
+      undefined, undefined,
+    )
+    const secondPayload = JSON.parse(second.content as string) as { styleSessionId: string }
+    expect(secondPayload.styleSessionId).not.toBe(firstSessionId)
+    expect(generateImages).toHaveBeenCalledTimes(2)
+    expect(deps.sessions.byId(secondPayload.styleSessionId)?.draftDocumentId).toBe('doc-draft-2')
+    expect(deps.sessions.byId(firstSessionId)?.draftDocumentId).toBe('doc-draft-1')
+  })
+
   it('style_select：提取+复核+降级演示页 → 风格卡就绪；坏序号被拒', async () => {
     const { deps, orchestrator, saveDemoPng } = await setupStyleDeps()
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
@@ -981,6 +1019,74 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const session = deps.sessions.byId(styleSessionId)
     expect(session?.stage).toBe('card_ready')
     expect(session?.styleParams?.palette.primary).toBe('#1e3a5f')
+  })
+
+  it('style：候选构图家族缺失/重复时确定性补位，三候选两两互异并随候选落库', async () => {
+    const { deps, orchestrator, generateImages } = await setupStyleDeps({
+      directionOutput: {
+        task: 'direction',
+        candidates: [
+          { label: '深空科技', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，深炭黑底亮青主色，顶部标题区用灰色假字条……'.repeat(2), composition: 'poster' },
+          { label: '冷灰商务', imagePrompt: '一张浅色商务风 PPT 风格参考图，16:9 横版，灰白底藏蓝主色，顶部标题区用灰色假字条……'.repeat(2), composition: 'poster' },
+          { label: '暖调编辑', imagePrompt: '一张暖色人文风 PPT 风格参考图，16:9 横版，米白底赭棕主色，顶部标题区用灰色假字条……'.repeat(2) },
+        ],
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '做一份商务科技风的汇报', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const payload = JSON.parse(result.content as string) as { styleSessionId: string }
+
+    const genInput = generateImages.mock.calls[0]?.[0] as { candidates: Array<{ composition: string }> }
+    const compositions = genInput.candidates.map((candidate) => candidate.composition)
+    expect(compositions[0]).toBe('poster')
+    expect(new Set(compositions).size).toBe(3)
+    const session = deps.sessions.byId(payload.styleSessionId)
+    expect(session?.overviewImages.length).toBe(3)
+    expect(session?.overviewImages.every((image) => typeof image.composition === 'string')).toBe(true)
+    expect(new Set(session?.overviewImages.map((image) => image.composition)).size).toBe(3)
+  })
+
+  it('style_select：settle 收到预设清单与草稿页角色；composition 以用户挑中的候选为准并进效果文案', async () => {
+    const { deps, orchestrator } = await setupStyleDeps({
+      directionOutput: {
+        task: 'direction',
+        candidates: [
+          { label: '深空科技', imagePrompt: '一张深色科技风 PPT 风格参考图，16:9 横版，深炭黑底亮青主色，顶部标题区用灰色假字条……'.repeat(2), composition: 'swiss' },
+          { label: '冷灰商务', imagePrompt: '一张浅色商务风 PPT 风格参考图，16:9 横版，灰白底藏蓝主色，顶部标题区用灰色假字条……'.repeat(2), composition: 'poster' },
+          { label: '暖调编辑', imagePrompt: '一张暖色人文风 PPT 风格参考图，16:9 横版，米白底赭棕主色，顶部标题区用灰色假字条……'.repeat(2), composition: 'editorial' },
+        ],
+      },
+    })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const style = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
+    const selected = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 2 } as never,
+      undefined, undefined,
+    )
+    expect((JSON.parse(selected.content as string) as { status: string }).status).toBe('style_card_ready')
+
+    const settleCall = (orchestrator.dispatch as ReturnType<typeof vi.fn>).mock.calls
+      .find((call) => (call[0] as { input?: { task?: string } }).input?.task === 'settle')
+    const settleInput = (settleCall?.[0] as { input?: Record<string, unknown> }).input
+    expect(settleInput?.layoutPresetIds).toMatchObject({ cover: ['P1a', 'P1b', 'P1c'], section: ['P3'] })
+    expect(settleInput?.outlineRoles).toEqual(['cover', 'table', 'closing'])
+
+    const session = deps.sessions.byId(styleSessionId)
+    expect(session?.styleParams?.composition).toBe('poster')
+    expect(session?.styleParams?.effectLines.some((line) => line.startsWith('构图：海报大字'))).toBe(true)
   })
 
   it('generate：带 styleSessionId 时 builder 输入注入 styleParams；未到风格卡阶段的会话被拒', async () => {
@@ -1049,6 +1155,130 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const builderInput = (builderCall?.[0] as { input?: { styleParams?: { palette: { primary: string } } } }).input
     expect(builderInput?.styleParams?.palette.primary).toBe('#1e3a5f')
     expect(deps.sessions.byId(styleSessionId)?.stage).toBe('confirmed')
+  })
+
+  it('generate：builder 带 pageLayouts → 结果透传并出节奏审计 warning；不带则不出', async () => {
+    const { deps } = await setupStyleDeps()
+    const planFixture = {
+      phase: 'arrange', title: '季度汇报', narrative: 'n',
+      pages: [{ title: '封面', role: 'cover', density: 'sparse', points: ['季度汇报'] },
+        { title: '业绩', role: 'data', density: 'dense', points: ['增长'], data: 'bar | categories: Q1, Q2 | 营收: 1, 2' }],
+      warnings: [], summary: '',
+    }
+    const buildWithLayouts = {
+      status: 'completed', fileEntryId: 'file-1', fileName: '季度汇报.pptx', pages: 7,
+      outline: ['封面', '目录', '业绩', '增长', '战略', '生态', '封底'],
+      pageLayouts: ['P1a', 'P4', 'T1', 'T1', 'F1', 'R1', 'R2'],
+      warnings: [], summary: 'ok',
+    }
+    const orchestratorWithLayouts = {
+      dispatch: vi.fn(async (input: { agentId: string; input?: { task?: string; phase?: string }; onInvocationId?: (id: string) => void }) => {
+        const invocationId = input.agentId === 'slides-planner' ? 'invocation-plan' : 'invocation-build'
+        input.onInvocationId?.(invocationId)
+        const result = input.agentId === 'slides-planner'
+          ? { text: '', structuredOutput: planFixture }
+          : { text: '', structuredOutput: buildWithLayouts }
+        return {
+          id: invocationId, agentDefinitionId: input.agentId, agentRevisionId: 'r1', source: 'primary_agent',
+          parentSessionId: 'session-1', parentRunId: 'run-1', task: 't', input: null, status: 'completed',
+          result, errorCode: null, errorMessage: null, createdAt: '', startedAt: '', completedAt: '',
+        }
+      }),
+    } as unknown as SubagentOrchestrator
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorWithLayouts, {
+      slidesStyle: deps,
+      resolveDocumentForDraft: () => ({
+        document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+        blocks: [],
+        markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1, Q2 | 营收: 1, 2\n',
+      }),
+      trashSlidesDraftDocument: async () => undefined,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+    const style = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1 } as never,
+      undefined, undefined,
+    )
+    const generated = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', styleSessionId } as never,
+      undefined, undefined,
+    )
+    const payload = JSON.parse(generated.content as string) as {
+      status: string
+      pageLayouts: string[]
+      warnings: string[]
+    }
+    expect(payload.status).toBe('completed')
+    expect(payload.pageLayouts).toEqual(buildWithLayouts.pageLayouts)
+    const rhythmWarnings = payload.warnings.filter((warning) => warning.startsWith('版式节奏'))
+    expect(rhythmWarnings.join('\n')).toContain('第3~4页连续 T1')
+  })
+
+  it('generate：run 无 Room 绑定（用户已退出 Room）时凭 styleSessionId 反查所属 Room', async () => {
+    const { deps } = await setupStyleDeps()
+    const planFixture = {
+      phase: 'arrange', title: '季度汇报', narrative: 'n',
+      pages: [{ title: '封面', role: 'cover', density: 'sparse', points: ['季度汇报'] },
+        { title: '业绩', role: 'data', density: 'dense', points: ['增长'], data: 'bar | categories: Q1, Q2 | 营收: 1, 2' }],
+      warnings: [], summary: '',
+    }
+    const buildResult = { status: 'completed', fileEntryId: 'file-1', fileName: '季度汇报.pptx', pages: 2, outline: ['封面', '业绩'], warnings: [], summary: 'ok' }
+    const orchestratorTwo = {
+      dispatch: vi.fn(async (input: { agentId: string; input?: { task?: string; phase?: string }; onInvocationId?: (id: string) => void }) => {
+        const invocationId = input.agentId === 'slides-planner' ? 'invocation-plan' : 'invocation-build'
+        input.onInvocationId?.(invocationId)
+        const result = input.agentId === 'slides-planner'
+          ? { text: '', structuredOutput: planFixture }
+          : { text: '', structuredOutput: buildResult }
+        return {
+          id: invocationId, agentDefinitionId: input.agentId, agentRevisionId: 'r1', source: 'primary_agent',
+          parentSessionId: 'session-1', parentRunId: 'run-1', task: 't', input: null, status: 'completed',
+          result, errorCode: null, errorMessage: null, createdAt: '', startedAt: '', completedAt: '',
+        }
+      }),
+    } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorTwo, {
+      slidesStyle: deps,
+      resolveDocumentForDraft: () => ({
+        document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+        blocks: [],
+        markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1, Q2 | 营收: 1, 2\n',
+      }),
+      trashSlidesDraftDocument: async () => undefined,
+    })
+    const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
+
+    const style = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
+      undefined, undefined,
+    )
+    const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1 } as never,
+      undefined, undefined,
+    )
+
+    // run 无 roomId、无 activeDocument：不得抛 ROOM_SELECTION_REQUIRED，
+    // Room 由风格会话反查，builder/planner 拿到的仍是会话所属 Room。
+    const generated = await slidesDraft.execute(
+      { ...run } as never,
+      { task: 'generate', instruction: '生成', styleSessionId } as never,
+      undefined, undefined,
+    )
+    expect((JSON.parse(generated.content as string) as { status: string }).status).toBe('completed')
+    const dispatchCalls = (orchestratorTwo.dispatch as ReturnType<typeof vi.fn>).mock.calls
+    const builderInput = (dispatchCalls.find((call) => (call[0] as { agentId: string }).agentId === 'slides-builder')?.[0] as { input?: { roomId?: string } }).input
+    expect(builderInput?.roomId).toBe('room-1')
   })
 })
 
@@ -1325,6 +1555,43 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('completed')
     expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('resolved')
+  })
+
+  it('decision=accept 不带 styleSessionId：靠配图会话回查仍注入风格卡（回归：桌面罐头消息不带 styleSessionId）', async () => {
+    const setup = await setupPageImages({ outcomes: [
+      { ok: true, hash: 'a'.repeat(64) },
+    ] })
+    // 预置 card_ready 风格会话（绑定同一草稿），初始 generate 带 styleSessionId——与真实流程一致。
+    const styleSession = setup.deps.sessions.create({ roomId: 'room-1', draftDocumentId: 'doc-draft-1', instruction: '商务科技风' })
+    setup.deps.sessions.patch(styleSession.id, {
+      overviewImages: [{ contentHash: 'c'.repeat(64), composition: 'poster', generation: 1 }],
+      selectedImageHash: 'c'.repeat(64),
+      styleParams: { palette: { primary: '#1e3a5f' }, composition: 'poster' } as never,
+      stage: 'card_ready',
+    })
+    const slidesDraft = buildTools(setup)
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1', styleSessionId: styleSession.id } as never,
+      undefined,
+    )
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
+      undefined,
+    )
+
+    // 确认落页只带 draftDocumentId（桌面罐头消息形态）——风格卡仍必须注入 builder。
+    const result = await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
+      undefined,
+    )
+    expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'completed' })
+    const builderDispatch = setup.orchestrator.dispatch.mock.calls.at(-1)![0] as Record<string, unknown>
+    const builderInput = builderDispatch.input as { styleParams?: { palette: { primary: string }; composition?: string } }
+    expect(builderInput.styleParams?.palette.primary).toBe('#1e3a5f')
+    expect(builderInput.styleParams?.composition).toBe('poster')
   })
 
   it('decision=skip：不生图直接落页，plan 无注入', async () => {

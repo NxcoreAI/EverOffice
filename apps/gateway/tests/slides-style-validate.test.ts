@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { defaultStyleParams, deriveChartSeries, normalizeStyleParams } from "../src/modules/slides-style/validate.js";
+import {
+  appendCompositionEffectLine,
+  defaultStyleParams,
+  deriveChartSeries,
+  normalizeStyleParams,
+} from "../src/modules/slides-style/validate.js";
 import type { PaletteRoles } from "../src/modules/slides-style/extract.js";
 import { contrast, hexToRgb, hueDistance, luminance, saturation } from "../src/modules/slides-style/extract.js";
 
@@ -200,5 +205,41 @@ describe("色板关系闸门（确定性修复）", () => {
       { ...validParams, palette: { ...validParams.palette, primary: "#ff00ff", surface: "#f5f3ee" } },
     );
     expect(normalizeStyleParams(once)).toEqual(once);
+  });
+});
+
+describe("composition 构图轴", () => {
+  it("合法值保留", () => {
+    expect(normalizeStyleParams({ ...validParams, composition: "immersive" }).composition).toBe("immersive");
+  });
+
+  it("缺失/非法时确定性推导：深底→poster、衬线栈→editorial、其余 swiss", () => {
+    expect(normalizeStyleParams(validParams).composition).toBe("swiss");
+    expect(
+      normalizeStyleParams({ ...validParams, palette: { ...validParams.palette, background: "#101418" } }).composition,
+    ).toBe("poster");
+    expect(
+      normalizeStyleParams({
+        ...validParams,
+        typography: { ...validParams.typography, fontHeading: "Songti SC, Georgia" },
+      }).composition,
+    ).toBe("editorial");
+    expect(normalizeStyleParams({ ...validParams, composition: "baroque" }).composition).toBe("swiss");
+  });
+
+  it("推导幂等：再归一一次 composition 不变", () => {
+    const once = normalizeStyleParams(validParams);
+    expect(normalizeStyleParams(once).composition).toBe(once.composition);
+  });
+
+  it("appendCompositionEffectLine：缺失追加、已有不重复、超上限替换末条", () => {
+    expect(appendCompositionEffectLine([], "poster")).toEqual([expect.stringContaining("构图：海报大字")]);
+    const withLine = appendCompositionEffectLine(["a", "b"], "poster");
+    expect(appendCompositionEffectLine(withLine, "editorial")).toEqual(withLine);
+    const ten = Array.from({ length: 10 }, (_, index) => `行${String(index)}`);
+    const replaced = appendCompositionEffectLine(ten, "swiss");
+    expect(replaced).toHaveLength(10);
+    expect(replaced[0]).toBe("行0");
+    expect(replaced[9]).toContain("构图：瑞士网格");
   });
 });
