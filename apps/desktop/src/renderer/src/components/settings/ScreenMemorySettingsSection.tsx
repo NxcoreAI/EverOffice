@@ -131,8 +131,44 @@ export function ScreenMemorySettingsSection() {
         </button>
       </div>
       <div className="reality-setting-row">
-        <div><strong>{t('surface:screenMemory.permission')}</strong><span className="settings-value-text">{permissionLabel}</span></div>
+        <div>
+          <strong>{t('surface:screenMemory.permission')}</strong>
+          <span className="settings-value-text">{permissionLabel}</span>
+          {status?.permission !== 'granted' ? (
+            <span className="screen-memory-permission-actions">
+              <button type="button" onClick={() => void window.nxcore?.screenMemory.openPermissionSettings()}>
+                {t('surface:screenMemory.openPermission')}
+              </button>
+              <span className="settings-value-text">{t('surface:screenMemory.permissionRestartHint')}</span>
+            </span>
+          ) : null}
+        </div>
       </div>
+      {status?.running ? (
+        <div className="reality-setting-row">
+          <div>
+            <strong>{t('surface:screenMemory.currentApp')}</strong>
+            <span className="settings-value-text">{status.currentAppName ?? '—'}</span>
+          </div>
+        </div>
+      ) : null}
+      <div className="reality-setting-row">
+        <div><strong>{t('surface:screenMemory.scope')}</strong></div>
+        <div className="screen-memory-scope-switch">
+          {([['all', 'surface:screenMemory.scopeAll'], ['allowlist', 'surface:screenMemory.scopeAllowlist']] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              disabled={busy || settings === null}
+              data-active={String(settings?.scopeMode === value)}
+              onClick={() => void patch({ scopeMode: value })}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
+      </div>
+      {settings?.scopeMode === 'allowlist' ? (
       <div className="reality-setting-row">
         <div>
           <strong>{t('surface:screenMemory.allowedApps')}</strong>
@@ -161,6 +197,7 @@ export function ScreenMemorySettingsSection() {
           </div>
         </div>
       </div>
+      ) : null}
       <div className="reality-setting-row">
         <div>
           <strong>{t('surface:screenMemory.excludedApps')}</strong>
