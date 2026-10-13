@@ -5,7 +5,12 @@ import type { MemoryAtomicItemDto } from '../../shared/memory'
 import { type OfficePreviewTab } from '../../shared/sources'
 
 import { AgentPanel } from '@/components/AgentPanel'
+import { SearchPalette } from '@/components/search/SearchPalette'
+import { slugifyAgentToken } from '@/components/agent/agentMentions'
+import type { SearchHitDto } from '../../shared/search'
+import type { LocalAgentInstallation } from '@nxcore/agent-contract'
 import {
+  isAgentPageId,
   resolveAgentSessionLinkRoute,
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
@@ -126,6 +131,12 @@ export function App() {
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
   const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string } | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [agentPrefillRequest, setAgentPrefillRequest] = useState<{
+    key: string
+    text: string
+    attachment?: { fileId: string; fileName: string } | null
+  } | null>(null)
   const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
     roomId: string
@@ -380,6 +391,18 @@ export function App() {
         : [...current, room]
     ))
   }, [availableContextRooms])
+
+  // 统一搜索面板：⌘K/Ctrl+K 全局开关。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setSearchOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -840,6 +863,48 @@ export function App() {
     navigate('files')
   }
 
+  // ---- 统一搜索面板动作 ----
+  const searchRooms = availableContextRooms.map((room) => ({ id: room.id, title: room.title }))
+
+  const openSearchRoom = (roomId: string, title: string) => {
+    window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: roomId, title } }))
+  }
+
+  const openSearchSession = (hit: SearchHitDto) => {
+    setAgentOpen(true)
+    const page = hit.pageId && isAgentPageId(hit.pageId) ? hit.pageId : 'home'
+    if (hit.roomIds[0]) {
+      const room = availableContextRooms.find((item) => item.id === hit.roomIds[0])
+      if (room) openSearchRoom(room.id, room.title)
+    }
+    setAgentSessionRouteRequest({
+      key: `search:${hit.id}:${Date.now()}`,
+      pageId: page,
+      roomId: hit.roomIds[0] ?? null,
+      sessionId: hit.sessionId ?? hit.refId,
+    })
+  }
+
+  const attachSearchHit = (hit: SearchHitDto) => {
+    setAgentOpen(true)
+    setAgentPrefillRequest({
+      key: `search-attach-${Date.now()}`,
+      text: `请参考《${hit.title}》处理。`,
+      attachment: hit.itemType === 'file' ? { fileId: hit.refId, fileName: hit.title } : null,
+    })
+  }
+
+  const dispatchSearchHit = (hit: SearchHitDto, agent: LocalAgentInstallation | null, instruction: string) => {
+    setAgentOpen(true)
+    const lead = agent ? `@${slugifyAgentToken(agent.displayName)} ` : ''
+    const extra = instruction.trim() ? `\n${instruction.trim()}` : ''
+    setAgentPrefillRequest({
+      key: `search-dispatch-${Date.now()}`,
+      text: `${lead}请处理这份材料：《${hit.title}》${extra}`,
+      attachment: hit.itemType === 'file' ? { fileId: hit.refId, fileName: hit.title } : null,
+    })
+  }
+
   const navigateFromAgent = (request: AgentNavigationRequest) => {
     setAgentNavigationRequest(request)
     setAgentSessionRouteRequest(null)
@@ -1004,6 +1069,7 @@ export function App() {
         onActivateOfficeTab={activateOfficeTab}
         onCloseOfficeTab={closeOfficeTab}
         onToggleAgent={() => setAgentOpen((open) => !open)}
+        onOpenSearch={() => setSearchOpen(true)}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
       <main ref={workspaceMainRef} className="workspace-main">
@@ -1071,6 +1137,8 @@ export function App() {
           navigationRequest={agentNavigationRequest}
           sessionRouteRequest={agentSessionRouteRequest}
           askRequest={agentAskRequest}
+          prefillRequest={agentPrefillRequest}
+          onPrefillConsumed={() => setAgentPrefillRequest(null)}
           onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}
           onNavigate={navigateFromAgent}
           onNavigatePage={navigate}
@@ -1092,6 +1160,16 @@ export function App() {
           }}
         />
       ) : null}
+      <SearchPalette
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        rooms={searchRooms}
+        onOpenFile={(fileId) => { openAgentMentionFile(fileId) }}
+        onOpenRoom={openSearchRoom}
+        onOpenSession={openSearchSession}
+        onAttach={attachSearchHit}
+        onDispatch={dispatchSearchHit}
+      />
       <HighRiskImportReview />
       <AppToast />
       <AppErrorToast />
