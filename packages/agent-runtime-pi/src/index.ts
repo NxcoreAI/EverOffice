@@ -612,10 +612,17 @@ export class PiAgentRuntime implements AgentRuntime {
           maxTokens: this.config.maxTokens,
           samplingParams: { temperature: this.config.temperature },
           // 本 runtime 只对接网关/自建 baseUrl：pi-ai 按 URL 自动探测会把
-          // 未知源当 OpenAI 官方，reasoning 模型的系统提示词发成 developer
-          // role，而中转上游只认 system（400: developer is not one of
-          // ['system', ...]）。system 全兼容，一律禁用 developer。
-          compat: { supportsDeveloperRole: false },
+          // 未知源当 OpenAI 官方。三类参数只对 OpenAI 官方端点安全，第三方
+          // 中转/直连上游会 400：
+          // - developer role：reasoning 模型系统提示词发成 developer role，
+          //   中转上游只认 system（400: developer is not one of [...]）。
+          // - store：litellm 等聚合器把模型路由到 Anthropic 后端时，
+          //   anthropic 不支持 store 参数（400: UnsupportedParamsError，
+          //   glm-5.3 经 litellm 实测）。
+          // - reasoning_effort：同为 anthropic 后端不支持的参数；后台/知识
+          //   工作流带 effort 调用时必 400（同环境实测）。推理本身不受影响
+          //   ——GLM 系模型默认思考，thinking 照常经 reasoning_content 回传。
+          compat: { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: false },
         }],
       });
       await runtime.setRuntimeApiKey(this.config.provider, this.config.apiKey);
