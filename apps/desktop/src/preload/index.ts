@@ -16,6 +16,13 @@ import type {
   MemoryOnboardingInput,
   MemoryRoomMemoriesPageDto,
 } from '../shared/memory'
+import type {
+  SearchItemType,
+  SearchMessageContextDto,
+  SearchPageDto,
+  SearchRequestDto,
+  SearchScopeDto,
+} from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
@@ -420,6 +427,7 @@ const api: NxcoreDesktopApi = {
     correctInterval: (input) => invoke('screen-memory:correct', input),
     storage: () => invokeQuietly('screen-memory:storage'),
     frontmost: () => invoke('screen-memory:frontmost'),
+    openPermissionSettings: () => invoke('screen-memory:open-permission-settings'),
     registerMaterial: (intervalId) => invoke('screen-memory:register-material', intervalId),
     backfillEstimate: (input) => invoke('screen-memory:backfill-estimate', input),
     backfillRun: (input) => invoke('screen-memory:backfill-run', input),
@@ -611,6 +619,14 @@ const api: NxcoreDesktopApi = {
     replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),
     renameTag: (tagId, label) => invoke('transcription:rename-tag', tagId, label),
     mergeTag: (targetTagId, sourceTagId) => invoke('transcription:merge-tag', targetTagId, sourceTagId),
+  },
+  search: {
+    invoke: (request: SearchRequestDto): Promise<SearchPageDto> => invoke('search:invoke', request),
+    status: (): Promise<SearchScopeDto> => invoke('search:status'),
+    prioritize: (itemType: SearchItemType, refId: string): Promise<{ ok: boolean }> =>
+      invoke('search:prioritize', itemType, refId),
+    messageContext: (messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto> =>
+      invoke('search:message-context', messageId, before, after),
   },
   memory: {
     overview: () => invoke('memory:overview'),
@@ -818,7 +834,6 @@ const api: NxcoreDesktopApi = {
       invoke('sources:disconnect', id, deleteLocalData),
   },
   obsidian: {
-    pickAndMount: () => invoke('obsidian:pick-and-mount'),
     discover: () => invoke('obsidian:discover'),
     pickCandidate: () => invoke('obsidian:pick-candidate'),
     importCandidate: (candidateId, target) => invoke('obsidian:import-candidate', candidateId, target),

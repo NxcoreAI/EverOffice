@@ -24,12 +24,17 @@
             "minLength": 40,
             "maxLength": 1200,
             "description": "direction: complete Chinese prompt for this candidate's overview image (structured layout spec with fake-text-bar rules)."
+          },
+          "composition": {
+            "type": "string",
+            "enum": ["swiss", "editorial", "poster", "immersive"],
+            "description": "Layout composition family this candidate commits to: swiss = strict grid alignment; editorial = asymmetric magazine columns with generous whitespace; poster = oversized type / big-number dominance; immersive = large imagery or dark immersive fields. The three candidates must use three pairwise distinct families, and the prompt's layout paragraph must visibly express the family."
           }
         },
-        "required": ["label", "imagePrompt"],
+        "required": ["label", "imagePrompt", "composition"],
         "additionalProperties": false
       },
-      "description": "direction: exactly 3 mutually distinct style directions; any two must differ in at least two of color mood / light-dark base / layout temperament."
+      "description": "direction: exactly 3 mutually distinct style directions; any two must differ in at least two of color mood / light-dark base / layout temperament, and the three composition families must be pairwise distinct."
     },
     "styleParams": {
       "type": "object",
@@ -118,14 +123,19 @@
         "layoutHints": {
           "type": "object",
           "properties": {
-            "cover": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" },
-            "section": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" },
-            "content": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" },
-            "closing": { "type": "string", "pattern": "^[PDTF]\\d[ab]?$" }
+            "cover": { "type": "string", "pattern": "^[PDTFR]\\d[ab]?$" },
+            "section": { "type": "string", "pattern": "^[PDTFR]\\d[ab]?$" },
+            "content": { "type": "string", "pattern": "^[PDTFR]\\d[ab]?$" },
+            "closing": { "type": "string", "pattern": "^[PDTFR]\\d[ab]?$" }
           },
           "additionalProperties": false
         },
         "darkCover": { "type": "boolean" },
+        "composition": {
+          "type": "string",
+          "enum": ["swiss", "editorial", "poster", "immersive"],
+          "description": "Optional layout composition family; the gateway overwrites it with the user-picked candidate's family, so omit unless reviewing."
+        },
         "effectLines": {
           "type": "array",
           "minItems": 3,

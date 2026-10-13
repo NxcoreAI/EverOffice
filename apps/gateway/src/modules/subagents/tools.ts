@@ -29,6 +29,7 @@ import {
 } from "./slides-page-images-stage.js";
 import type { SlidesPageImageSessionStore } from "./slides-page-images-store.js";
 import { runSlidesStyleStage, type SlidesStyleStageDeps } from "./slides-style-stage.js";
+import { auditPageLayouts } from "./slides-layout-audit.js";
 
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
   return createHash("sha256")
@@ -105,6 +106,10 @@ function normalizeSlidesResult(
     };
   }
   const pick = (key: string): unknown => (structured[key] !== undefined && structured[key] !== null ? structured[key] : null);
+  // 版式节奏审计：builder 带了 pageLayouts 才查（旧 builder/edit 路径零影响），
+  // 违例只并进 warnings 转告用户，不打回不重试。
+  const pageCount = typeof structured.pages === "number" ? structured.pages : null;
+  const rhythmWarnings = auditPageLayouts(pick("pageLayouts"), pageCount);
   return {
     content: JSON.stringify({
       invocationId: invocation.id,
@@ -114,7 +119,11 @@ function normalizeSlidesResult(
       fileName: pick("fileName"),
       pages: pick("pages"),
       outline: pick("outline"),
-      warnings: Array.isArray(structured.warnings) ? structured.warnings : [],
+      pageLayouts: pick("pageLayouts"),
+      warnings: [
+        ...(Array.isArray(structured.warnings) ? structured.warnings : []),
+        ...rhythmWarnings,
+      ],
       summary: typeof structured.summary === "string" ? structured.summary : "",
     }),
     details: invocation,
@@ -967,7 +976,7 @@ export function createSubagentPiTools(
         + "挑图未决时再次调用 style 只会重新展示候选（不重新生成），用户明确不满意/要换一批时传 regenerate=true（instruction 带反馈原话，反馈逐轮累积）。"
         + "style_select：用户挑定后调用，传 styleSessionId 与 candidateIndex（1 起）——提取风格、生成风格卡（色板/字号/线框/演示页）并展示确认卡，到此即停；"
         + "用户想改效果就在对话里说（如「标题改小点」），由 style 任务携带新反馈重出；确认后进入 generate。"
-        + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId）——"
+        + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId；当前未绑定 Room 时凭 styleSessionId 自动反查，不要猜测 roomId）——"
         + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图。"
         + "方案里有配图缺口页（素材检索不到、planner 标了生图提示词）会先停在配图确认卡：返回 page_images_confirm，"
         + "用户选「生成配图」就传 pageImagesDecision=\"generate\"——生成在后台逐张进行、本调用立即返回 page_images_review，"
@@ -979,6 +988,7 @@ export function createSubagentPiTools(
         + "网关重启会中断后台生成：用户再要继续时重传 pageImagesDecision=\"generate\" 续跑剩余。"
         + "配图未决时无参重调 generate 只会重新展示当前确认卡（不重排不烧配额）。"
         + "无配图缺口页或已确认后，由 slides-builder 按风格卡参数定调落完全部页（逐页进度实时展示，中途不再逐页询问）。"
+        + "落页结果 warnings 里的「版式节奏」条目是网关对每页版式选择的节奏审计提示（相邻重复/超上限等），如实转告用户即可，不必重跑。"
         + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
         + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
         + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
@@ -1020,7 +1030,13 @@ export function createSubagentPiTools(
         if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
           throw new Error("ROOM_SELECTION_MISMATCH: The slides target differs from the Room already bound to this run");
         }
-        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        const styleSessionIdParam = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
+        // 退出 Room 后 run 无房间绑定（渲染层 selectedRoomId 已空）：styleSessionId
+        // 本身是权威寻址，从风格会话反查 roomId，避免模型猜 Room 引发连环失败。
+        const styleSessionRoomId = !explicitRoomId && !run.roomId && !run.activeDocument?.roomId?.trim() && styleSessionIdParam
+          ? (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions.byId(styleSessionIdParam)?.roomId ?? ""
+          : "";
+        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || styleSessionRoomId || "";
         if (!roomId) {
           throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
         }
@@ -1216,9 +1232,10 @@ export function createSubagentPiTools(
         // ── generate：读回用户确认的草稿（风格会话可代取）→ planner arrange → builder 按风格参数落页。 ──
         if (task === "generate") {
           const styleSessionId = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
-          const styleSessions = styleSessionId
-            ? (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions ?? null
-            : null;
+          // 风格会话存储必须无条件加载：配图确认的续跑调用只带 draftDocumentId（桌面罐头消息
+          // 不带 styleSessionId），落页尾部要靠 byDraftId 回查风格会话补注入——按 styleSessionId
+          // 门控会让回查永远拿到 null，确认配图后的落页丢掉整张风格卡。
+          const styleSessions = (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions ?? null;
           let styleSession: import("../slides-style/types.js").SlidesStyleSessionData | null = null;
           if (styleSessionId && styleSessions) {
             const session = styleSessions.byId(styleSessionId);
@@ -1397,8 +1414,9 @@ export function createSubagentPiTools(
                 details: { errorCode: "slides_page_images_plan_invalid" },
               };
             }
-            const settleStyleSessionId = styleSessionId ?? waitingPageImagesSession?.styleSessionId
-              ?? pageImagesStoreRef.byDraftId(roomId, draftDocumentId)?.styleSessionId ?? null;
+            // 空串的 styleSessionId（续跑调用未带）必须落进回查：?? 不吃空串，用 || 串链。
+            const settleStyleSessionId = styleSessionId || waitingPageImagesSession?.styleSessionId
+              || pageImagesStoreRef.byDraftId(roomId, draftDocumentId)?.styleSessionId || null;
             const resumeStyleSession = settleStyleSessionId && styleSessions
               ? styleSessions.byId(settleStyleSessionId) : null;
             return await dispatchBuilderTail(

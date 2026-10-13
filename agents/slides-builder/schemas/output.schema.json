@@ -34,6 +34,12 @@
       "items": { "type": "string", "maxLength": 400 },
       "description": "Page-level tolerance warnings and failed pages worth reporting to the user."
     },
+    "pageLayouts": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "string", "pattern": "^[PDTFR]\\d[ab]?$" },
+      "description": "Per-page layout preset id in deck order (P1a/T3/D2/F6/R1…), as picked in the rhythm table. The gateway audits page rhythm from this list (warnings only, no retry)."
+    },
     "summary": {
       "type": "string",
       "minLength": 1,

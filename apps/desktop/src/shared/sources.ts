@@ -510,7 +510,7 @@ export type WindowScreenshotResult =
     }
   | {
       ok: false
-      code: 'window-unavailable' | 'capture-failed' | 'save-failed'
+      code: 'window-unavailable' | 'permission-denied' | 'capture-failed' | 'save-failed'
       message: string
     }
 
@@ -518,6 +518,7 @@ export type WindowScreenshotResult =
 export interface ScreenMemorySettingsDto {
   enabled: boolean
   paused: boolean
+  scopeMode: 'all' | 'allowlist'
   allowedApps: string[]
   excludedApps: string[]
 }
@@ -624,6 +625,7 @@ export interface ScreenMemoryFrontmostDto {
 export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
   lastResult: WindowScreenshotResult | null
 }
 
@@ -1154,6 +1156,7 @@ export interface NxcoreDesktopApi {
     correctInterval(input: { id: string; title?: string; textLines?: string[] }): Promise<ScreenMemoryIntervalDto>
     storage(): Promise<ScreenMemoryStorageDto>
     frontmost(): Promise<ScreenMemoryFrontmostDto>
+    openPermissionSettings(): Promise<void>
     registerMaterial(intervalId: string): Promise<{ ref: string }>
     backfillEstimate(input: { from: string; to: string }): Promise<{ count: number }>
     backfillRun(input: { from: string; to: string; maxItems: number }): Promise<ScreenMemoryBackfillSummaryDto>
@@ -1286,6 +1289,12 @@ export interface NxcoreDesktopApi {
     replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>
     renameTag(tagId: string, label: string): Promise<void>
     mergeTag(targetTagId: string, sourceTagId: string): Promise<void>
+  }
+  search: {
+    invoke(request: SearchRequestDto): Promise<SearchPageDto>
+    status(): Promise<SearchScopeDto>
+    prioritize(itemType: SearchItemType, refId: string): Promise<{ ok: boolean }>
+    messageContext(messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
@@ -1632,6 +1641,7 @@ import type {
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'
+import type { SearchItemType, SearchMessageContextDto, SearchPageDto, SearchRequestDto, SearchScopeDto } from './search'
 import type {
   FileCatalogDto,
   FileDto,

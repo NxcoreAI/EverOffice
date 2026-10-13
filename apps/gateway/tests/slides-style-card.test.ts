@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createCanvas } from "@napi-rs/canvas";
-import { wireframeForRole, renderWireframeSvg, type WireframeRole } from "../src/modules/slides-style/wireframe.js";
+import { presetThumbnails } from "../src/modules/slides-style/preset-thumbnails.js";
 import { buildDemoPageSpec } from "../src/modules/slides-style/demo-page.js";
 import { checkDemoPage, runSelfCheck } from "../src/modules/slides-style/self-check.js";
 import type { DemoPptxRenderer } from "../src/modules/slides-style/render.js";
@@ -8,32 +8,45 @@ import { defaultStyleParams } from "../src/modules/slides-style/validate.js";
 import type { StyleParams } from "../src/modules/slides-style/types.js";
 import { styleCardPayload, styleImagesPayload } from "../src/modules/slides-style/style-card.js";
 
-const spacing = { margin: 60, gutter: 20, cardPadding: 16, cornerRadius: 8 };
-
 const params: StyleParams = defaultStyleParams({
   background: "#f5f2ec", surface: "#ffffff", primary: "#1e3a5f", accent: "#e0a03c",
   text: "#2f2b28", textMuted: "#8f8a81", onDarkText: "#f2f4f7", darkCover: true,
 });
 
-describe("wireframe", () => {
-  it("keeps every role inside the canvas", () => {
-    for (const role of ["cover", "section", "content", "data", "table", "flow", "closing"] as WireframeRole[]) {
-      const boxes = wireframeForRole(role, spacing);
-      expect(boxes.length).toBeGreaterThanOrEqual(1);
-      for (const box of boxes) {
-        expect(box.x).toBeGreaterThanOrEqual(0);
-        expect(box.y).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.w).toBeLessThanOrEqual(1280);
-        expect(box.y + box.h).toBeLessThanOrEqual(720);
+describe("presetThumbnails", () => {
+  it("每个构图家族出封面/内容/数据三张真实预设", () => {
+    for (const composition of ["swiss", "editorial", "poster", "immersive"] as const) {
+      const thumbs = presetThumbnails({ ...params, composition });
+      expect(thumbs).toHaveLength(3);
+      expect(thumbs.map((t) => t.role)).toEqual(["cover", "content", "data"]);
+      for (const thumb of thumbs) {
+        expect(thumb.label).toContain(thumb.presetId);
+        expect(thumb.svg).toContain("<svg");
+        // 假字条版式图：只画形状，不渲染文字元素。
+        expect(thumb.svg).not.toContain("<text");
       }
+      // 内容页以浅底起笔——调色板背景色必须出现。
+      const content = thumbs.find((t) => t.role === "content");
+      expect(content?.svg).toContain(params.palette.background);
     }
   });
 
-  it("renders an SVG with labels", () => {
-    const svg = renderWireframeSvg(wireframeForRole("content", spacing));
-    expect(svg).toContain("<svg");
-    expect(svg).toContain("页标题");
-    expect(svg).toContain("</svg>");
+  it("预设选型对齐构图家族权重表", () => {
+    const ids = (p: StyleParams | null) => presetThumbnails(p).map((t) => t.presetId);
+    expect(ids({ ...params, composition: "swiss" })).toEqual(["P1a", "F2", "D3"]);
+    expect(ids({ ...params, composition: "swiss", darkCover: false })).toEqual(["P1c", "F2", "D3"]);
+    expect(ids({ ...params, composition: "editorial" })).toEqual(["P1c", "P7", "D5"]);
+    expect(ids({ ...params, composition: "poster" })).toEqual(["P1b", "D2", "D1"]);
+    expect(ids({ ...params, composition: "immersive" })).toEqual(["P2", "P6", "D4"]);
+    // 旧会话无 params：按 swiss 深色封面兜底，不报错。
+    expect(ids(null)).toEqual(["P1a", "F2", "D3"]);
+  });
+
+  it("缩略图用会话色板上色而非灰框", () => {
+    const swiss = presetThumbnails(params);
+    const content = swiss.find((t) => t.role === "content");
+    expect(content?.svg).toContain(params.palette.primary);
+    expect(content?.svg).toContain(params.palette.accent);
   });
 });
 
@@ -176,7 +189,28 @@ describe("style card payloads", () => {
     expect(payload.swatches[1]).toEqual({ hex: "#1e3a5f", label: "主色" });
     expect(payload.typography[0]?.value).toBe("64pt");
     expect(payload.wireframes).toHaveLength(3);
+    expect(payload.wireframes.map((frame) => frame.label)).toEqual(["封面 P1a", "内容页 F2", "数据页 D3"]);
     expect(payload.demoImageUrl).toBe(`everroom-material://${"d".repeat(64)}`);
     expect(payload.effectLines).toEqual([]);
+  });
+
+  it("缩略图按 styleParams.composition 出家族变体", () => {
+    const editorial = styleCardPayload({
+      id: "s2", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
+      overviewImages: [], selectedImageHash: "c".repeat(64),
+      styleParams: { ...params, composition: "editorial" }, demoImageHash: null,
+      stage: "card_ready", generation: 1,
+    });
+    expect(editorial.wireframes.map((frame) => frame.label)).toEqual(["封面 P1c", "内容页 P7", "数据页 D5"]);
+    // 无 composition（旧会话）退 swiss 配方，不报错（exactOptionalPropertyTypes：解构剔除键而非直写 undefined）。
+    const { composition: _omitted, ...legacyBase } = params;
+    void _omitted;
+    const legacy = styleCardPayload({
+      id: "s3", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
+      overviewImages: [], selectedImageHash: "c".repeat(64),
+      styleParams: legacyBase, demoImageHash: null,
+      stage: "card_ready", generation: 1,
+    });
+    expect(legacy.wireframes.map((frame) => frame.label.split(" ")[1])).toEqual(["P1a", "F2", "D3"]);
   });
 });

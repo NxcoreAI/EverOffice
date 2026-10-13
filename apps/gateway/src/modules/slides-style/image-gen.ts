@@ -49,6 +49,12 @@ export interface OverviewImageResult {
   contentHash: string;
 }
 
+/** 纵览候选生成结果：index 是候选在输入数组里的原下标——部分失败时
+ *  调用方靠它把 label/composition 对回正确候选，不能按下标压平。 */
+export interface IndexedOverviewImageResult extends OverviewImageResult {
+  index: number;
+}
+
 export class SlidesStyleImageGenerator {
   private readonly retryDelaysMs: number[];
 
@@ -61,7 +67,7 @@ export class SlidesStyleImageGenerator {
     this.retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
   }
 
-  async generateOverviewImages(input: OverviewImageInput): Promise<OverviewImageResult[]> {
+  async generateOverviewImages(input: OverviewImageInput): Promise<IndexedOverviewImageResult[]> {
     const session = this.sessions.current();
     if (!session) {
       throw new Error("生图中转会话不可用：需要已订阅账号且网关在线");
@@ -72,9 +78,10 @@ export class SlidesStyleImageGenerator {
       .slice(0, MAX_OVERVIEW_CANDIDATES);
     if (prompts.length === 0) throw new Error("生图提示词不能为空");
     // 部分成功即接受：限流窗口内能出几张是几张（≥1 张用户就能挑/说不满意），
-    // 只有全军覆没才向上抛。
+    // 只有全军覆没才向上抛。结果带原候选下标，存活张的元数据不会错位。
     const settled = await Promise.allSettled(prompts.map((prompt, index) =>
-      this.generateOneWithRetry(session, prompt, input.idempotencyKey, index)));
+      this.generateOneWithRetry(session, prompt, input.idempotencyKey, index)
+        .then((result) => ({ ...result, index }))));
     const succeeded = settled
       .flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
     if (succeeded.length === 0) {

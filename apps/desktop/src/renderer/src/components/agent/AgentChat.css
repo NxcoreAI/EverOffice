@@ -1751,10 +1751,20 @@ button.agent-slides-style-candidate:disabled {
 }
 
 .agent-slides-style-wireframe {
+  margin: 0;
   border: 1px solid #e3e9f1;
   border-radius: 6px;
   overflow: hidden;
   line-height: 0;
+}
+
+.agent-slides-style-wireframe figcaption {
+  line-height: 1;
+  padding: 5px 8px 6px;
+  font-size: 11px;
+  color: #7c8794;
+  background: #fbfcfe;
+  border-top: 1px solid #eef2f7;
 }
 
 .agent-slides-style-demo {

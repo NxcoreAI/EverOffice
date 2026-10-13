@@ -108,12 +108,16 @@ import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
+import { SearchService } from "../modules/search/service.js";
+import { SearchBackfill } from "../modules/search/backfill.js";
+import { searchRoutes } from "../modules/search/routes.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
 import { materialsRoutes } from "../modules/materials/routes.js";
 import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
 import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
+import { ImageDescribeService } from "../modules/files/image-describe.js";
 import { FileClusteringService } from "../modules/files/clustering-service.js";
 import { ClipperService } from "../modules/clipper/service.js";
 import { clipperRoutes } from "../modules/clipper/routes.js";
@@ -1396,8 +1400,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     saveDemoPng: async (png) => materialsService.saveImageBlob(png, "image/png"),
     pageImageSessions: pageImageSessionsStore,
     pageImageRunner: pageImageRunner,
+    // settle 的 outlineRoles 来源：按风格会话绑定的草稿读回页结构（读取失败时省略该输入）。
+    resolveDraftDocument: (documentId, roomId) => {
+      try {
+        return documentService.readDocumentForAgent(documentId, roomId);
+      } catch {
+        return null;
+      }
+    },
   };
   const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
+  const searchService = new SearchService(db, sqlite);
+  await app.register(searchRoutes(searchService));
   dataMigrationService.setFilesService(filesService);
   dataMigrationService.recover();
   // @ 引用解析：先查导入的外部线程；未命中（本应用自有会话 id）回退读 agent_sessions 历史。
@@ -1735,6 +1749,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       "ingest filter gate enabled",
     );
   }
+  // 图片描述器：VLM 结果同时喂文件链路（markdown 解析产物）与视觉库（素材检索）。
+  const imageDescribeService = new ImageDescribeService(filesService, perceptionService, app.log);
   const ingestService = new IngestService(
     db,
     filesService,
@@ -1748,6 +1764,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ingestFilterService,
     // 暂停闸状态文件（记忆页「继续/暂停」，重启保持）
     resolve(config.dataDir, "ingest-gate.json"),
+    imageDescribeService,
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
@@ -1909,6 +1926,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   documentHistoryBackfillWorker.start();
   writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
   writingStyleWorker.start();
+  // 统一搜索索引 worker（2s 轮询 + 启动回填）。
+  searchService.start();
+  const searchBackfill = new SearchBackfill(db);
+  searchBackfill.schedule();
   // 新记忆自动绑定 Room（推导 worker）：构造不以 config.memory 为前提——runtime
   // config 可事后热注入，drain 内自查 memory.enabled 兜底。
   if (config.memoryRoomDerive?.enabled !== false) {

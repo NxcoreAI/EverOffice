@@ -1083,7 +1083,7 @@ export const externalDocumentBindings = sqliteTable(
   {
     documentId: text("document_id").primaryKey()
       .references(() => documents.id, { onDelete: "cascade" }),
-    sourceKind: text("source_kind", { enum: ["obsidian-vault"] }).notNull(),
+    sourceKind: text("source_kind", { enum: ["obsidian-vault", "local-directory"] }).notNull(),
     sourceId: text("source_id").notNull(),
     resourceId: text("resource_id").notNull(),
     roomId: text("room_id").notNull(),
@@ -2456,6 +2456,7 @@ export const screenIntervals = sqliteTable(
     }).notNull(),
     keyframeCount: integer("keyframe_count").notNull().default(0),
     textLines: text("text_lines", { mode: "json" }).$type<string[]>().notNull().default([]),
+    textBlocks: text("text_blocks", { mode: "json" }).$type<string[]>(),
     summaryStatus: text("summary_status", {
       enum: ["pending", "processing", "ready", "waiting", "failed"],
     }).notNull().default("pending"),
@@ -2850,6 +2851,21 @@ export const slidesPageImageSessions = sqliteTable(
   ],
 );
 
+/** 论文格式卡（thesis-format 管线）：一 Room 一卡，重设即覆盖。 */
+export const thesisFormatCards = sqliteTable(
+  "thesis_format_cards",
+  {
+    roomId: text("room_id").primaryKey(),
+    /** validate 后的 ThesisFormatCard 全量 JSON。 */
+    formatCard: text("format_card", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 设为模版的库内文件（parseFromDisk 直传时为空）。 */
+    sourceFileEntryId: text("source_file_entry_id"),
+    sourceName: text("source_name").notNull().default(""),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+);
+
 export const localAgentDispatches = sqliteTable(
   "local_agent_dispatches",
   {    id: text("id").primaryKey(),
@@ -3054,3 +3070,57 @@ export const writingStyleUserContent = sqliteTable("writing_style_user_content",
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * 统一搜索索引（PRD 0.2.0 §2.5）：每类内容一行，itemType+refId 即去重身份。
+ * 元信息先行（status=meta_only），正文解析后经队列写入 FTS（status=indexed）。
+ * FTS5 虚拟表 search_index_fts 由应用层维护，rowid 对齐本表 id 的 INTEGER 行号。
+ */
+export const searchIndex = sqliteTable(
+  "search_index",
+  {
+    id: text("id").primaryKey(),
+    itemType: text("item_type", {
+      enum: ["file", "message", "room", "document", "export"],
+    }).notNull(),
+    refId: text("ref_id").notNull(),
+    title: text("title").notNull(),
+    bodyPreview: text("body_preview").notNull().default(""),
+    sourceKind: text("source_kind"),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }),
+    ingestedAt: integer("ingested_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    timeBasis: text("time_basis", { enum: ["occurred", "ingested"] }).notNull().default("ingested"),
+    fileVersionId: text("file_version_id"),
+    versionLabel: text("version_label"),
+    /** itemType=message 时存所属会话 id（结果跳转用）；其余为 null。 */
+    sessionId: text("session_id"),
+    status: text("status", {
+      enum: ["meta_only", "indexed", "failed"],
+    })
+      .notNull()
+      .default("meta_only"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("search_index_item_ref_idx").on(table.itemType, table.refId),
+    index("search_index_status_idx").on(table.status),
+    index("search_index_item_type_idx").on(table.itemType),
+  ],
+);
+
+/** 搜索索引与 Room 的多对多关联（筛选维度独立成表，改名/移出不触碰 FTS token）。 */
+export const searchIndexRooms = sqliteTable(
+  "search_index_rooms",
+  {
+    indexId: text("index_id").notNull(),
+    roomId: text("room_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.indexId, table.roomId] }),
+    index("search_index_rooms_room_idx").on(table.roomId),
+  ],
+);
