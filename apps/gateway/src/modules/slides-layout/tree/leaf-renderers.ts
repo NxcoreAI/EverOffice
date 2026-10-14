@@ -1,6 +1,6 @@
 /**
  * 树叶子的渲染器：把叶子 + 框 → PageSpec 元素。
- * 构件自 preset-common.ts / presets/data.ts 迁入（C4 删预设后此处为唯一出处）。
+ * 构件迁自旧 preset-common.ts / presets/data.ts（预设库已删，此处为唯一出处）。
  * 装不下的报错会被 compile.ts 转成缺陷清单回传布局代理自纠。
  */
 
