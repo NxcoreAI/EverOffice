@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
-import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";import {
+import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
+import { setActiveDeckStyle } from "../slides-layout/style-context.js";import {
   DOC_WRITER_AGENT_ID,
   DOC_WRITER_TASK_LABELS,
   DOCUMENT_MARKDOWN_MAX_CHARS,
@@ -1278,6 +1279,8 @@ export function createSubagentPiTools(
             let builderRunId: string | null = null;
             // 续跑路径 styleSession 可能未加载：风格参数以调用方回查结果优先。
             const builderStyleParams = settle.builderStyleParams ?? styleSession?.styleParams ?? null;
+            // 存入风格上下文：set_page 展开预设时按 Room 取用，模型不必逐页携带。
+            setActiveDeckStyle(roomId, builderStyleParams);
             const builderInput = {
               task: "create",
               instruction,
