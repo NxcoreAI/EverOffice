@@ -33,7 +33,6 @@ import {
 } from "./slides-page-images-stage.js";
 import type { SlidesPageImageSessionStore } from "./slides-page-images-store.js";
 import { runSlidesStyleStage, type SlidesStyleStageDeps } from "./slides-style-stage.js";
-import { auditPageLayouts } from "./slides-layout-audit.js";
 
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
   return createHash("sha256")
@@ -110,10 +109,6 @@ function normalizeSlidesResult(
     };
   }
   const pick = (key: string): unknown => (structured[key] !== undefined && structured[key] !== null ? structured[key] : null);
-  // 版式节奏审计：builder 带了 pageLayouts 才查（旧 builder/edit 路径零影响），
-  // 违例只并进 warnings 转告用户，不打回不重试。
-  const pageCount = typeof structured.pages === "number" ? structured.pages : null;
-  const rhythmWarnings = auditPageLayouts(pick("pageLayouts"), pageCount);
   return {
     content: JSON.stringify({
       invocationId: invocation.id,
@@ -124,10 +119,7 @@ function normalizeSlidesResult(
       pages: pick("pages"),
       outline: pick("outline"),
       pageLayouts: pick("pageLayouts"),
-      warnings: [
-        ...(Array.isArray(structured.warnings) ? structured.warnings : []),
-        ...rhythmWarnings,
-      ],
+      warnings: [...(Array.isArray(structured.warnings) ? structured.warnings : [])],
       summary: typeof structured.summary === "string" ? structured.summary : "",
     }),
     details: invocation,

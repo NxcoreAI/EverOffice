@@ -1100,7 +1100,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     expect(new Set(session?.overviewImages.map((image) => image.composition)).size).toBe(3)
   })
 
-  it('style_select：settle 收到预设清单与草稿页角色；composition 以用户挑中的候选为准并进效果文案', async () => {
+  it('style_select：settle 收到草稿页角色；composition 以用户挑中的候选为准并进效果文案', async () => {
     const { deps, orchestrator } = await setupStyleDeps({
       directionOutput: {
         task: 'direction',
@@ -1129,7 +1129,8 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const settleCall = (orchestrator.dispatch as ReturnType<typeof vi.fn>).mock.calls
       .find((call) => (call[0] as { input?: { task?: string } }).input?.task === 'settle')
     const settleInput = (settleCall?.[0] as { input?: Record<string, unknown> }).input
-    expect(settleInput?.layoutPresetIds).toMatchObject({ cover: ['P1a', 'P1b', 'P1c'], section: ['P3'] })
+    // 预设清单已随预设库删除：settle 输入不再携带 layoutPresetIds。
+    expect(settleInput?.layoutPresetIds).toBeUndefined()
     expect(settleInput?.outlineRoles).toEqual(['cover', 'table', 'closing'])
 
     const session = deps.sessions.byId(styleSessionId)

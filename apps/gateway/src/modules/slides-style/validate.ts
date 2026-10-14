@@ -39,7 +39,6 @@ export const STYLE_FONT_OPTIONS = [
 const DEFAULT_FONT = "PingFang SC";
 
 /** layout 技能预设 id 形态（P1a / T3 / D2 / F6 / R1…）。 */
-const LAYOUT_HINT_PATTERN = /^[PDTFR]\d[ab]?$/;
 
 /** 构图家族词表与用户可读名（风格卡 effectLines / 预设缩略图复用）。 */
 export const STYLE_COMPOSITIONS = ["swiss", "editorial", "poster", "immersive"] as const;
@@ -311,13 +310,6 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
     if (typeof value === "string" || typeof value === "number") motifSpec[key] = value;
   }
 
-  const hintsRow = (row.layoutHints ?? {}) as Record<string, unknown>;
-  const layoutHints: StyleParams["layoutHints"] = {};
-  for (const role of ["cover", "section", "content", "closing"] as const) {
-    const value = hintsRow[role];
-    if (typeof value === "string" && LAYOUT_HINT_PATTERN.test(value)) layoutHints[role] = value;
-  }
-
   const effectLines = Array.isArray(row.effectLines)
     ? (row.effectLines as unknown[])
       .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -339,7 +331,6 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
         ["ghost-number", "ghost-word", "color-band", "corner-accent", "none"] as const, "motif.kind"),
       spec: motifSpec,
     },
-    layoutHints,
     darkCover: typeof row.darkCover === "boolean" ? row.darkCover : true,
     effectLines,
     composition,
@@ -382,7 +373,6 @@ export function defaultStyleParams(
       imageFit: "cover",
     },
     motif: { kind: "none", spec: {} },
-    layoutHints: {},
     darkCover: roles.darkCover,
     effectLines: [],
   });
