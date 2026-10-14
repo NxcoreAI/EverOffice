@@ -43,6 +43,7 @@ import { documentOverviewRoutes } from "../modules/documents/overview-routes.js"
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
@@ -200,6 +201,8 @@ import { SlidesStyleSessionStore } from "../modules/slides-style/style-session.j
 import { SlidesPageImageSessionStore } from "../modules/subagents/slides-page-images-store.js";
 import { SlidesPageImageRunner } from "../modules/subagents/slides-page-images-runner.js";
 import { slidesPageImagesRoutes } from "../modules/slides/page-images-routes.js";
+import { ThesisFormatService } from "../modules/thesis-format/service.js";
+import { thesisFormatRoutes } from "../modules/thesis-format/routes.js";
 import type { SlidesStyleStageDeps } from "../modules/subagents/slides-style-stage.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
 import { WritingStyleService } from "../modules/writing-style/service.js";
@@ -722,6 +725,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       () => agentServiceRef.current,
       // PPT 逐页进度上报：set_page 成功落页即广播快照。
       slidesProgress,
+      // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
+      // 设置页保存 vlm 段后 runtime config 热替换，复检无需重启网关即生效。
+      new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) }),
     ),
     documentOperationService,
     (diagnostic) => {
@@ -1369,6 +1375,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  // 论文排版管线：模版解析与装订映射走子代理，渲染走桌面 office-bridge。
+  const thesisFormatService = new ThesisFormatService({
+    db,
+    files: filesService,
+    orchestrator: subagentOrchestrator,
+    officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+  });
   // 本地素材库（PPT 配图）：检索走结构化表（perception/剪藏/文档内嵌图），
   // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
   const materialsService = new MaterialsService(db, config.dataDir);
@@ -1670,6 +1683,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(memoryRoutes(memoryService));
   await app.register(materialsRoutes(materialsService));
   await app.register(slidesPageImagesRoutes(pageImageSessionsStore));
+  await app.register(thesisFormatRoutes(thesisFormatService));
   await app.register(dataMigrationRoutes(dataMigrationService));
   await app.register(filesRoutes(filesService, {
     // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档

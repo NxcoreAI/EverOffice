@@ -464,10 +464,20 @@ export class FilesGatewayBridge {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
     const manualExtensions = await this.manualImportExtensions()
+    // 目录展开阶段先发 scanning：大目录 walk 可能数分钟且无文件计数，
+    // 不发则界面停在 0/0 且无法区分「扫描中」与「卡死」。
+    this.emitImportProgress({ batchId: randomUUID(), status: 'scanning', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
+    const scanStartedAt = Date.now()
     const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
     )
+    console.info('[files] import plan ready', {
+      paths: selectedPaths.length,
+      candidates: importPlan.candidates.length,
+      unsupported: importPlan.unsupported.length,
+      scanMs: Date.now() - scanStartedAt,
+    })
     // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
     const highRiskImports = this.highRiskImports
     let candidates = highRiskImports
@@ -632,6 +642,10 @@ export class FilesGatewayBridge {
         })
         succeeded += 1
       } catch (error) {
+        console.warn('[files] manual import failed', {
+          filename,
+          error: error instanceof Error ? error.message : String(error),
+        })
         outcomes.push({
           filename,
           fileId: null,
@@ -824,10 +838,13 @@ export class FilesGatewayBridge {
     const uploadMime = imageMime(extname(input.originalName).toLowerCase())
     form.append('file', new Blob([new Uint8Array(buffer)], uploadMime ? { type: uploadMime } : undefined), input.originalName)
     const connection = this.supervisor.getConnection()
+    // 上传必须有超时：网关侧或连接异常挂起时，无超时的 fetch 会把整个
+    // 目录导入循环无声冻结（2026-10-14 实证：扫描完成后 30 分钟零上传）。
     const response = await fetch(`${connection.baseUrl}/v1/file-imports`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${connection.token}` },
       body: form,
+      signal: AbortSignal.timeout(180_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { error?: unknown } | null
@@ -885,6 +902,7 @@ export class FilesGatewayBridge {
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
+      signal: init?.signal ?? AbortSignal.timeout(60_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { message?: unknown; error?: unknown } | null
