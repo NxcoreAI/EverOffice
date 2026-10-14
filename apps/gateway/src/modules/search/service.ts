@@ -509,7 +509,7 @@ export class SearchService {
   prioritize(itemType: SearchItemType, refId: string): boolean {
     const id = `search-index:${itemType}:${refId}`;
     const changed = this.sqlite.prepare(
-      "UPDATE jobs SET type=?, updatedAt=? WHERE id=? AND type=? AND status='pending'",
+      "UPDATE jobs SET type=?, updated_at=? WHERE id=? AND type=? AND status='pending'",
     ).run(SEARCH_INDEX_HIGH_JOB_TYPE, Date.now(), id, SEARCH_INDEX_JOB_TYPE);
     if (changed.changes === 0) {
       enqueueSearchIndex(this.db, { itemType, refId, priority: "high" });

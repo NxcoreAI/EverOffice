@@ -2851,11 +2851,12 @@ export const slidesPageImageSessions = sqliteTable(
   ],
 );
 
-/** 论文格式卡（thesis-format 管线）：一 Room 一卡，重设即覆盖。 */
+/** 论文格式卡（thesis-format 管线）：一 Room 多卡，同 Room 内 (room_id, source_name) 唯一，重传同名模版即覆盖。 */
 export const thesisFormatCards = sqliteTable(
   "thesis_format_cards",
   {
-    roomId: text("room_id").primaryKey(),
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
     /** validate 后的 ThesisFormatCard 全量 JSON。 */
     formatCard: text("format_card", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     /** 设为模版的库内文件（parseFromDisk 直传时为空）。 */
@@ -2864,6 +2865,9 @@ export const thesisFormatCards = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
+  (table) => [
+    uniqueIndex("thesis_format_cards_room_source_idx").on(table.roomId, table.sourceName),
+  ],
 );
 
 export const localAgentDispatches = sqliteTable(

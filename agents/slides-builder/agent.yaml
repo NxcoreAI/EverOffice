@@ -19,7 +19,7 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 2
-  # 逐页生成预算：create 1 + set_page ≤24 页（含失败重试）+ 定调/布局技能读取 ~5 + 提交。
-  maxToolCalls: 64
+  # 逐页生成预算：create 1 + set_page ≤24 页（含 PRESET_INVALID 重试与视觉复检重落，每页重落上限 1 次）+ 定调/布局技能读取 ~5 + 提交。
+  maxToolCalls: 72
   # 一口气落完：24 页逐页 set_page + 完稿自检，正常十几分钟内完成。
   timeoutSeconds: 1800

@@ -974,6 +974,28 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
     },
   },
+  thesisFormat: {
+    listCards: (roomId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>> => invoke('thesis-format:cards:list', roomId),
+    setFromLibrary: (roomId: string, fileEntryId: string) =>
+      invoke('thesis-format:parse:library', roomId, fileEntryId),
+    pickAndSet: (roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> =>
+      invoke('thesis-format:parse:pick', roomId),
+    reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
+      invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
+    removeCard: (roomId: string, cardId: string) =>
+      invoke('thesis-format:cards:remove', roomId, cardId),
+    onCardChanged: (listener: () => void) => {
+      const handler = () => listener()
+      ipcRenderer.on('thesis-format:card-changed', handler)
+      return () => ipcRenderer.removeListener('thesis-format:card-changed', handler)
+    },
+  },
   ingest: {
     listEvents: (query: {
       limit?: number

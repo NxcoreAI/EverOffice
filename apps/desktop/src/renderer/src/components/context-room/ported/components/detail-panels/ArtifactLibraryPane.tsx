@@ -17,6 +17,7 @@ import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/m
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
 import { FilterSelect } from '../shared';
+import { ThesisReformatControl } from './ThesisReformatControl';
 
 type ArtifactFilter = 'all' | 'clouddoc' | 'office';
 type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
@@ -81,6 +82,10 @@ export function ArtifactLibraryPane({
   >(null);
   const [deletingArtifact, setDeletingArtifact] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // 论文排版：docx 产物行的「排版」打开格式卡选择面板（有卡选卡、无卡引导上传）；
+  // reformattingFileId 为全局装订锁（同屏同时只跑一个装订任务）。
+  const [reformattingFileId, setReformattingFileId] = useState<string | null>(null);
 
   const confirmArtifactDelete = async () => {
     if (!pendingDelete) return;
@@ -364,6 +369,15 @@ export function ArtifactLibraryPane({
               </button>
               {office || backendDocument ? (
                 <span className="context-room-artifact-acts">
+                  {office && /\.docx$/i.test(office.originalName) ? (
+                    <ThesisReformatControl
+                      room={room}
+                      fileId={office.fileId}
+                      fileName={office.originalName}
+                      busy={reformattingFileId !== null}
+                      onBusyChange={(isBusy) => setReformattingFileId(isBusy ? office.fileId : null)}
+                    />
+                  ) : null}
                   {office ? (
                     <button
                       type="button"

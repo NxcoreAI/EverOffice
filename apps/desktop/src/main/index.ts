@@ -64,6 +64,7 @@ import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
 import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
+import { ThesisFormatGatewayBridge } from './gateway/thesis-format-gateway-bridge'
 import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
 import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
 import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
@@ -660,6 +661,15 @@ const INGEST_CHANNELS = {
   setPause: 'ingest:pause:set',
 } as const
 
+const THESIS_FORMAT_CHANNELS = {
+  listCards: 'thesis-format:cards:list',
+  parseFromLibrary: 'thesis-format:parse:library',
+  pickAndParse: 'thesis-format:parse:pick',
+  removeCard: 'thesis-format:cards:remove',
+  reformat: 'thesis-format:reformat',
+  cardChanged: 'thesis-format:card-changed',
+} as const
+
 const SCREEN_CAPTURE_CHANNELS = {
   captureCurrentWindow: 'screen-capture:capture-current-window',
   start: 'screen-capture:start',
@@ -767,6 +777,7 @@ function installIpcRouters(): void {
     ACCOUNT_CHANNELS,
     TRANSCRIPTION_CHANNELS,
     MEMORY_CHANNELS,
+    SEARCH_CHANNELS,
     KNOWLEDGE_CHANNELS,
     MCP_CHANNELS,
     EXTERNAL_CALL_CHANNELS,
@@ -781,6 +792,7 @@ function installIpcRouters(): void {
     AGENT_SCHEDULER_CHANNELS,
     WRITING_STYLE_CHANNELS,
     SLIDES_CHANNELS,
+    THESIS_FORMAT_CHANNELS,
   ]
   for (const group of channelGroups) {
     for (const channel of Object.values(group)) {
@@ -2766,6 +2778,39 @@ async function hashFileBytes(path: string): Promise<string> {
   return hash.digest('hex')
 }
 
+function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge): void {
+  const cardChanged = () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(THESIS_FORMAT_CHANNELS.cardChanged)
+    }
+  }
+  handle(THESIS_FORMAT_CHANNELS.listCards, (_event, roomId: string) => bridge.listCards(roomId))
+  handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, roomId: string, fileEntryId: string) => {
+    const meta = await bridge.parseFromLibrary(roomId, fileEntryId)
+    cardChanged()
+    return meta
+  })
+  // 磁盘选择直传（zip/docx/doc/pdf）：zip 不进文件库。用户取消返回 canceled:true。
+  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string) => {
+    const picked = await dialog.showOpenDialog({
+      title: '选择论文格式模版',
+      properties: ['openFile'],
+      filters: [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
+    })
+    const filePath = picked.filePaths[0]
+    if (!filePath) return { canceled: true, cardId: '', sourceName: '' }
+    const meta = await bridge.parseFromDisk(roomId, filePath)
+    cardChanged()
+    return { canceled: false, ...meta }
+  })
+  handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, roomId: string, cardId: string) => {
+    await bridge.removeCard(roomId, cardId)
+    cardChanged()
+  })
+  handle(THESIS_FORMAT_CHANNELS.reformat, (_event, roomId: string, fileEntryId: string, cardId?: string) =>
+    bridge.reformat(roomId, fileEntryId, cardId))
+}
+
 function registerFilesHandlers(
   bridge: FilesGatewayBridge,
   highRiskImports: HighRiskImportCoordinator,
@@ -3985,6 +4030,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       // Agent 编辑已打开的 slides 产物：registry 持有可编辑实例 → fork 活会话事务
       // （编辑实时重绘 + 静默保存回填版本链）。
       () => (fileId, req) => officePreviewRegistry.editSlidesArtifact(fileId, req),
+      // 视觉复检：已打开 slides 产物的一页 → 1x PNG（渲染层离屏栅格化）。
+      () => (fileId, slideIndex) => officePreviewRegistry.renderSlidesPagePng(fileId, slideIndex),
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
@@ -4164,6 +4211,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       retry: (captureId) => filesGatewayBridge.retryClipCapture(captureId),
     })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
+    registerThesisFormatHandlers(new ThesisFormatGatewayBridge(gatewaySupervisor))
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()

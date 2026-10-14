@@ -30,3 +30,5 @@ export const i18nResources = {
 } as const
 
 export type I18nNamespace = keyof typeof i18nResources['en-US']
+
+// cache-bust: search namespace

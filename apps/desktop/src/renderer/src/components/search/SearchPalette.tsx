@@ -3,6 +3,7 @@ import type { LocalAgentInstallation } from '@nxcore/agent-contract'
 import type { SearchHitDto, SearchItemType, SearchMessageContextDto, SearchPageDto } from '../../../../shared/search'
 import { useLocale } from '@/i18n/LocaleContext'
 import { splitHighlight } from './search-highlight'
+import './search-i18n'
 import './SearchPalette.css'
 
 export interface SearchPaletteProps {
