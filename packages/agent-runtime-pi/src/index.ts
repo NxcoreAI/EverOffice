@@ -357,6 +357,50 @@ function looksLikeLeakedToolProtocol(text: string): boolean {
 }
 
 /** Keep conversation continuity while removing run-scoped tool payloads from the next run. */
+type StripThinkingMessage = {
+  role?: string;
+  content?: Array<{ type?: string } | null>;
+};
+
+function dropAssistantThinkingInPlace(message: StripThinkingMessage | undefined): void {
+  if (!message || message.role !== "assistant" || !Array.isArray(message.content)) return;
+  const rest = message.content.filter((block) => block?.type !== "thinking");
+  // 纯思考消息（思考被中断等）保留原样，避免落出空 content 的 assistant 消息
+  if (rest.length === 0 || rest.length === message.content.length) return;
+  message.content = rest;
+}
+
+/**
+ * 中转模型经 reasoning_content 回传思考块，pi 会把思考块随历史逐轮重发并落盘
+ * （实测落页子代理历史中思考文字约为正文的 290 倍，两度触发上下文压缩）。
+ * pi 核心把同一条 assistant 消息对象既写进 agent 上下文又交给 SessionManager 落盘，
+ * 因此在 appendMessage 入口原地剥除思考块，可同时让后续请求与会话文件都不再携带；
+ * buildSessionContext 再过滤一次，兼容修复前已落盘的旧会话。
+ */
+export function wrapSessionManagerDroppingThinking(manager: SessionManager): SessionManager {
+  return new Proxy(manager, {
+    get(target, prop) {
+      if (prop === "appendMessage") {
+        return (message: StripThinkingMessage) => {
+          dropAssistantThinkingInPlace(message);
+          return target.appendMessage(message as never);
+        };
+      }
+      if (prop === "buildSessionContext") {
+        return (...args: Parameters<SessionManager["buildSessionContext"]>) => {
+          const context = target.buildSessionContext(...args);
+          for (const message of (context?.messages ?? []) as StripThinkingMessage[]) {
+            dropAssistantThinkingInPlace(message);
+          }
+          return context;
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as SessionManager;
+}
+
 function compactHistoricalToolState(session: AgentSession): boolean {
   const messages = session.messages;
   const hasRunScopedPayload = messages.some((message) => message.role === "toolResult"
@@ -810,9 +854,11 @@ export class PiAgentRuntime implements AgentRuntime {
     });
     await resourceLoader.reload();
 
-    const sessionManager = runtimeSessionRef
-      ? SessionManager.open(runtimeSessionRef, this.config.sessionsDir, this.config.workingDirectory)
-      : SessionManager.create(this.config.workingDirectory, this.config.sessionsDir);
+    const sessionManager = wrapSessionManagerDroppingThinking(
+      runtimeSessionRef
+        ? SessionManager.open(runtimeSessionRef, this.config.sessionsDir, this.config.workingDirectory)
+        : SessionManager.create(this.config.workingDirectory, this.config.sessionsDir),
+    );
     const { session } = await createAgentSession({
       cwd: this.config.workingDirectory,
       agentDir: this.config.agentDirectory,
