@@ -1599,6 +1599,25 @@ export interface NxcoreDesktopApi {
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
   }
+  thesisFormat: {
+    /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
+    listCards(roomId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>>
+    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
+    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
+    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
+    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    /** 删除一张格式卡。 */
+    removeCard(roomId: string, cardId: string): Promise<void>
+    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */
+    reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
+    onCardChanged(listener: () => void): () => void
+  }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
     listEvents(query: {
