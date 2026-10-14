@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
-import { setActiveDeckStyle } from "../slides-layout/style-context.js";import {
+import {
   DOC_WRITER_AGENT_ID,
   DOC_WRITER_TASK_LABELS,
   DOCUMENT_MARKDOWN_MAX_CHARS,
@@ -19,7 +19,10 @@ import {
   renderDraftMarkdown,
   slidesProgressPlanFrom,
 } from "./slides-draft-doc.js";
-import type { SlidesProgressEvent, SlidesProgressTracker } from "./slides-progress-tracker.js";
+import type { SlidesProgressTracker } from "./slides-progress-tracker.js";
+import { runLayouterTail } from "./slides-layout-tail.js";
+import type { OfficeBridgeClient } from "../documents/capabilities/office-bridge-client.js";
+import type { SlidesVisualReviewer } from "../slides-visual-review/review.js";
 import { collectPendingImagePages, generateSlidesPageImages } from "./slides-page-images.js";
 import {
   decidePageImages,
@@ -143,20 +146,7 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
-/** 进度事件 → 渲染层进度卡载荷（slides_draft onUpdate 的 details/content）。 */
-function slidesProgressUpdatePayload(event: SlidesProgressEvent): Record<string, unknown> {
-  const snapshot = event.snapshot;
-  return {
-    stage: "page_applied",
-    slideIndex: event.slideIndex,
-    title: snapshot.title,
-    totalPages: snapshot.totalPages,
-    pages: snapshot.pages,
-    doneCount: snapshot.doneCount,
-    ...(snapshot.narrative ? { narrative: snapshot.narrative } : {}),
-    ...(snapshot.warnings?.length ? { warnings: snapshot.warnings } : {}),
-  };
-}
+/** 进度事件 → 渲染层进度卡载荷：已迁 slides-layout-tail.ts（布局树链路与 edit 中继共用单一出处）。 */
 
 function extractJsonObject(value: string): Record<string, unknown> | null {
   const direct = parseJsonObject(value.trim());
@@ -331,6 +321,19 @@ export function createSubagentPiTools(
     /** 无模版风格管线（slides_draft 的 style/style_select 阶段与 generate 风格注入）。
      *  create-server 侧 filesService/materials 晚于工具装配创建：支持 getter 惰性取。 */
     slidesStyle?: SlidesStyleStageDeps | null | (() => SlidesStyleStageDeps | null);
+    /** 布局树落页装配（generate 尾部）：Office 桥 + 视觉复检器 + 素材字节读取。
+     *  create-server 侧共享 office-plugin 的同一批实例；支持 getter 惰性取。 */
+    slidesLayoutOffice?: {
+      bridge: OfficeBridgeClient | null;
+      visualReviewer: SlidesVisualReviewer | null;
+      readMaterialBlob: (hash: string) => Promise<Uint8Array | null>;
+      fetchImageHead: (url: string) => Promise<Uint8Array | null>;
+    } | null | (() => {
+      bridge: OfficeBridgeClient | null;
+      visualReviewer: SlidesVisualReviewer | null;
+      readMaterialBlob: (hash: string) => Promise<Uint8Array | null>;
+      fetchImageHead: (url: string) => Promise<Uint8Array | null>;
+    } | null);
   } = {},
 ): PiAgentRuntimeTool[] {
   const tools: PiAgentRuntimeTool[] = [
@@ -988,8 +991,9 @@ export function createSubagentPiTools(
         + "打回某张不用传 rejectPageImage=序号（落页时该页退化图形版式，restorePageImage=序号可撤销）。"
         + "网关重启会中断后台生成：用户再要继续时重传 pageImagesDecision=\"generate\" 续跑剩余。"
         + "配图未决时无参重调 generate 只会重新展示当前确认卡（不重排不烧配额）。"
-        + "无配图缺口页或已确认后，由 slides-builder 按风格卡参数定调落完全部页（逐页进度实时展示，中途不再逐页询问）。"
-        + "落页结果 warnings 里的「版式节奏」条目是网关对每页版式选择的节奏审计提示（相邻重复/超上限等），如实转告用户即可，不必重跑。"
+        + "无配图缺口页或已确认后，每页由专职布局代理（slides-layouter）设计递归嵌套的布局树（容器=方向+比例，叶子=文本/图片/卡/路径/图表/表格），"
+        + "经确定性校验环收敛后由网关编译落页（逐页进度实时展示，中途不再逐页询问；相邻页结构雷同会被网关自动重排一次）。"
+        + "落页结果 warnings 里的兜底/重排/视觉复检条目如实转告用户即可，不必重跑。"
         + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
         + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
         + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
@@ -1267,88 +1271,79 @@ export function createSubagentPiTools(
             };
           }
 
-          // 落页尾部（直落与配图确认后共用）：派发 builder、布防逐页进度、完成后回收草稿
-          // 与落定风格/配图会话。
+          // 落页尾部（直落与配图确认后共用）：每页并发 dispatch slides-layouter 取布局树，
+          // 网关编译落页 + 进度广播 + 视觉复检 + 相似度审计，完成后回收草稿与落定风格/配图会话。
           const dispatchBuilderTail = async (
             builderPlan: Record<string, unknown>,
             builderArmPlan: NonNullable<ReturnType<typeof slidesProgressPlanFrom>>,
             parentRunId: string | null,
             settle: { pageImagesSessionId?: string; styleSessionIdToSettle?: string | null; builderStyleParams?: unknown } = {},
           ): Promise<{ content: string; details: unknown }> => {
-            const slidesProgress = options.slidesProgress;
-            let builderRunId: string | null = null;
-            // 续跑路径 styleSession 可能未加载：风格参数以调用方回查结果优先。
-            const builderStyleParams = settle.builderStyleParams ?? styleSession?.styleParams ?? null;
-            // 存入风格上下文：set_page 展开预设时按 Room 取用，模型不必逐页携带。
-            setActiveDeckStyle(roomId, builderStyleParams);
-            const builderInput = {
-              task: "create",
-              instruction,
-              roomId,
-              title: builderArmPlan.title,
-              plan: builderPlan,
-              // 风格卡参数是全篇风格唯一出处；无风格会话时 builder 走 design-craft 定调。
-              ...(builderStyleParams ? { styleParams: builderStyleParams } : {}),
-            };
-            let builderInvocation;
-            try {
-              builderInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-                agentId: "slides-builder",
-                task: "演示文稿创建",
-                input: builderInput,
-                idempotencyKey: dispatchKey(run.runId, "slides-builder", "generate", builderInput),
-                source: "primary_agent",
-                parentSessionId: run.sessionId,
-                // 两跳串接（调用链语义）：直落路径挂靠编排调用之下，续跑路径挂当前 run。
-                ...(parentRunId ? { parentRunId } : {}),
-                // 逐页进度（只报不定）：invocationId 一生成即登记并挂进度转发，
-                // 子 run 的 set_page 落页后广播快照，进度卡逐页打勾。
-                onInvocationId: (invocationId) => {
-                  builderRunId = invocationId;
-                  if (slidesProgress) {
-                    slidesProgress.arm(invocationId, builderArmPlan);
-                    if (onUpdate) {
-                      slidesProgress.setRelay(invocationId, (event) => {
-                        const payload = slidesProgressUpdatePayload(event);
-                        onUpdate({ content: JSON.stringify(payload), details: payload });
-                      });
-                    }
-                  }
-                },
-                ...(signal ? { signal } : {}),
-              }));
-            } catch (error) {
-              const errorCode = error instanceof Error ? error.message : String(error);
-              const retryable = isConcurrencyLimitError(error);
+            const office = typeof options.slidesLayoutOffice === "function"
+              ? options.slidesLayoutOffice()
+              : options.slidesLayoutOffice;
+            if (!office) {
               return {
                 content: JSON.stringify({
                   ...(parentRunId ? { invocationId: parentRunId } : {}),
                   status: "failed",
-                  errorCode,
-                  retryable,
-                  message: retryable
-                    ? "落页代理调度被并发限额拒绝；如实告知用户可稍后重试（方案已就绪，重试会复用），禁止自行拼 PPT 内容。"
-                    : "落页代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+                  errorCode: "slides_layout_office_unavailable",
+                  retryable: false,
+                  message: "布局树落页装配未配置；如实告知用户生成失败，禁止自行拼 PPT 内容。",
                 }),
-                details: { errorCode },
+                details: { errorCode: "slides_layout_office_unavailable" },
               };
-            } finally {
-              if (builderRunId) slidesProgress?.disarm(builderRunId);
             }
-            const generateResult = normalizeSlidesResult(builderInvocation, "create");
-            // 落页完成即回收内容草稿：产物已落库，草稿使命结束（进回收站可恢复）；
-            // partial/failed 保留草稿便于重试。fire-and-forget，不影响结果返回。
-            if (generateResult.status === "completed" && draftDocumentId) {
-              void options.trashSlidesDraftDocument?.(draftDocumentId).catch(() => {});
-            }
-            const settleStyleSessionId = settle.styleSessionIdToSettle ?? styleSessionId;
-            if (generateResult.status === "completed" && settleStyleSessionId && styleSessions) {
-              styleSessions.patch(settleStyleSessionId, { stage: "confirmed" });
-            }
-            if (generateResult.status === "completed" && settle.pageImagesSessionId) {
-              pageImagesStoreRef?.patch(settle.pageImagesSessionId, { stage: "resolved" });
-            }
-            return { content: generateResult.content, details: generateResult.details };
+            // 续跑路径 styleSession 可能未加载：风格参数以调用方回查结果优先。
+            const builderStyleParams = settle.builderStyleParams ?? styleSession?.styleParams ?? null;
+            const styleSessionIdToSettle = settle.styleSessionIdToSettle ?? styleSessionId;
+            return runLayouterTail(
+              {
+                progress: options.slidesProgress ?? null,
+                bridge: office.bridge,
+                visualReviewer: office.visualReviewer,
+                readMaterialBlob: office.readMaterialBlob,
+                fetchImageHead: office.fetchImageHead,
+                makeKey: dispatchKey,
+                dispatchPage: (input, idempotencyKey, tailParentRunId) =>
+                  dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+                    agentId: "slides-layouter",
+                    task: "单页布局",
+                    input,
+                    idempotencyKey,
+                    source: "primary_agent",
+                    parentSessionId: run.sessionId,
+                    ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
+                    ...(signal ? { signal } : {}),
+                  })),
+              },
+              {
+                roomId,
+                sessionId: run.sessionId,
+                runId: run.runId,
+                parentRunId,
+                instruction,
+                plan: builderPlan,
+                armPlan: builderArmPlan,
+                styleParams: (builderStyleParams !== null && typeof builderStyleParams === "object" && !Array.isArray(builderStyleParams))
+                  ? builderStyleParams as Record<string, unknown>
+                  : null,
+                draftDocumentId,
+                settle: {
+                  ...(settle.pageImagesSessionId ? { pageImagesSessionId: settle.pageImagesSessionId } : {}),
+                  ...(styleSessionIdToSettle ? { styleSessionIdToSettle } : {}),
+                },
+                styleSessions,
+                pageImagesStore: pageImagesStoreRef,
+                trashDraft: (documentId) => {
+                  const trash = options.trashSlidesDraftDocument;
+                  if (!trash) return Promise.resolve();
+                  return trash(documentId);
+                },
+                ...(signal ? { signal } : {}),
+                ...(onUpdate ? { onUpdate } : {}),
+              },
+            );
           };
 
           // 正文配图交互路由：带 decision/regenerate 参数续跑已落库的配图会话；

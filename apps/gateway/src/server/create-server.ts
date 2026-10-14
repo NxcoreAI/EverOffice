@@ -702,6 +702,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
   // registry 的 set_page 落页即广播快照，slides_draft 布闸挂转发。
   const slidesProgress = new SlidesProgressTracker();
+  // Office 桥与视觉复检器共享单实例：office-plugin 工具与 slides-layout-tail 落页尾部共用。
+  const officeBridgeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
+  const slidesVisualReviewer = new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) });
   // 无模版风格管线依赖 filesService/materials（晚于工具装配创建）：getter 惰性取。
   const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
@@ -717,7 +720,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       documentCommentService,
       (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
-      config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+      officeBridgeClient,
       // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
       () => routeMindmapServiceRef.current,
       // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。
@@ -727,7 +730,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       slidesProgress,
       // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
       // 设置页保存 vlm 段后 runtime config 热替换，复检无需重启网关即生效。
-      new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) }),
+      slidesVisualReviewer,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -1146,6 +1149,31 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             slidesProgress,
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
+            // 布局树落页装配（generate 尾部）：与 office-plugin 共享同一批实例；
+            // readMaterialBlob 供图片 AR 解析（everroom-material:// 按 hash 回源）。
+            slidesLayoutOffice: subagentConfig.enabled
+              ? {
+                  bridge: officeBridgeClient,
+                  visualReviewer: slidesVisualReviewer,
+                  readMaterialBlob: async (hash) => {
+                    const content = await materialsService.readByHash(hash).catch(() => null);
+                    return content ? new Uint8Array(content.buffer) : null;
+                  },
+                  fetchImageHead: async (url) => {
+                    try {
+                      const response = await fetch(url, {
+                        headers: { Range: "bytes=0-65535" },
+                        signal: AbortSignal.timeout(3000),
+                        redirect: "follow",
+                      });
+                      if (!response.ok && response.status !== 206) return null;
+                      return new Uint8Array(await response.arrayBuffer());
+                    } catch {
+                      return null;
+                    }
+                  },
+                }
+              : null,
             // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
             createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
               const documentId = randomUUID();

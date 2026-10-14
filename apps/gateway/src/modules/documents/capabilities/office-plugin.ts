@@ -31,7 +31,7 @@ import {
 
 const MAX_HTML_LENGTH = 400_000;
 const MAX_SLIDES_PAGES = 24;
-const MAX_PAGE_SPEC_LENGTH = 80_000;
+export const MAX_PAGE_SPEC_LENGTH = 80_000;
 const MAX_SHEETS = 20;
 const MAX_ROWS = 5000;
 const MAX_COLS = 50;
@@ -136,7 +136,7 @@ function normalizeOutline(outline: unknown): string[] {
 }
 
 /** 骨架页：中性占位版式（演示标题 + 首页标题），set_page slideIndex=0 时整页替换。 */
-function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
+export function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
   return JSON.stringify({
     background: "#F5F6F8",
     elements: [

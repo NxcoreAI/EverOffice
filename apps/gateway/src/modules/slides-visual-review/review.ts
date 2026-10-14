@@ -125,6 +125,8 @@ export class SlidesVisualReviewer {
     fileId: string;
     slideIndex: number;
     fetchPng: () => Promise<Buffer>;
+    /** 降档兜底等引擎侧已知的薄弱点，转成「重点核查」提示拼进复检 prompt。 */
+    focusHints?: string[];
   }): Promise<VisualReviewOutcome> {
     const vlm = this.resolveVlm();
     if (!vlm) return { status: "skipped", reason: "vlm 未配置" };
@@ -138,9 +140,12 @@ export class SlidesVisualReviewer {
       return { status: "error", reason: `截图失败：${error instanceof Error ? error.message : String(error)}` };
     }
     if (png.byteLength === 0) return { status: "error", reason: "截图为空" };
+    const prompt = params.focusHints?.length
+      ? `${REVIEW_PROMPT}\n\n本页已知薄弱点（重点核查）：${params.focusHints.slice(0, 6).join("；")}`
+      : REVIEW_PROMPT;
     try {
       const signal = AbortSignal.timeout(REVIEW_TIMEOUT_MS);
-      const raw = await vlm.analyze({ buffer: png, mime: "image/png" }, REVIEW_PROMPT, signal);
+      const raw = await vlm.analyze({ buffer: png, mime: "image/png" }, prompt, signal);
       const verdict = parseVerdict(raw);
       if (!verdict) return { status: "error", reason: "复检结果解析失败（按通过处理）" };
       if (verdict.pass) return { status: "pass" };
