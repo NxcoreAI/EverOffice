@@ -1,6 +1,10 @@
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 
 import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
+import { getDeckLayoutContext } from "../slides-layout/deck-contract-context.js";
+import { normalizeTree } from "../slides-layout/tree/schema.js";
+import { compileTree } from "../slides-layout/tree/compile.js";
+import { measureDefects, type LayoutDefect } from "../slides-layout/tree/measure.js";
 
 /**
  * slides 两段式子代理的工具面：
@@ -59,4 +63,62 @@ export function createSlidesBuilderAgentTools(deps: {
   return [
     ...filterTools(deps.documentTools, SLIDES_BUILDER_TOOL_ALLOWLIST),
   ];
+}
+
+interface ValidateOutcome {
+  ok: boolean;
+  defects: LayoutDefect[];
+  stats: { elements: number; leaves: number; depth: number; images: number; paths: number };
+}
+
+/** 归一 → 编译 → 量测（契约经 token 从进程内上下文取，模型不回传防漂移）。 */
+export function validateLayoutTree(token: unknown, rawTree: unknown): ValidateOutcome {
+  const context = getDeckLayoutContext(token);
+  if (!context) {
+    return {
+      ok: false,
+      defects: [{ path: "root", type: "schema", detail: `token 未注册或已失效（${String(token).slice(0, 40)}）`, hint: "检查输入里的 token 字段原样传入" }],
+      stats: { elements: 0, leaves: 0, depth: 0, images: 0, paths: 0 },
+    };
+  }
+  let tree;
+  try {
+    tree = normalizeTree(rawTree);
+  } catch (error) {
+    return {
+      ok: false,
+      defects: [{ path: "root", type: "schema", detail: error instanceof Error ? error.message : String(error), hint: "按报错修正后重交整棵树" }],
+      stats: { elements: 0, leaves: 0, depth: 0, images: 0, paths: 0 },
+    };
+  }
+  const result = compileTree(tree, context.contract);
+  const defects = measureDefects(result, context.contract, { imageArs: context.imageArs });
+  return { ok: defects.length === 0, defects, stats: result.stats };
+}
+
+const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
+  name: "slides_layout_validate",
+  label: "布局树校验",
+  description:
+    "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（节点路径+缺陷类型+改法）。"
+    + "ok=true 才可用 subagent_submit_result 提交；有缺陷按 hint 修正后重交整棵树，最多 3 轮。",
+  parameters: {
+    type: "object",
+    properties: {
+      token: { type: "string", description: "输入里的 deckToken，原样传入（网关据此取本 deck 的布局契约）" },
+      tree: { type: "object", description: "布局树（root：role/title?/dark?/direction/weights?/gapScale?/pad?/children）" },
+    },
+    required: ["token", "tree"],
+    additionalProperties: false,
+  },
+  executionMode: "sequential",
+  async execute(_input, params) {
+    const outcome = validateLayoutTree(params.token, params.tree);
+    return { content: JSON.stringify(outcome) };
+  },
+};
+
+/** slides-layouter 的工具面：只有布局树校验（技能读取与结果提交由运行时自带）。 */
+export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
+  return [LAYOUTER_VALIDATE_TOOL];
 }
