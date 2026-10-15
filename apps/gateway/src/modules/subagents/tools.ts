@@ -974,15 +974,13 @@ export function createSubagentPiTools(
         + "用户想改效果就在对话里说（如「标题改小点」），由 style 任务携带新反馈重出；确认后进入 generate。"
         + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId；当前未绑定 Room 时凭 styleSessionId 自动反查，不要猜测 roomId）——"
         + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图。"
-        + "方案里有配图缺口页（素材检索不到、planner 标了生图提示词）会先停在配图确认卡：返回 page_images_confirm，"
-        + "用户选「生成配图」就传 pageImagesDecision=\"generate\"——生成在后台逐张进行、本调用立即返回 page_images_review，"
-        + "每生成一张确认卡就亮出一张（生成中/失败页有占位行），期间用户随时可审核已生成的图（打回/重生成，正常对话即可）；"
+        + "方案里素材检索不到但值得配图的页，AI 配图自动在后台开始生成（并发进行），过目卡逐张亮出（生成中/失败页有占位行）："
+        + "返回 page_images_review 即到此为止，期间用户随时可逐张处置——重生成传 regeneratePageImage=序号（1 起，反馈写 regenerateFeedback）；"
+        + "打回某张传 rejectPageImage=序号（落页时该页退化图形版式，restorePageImage=序号可撤销）。"
         + "用户确认落页传 pageImagesDecision=\"accept\"（未完成的张数自动放弃，相应页退化图形版式）；"
-        + "选「跳过配图」传 pageImagesDecision=\"skip\"（一张都不用直接落页）。"
-        + "过目阶段逐张处置：重生成传 regeneratePageImage=序号（1 起，反馈写 regenerateFeedback）；"
-        + "打回某张不用传 rejectPageImage=序号（落页时该页退化图形版式，restorePageImage=序号可撤销）。"
+        + "全部不要传 pageImagesDecision=\"skip\"（直接落页）。"
         + "网关重启会中断后台生成：用户再要继续时重传 pageImagesDecision=\"generate\" 续跑剩余。"
-        + "配图未决时无参重调 generate 只会重新展示当前确认卡（不重排不烧配额）。"
+        + "配图未决时无参重调 generate 只会重新展示当前过目卡（不重排不烧配额）。"
         + "无配图缺口页或已确认后，每页由专职布局代理（slides-layouter）设计递归嵌套的布局树（容器=方向+比例，叶子=文本/图片/卡/路径/图表/表格），"
         + "经确定性校验环收敛后由网关编译落页（逐页进度实时展示，中途不再逐页询问；相邻页结构雷同会被网关自动重排一次）。"
         + "落页结果 warnings 里的兜底/重排/视觉复检条目如实转告用户即可，不必重跑。"
@@ -1552,6 +1550,8 @@ export function createSubagentPiTools(
             }, {
               sessions: pageImagesStoreRef,
               images: styleDeps.images,
+              // 有 runner 即自动开跑（过目卡实时亮出）；无 runner 走确认卡同步生成。
+              ...(styleDeps.pageImageRunner ? { runner: styleDeps.pageImageRunner } : {}),
               ...(onUpdate ? { onUpdate } : {}),
             });
             if (outcome.kind !== "build") return outcome.result;

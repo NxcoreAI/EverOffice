@@ -1737,6 +1737,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
   it('生图全失败：返回 failed 带 skip 指引，会话留在 confirm', async () => {
     const setup = await setupPageImages({ outcomes: [
       { ok: false, error: new Error('生图中转会话不可用：需要已订阅账号且网关在线') },
+      { ok: false, error: new Error('生图中转会话不可用：需要已订阅账号且网关在线') },
     ] })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
@@ -2150,6 +2151,35 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
       undefined,
     )
   }
+
+  it('fresh generate 自动开跑：无需 decision 即返回 review 卡且后台已生成', async () => {
+    const hashes = ['a'.repeat(64), 'b'.repeat(64)]
+    let call = 0
+    const generateImage = vi.fn(async () => {
+      const hash = hashes[call] ?? 'd'.repeat(64)
+      call += 1
+      return { contentHash: hash }
+    })
+    const setup = await setupBackground({ generateImage })
+
+    const result = await setup.slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
+      undefined,
+    )
+
+    // 有 runner：过目卡直接亮出（生成中占位），后台并发开跑，无需用户先决策。
+    const payload = JSON.parse((result as { content: string }).content)
+    expect(payload.status).toBe('page_images_review')
+    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('review')
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1) // 只编排未落页
+    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    await setup.runner.settle(sessionId)
+    expect(generateImage).toHaveBeenCalledTimes(2)
+    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
+    expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
+  })
 
   it('generate 立即返回后台生成；settle 后逐张入会话，builder 不被阻塞调度', async () => {
     const hashes = ['a'.repeat(64), 'b'.repeat(64)]
