@@ -15,7 +15,7 @@ import { contractFromStyleParams, type LayoutContract } from "../slides-layout/t
 import { dropDeckLayoutContext, registerDeckLayoutContext } from "../slides-layout/deck-contract-context.js";
 import { normalizeTree, type LayoutTree } from "../slides-layout/tree/schema.js";
 import { compileTree } from "../slides-layout/tree/compile.js";
-import { measureDefects, shrinkToFit } from "../slides-layout/tree/measure.js";
+import { measureDefects, shrinkToFit, type LayoutDefect } from "../slides-layout/tree/measure.js";
 import { auditSimilarity, treeSignature } from "../slides-layout/tree/similarity.js";
 import { resolveImageArs } from "../slides-layout/tree/aspect-ratio.js";
 
@@ -209,19 +209,21 @@ interface FinalPage {
   spec: Record<string, unknown>;
   degraded: boolean;
   focusHints: string[];
+  defects: LayoutDefect[];
 }
 
 function finalizeTree(tree: LayoutTree, contract: LayoutContract, imageArs: Map<string, number>): FinalPage {
   const result = compileTree(tree, contract);
   const defects = measureDefects(result, contract, { imageArs });
   if (defects.length === 0) {
-    return { spec: result.spec as unknown as Record<string, unknown>, degraded: false, focusHints: [] };
+    return { spec: result.spec as unknown as Record<string, unknown>, degraded: false, focusHints: [], defects };
   }
   const shrunk = shrinkToFit(tree, contract, { imageArs });
   return {
     spec: shrunk.result.spec as unknown as Record<string, unknown>,
     degraded: shrunk.degraded,
     focusHints: shrunk.defects.map((d) => `${d.path}：${d.detail}`),
+    defects: shrunk.defects,
   };
 }
 
@@ -316,30 +318,40 @@ export async function runLayouterTail(
     await Promise.all(workers);
 
     // 按页序编译落页：fill → 进度广播 → VLM 复检（复检含降档页 focusHints）。
-    // 重排重落不重复计数：按页号集合统计。
+    // 两条防线：① 降档后仍有引擎硬闸类缺陷（重叠/emoji/溢出）的页落确定性兜底版式，
+    // 不把会被引擎拒绝的 spec 送下去；② slideIndex 跟踪 deck 活页数（某页失败后
+    // 后续页按「追加」语义落，不会越界级联失败）。重排重落不重复计数：按页号集合统计。
+    const BLOCKING_DEFECTS = new Set(["overlap", "emoji", "overflow", "font_floor", "canvas", "element_cap"]);
     const appliedPages = new Set<number>();
+    let livePageCount = 1;
     const applyPage = async (index: number, tree: LayoutTree): Promise<boolean> => {
-      const final = finalizeTree(tree, contract, imageArs);
+      let final = finalizeTree(tree, contract, imageArs);
       if (final.degraded) warnings.push(`第 ${index + 1} 页经引擎降档兜底装下内容`);
+      if (final.defects.some((defect) => BLOCKING_DEFECTS.has(defect.type))) {
+        warnings.push(`第 ${index + 1} 页布局树未收敛（${final.defects[0]!.type}），已用兜底版式`);
+        final = finalizeTree(fallbackTree(pages[index]!), contract, imageArs);
+      }
       const specJson = JSON.stringify(final.spec);
       if (specJson.length > MAX_PAGE_SPEC_LENGTH) {
         warnings.push(`第 ${index + 1} 页 PageSpec 超长，跳过`);
         return false;
       }
-      const result = await bridge.fillPage({ fileId: fileEntryId, slideIndex: index, specJson });
+      const slideIndex = Math.min(index, livePageCount);
+      const result = await bridge.fillPage({ fileId: fileEntryId, slideIndex, specJson });
       if (!result.ok || result.applied !== true) {
         warnings.push(`第 ${index + 1} 页落页失败（${result.error ?? "桌面端拒绝"}）`);
         return false;
       }
-      progress?.notify(progressKey, index);
+      livePageCount = Math.max(livePageCount, slideIndex + 1);
+      progress?.notify(progressKey, slideIndex);
       appliedPages.add(index);
       if (deps.visualReviewer) {
         let review: VisualReviewOutcome | null = null;
         try {
           review = await deps.visualReviewer.reviewPage({
             fileId: fileEntryId,
-            slideIndex: index,
-            fetchPng: async () => Buffer.from(await bridge.renderPage({ fileId: fileEntryId, slideIndex: index }), "base64"),
+            slideIndex,
+            fetchPng: async () => Buffer.from(await bridge.renderPage({ fileId: fileEntryId, slideIndex }), "base64"),
             ...(final.focusHints.length > 0 ? { focusHints: final.focusHints } : {}),
           });
         } catch {

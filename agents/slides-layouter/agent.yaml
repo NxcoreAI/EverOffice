@@ -20,4 +20,4 @@ policy:
   maxConcurrency: 8
   # 读技能 2~3 次 + validate ≤4 次（3 轮自纠 + 1 次确认）+ 提交 1 次。
   maxToolCalls: 16
-  timeoutSeconds: 300
+  timeoutSeconds: 480

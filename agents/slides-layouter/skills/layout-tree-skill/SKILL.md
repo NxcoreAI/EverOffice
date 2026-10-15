@@ -51,9 +51,11 @@ description: 布局树语法与设计纪律——容器/叶子词汇表、比例
 | `chart` | `kind`、`categories`、`series`（name+values） | kind: bar/barStacked/line/pie/doughnut/scatter/comboBarLine（≥2 系列）；values 与 categories 等长 |
 | `table` | `rows`（首行表头，2~12 行、2~8 列）、`colWidths?`、`style?`（lines/darkHeader/zebra） | 单元格是字符串或 {text, bold?, align?} |
 
-### 上限（引擎硬约束，超了 validate 会报）
+### 上限与硬禁令（引擎硬约束，超了 validate 会报）
 
 元素总数 48、图片 8、路径 4、单文本 2000 字符、图表类目 2~24、表格 12 行 8 列。
+
+**禁 emoji**：任何叶子文本（含表格单元格、图表系列名）出现 emoji 会被引擎整页拒绝——装饰用 path 叶子，不要用符号字符。
 
 ## data 行内格式翻译
 

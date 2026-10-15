@@ -180,6 +180,38 @@ describe("runLayouterTail", () => {
     expect(appliedIndexes.filter((i) => i === 1).length).toBe(2);
   });
 
+  it("带引擎硬闸缺陷的页落兜底版式，不级联失败（真机 2026-10-15 事故回归）", async () => {
+    const emojiTree = {
+      role: "content",
+      title: "会失败的页",
+      direction: "column",
+      children: [{ type: "text", variant: "body", text: "带 emoji 🎉 的树" }],
+    };
+    const harness = makeHarness([emojiTree, CHART_TREE, QUOTE_TREE]);
+    harness.bridge.fillPage.mockImplementation(async (input: { slideIndex: number }) =>
+      input.slideIndex === 0 ? { ok: false, applied: false, error: "桌面端拒绝" } : { ok: true, applied: true });
+    const plan = {
+      title: "测试演示",
+      pages: [
+        { title: "会失败的页", points: ["要点一"], role: "content", density: "standard" },
+        { title: "数据页", role: "data", density: "standard" },
+        { title: "引用页", role: "quote", density: "standard" },
+      ],
+    };
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
+    const payload = JSON.parse(result.content);
+    // 首页落页仍失败（模拟引擎拒绝兜底外的场景）→ 后续页按追加语义继续，不再越界级联。
+    expect(payload.status).toBe("partial");
+    expect(payload.warnings.some((w: string) => /第 1 页布局树未收敛/.test(w))).toBe(true);
+    expect(payload.warnings.some((w: string) => /第 1 页落页失败/.test(w))).toBe(true);
+    expect(payload.warnings.some((w: string) => /slideIndex must be an integer/.test(w))).toBe(false);
+    expect(payload.warnings.some((w: string) => /第 [23] 页落页失败/.test(w))).toBe(false);
+    expect(payload.pages).toBe(2);
+    // 第 2、3 页：首页失败后 deck 仍 1 页骨架 → slideIndex 各为 1、2（追加语义）。
+    const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
+    expect(appliedIndexes).toEqual([0, 1, 2]);
+  });
+
   it("建 deck 失败回 failed 不落任何页", async () => {
     const harness = makeHarness([CONTENT_TREE]);
     harness.bridge.generate.mockResolvedValueOnce({ fileEntryId: "" });

@@ -108,6 +108,11 @@ export function statCell(stat: StatInput, frame: Frame, theme: ResolvedTheme, fo
   const labelH = textBoxHeight(stat.label, labelSize, innerW);
   const gap = 12;
   const total = valueH + gap + labelH;
+  // 高度闸：KPI 卡内容高于卡框时墨迹向下溢出会撞进兄弟区域（引擎拒页）——
+  // 与宽度闸同口径，装不下点名报错让代理自纠。
+  if (total > frame.h) {
+    bad(`KPI 卡「${stat.value}」内容高约 ${Math.round(total)}px 超过卡框 ${Math.round(frame.h)}px——加大该子树权重或换文字卡`);
+  }
   const top = frame.y + Math.max(0, (frame.h - total) / 2);
   return [
     card(frame, theme, focus ? theme.colors.primarySoft : undefined),

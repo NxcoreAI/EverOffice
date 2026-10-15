@@ -10,8 +10,10 @@ import { variantSize } from "./compile.js";
 import type { LayoutContract, TextVariant } from "./layout-contract.js";
 import type { LayoutTree } from "./schema.js";
 import { contractFromStyleParams } from "./layout-contract.js";
+import { estimateLineHeight, estimateTextWidth } from "../text-metrics.js";
+import type { PageSpec } from "../elements.js";
 
-export type DefectType = "schema" | "overflow" | "min_size" | "font_floor" | "element_cap" | "image_ar" | "canvas";
+export type DefectType = "schema" | "overflow" | "min_size" | "font_floor" | "element_cap" | "image_ar" | "canvas" | "overlap" | "emoji";
 
 export interface LayoutDefect {
   path: string;
@@ -26,6 +28,41 @@ export interface MeasureInput {
 }
 
 const OVERFLOW_TOLERANCE_PX = 2;
+const OVERLAP_TOLERANCE_PX = 6;
+/** 与 genoffice 引擎同口径的 emoji 判定（含变体选择符/零宽连接符区段）。 */
+const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u;
+
+interface InkBox { label: string; x: number; y: number; w: number; h: number }
+
+/** 引擎 estimateTextInk 同口径的墨迹框（引擎墨迹重叠闸门的镜像，超限即被拒页）。 */
+function inkBoxesOf(spec: PageSpec): InkBox[] {
+  const boxes: InkBox[] = [];
+  for (const el of spec.elements) {
+    if (el.type !== "text" && !(el.type === "shape" && el.paragraphs)) continue;
+    const paragraphs = el.type === "text" ? el.paragraphs : el.paragraphs!;
+    let contentH = 0;
+    let label = "";
+    for (const p of paragraphs) {
+      const size = Math.max(18, ...p.runs.map((r) => r.sizePt ?? 18));
+      let textW = 0;
+      for (const r of p.runs) {
+        label += r.text;
+        textW += estimateTextWidth(r.text, r.sizePt ?? 18);
+      }
+      contentH += Math.max(1, Math.ceil(textW / Math.max(1, el.w))) * estimateLineHeight(size, p.lineSpacingPct);
+    }
+    const anchor = el.valign ?? (el.type === "shape" ? "middle" : "top");
+    const y = anchor === "top" ? el.y : anchor === "bottom" ? el.y + el.h - contentH : el.y + (el.h - contentH) / 2;
+    boxes.push({ label: label.slice(0, 16), x: el.x, y, w: el.w, h: contentH });
+  }
+  return boxes;
+}
+
+function boxesOverlap(a: InkBox, b: InkBox): boolean {
+  const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return ox > OVERLAP_TOLERANCE_PX && oy > OVERLAP_TOLERANCE_PX;
+}
 
 export function measureDefects(result: CompileResult, contract: LayoutContract, input: MeasureInput = {}): LayoutDefect[] {
   const defects: LayoutDefect[] = [];
@@ -70,6 +107,26 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
             "调整区域比例贴近图片长宽比，或改用 cover 裁切填满",
           );
         }
+      }
+    }
+  }
+
+  // 引擎硬闸镜像①：emoji 直接拒页（任何元素的任何文本都不允许）。
+  if (EMOJI_PATTERN.test(JSON.stringify(result.spec.elements))) {
+    push("root", "emoji", "页面文本含 emoji（引擎直接拒页）", "删除 emoji；装饰用 path，图标留给后续 icon 叶子");
+  }
+
+  // 引擎硬闸镜像②：有字元素墨迹两两相交（6px 容差）直接拒页。
+  const inkBoxes = inkBoxesOf(result.spec);
+  for (let i = 0; i < inkBoxes.length; i++) {
+    for (let j = i + 1; j < inkBoxes.length; j++) {
+      if (boxesOverlap(inkBoxes[i]!, inkBoxes[j]!)) {
+        push(
+          "root",
+          "overlap",
+          `「${inkBoxes[i]!.label}」与「${inkBoxes[j]!.label}」墨迹重叠（引擎会整页拒绝）`,
+          "加大该区域的权重/比例，或精简其中一方的内容——通常是区域太小装不下内容",
+        );
       }
     }
   }

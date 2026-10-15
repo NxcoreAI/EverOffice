@@ -262,6 +262,50 @@ describe("measureDefects", () => {
   });
 });
 
+describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () => {
+  it("KPI 卡装不下卡框时报缺陷，不再让墨迹溢出", () => {
+    const result = compileTree(tree({
+      role: "data", title: "茶经立典",
+      direction: "column", weights: [0.6, 1.6], children: [
+        { direction: "row", gapScale: 0.7, children: [
+          { type: "card", value: "780", unit: "年", label: "《茶经》成书" },
+          { type: "card", value: "3", unit: "卷", label: "全书十节 · 七千余言" },
+          { type: "card", value: "28", unit: "种", label: "记录的茶具" },
+        ] },
+        { type: "text", variant: "body", text: "公元 780 年陆羽《茶经》成书，是世界第一部茶文化元典。" },
+      ],
+    }), CONTRACT);
+    const defects = measureDefects(result, CONTRACT);
+    expect(defects.some((d) => d.type === "overflow" && /KPI 卡/.test(d.detail))).toBe(true);
+  });
+
+  it("文本含 emoji 报 emoji 缺陷", () => {
+    const result = compileTree(tree({
+      direction: "column", children: [
+        { type: "text", variant: "body", text: "要点一 🎉 与要点二" },
+      ],
+    }), CONTRACT);
+    const defects = measureDefects(result, CONTRACT);
+    expect(defects.some((d) => d.type === "emoji")).toBe(true);
+  });
+
+  it("编译产物文本墨迹两两重叠时报 overlap 缺陷", () => {
+    const overlapResult = {
+      spec: {
+        elements: [
+          { type: "text", x: 56, y: 259, w: 608, h: 65, paragraphs: [{ runs: [{ text: "很宽的两行正文内容", sizePt: 14 }] }] },
+          { type: "text", x: 74, y: 259, w: 156, h: 32, paragraphs: [{ runs: [{ text: "卡标签", sizePt: 14 }] }] },
+        ],
+      },
+      placements: [],
+      defects: [],
+      stats: { elements: 2, leaves: 0, depth: 0, images: 0, paths: 0 },
+    };
+    const defects = measureDefects(overlapResult as never, CONTRACT);
+    expect(defects.some((d) => d.type === "overlap")).toBe(true);
+  });
+});
+
 describe("shrinkToFit", () => {
   it("溢出文字降档后收敛并标记 degraded", () => {
     const t = tree({
