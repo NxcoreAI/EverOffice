@@ -48,6 +48,7 @@ import {
 } from '@/components/context-room/roomOverviewCitation'
 import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { requestRoomOfficeFocus, useEmbeddedOffice } from '@/components/context-room/ported/embeddedOffice'
+import { attachOfficeViewport } from '@/components/context-room/ported/officeViewport'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
@@ -188,49 +189,23 @@ export function App() {
     : null
 
   useEffect(() => {
-    const workspace = workspaceMainRef.current
     const office = window.nxcore?.office
-    if (!workspace || !office) return
-
-    if (!focusedOfficeInstanceId) {
-      void office.setActiveInstance(null).catch((error) => {
-        console.error('Failed to hide the Office view.', error)
-      })
-      return
-    }
-
-    // Room 内嵌预览：占位矩形由 EmbeddedOfficePreview 自行上报，这里只激活。
-    if (activePage === 'rooms') {
-      void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
-        console.error('Failed to open the Office view.', error)
-      })
-      return
-    }
-
-    const reportBounds = () => {
-      const bounds = workspace.getBoundingClientRect()
-      office.setWorkspaceBounds({
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      })
-    }
-    const observer = new ResizeObserver(reportBounds)
-    observer.observe(workspace)
-    window.addEventListener('resize', reportBounds)
-    let disposed = false
-    void office.setActiveInstance(focusedOfficeInstanceId).then(() => {
-      if (!disposed) reportBounds()
-    }).catch((error) => {
-      console.error('Failed to open the Office view.', error)
+    if (!office) return
+    void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
+      console.error('Failed to update the Office view visibility.', error)
     })
-    return () => {
-      disposed = true
-      observer.disconnect()
-      window.removeEventListener('resize', reportBounds)
-    }
-  }, [activePage, focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
+  }, [focusedOfficeInstanceId])
+
+  // office-document 顶栏页：矩形上报与弹层遮挡显隐交给共享视口模块
+  //（Room 内嵌宿主 EmbeddedOfficePreview 挂同一模块；侧栏开合等布局变化
+  // 由模块内 ResizeObserver 跟随，不随 agentOpen 重挂）。
+  useEffect(() => {
+    if (activePage !== 'office-document' || !focusedOfficeInstanceId) return
+    const workspace = workspaceMainRef.current
+    if (!workspace) return
+    const attachment = attachOfficeViewport(workspace)
+    return () => attachment.detach()
+  }, [activePage, focusedOfficeInstanceId])
 
   useEffect(() => {
     logOnboarding('state', {
