@@ -75,7 +75,9 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
 
   for (const placement of result.placements) {
     const { frame } = placement;
-    if (frame.w < contract.minLeaf.w || frame.h < contract.minLeaf.h) {
+    // justify 打包的叶子框高=内容自然高（刻意贴合），只查宽度下限。
+    const minHeight = placement.packed ? 0 : contract.minLeaf.h;
+    if (frame.w < contract.minLeaf.w || frame.h < minHeight) {
       push(
         placement.path,
         "min_size",

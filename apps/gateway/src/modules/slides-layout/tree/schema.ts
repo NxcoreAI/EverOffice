@@ -5,6 +5,7 @@
  */
 
 export type Direction = "row" | "column";
+export type MainJustify = "start" | "center" | "end";
 export type TextAlign = "left" | "center" | "right";
 export type TextTone = "normal" | "muted" | "inverse";
 export type TableStyle = "lines" | "darkHeader" | "zebra";
@@ -69,6 +70,8 @@ export interface ContainerNode {
   gapScale?: number;
   /** 容器内边距（px）。 */
   pad?: number;
+  /** 主轴打包（仅 column）：text 叶子按内容自然高、其余均分剩余，整组按 justify 落位。 */
+  justify?: MainJustify;
   children: TreeNode[];
 }
 
@@ -83,6 +86,7 @@ export interface LayoutTree {
   weights?: number[];
   gapScale?: number;
   pad?: number;
+  justify?: MainJustify;
   children: TreeNode[];
 }
 
@@ -228,8 +232,17 @@ function asContainer(node: Record<string, unknown>, path: string): ContainerNode
     ...(weights ? { weights } : {}),
     ...normalizeGapScale(node.gapScale, path),
     ...normalizePad(node.pad, path),
+    ...normalizeJustify(node.justify, direction, path),
     children,
   };
+}
+
+function normalizeJustify(raw: unknown, direction: Direction, path: string): { justify?: MainJustify } {
+  if (raw === undefined) return {};
+  if (raw === "start") return {}; // 与缺省等价，省字段
+  if (raw !== "center" && raw !== "end") bad(`${path}.justify 必须是 start|center|end`);
+  if (direction !== "column") bad(`${path}.justify 只用于 column 容器（row 上下分无打包语义）`);
+  return { justify: raw as MainJustify };
 }
 
 function normalizeWeights(raw: unknown, count: number, path: string): number[] | undefined {
@@ -304,6 +317,7 @@ export function normalizeTree(raw: unknown): LayoutTree {
     ...(weights ? { weights } : {}),
     ...normalizeGapScale(root.gapScale, "root"),
     ...normalizePad(root.pad, "root"),
+    ...normalizeJustify(root.justify, root.direction, "root"),
     children,
   };
 }

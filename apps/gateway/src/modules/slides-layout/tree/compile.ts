@@ -10,7 +10,7 @@ import { snap4 } from "../theme.js";
 import { imageElement, type PageSpec, type SpecElement } from "../elements.js";
 import { estimateLineHeight, estimateLines } from "../text-metrics.js";
 import type { LayoutContract, TextVariant } from "./layout-contract.js";
-import type { ContainerNode, LayoutTree, LeafNode, TreeNode } from "./schema.js";
+import type { ContainerNode, Direction, LayoutTree, LeafNode, TreeNode } from "./schema.js";
 import { isLeaf } from "./schema.js";
 import {
   isTreeErrorLike,
@@ -31,6 +31,8 @@ export interface LeafPlacement {
   neededHeight?: number;
   url?: string;
   contain?: boolean;
+  /** justify 打包分配（框高=内容自然高，豁免 min_size 检查）。 */
+  packed?: boolean;
 }
 
 export interface CompileDefect {
@@ -75,6 +77,7 @@ interface WalkState {
   defects: CompileDefect[];
   stats: { elements: number; leaves: number; depth: number; images: number; paths: number };
   sizeOverrides: Map<string, number>;
+  packedPaths: Set<string>;
   contract: LayoutContract;
 }
 
@@ -128,8 +131,65 @@ function walk(node: TreeNode, frame: Frame, path: string, depth: number, state: 
     return;
   }
   const inner = node.pad ? padFrame(frame, snap4(node.pad)) : frame;
-  const childFrames = splitFrame(inner, node, state.contract, node.direction);
+  const childFrames = layoutChildren(node, inner, path, state);
   node.children.forEach((child, i) => walk(child, childFrames[i]!, `${path}/${i}`, depth + 1, state));
+}
+
+/**
+ * justify 打包（仅 column）：text 叶子按内容自然高，其余叶子均分剩余空间，
+ * 整组按 start/center/end 落位。缺省（无 justify）走 weights 满分。
+ */
+function packColumn(
+  inner: Frame,
+  node: ContainerNode,
+  path: string,
+  state: WalkState,
+): Frame[] {
+  const count = node.children.length;
+  const gap = gapFor(node, state.contract);
+  const totalGap = gap * (count - 1);
+  const naturals = node.children.map((child, i) => {
+    if (!isLeaf(child) || child.type !== "text") return null;
+    state.packedPaths.add(`${path}/${i}`);
+    const sizePt = state.sizeOverrides.get(`${path}/${i}`) ?? variantSize(child.variant, state.contract);
+    return neededHeightFor(child.text, sizePt, inner.w);
+  });
+  const naturalSum = naturals.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  if (naturalSum + totalGap > inner.h) {
+    state.defects.push({
+      path,
+      type: "overflow",
+      detail: `justify 打包内容高约 ${Math.round(naturalSum + totalGap)}px 超过容器 ${Math.round(inner.h)}px——精简文字、减少子节点或去掉 justify`,
+    });
+  }
+  const flexible = naturals.filter((value) => value === null).length;
+  const remaining = Math.max(flexible, inner.h - totalGap - naturalSum);
+  const share = flexible > 0 ? Math.floor(remaining / flexible) : 0;
+  const contentTotal = naturalSum + share * flexible + totalGap;
+  const rawOffset = node.justify === "center"
+    ? (inner.h - contentTotal) / 2
+    : node.justify === "end"
+      ? inner.h - contentTotal
+      : 0;
+  let y = inner.y + Math.max(0, Math.round(rawOffset));
+  return node.children.map((_, i) => {
+    const h = naturals[i] ?? Math.max(1, share);
+    const childFrame: Frame = { x: inner.x, y, w: inner.w, h };
+    y += h + gap;
+    return childFrame;
+  });
+}
+
+function layoutChildren(
+  node: { direction: Direction; weights?: number[]; gapScale?: number; justify?: string; children: TreeNode[] },
+  inner: Frame,
+  path: string,
+  state: WalkState,
+): Frame[] {
+  if (node.justify && node.direction === "column") {
+    return packColumn(inner, node as ContainerNode, path, state);
+  }
+  return splitFrame(inner, node as ContainerNode, state.contract, node.direction);
 }
 
 function renderLeaf(leaf: LeafNode, frame: Frame, path: string, state: WalkState): void {
@@ -150,6 +210,7 @@ function renderLeaf(leaf: LeafNode, frame: Frame, path: string, state: WalkState
           variant: leaf.variant,
           sizePt,
           neededHeight: neededHeightFor(leaf.text, sizePt, frame.w),
+          ...(state.packedPaths.has(path) ? { packed: true } : {}),
         });
         return;
       }
@@ -217,6 +278,7 @@ export function compileTree(
     defects: [],
     stats: { elements: 0, leaves: 0, depth: 0, images: 0, paths: 0 },
     sizeOverrides: sizeOverrides ?? new Map(),
+    packedPaths: new Set(),
     contract,
   };
   const theme = contract.theme;
@@ -247,10 +309,11 @@ export function compileTree(
     ...(tree.weights ? { weights: tree.weights } : {}),
     ...(tree.gapScale !== undefined ? { gapScale: tree.gapScale } : {}),
     ...(tree.pad !== undefined ? { pad: tree.pad } : {}),
+    ...(tree.justify !== undefined ? { justify: tree.justify } : {}),
     children: tree.children,
   };
   const inner = tree.pad ? padFrame(contract.contentFrame, snap4(tree.pad)) : contract.contentFrame;
-  const childFrames = splitFrame(inner, rootContainer, contract, tree.direction);
+  const childFrames = layoutChildren(rootContainer, inner, "root", state);
   tree.children.forEach((child, i) => walk(child, childFrames[i]!, `root/${i}`, 1, state));
   return { spec, placements: state.placements, defects: state.defects, stats: state.stats };
 }

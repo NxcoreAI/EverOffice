@@ -262,6 +262,48 @@ describe("measureDefects", () => {
   });
 });
 
+describe("justify 打包", () => {
+  it("row 容器带 justify 报错；column 合法", () => {
+    expect(() => tree({ direction: "row", justify: "center", children: [
+      { type: "text", variant: "body", text: "a" },
+    ] })).toThrow(/justify 只用于 column/);
+    expect(() => tree({ direction: "column", justify: "end", children: [
+      { type: "text", variant: "body", text: "a" },
+    ] })).not.toThrow();
+  });
+
+  it("center：文本组按自然高垂直居中", () => {
+    const result = compileTree(tree({
+      role: "quote", title: "引用页",
+      direction: "column", justify: "center", pad: 32, children: [
+        { type: "text", variant: "heading", text: "一句话", align: "center" },
+        { type: "text", variant: "caption", text: "张三 · 创始人", align: "center", tone: "muted" },
+      ],
+    }), CONTRACT);
+    expect(measureDefects(result, CONTRACT)).toEqual([]);
+    const texts = result.spec.elements.filter((el) => el.type === "text" && el.y > 100);
+    expect(texts.length).toBe(2);
+    const first = texts[0]!;
+    const second = texts[1]!;
+    expect(second.y).toBeGreaterThan(first.y);
+    // 组内容远小于内容区（540-64=476px），居中后首元素应落在中部而非顶部。
+    expect(first.y).toBeGreaterThan(200);
+    // 两个框紧挨（自然高 + 缝隙），不是各分半页。
+    expect(second.y - first.y).toBeLessThan(160);
+  });
+
+  it("打包超高报缺陷", () => {
+    const result = compileTree(tree({
+      direction: "column", justify: "center", children: [
+        { type: "text", variant: "body", text: "很长".repeat(600) },
+        { type: "text", variant: "body", text: "又一段".repeat(300) },
+      ],
+    }), CONTRACT);
+    const defects = measureDefects(result, CONTRACT);
+    expect(defects.some((d) => d.type === "overflow" && /justify 打包/.test(d.detail))).toBe(true);
+  });
+});
+
 describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () => {
   it("KPI 卡装不下卡框时报缺陷，不再让墨迹溢出", () => {
     const result = compileTree(tree({
