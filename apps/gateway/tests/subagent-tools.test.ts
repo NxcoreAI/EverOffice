@@ -509,7 +509,7 @@ describe('createSubagentPiTools slides_draft', () => {
       onUpdate,
     )
 
-    expect(orchestrator.dispatch).toHaveBeenCalledTimes(4)
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(7) // planner + 3 布局 + 3 审页
     const plannerDispatch = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
     expect(plannerDispatch.task).toBe('演示文稿编排')
     const plannerInput = plannerDispatch.input as Record<string, unknown>
@@ -521,7 +521,7 @@ describe('createSubagentPiTools slides_draft', () => {
     // 预设风格字段已拆除（af1c1dac）：风格倾向走 instruction，不再有 style 入参。
     expect(plannerInput.style).toBeUndefined()
 
-    const layouterDispatches = orchestrator.dispatch.mock.calls.slice(1).map((call) => call[0] as Record<string, unknown>)
+    const layouterDispatches = orchestrator.dispatch.mock.calls.slice(1, 4).map((call) => call[0] as Record<string, unknown>)
     expect(layouterDispatches.every((dispatch) => dispatch.agentId === 'slides-layouter' && dispatch.source === 'primary_agent')).toBe(true)
     // 两跳串接成链：布局调用挂靠编排调用之下，时间线据此呈现先后依赖。
     expect(layouterDispatches[0]!.parentRunId).toBe('invocation-plan')
@@ -578,7 +578,10 @@ describe('createSubagentPiTools slides_draft', () => {
 
     expect(generateImage).toHaveBeenCalledTimes(1)
     expect(generateImage.mock.calls[0]![0]).toMatchObject({ prompt: expect.stringContaining('城市天际线') })
-    const layouterInputs = orchestrator.dispatch.mock.calls.slice(1).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
+    const layouterInputs = orchestrator.dispatch.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((dispatch) => dispatch.agentId === 'slides-layouter')
+      .map((dispatch) => dispatch.input as Record<string, unknown>)
     expect(layouterInputs.map((input) => input.pageIndex)).toEqual([0, 1, 2])
     expect(layouterInputs[0]!.materials).toEqual([
       { url: `everroom-material://${'e'.repeat(64)}`, desc: expect.stringContaining('AI 生成配图') },
@@ -618,8 +621,8 @@ describe('createSubagentPiTools slides_draft', () => {
       undefined,
     )
 
-    expect(orchestrator.dispatch).toHaveBeenCalledTimes(3)
-    const layouterInputs = orchestrator.dispatch.mock.calls.slice(1).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(5) // planner + 2 布局 + 2 审页
+    const layouterInputs = orchestrator.dispatch.mock.calls.slice(1, 3).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
     expect(layouterInputs[0]!.materials).toBeUndefined()
   })
 
@@ -1242,6 +1245,14 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const differentTree = { role: 'content', direction: 'column', children: [{ type: 'text', variant: 'body', text: '重排内容' }] }
     const orchestratorSameTree = {
       dispatch: vi.fn(async (input: { agentId: string; input?: { neighborSignatures?: string[] } }) => {
+        if (input.agentId === 'slides-reviewer') {
+          return {
+            id: 'invocation-review', agentDefinitionId: 'slides-reviewer', agentRevisionId: 'r1', source: 'primary_agent',
+            parentSessionId: 'session-1', parentRunId: 'run-1', task: '单页审阅', input: null, status: 'completed',
+            result: { text: '', structuredOutput: { status: 'ok' } },
+            errorCode: null, errorMessage: null, createdAt: '', startedAt: '', completedAt: '',
+          };
+        }
         if (input.agentId === 'slides-planner') {
           return {
             id: 'invocation-plan', agentDefinitionId: 'slides-planner', agentRevisionId: 'r1', source: 'primary_agent',
@@ -1662,8 +1673,8 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
       undefined,
     )
 
-    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(4)
-    const layouterInputs = setup.orchestrator.dispatch.mock.calls.slice(1).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(7) // planner + 3 布局 + 3 审页
+    const layouterInputs = setup.orchestrator.dispatch.mock.calls.slice(1, 4).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
     expect(layouterInputs[0]!.materials).toEqual([
       { url: `everroom-material://${'a'.repeat(64)}`, desc: expect.stringContaining('AI 生成配图') },
     ])
@@ -1727,8 +1738,8 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     )
 
     expect(setup.generateImage).not.toHaveBeenCalled()
-    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(4)
-    const layouterInputs = setup.orchestrator.dispatch.mock.calls.slice(1).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
+    expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(7) // planner + 3 布局 + 3 审页
+    const layouterInputs = setup.orchestrator.dispatch.mock.calls.slice(1, 4).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
     expect(layouterInputs[0]!.materials).toBeUndefined()
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('completed')
@@ -1952,8 +1963,8 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     )
 
     expect(generateImage).toHaveBeenCalledTimes(2)
-    expect(orchestrator.dispatch).toHaveBeenCalledTimes(3)
-    const layouterInputs = orchestrator.dispatch.mock.calls.slice(1).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
+    expect(orchestrator.dispatch).toHaveBeenCalledTimes(5) // planner + 2 布局 + 2 审页
+    const layouterInputs = orchestrator.dispatch.mock.calls.slice(1, 3).map((call) => (call[0] as Record<string, unknown>).input as Record<string, unknown>)
     expect(layouterInputs[0]!.materials).toBeUndefined()
     expect(layouterInputs[1]!.materials).toEqual([
       { url: `everroom-material://${'b'.repeat(64)}`, desc: expect.stringContaining('AI 生成配图') },

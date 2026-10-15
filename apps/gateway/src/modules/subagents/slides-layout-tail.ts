@@ -1,11 +1,13 @@
 /**
  * generate 尾部（布局树链路）：契约注册 → 建骨架 deck → 每页并发 dispatch
- * slides-layouter（窗口 4）→ 按页序编译落页（进度广播 + VLM 视觉复检）→
- * 页间树相似度审计（超标页重排 ≤1 次）→ 汇总回收。
- * agent 只出树；编译、落页、复检全部网关确定性执行。
+ * slides-layouter（窗口 8）→ 按页序编译落页（进度广播）→ 页间树相似度审计
+ * （超标页重排 ≤1 次）→ slides-reviewer 并发审页（截图直投多模态；revised 的
+ * 页网关机械套用修正树重落一次）→ 汇总回收。
+ * agent 只出树与判断；编译、落页、套用全部网关确定性执行。
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { RuntimeAttachment } from "@nxcore/agent-runtime";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
 import type { SlidesProgressEvent, SlidesProgressPlan, SlidesProgressTracker } from "./slides-progress-tracker.js";
 import type { OfficeBridgeClient } from "../documents/capabilities/office-bridge-client.js";
@@ -18,6 +20,7 @@ import { compileTree } from "../slides-layout/tree/compile.js";
 import { measureDefects, shrinkToFit, type LayoutDefect } from "../slides-layout/tree/measure.js";
 import { auditSimilarity, treeSignature } from "../slides-layout/tree/similarity.js";
 import { resolveImageArs } from "../slides-layout/tree/aspect-ratio.js";
+import { dropReviewManuals, registerReviewManual } from "../slides-layout/review-context.js";
 
 const COMPOSITION_TENDENCY: Record<string, string> = {
   swiss: "强网格、克制留白、对齐严谨",
@@ -36,6 +39,13 @@ export interface LayouterTailDeps {
   makeKey(runId: string, agentId: string, task: string, input: unknown): string;
   /** 带并发限额退避的 dispatch（tools.ts 的 dispatchWithConcurrencyRetry 单一出处）。 */
   dispatchPage(input: Record<string, unknown>, idempotencyKey: string, parentRunId: string | null): Promise<SubagentInvocation>;
+  /** 审页 dispatch（截图走 attachments 直投多模态）；缺省＝无审页代理，视觉复检走旧 VLM 链。 */
+  dispatchReview?(
+    input: Record<string, unknown>,
+    idempotencyKey: string,
+    parentRunId: string | null,
+    attachments: RuntimeAttachment[],
+  ): Promise<SubagentInvocation>;
 }
 
 export interface LayouterTailArgs {
@@ -318,12 +328,16 @@ export async function runLayouterTail(
     });
     await Promise.all(workers);
 
-    // 按页序编译落页：fill → 进度广播 → VLM 复检（复检含降档页 focusHints）。
+    // 按页序编译落页：fill → 进度广播。
     // 两条防线：① 降档后仍有引擎硬闸类缺陷（重叠/emoji/溢出）的页落确定性兜底版式，
     // 不把会被引擎拒绝的 spec 送下去；② slideIndex 跟踪 deck 活页数（某页失败后
     // 后续页按「追加」语义落，不会越界级联失败）。重排重落不重复计数：按页号集合统计。
     const BLOCKING_DEFECTS = new Set(["overlap", "emoji", "overflow", "font_floor", "canvas", "element_cap"]);
     const appliedPages = new Set<number>();
+    /** 页号 → 实际落进的 slideIndex（追加语义下可能与页号不同）。 */
+    const appliedSlideIndex = new Map<number, number>();
+    /** 页号 → 落页时的降档提示（审页降级复检时拼 focusHints）。 */
+    const appliedFocusHints = new Map<number, string[]>();
     let livePageCount = 1;
     const applyPage = async (index: number, tree: LayoutTree): Promise<boolean> => {
       let final = finalizeTree(tree, contract, imageArs);
@@ -346,7 +360,10 @@ export async function runLayouterTail(
       livePageCount = Math.max(livePageCount, slideIndex + 1);
       progress?.notify(progressKey, slideIndex);
       appliedPages.add(index);
-      if (deps.visualReviewer) {
+      appliedSlideIndex.set(index, slideIndex);
+      if (final.focusHints.length > 0) appliedFocusHints.set(index, final.focusHints);
+      // 无审页代理时退回旧 VLM 封闭清单复检（有 dispatchReview 时审页统一在收尾阶段做）。
+      if (!deps.dispatchReview && deps.visualReviewer) {
         let review: VisualReviewOutcome | null = null;
         try {
           review = await deps.visualReviewer.reviewPage({
@@ -391,6 +408,103 @@ export async function runLayouterTail(
       }
     }
 
+    // 审页阶段：slides-reviewer 并发看最终页态（窗口 4）。截图经 attachments 直投
+    // 多模态模型；revised 的页网关机械套用修正树重落一次（每页至多一次修正）。
+    // 审页代理失败/超时的页降级跑旧 VLM 封闭清单（warning 保底）。
+    if (deps.dispatchReview) {
+      const reviewIndexes = [...appliedPages].sort((a, b) => a - b);
+      let reviewCursor = 0;
+      const reviewWorker = async (): Promise<void> => {
+        for (;;) {
+          const index = reviewCursor++;
+          if (index >= reviewIndexes.length) return;
+          const pageIndex = reviewIndexes[index]!;
+          const slideIndex = appliedSlideIndex.get(pageIndex) ?? pageIndex;
+          const manualToken = `${token}#${String(pageIndex)}`;
+          registerReviewManual(manualToken, {
+            deckToken: token,
+            page: pages[pageIndex] as Record<string, unknown>,
+            currentTree: trees[pageIndex]!.tree,
+          });
+          try {
+            const pngBase64 = await bridge.renderPage({ fileId: fileEntryId, slideIndex });
+            const invocation = await dispatchWithPageRetry(() => deps.dispatchReview!(
+              {
+                task: "review",
+                manualToken,
+                pageIndex,
+                totalPages: pages.length,
+                ...(typeof (pages[pageIndex] as { title?: unknown }).title === "string"
+                  ? { title: (pages[pageIndex] as { title: string }).title.slice(0, 80) }
+                  : {}),
+                ...(typeof (pages[pageIndex] as { role?: unknown }).role === "string"
+                  ? { role: (pages[pageIndex] as { role: string }).role }
+                  : {}),
+                ...(typeof (pages[pageIndex] as { density?: unknown }).density === "string"
+                  ? { density: (pages[pageIndex] as { density: string }).density }
+                  : {}),
+              },
+              deps.makeKey(args.runId, "slides-reviewer", `review:${pageIndex}`, { pageIndex }),
+              args.parentRunId,
+              [{ filename: `page-${String(pageIndex + 1)}.png`, mimeType: "image/png", kind: "image", dataUrl: `data:image/png;base64,${pngBase64}` }],
+            ));
+            if (invocation.status !== "completed") {
+              throw new Error(invocation.errorCode ?? invocation.status);
+            }
+            const structured = invocation.result?.structuredOutput;
+            const revisedTree = structured !== null && typeof structured === "object" && !Array.isArray(structured)
+              ? (structured as Record<string, unknown>).tree
+              : null;
+            if (revisedTree !== null && typeof revisedTree === "object" && !Array.isArray(revisedTree)) {
+              let tree: LayoutTree;
+              try {
+                tree = normalizeTree(revisedTree);
+              } catch {
+                warnings.push(`第 ${pageIndex + 1} 页审页修正树非法，保留原页`);
+                continue;
+              }
+              const final = finalizeTree(tree, contract, imageArs);
+              if (final.defects.some((defect) => BLOCKING_DEFECTS.has(defect.type))) {
+                warnings.push(`第 ${pageIndex + 1} 页审页修正未收敛，保留原页`);
+                continue;
+              }
+              const reapplied = await bridge.fillPage({
+                fileId: fileEntryId,
+                slideIndex,
+                specJson: JSON.stringify(final.spec),
+              });
+              if (reapplied.ok && reapplied.applied === true) {
+                trees[pageIndex] = { tree, fellBack: false };
+                warnings.push(`第 ${pageIndex + 1} 页经审页代理重排`);
+              } else {
+                warnings.push(`第 ${pageIndex + 1} 页审页重落失败，保留原页`);
+              }
+            }
+          } catch {
+            // 审页代理不可用/失败：该页降级跑旧 VLM 封闭清单。
+            if (deps.visualReviewer) {
+              try {
+                const review = await deps.visualReviewer.reviewPage({
+                  fileId: fileEntryId,
+                  slideIndex,
+                  fetchPng: async () => Buffer.from(await bridge.renderPage({ fileId: fileEntryId, slideIndex }), "base64"),
+                  ...(appliedFocusHints.get(pageIndex)?.length ? { focusHints: appliedFocusHints.get(pageIndex)! } : {}),
+                });
+                if (review.status === "fail") {
+                  warnings.push(`第 ${pageIndex + 1} 页视觉复检不通过${review.retriesExhausted ? "（重试上限，放行）" : ""}`);
+                }
+              } catch {
+                // 复检也失败：放行（warning 已有审页失败信息时不再叠加）
+              }
+            } else {
+              warnings.push(`第 ${pageIndex + 1} 页审页代理失败，跳过审页`);
+            }
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, reviewIndexes.length) }, () => reviewWorker()));
+    }
+
     if (appliedPages.size === 0) {
       return fail("slides_layout_apply_failed", "全部页面落页失败；方案已就绪，可重试 generate。", true, { fileEntryId });
     }
@@ -428,6 +542,7 @@ export async function runLayouterTail(
     );
   } finally {
     dropDeckLayoutContext(token);
+    dropReviewManuals(`${token}#`);
     progress?.disarm(progressKey);
   }
 }

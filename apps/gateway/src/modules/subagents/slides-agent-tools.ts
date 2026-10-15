@@ -2,6 +2,7 @@ import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 
 import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
 import { getDeckLayoutContext } from "../slides-layout/deck-contract-context.js";
+import { takeReviewManual } from "../slides-layout/review-context.js";
 import { normalizeTree } from "../slides-layout/tree/schema.js";
 import { compileTree } from "../slides-layout/tree/compile.js";
 import { measureDefects, type LayoutDefect } from "../slides-layout/tree/measure.js";
@@ -96,7 +97,7 @@ export function validateLayoutTree(token: unknown, rawTree: unknown): ValidateOu
   return { ok: defects.length === 0, defects, stats: result.stats };
 }
 
-const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
+export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   name: "slides_layout_validate",
   label: "布局树校验",
   description:
@@ -121,4 +122,41 @@ const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
 /** slides-layouter 的工具面：只有布局树校验（技能读取与结果提交由运行时自带）。 */
 export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
   return [LAYOUTER_VALIDATE_TOOL];
+}
+
+/** slides-reviewer 的审页说明书：决定修改时按需取该页内容与当前树（含校验用 deckToken）。 */
+const REVIEWER_MANUAL_TOOL: PiAgentRuntimeTool = {
+  name: "slides_review_manual",
+  label: "审页说明书",
+  description:
+    "取本页的修改说明书：该页的内容（title/points/data/materials）、当前布局树、以及 slides_layout_validate 校验要用的 deckToken。"
+    + "只在你看完截图决定要修改这一页时调用。",
+  parameters: {
+    type: "object",
+    properties: {
+      manualToken: { type: "string", description: "输入里的 manualToken，原样传入" },
+    },
+    required: ["manualToken"],
+    additionalProperties: false,
+  },
+  executionMode: "sequential",
+  async execute(_input, params) {
+    const manual = takeReviewManual(params.manualToken);
+    if (!manual) {
+      return { content: JSON.stringify({ ok: false, error: "说明书未注册（manualToken 不对或本次生成已结束）；核对输入原样重试一次，仍失败就提交 ok" }) };
+    }
+    return {
+      content: JSON.stringify({
+        ok: true,
+        deckToken: manual.deckToken,
+        page: manual.page,
+        currentTree: manual.currentTree,
+      }),
+    };
+  },
+};
+
+/** slides-reviewer 的工具面：说明书（按需）+ 布局树校验（复用 layouter 的确定性环）。 */
+export function createSlidesReviewerAgentTools(): PiAgentRuntimeTool[] {
+  return [REVIEWER_MANUAL_TOOL, LAYOUTER_VALIDATE_TOOL];
 }

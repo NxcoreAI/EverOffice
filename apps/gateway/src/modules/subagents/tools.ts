@@ -1306,6 +1306,18 @@ export function createSubagentPiTools(
                     ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
                     ...(signal ? { signal } : {}),
                   })),
+                dispatchReview: (input, idempotencyKey, tailParentRunId, attachments) =>
+                  dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+                    agentId: "slides-reviewer",
+                    task: "单页审阅",
+                    input,
+                    attachments,
+                    idempotencyKey,
+                    source: "primary_agent",
+                    parentSessionId: run.sessionId,
+                    ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
+                    ...(signal ? { signal } : {}),
+                  })),
               },
               {
                 roomId,
