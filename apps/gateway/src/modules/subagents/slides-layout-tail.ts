@@ -294,10 +294,11 @@ export async function runLayouterTail(
     const styleBrief = styleBriefFrom(args.styleParams);
     const base = { token, totalPages: pages.length, styleBrief };
 
-    // 每页并发取树（窗口 4，页序占位）。失败页确定性兜底，不中断整册。
+    // 每页并发取树（页序占位）。窗口=网关全局子代理并发默认值（NXCORE_SUBAGENT_MAX_CONCURRENT，
+    // 缺省 8；环境改小时 dispatch 被拒会走页级退避重试，安全）。失败页确定性兜底，不中断整册。
     const trees: { tree: LayoutTree; fellBack: boolean }[] = new Array(pages.length);
     let cursor = 0;
-    const workerCount = Math.min(4, pages.length);
+    const workerCount = Math.min(8, pages.length);
     const workers = Array.from({ length: workerCount }, async () => {
       for (;;) {
         const index = cursor++;
