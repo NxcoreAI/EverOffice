@@ -23,6 +23,21 @@ export interface GenOfficeDocsRuntime {
   docsQueryDirty(contents: WebContents): Promise<boolean>
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
+  /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
+  setDocsThesisPanelHook(
+    hook:
+      | ((
+          wcId: number,
+          action:
+            | { kind: 'list' }
+            | { kind: 'pick' }
+            | { kind: 'remove'; cardId: string }
+            | { kind: 'reformat'; cardId?: string },
+        ) => Promise<
+          { ok: true; value: unknown } | { ok: false; reason: 'no_room' | 'error'; message?: string }
+        >)
+      | null,
+  ): void
   setDocsShellWindow(window: BrowserWindow | null): void
   teardownDocsRenderer(contents: WebContents): void
   /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx 字节（主进程纯函数）。 */
