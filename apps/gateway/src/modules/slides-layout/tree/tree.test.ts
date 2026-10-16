@@ -1508,3 +1508,113 @@ describe("批次2 扩展：五个新组件", () => {
       { image: "https://example.com/l.png" }, {}, {}, {}] }] })).toThrow(/image 或 text/);
   });
 });
+
+describe("表格参数与 pointList（xPoint 嫁接）", () => {
+  it("table header:false + topRule：账目式两列表——2px 墨线顶线、表格下移、首行按数据渲染", () => {
+    const result = compileTree(tree({
+      role: "data", title: "全年接待", direction: "column", children: [
+        { type: "table", header: false, topRule: true, colWidths: [3, 2], rows: [
+          ["入境过夜游客", "1308.20 万人次"],
+          ["国内过夜游客", "7634.60 万人次"],
+          ["旅游外汇收入", "110.67 亿美元"],
+        ] },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(result.stats.elements).toBe(3); // 标题带 + 顶线 + 表格
+    const rule = result.spec.elements.find((el) => el.type === "shape") as { h: number; y: number; fill: string } | undefined;
+    expect(rule).toBeDefined();
+    expect(rule!.h).toBe(2);
+    expect(rule!.fill).toBe(CONTRACT.theme.colors.text);
+    const table = result.spec.elements.find((el) => el.type === "table") as unknown as {
+      y: number;
+      rows: { text: string; bold?: boolean; align?: string }[][];
+    };
+    expect(table.y).toBe(rule!.y + 10); // 顶线 2px + 让位 8px
+    expect(table.rows[0]![0]).toEqual({ text: "入境过夜游客", bold: false, align: "left" });
+  });
+
+  it("topRule/header 缺省回归：默认表格无顶线形状、首行仍是表头", () => {
+    const result = compileTree(tree({
+      role: "data", direction: "column", children: [
+        { type: "table", rows: [["指标", "数值"], ["游客", "1308.20"]] },
+      ],
+    }), CONTRACT);
+    expect(result.spec.elements.filter((el) => el.type === "shape")).toHaveLength(0);
+    const table = result.spec.elements.find((el) => el.type === "table") as unknown as {
+      rows: { text: string; bold?: boolean }[][];
+    };
+    expect(table.rows[0]![0]!.bold).toBe(true);
+  });
+
+  it("header/topRule 非法值与 darkHeader 互斥在归一层拦下", () => {
+    const base = { type: "table", header: false as const, rows: [["a", "1"], ["b", "2"]] };
+    expect(() => tree({ role: "data", direction: "column", children: [{ ...base, header: true }] })).toThrow(/header 只接受 false/);
+    expect(() => tree({ role: "data", direction: "column", children: [{ ...base, topRule: false }] })).toThrow(/topRule 只接受 true/);
+    expect(() => tree({ role: "data", direction: "column", children: [
+      { type: "table", header: false, style: "darkHeader", rows: [["a", "1"], ["b", "2"]] },
+    ] })).toThrow(/darkHeader 样式需要表头/);
+  });
+
+  const POINT_ITEMS = [
+    { label: "地标", body: "平安金融中心 592.5 米，为深圳第一高楼；市民中心呈「大鹏展翅」之势。" },
+    { label: "山海", body: "梧桐山 943.7 米为深圳第一高峰；大梅沙 1.8 公里沙滩免费开放。" },
+    { label: "人文", body: "世界之窗汇聚 130 余个微缩景观；莲花山公园立邓小平铜像。" },
+  ];
+
+  it("pointList numbered：衬线序号主色+字距标签+静音正文，条目间发丝线，墨迹不重叠", () => {
+    const result = compileTree(tree({
+      role: "content", title: "深圳三题", direction: "column", children: [
+        { type: "component", name: "pointList", numbered: true, items: POINT_ITEMS },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(measureDefects(result, CONTRACT)).toEqual([]);
+    expect(result.stats.elements).toBe(1 + 3 * 3 + 2); // 标题带 + 每条(序号+标签+正文) + 2 发丝线
+    const serial = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "01" && r.bold)),
+    ) as TextElement | undefined;
+    expect(serial).toBeDefined();
+    expect(serial!.paragraphs[0]!.runs[0]!.color).toBe(CONTRACT.theme.colors.primary);
+    const dividers = result.spec.elements.filter((el) => el.type === "shape" && el.h === 1);
+    expect(dividers).toHaveLength(2);
+    const boxes = inkBoxes(result.spec);
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        expect(overlaps(boxes[i]!, boxes[j]!)).toBe(false);
+      }
+    }
+  });
+
+  it("pointList 不带 numbered：无序号元素，每条仅标签+正文", () => {
+    const result = compileTree(tree({
+      role: "content", title: "要点", direction: "column", children: [
+        { type: "component", name: "pointList", items: POINT_ITEMS },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(result.stats.elements).toBe(1 + 3 * 2 + 2);
+    expect(result.spec.elements.some((el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "01")))).toBe(false);
+  });
+
+  it("pointList 装不下报 overflow 缺陷并点名", () => {
+    const longBody = { label: "要点", body: "这是一段很长的正文，用来撑爆窄区域的预算。".repeat(8) };
+    const result = compileTree(tree({
+      direction: "row", weights: [3, 1], children: [
+        { type: "text", variant: "body", text: "占位" },
+        { type: "component", name: "pointList", numbered: true, items: [longBody, longBody, longBody] },
+      ],
+    }), CONTRACT);
+    const defects = measureDefects(result, CONTRACT);
+    expect(defects.some((d) => d.type === "overflow" && /精简正文或减少条目/.test(d.detail))).toBe(true);
+  });
+
+  it("pointList 参数越界在归一层拦下", () => {
+    const one = [{ label: "甲", body: "内容" }];
+    const six = Array.from({ length: 6 }, () => ({ label: "甲", body: "内容" }));
+    const base = { role: "content", direction: "column" };
+    expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", items: one }] })).toThrow(/items 必须是 2~5 项/);
+    expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", items: six }] })).toThrow(/items 必须是 2~5 项/);
+    expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", numbered: false, items: [...one, ...one] }] })).toThrow(/numbered 只接受 true/);
+  });
+});

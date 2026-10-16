@@ -1,6 +1,6 @@
 ---
 name: layout-tree-skill
-description: 布局树语法与硬约束——容器/叶子/24 组件词汇表、比例/缝隙/justify 打包、整页背景图与 overlay 叠层、容器面板、data 行内格式翻译、多样性与收敛规则
+description: 布局树语法与硬约束——容器/叶子/25 组件词汇表、比例/缝隙/justify 打包、整页背景图与 overlay 叠层、容器面板、data 行内格式翻译、多样性与收敛规则
 ---
 
 # 布局树（LayoutTree）
@@ -67,14 +67,14 @@ overlay 容器不带 weights/gapScale/justify；每个直接子节点必须带 `
 | `image` | `url`、`contain?`、`radius?`、`circle?`、`focus?`、`duotone?`、`grayscale?`、`caption?` | 缺省 cover（裁切填满）；`contain: true` 完整呈现（可能留空带）。两者都不变形；框比例尽量贴近图比例。`radius: true` 圆角卡；`circle: true` 圆形裁切（头像/徽标用，框宜取方形，与 radius 二选一）；`focus: {x?, y?}`（0~100）把 cover 裁切对准画面主体；`duotone: true` 主题双色调；`grayscale: true` 灰度化（与 duotone 二选一）；`caption` 压图小字签（≤40 字，左下角玻璃底） |
 | `path` | `d`（SVG path） | 装饰性自由路径，默认主题浅色填充 |
 | `chart` | `kind`、`categories`、`series`（name+values）、`highlight?`、`delta?` | kind: bar/barStacked/line/area/waterfall/pie/doughnut/scatter/comboBarLine（≥2 系列）；values 与 categories 等长。`highlight`: 数字（0 基类目下标）或 "last"——该列主色实心、其余主色浅档（bar/line/area/comboBarLine 用）；`delta`: ≤12 字涨跌徽章（图表右上角主色圆角签，如 "+42%"）。waterfall 单系列、≤8 列：values 有符号（正=升、负=降），末列画 0→合计的结果柱（营收→减项→…→利润的商用读法） |
-| `table` | `rows`（首行表头，2~12 行、2~8 列）、`colWidths?`、`style?`（lines/darkHeader/zebra） | 单元格是字符串或 {text, bold?, align?} |
+| `table` | `rows`（首行表头，2~12 行、2~8 列）、`colWidths?`、`style?`（lines/darkHeader/zebra）、`header?: false`、`topRule?: true` | 单元格是字符串或 {text, bold?, align?}。`header: false`＝无表头，rows 全数据行（账目式两列表；与 darkHeader 互斥）；`topRule: true`＝顶部压一条 2px 墨线，表格下移让位 |
 | `divider` | 无 | 分隔线：高框渲染竖线、扁框渲染横线，主题分隔线色 |
 | `icon` | `icon`（引擎图标集名称） | 主题主色图标；名称如 check-circle、light-bulb、chart-bar、rocket-launch、users |
 | `component` | `name` + 各组件参数 | 参数化积木（见下节），只给文案/条目/方向 |
 
 ### 组件（参数化积木）
 
-组件是参数化的复合叶子：只给文案与条目，内部结构与配色由引擎确定性展开；展开产物照常受 48 元素、墨迹不重叠、装不下报缺陷的约束。「约几元素」是排页时的预算参考。组件是排印系统的：无卡片无色面，靠发丝线、衬线大数字（stats/steps/agenda/时间轴年份/引文）与唯一主色刻标表达层级；stats/featureCards/comparison/prosCons/persona/calloutBox 的内容高跟内容走、整组在区域内垂直居中，过高的框只增加留白。progress 条目可选 target（0~100）画目标刻度。
+组件是参数化的复合叶子：只给文案与条目，内部结构与配色由引擎确定性展开；展开产物照常受 48 元素、墨迹不重叠、装不下报缺陷的约束。「约几元素」是排页时的预算参考。组件是排印系统的：无卡片无色面，靠发丝线、衬线大数字（stats/steps/agenda/时间轴年份/引文）与唯一主色刻标表达层级；stats/featureCards/comparison/prosCons/persona/calloutBox/pointList 的内容高跟内容走、整组在区域内垂直居中，过高的框只增加留白。progress 条目可选 target（0~100）画目标刻度。
 
 | 组件 | 形态与语义 | 参数 | 条目/取值 | 约几元素 |
 |---|---|---|---|---|
@@ -102,6 +102,7 @@ overlay 容器不带 weights/gapScale/justify；每个直接子节点必须带 `
 | `quotes` | 星级+引文+短发丝线+头像署名——评价墙 | `items: [{ text, name, role?, avatar?, rating?(1~5) }]` | 2~3 条 | 6~10×条数 |
 | `pricingTiers` | 套餐定价卡，featured 档垫板描边上浮+实心按钮 | `tiers: [{ name, price, unit?, features, cta? }]`、`featured`（恰一个） | 2~4 档；每档 2~4 特性行 | ~7×档数+3 |
 | `logoWall` | 灰度图标/文字字标网格——客户墙 | `logos: [{ image?, text? }]`（二选一；图自动灰度 contain） | 4~8 个 | ≤8 |
+| `pointList` | 刻度要点纵列：可选衬线序号+粗标签+静音正文，条目间发丝线——分类词条、要点清单 | `items: [{ label, body }]`、`numbered?: true`（衬线序号 01/02/…） | 2~5 条；标签 ≤12 字、正文 ≤140 字 | 5~17 |
 
 ```json
 { "type": "component", "name": "timeline",
