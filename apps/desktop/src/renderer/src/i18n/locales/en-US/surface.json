@@ -350,6 +350,8 @@
   "agentInfo.waitingForTheNextTask": "Waiting for the next task",
   "agentInfo.workspaceReady": "Workspace ready",
   "agentPanel.resizeWidth": "Resize chat panel width",
+  "agentPanel.unavailableBody": "The agent service is not connected, so the conversation could not be opened. Click retry to check again; if it still fails, check the local service or restart the app.",
+  "agentPanel.unavailableTitle": "Can't open the AI conversation",
   "agentPanelSkeleton.agentServiceIsStarting": "Agent service is starting",
   "agentSessionSwitcher.aRunningConversationCannotBeDeleted": "A running conversation cannot be deleted",
   "agentSessionSwitcher.cancel": "Cancel",

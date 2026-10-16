@@ -907,6 +907,8 @@
   "objectDetail.archivedEmailIndexSummary": "Archived email and attachments are indexed and traceable in Context Room.",
   "objectDetail.askAgentToAnalyze": "Ask Agent to analyze",
   "objectDetail.askAgentToHelp": "Ask Agent to help",
+  "objectDetail.assistTaskPrompt": "Help move the task \"{task}\" in room \"{room}\" forward (status: {status}, owner: {owner}, due: {deadline}): break it into steps, flag risks, and suggest next actions.",
+  "objectDetail.analyzeFilePrompt": "Analyze the file \"{name}\" in the context of the current room \"{room}\": summarize the key points, relate them to the room's goal, and suggest next steps.\n\nFile summary: {summary}",
   "objectDetail.backToContextRoomDetails": "Back to Context Room details",
   "objectDetail.backToRoom": "Back to Room",
   "objectDetail.backToTasks": "Back to tasks",

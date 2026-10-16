@@ -139,6 +139,8 @@ export function AgentPanel({
   const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
   const session = useAgentSession(pageLabel, roomId, rooms)
   const agentAvailable = Boolean(window.nxcore?.agent)
+  // 「重试」仅用于强制重渲染以重读 agent 桥可用性；桥就绪/恢复后引导 effect 会因 api 变化自动重跑。
+  const [, setAvailabilityNonce] = useState(0)
 
   const [conversationSuggestionSettings, setConversationSuggestionSettings] =
     useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
@@ -771,6 +773,23 @@ export function AgentPanel({
         />
       </AgentToolbar>
 
+      {!agentAvailable ? (
+        <div className="agent-availability-banner" role="alert" data-testid="agent-panel-unavailable">
+          <div className="agent-availability-copy">
+            <strong>{t('surface:agentPanel.unavailableTitle')}</strong>
+            <span>{t('surface:agentPanel.unavailableBody')}</span>
+          </div>
+          <button
+            type="button"
+            className="agent-availability-retry"
+            onClick={() => {
+              setAvailabilityNonce((nonce) => nonce + 1)
+              session.reload()
+            }}
+          >{t('surface:agentComposer.retry')}</button>
+        </div>
+      ) : null}
+
       <WritingStyleInsightBanner />
 
       <AgentChatView
@@ -790,6 +809,7 @@ export function AgentPanel({
         messages={session.messages}
         notificationRunTarget={notificationRunTarget}
         onNotificationRunLocated={handleNotificationRunLocated}
+        onRetryError={() => session.reload()}
         pendingApprovals={session.pendingApprovals}
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
