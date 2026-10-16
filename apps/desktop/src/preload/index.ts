@@ -886,6 +886,7 @@ const api: NxcoreDesktopApi = {
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
     catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
+    listUploads: (limit?: number) => invoke('files:list-uploads', limit),
     listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
     setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
     getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),

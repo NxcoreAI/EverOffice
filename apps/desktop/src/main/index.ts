@@ -611,6 +611,7 @@ const FILES_CHANNELS = {
   pickPaths: 'files:pick-paths',
   importPathsOnce: 'files:import-paths-once',
   importAgentAttachments: 'files:import-agent-attachments',
+  listUploads: 'files:list-uploads',
   importProgress: 'files:import-progress',
   listHighRiskReviews: 'files:high-risk-reviews:list',
   resolveHighRiskReview: 'files:high-risk-reviews:resolve',
@@ -2819,6 +2820,7 @@ function registerFilesHandlers(
     FILES_CHANNELS.pickAndImport,
     (_event, options?: { pipelines?: IngestPipelines; roomId?: string }) => bridge.pickAndImport(options),
   )
+  handle(FILES_CHANNELS.listUploads, (_event, limit?: number) => bridge.listUploads(limit))
   handle(FILES_CHANNELS.pickPaths, () => bridge.pickImportPaths())
   handle(
     FILES_CHANNELS.importPathsOnce,

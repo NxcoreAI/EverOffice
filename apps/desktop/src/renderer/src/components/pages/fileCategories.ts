@@ -8,6 +8,7 @@ import {
   FileText,
   GraduationCap,
   Handshake,
+  Image,
   Presentation,
   Scissors,
   ScrollText,
@@ -26,6 +27,8 @@ export interface FileCategoryDefinition {
 
 export const FILE_CATEGORY_DEFINITIONS: FileCategoryDefinition[] = [
   { key: 'clipper', label: 'surface:files.categoryClipper', icon: Scissors, tone: 'teal' },
+  // 导入的图片资产（uploaded_files，无解析器、不进文档目录）：由 FilesPage 单独装配。
+  { key: 'photo', label: 'surface:files.categoryPhoto', icon: Image, tone: 'purple' },
   { key: 'data', label: 'surface:files.categoryData', icon: BarChart3, tone: 'green' },
   { key: 'form', label: 'surface:files.categoryForm', icon: ClipboardList, tone: 'blue' },
   { key: 'lesson', label: 'surface:files.categoryLesson', icon: Presentation, tone: 'orange' },

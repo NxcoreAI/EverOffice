@@ -1,10 +1,11 @@
-import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Search, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Image as ImageIcon, Search, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 import type {
   FileCatalogDto,
+  FileDto,
   FileImportOutcome,
   FileImportProgressEvent,
   IngestEventDto,
@@ -131,6 +132,55 @@ function groupCatalogFiles(files: FileCatalogDto[]): Map<string, ClassifiedFile[
   return groups
 }
 
+/** 上传资产（uploaded_files）→ 目录行形状：图片无文档目录条目，独立装配进「图片」分类。 */
+function adaptPhotoAsset(asset: FileDto): FileCatalogDto {
+  return {
+    id: asset.id,
+    originalName: asset.originalName,
+    displayName: null,
+    sharedTitle: asset.originalName.replace(/\.[^.]+$/, '') || asset.originalName,
+    sourceKind: 'manual-upload',
+    sourceLabel: asset.originChannel,
+    relativePath: null,
+    provider: null,
+    bytes: asset.bytes,
+    dataType: 'photo',
+    agentCategory: null,
+    summary: null,
+    tags: [],
+    processingState: 'ready',
+    clusterId: null,
+    contentHash: asset.contentHash,
+    currentVersionId: null,
+    parsed: asset.parsed,
+    updatedAt: asset.updatedAt,
+  }
+}
+
+/** 缩略图缓存（LRU）：详情视图逐张懒加载 /v1/files/:id/content。 */
+const photoPreviewCache = new Map<string, string>()
+
+function PhotoPreview({ fileId, name }: { fileId: string; name: string }) {
+  const [dataUrl, setDataUrl] = useState(() => photoPreviewCache.get(fileId) ?? null)
+  useEffect(() => {
+    if (dataUrl) return
+    let cancelled = false
+    window.nxcore?.files?.readDataUrl(fileId)
+      .then(({ dataUrl: next }) => {
+        if (photoPreviewCache.size >= 100) {
+          const oldest = photoPreviewCache.keys().next().value
+          if (oldest !== undefined) photoPreviewCache.delete(oldest)
+        }
+        photoPreviewCache.set(fileId, next)
+        if (!cancelled) setDataUrl(next)
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [fileId, dataUrl])
+  if (!dataUrl) return null
+  return <img className="file-photo-thumb" src={dataUrl} alt={name} />
+}
+
 export function FilesPage({
   onNavigate,
   onOpenOfficePreview,
@@ -146,6 +196,7 @@ export function FilesPage({
   const ingestApi = window.nxcore?.ingest
   const [view, setView] = useState<FilesView>('files')
   const [files, setFiles] = useState<FileCatalogDto[]>(() => fileCatalogCache.items)
+  const [photos, setPhotos] = useState<FileCatalogDto[]>([])
   const [loading, setLoading] = useState(Boolean(filesApi) && !fileCatalogCache.complete)
   const [events, setEvents] = useState<IngestEventDto[]>([])
   const [importing, setImporting] = useState(false)
@@ -229,18 +280,33 @@ export function FilesPage({
     }
   }, [ingestApi])
 
+  // 图片资产（/v1/files 上传库）：失败静默——图片分类整体缺位优于整页报错。
+  const loadPhotos = useCallback(async () => {
+    if (!filesApi || typeof filesApi.listUploads !== 'function') return
+    try {
+      const result = await filesApi.listUploads(200)
+      setPhotos((result.items ?? [])
+        .filter((item) => item.assetKind === 'photo')
+        .map(adaptPhotoAsset))
+    } catch {
+    }
+  }, [filesApi])
+
   useEffect(() => {
     void loadFiles(!fileCatalogCache.complete)
     void loadEvents()
+    void loadPhotos()
     const tick = () => {
       if (document.hidden) return
       void loadFiles()
       void loadEvents()
+      void loadPhotos()
     }
     const handleVisibilityChange = () => {
       if (document.hidden) return
       void loadFiles()
       void loadEvents()
+      void loadPhotos()
     }
     const timer = window.setInterval(tick, FILES_REFRESH_INTERVAL_MS)
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -248,7 +314,7 @@ export function FilesPage({
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [loadEvents, loadFiles])
+  }, [loadEvents, loadFiles, loadPhotos])
 
   useEffect(() => {
     if (!filesApi || typeof filesApi.onImportProgress !== 'function') return
@@ -278,15 +344,30 @@ export function FilesPage({
   const classifiedFilesByCategory = useMemo(() => groupCatalogFiles(files), [files])
 
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
-  const categoryCards = useMemo(() => FILE_CATEGORY_DEFINITIONS
-    .filter((definition) => definition.key !== 'clipper')
-    .map((definition) => ({
-    ...definition,
-    files: (classifiedFilesByCategory.get(definition.key) ?? []).filter(({ file }) => {
+  const categoryCards = useMemo(() => {
+    const cards = FILE_CATEGORY_DEFINITIONS
+      .filter((definition) => definition.key !== 'clipper')
+      .map((definition) => ({
+      ...definition,
+      files: (classifiedFilesByCategory.get(definition.key) ?? []).filter(({ file }) => {
+        if (!normalizedSearch) return true
+        return `${file.originalName} ${file.sharedTitle} ${file.sourceLabel}`.toLocaleLowerCase().includes(normalizedSearch)
+      }),
+    })).filter(({ files: categoryFiles }) => categoryFiles.length > 0)
+    // 图片资产不在文档目录（无解析器）：单独装配成「图片」分类卡。
+    const photoDefinition = FILE_CATEGORY_DEFINITIONS.find((definition) => definition.key === 'photo')
+    const matchedPhotos = photos.filter(({ originalName, sharedTitle }) => {
       if (!normalizedSearch) return true
-      return `${file.originalName} ${file.sharedTitle} ${file.sourceLabel}`.toLocaleLowerCase().includes(normalizedSearch)
-    }),
-  })).filter(({ files: categoryFiles }) => categoryFiles.length > 0), [classifiedFilesByCategory, normalizedSearch])
+      return `${originalName} ${sharedTitle}`.toLocaleLowerCase().includes(normalizedSearch)
+    })
+    if (photoDefinition && matchedPhotos.length > 0) {
+      cards.push({
+        ...photoDefinition,
+        files: matchedPhotos.map((file) => ({ file, category: photoDefinition })),
+      })
+    }
+    return cards
+  }, [classifiedFilesByCategory, normalizedSearch, photos])
 
   const selectedCategory = selectedCategoryKey
     ? categoryCards.find((category) => category.key === selectedCategoryKey) ?? null
@@ -302,8 +383,8 @@ export function FilesPage({
     setMessage(entered === 0 && firstError
       ? firstError
       : t('surface:files.importCompleteEnteredTotalFilesEnteredThePipeline', { entered, total: counted.length }))
-    await Promise.all([loadFiles(), loadEvents()])
-  }, [loadEvents, loadFiles, t])
+    await Promise.all([loadFiles(), loadEvents(), loadPhotos()])
+  }, [loadEvents, loadFiles, loadPhotos, t])
 
   const importFiles = async () => {
     if (!filesApi || importing) return
@@ -620,7 +701,11 @@ export function FilesPage({
                       <span className="file-document-icon"><FileTypeIcon file={file} /></span>
                       <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>
                     </button>
-                    <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
+                    <div className={`file-document-preview${selectedCategory.key === 'photo' ? ' is-photo' : ''}`} aria-hidden={selectedCategory.key === 'photo' ? undefined : true}>
+                      {selectedCategory.key === 'photo'
+                        ? <PhotoPreview fileId={file.id} name={file.originalName} />
+                        : <><span /><span /><span /></>}
+                    </div>
                     <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
                     <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
                   </article>
@@ -708,7 +793,9 @@ function FileTypeIcon({ file }: { file: FileCatalogDto }) {
     ? FileSpreadsheet
     : extension === 'pdf'
       ? FileType2
-      : FileTextIcon
+      : ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension ?? '')
+        ? ImageIcon
+        : FileTextIcon
   return <Icon className="file-type-icon" aria-hidden="true" strokeWidth={1.8} />
 }
 

@@ -44,6 +44,10 @@ const DEFAULT_IMPORT_EXTENSIONS = new Set([
   '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
 const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+/** 图片资产扩展名（与网关 SUPPORTED_UPLOAD_EXTENSIONS 的图片段保持一致）。 */
+const IMAGE_IMPORT_EXTENSIONS = AGENT_IMAGE_EXTENSIONS
+/** 网关 /v1/files 的单文件上限（MAX_UPLOAD_BYTES），超限在本地先行拦截给出可读错误。 */
+const PHOTO_MAX_BYTES = 20 * 1024 * 1024
 const AGENT_MAX_ATTACHMENTS = 5
 const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
@@ -189,6 +193,12 @@ export class FilesGatewayBridge {
   list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     return this.request(`/v1/files/catalog?${query}`)
+  }
+
+  /** 上传资产库（uploaded_files，含图片等无解析器格式）：文件页「图片」分类数据源。 */
+  listUploads(limit = 200): Promise<{ items: FileDto[] }> {
+    const query = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 200)) })
+    return this.request(`/v1/files?${query}`)
   }
 
   listClipCaptures(inputOrLimit: BrowserExtensionClipperListInput | number = {}, legacyOffset = 0): Promise<BrowserExtensionClipperListResult> {
@@ -382,8 +392,17 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
+          name: desktopText('dialog.importFiles.allSupported'),
+          extensions: [...new Set([...DEFAULT_IMPORT_EXTENSIONS, ...IMAGE_IMPORT_EXTENSIONS])]
+            .map((extension) => extension.slice(1)),
+        },
+        {
           name: desktopText('dialog.importFiles.documents'),
           extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -402,8 +421,17 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
+          name: desktopText('dialog.importFiles.allSupported'),
+          extensions: [...new Set([...DEFAULT_IMPORT_EXTENSIONS, ...IMAGE_IMPORT_EXTENSIONS])]
+            .map((extension) => extension.slice(1)),
+        },
+        {
           name: desktopText('dialog.importFiles.documents'),
           extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -424,15 +452,22 @@ export class FilesGatewayBridge {
 
     const manualExtensions = new Set((await this.capabilities()).items
       .filter((item) => item.manualImport).map((item) => item.extension))
+    // 图片不在文档能力清单（无解析器）：与文档同批收集，但走 /v1/files 资产直传。
+    const acceptedExtensions = new Set([...manualExtensions, ...IMAGE_IMPORT_EXTENSIONS])
     const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
-      manualExtensions,
+      acceptedExtensions,
     )
     // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
     const highRiskImports = this.highRiskImports
     let candidates = highRiskImports
       ? importPlan.candidates.filter((candidate) => !highRiskImports.isSkippedManualPath(candidate.filePath))
       : importPlan.candidates
+    // 图片是静态资产（无解析器、不执行内容）：不参与高风险批量审查，直传资产库。
+    const photoCandidates = candidates.filter((candidate) =>
+      IMAGE_IMPORT_EXTENSIONS.has(extname(candidate.filePath).toLowerCase()))
+    candidates = candidates.filter((candidate) =>
+      !IMAGE_IMPORT_EXTENSIONS.has(extname(candidate.filePath).toLowerCase()))
     const highRiskFileCount = candidates
       .filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length
     let heldForReview: ImportCandidate[] = []
@@ -449,6 +484,7 @@ export class FilesGatewayBridge {
     }
 
     const outcomes = await this.importCandidates(candidates, options)
+    if (photoCandidates.length) outcomes.push(...await this.importPhotoCandidates(photoCandidates))
     return [
       ...outcomes,
       ...importPlan.unsupported.map((candidate) => skippedOutcome(candidate.filename, 'unsupported_format')),
@@ -570,6 +606,68 @@ export class FilesGatewayBridge {
           pipelines: options?.pipelines ?? null,
           memoryResult: null,
           routeJobId: uploaded.jobId,
+          error: null,
+        })
+        succeeded += 1
+      } catch (error) {
+        outcomes.push({
+          filename,
+          fileId: null,
+          fileVersionId: null,
+          eventId: null,
+          dataType: null,
+          deduped: false,
+          skippedReason: null,
+          pipelines: null,
+          memoryResult: null,
+          routeJobId: null,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        failed += 1
+      }
+      this.emitImportProgress({ batchId, status: 'file-completed', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
+    }
+    this.emitImportProgress({ batchId, status: 'completed', total: candidates.length, completed: outcomes.length, filename: null, succeeded, failed })
+    return outcomes
+  }
+
+  /**
+   * 图片资产导入（/v1/files 直传 assetKind=photo）：与 Agent 附件同一资产库，
+   * 不走文档解析链路（图片无解析器）；逐行回报，失败不阻断同批其余文件。
+   */
+  private async importPhotoCandidates(candidates: ImportCandidate[]): Promise<FileImportOutcome[]> {
+    const outcomes: FileImportOutcome[] = []
+    const batchId = randomUUID()
+    let succeeded = 0
+    let failed = 0
+    this.emitImportProgress({ batchId, status: 'started', total: candidates.length, completed: 0, filename: null, succeeded, failed })
+    for (const { filePath, filename } of candidates) {
+      this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
+      try {
+        const buffer = await readFile(filePath)
+        if (buffer.byteLength > PHOTO_MAX_BYTES) throw new Error(`文件超过 20 MB 上限：${filename}`)
+        const uploaded = await this.request<{ id: string; deduped: boolean }>('/v1/files', {
+          method: 'POST',
+          body: JSON.stringify({
+            filename,
+            contentBase64: buffer.toString('base64'),
+            mime: imageMime(extname(filename).toLowerCase()),
+            assetKind: 'photo',
+            originChannel: 'manual-import',
+            visibility: 'private',
+          }),
+        })
+        outcomes.push({
+          filename,
+          fileId: uploaded.id,
+          fileVersionId: null,
+          eventId: null,
+          dataType: 'photo',
+          deduped: uploaded.deduped,
+          skippedReason: null,
+          pipelines: null,
+          memoryResult: null,
+          routeJobId: null,
           error: null,
         })
         succeeded += 1

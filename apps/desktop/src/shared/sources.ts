@@ -1412,6 +1412,8 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
+    /** 上传资产库（uploaded_files，含图片等无解析器格式；文件页「图片」分类数据源）。 */
+    listUploads(limit?: number): Promise<{ items: FileDto[] }>
     catalogEntry(fileId: string): Promise<FileCatalogDto>
     listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
     setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
