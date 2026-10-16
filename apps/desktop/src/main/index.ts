@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, Notification, protocol, screen, session, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -117,6 +117,7 @@ import {
 } from './screen-memory/screen-memory-controller'
 import { VisionOcrClient } from './vision-ocr/vision-ocr-client'
 import { ScreenMemoryGatewayBridge } from './screen-memory/screen-memory-gateway-bridge'
+import { getScreenCapturePermission } from './screen-memory/capture-current-screen'
 import { getScreenMemoryDirectory } from './screen-memory/screen-memory-settings'
 import { runScreenMemoryBackfill } from './screen-memory/screen-memory-backfill'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
@@ -3350,14 +3351,72 @@ function registerPrivateTranscriptionHandlers(
     rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
 }
 
+let screenPermissionCardWindow: BrowserWindow | null = null
+
+// 拖拽授权悬浮卡：系统设置打开时置顶悬浮在屏幕下半部，用户从卡上把应用
+// 图标拖进「屏幕录制」列表；权限到手后自动收卡。
+// 卡片必须不可聚焦且用 showInactive：show/focus 会激活 EverRoom 应用，
+// macOS 会连带把主窗口顶到系统设置之上，遮住设置页。
+function showScreenPermissionCard(): void {
+  if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
+    screenPermissionCardWindow.showInactive()
+    return
+  }
+  const cardWidth = 420
+  const cardHeight = 150
+  const workArea = screen.getPrimaryDisplay().workArea
+  const card = new BrowserWindow({
+    width: cardWidth,
+    height: cardHeight,
+    x: Math.round(workArea.x + (workArea.width - cardWidth) / 2),
+    y: Math.round(workArea.y + workArea.height - cardHeight - 96),
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    transparent: true,
+    show: false,
+    alwaysOnTop: true,
+    focusable: false,
+    title: 'EverRoom',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  screenPermissionCardWindow = card
+  card.setAlwaysOnTop(true, 'screen-saver')
+  card.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const permissionWatcher = setInterval(() => {
+    if (card.isDestroyed()) {
+      clearInterval(permissionWatcher)
+      return
+    }
+    if (getScreenCapturePermission() === 'granted') card.close()
+  }, 2000)
+  card.on('closed', () => {
+    clearInterval(permissionWatcher)
+    if (screenPermissionCardWindow === card) screenPermissionCardWindow = null
+  })
+  card.once('ready-to-show', () => card.showInactive())
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void card.loadURL(`${process.env.ELECTRON_RENDERER_URL}/permission-card.html`)
+  } else {
+    void card.loadFile(join(__dirname, '../renderer/permission-card.html'))
+  }
+}
+
 function registerScreenCaptureHandlers(): void {
   const isAuthorized = (event: { sender: Electron.WebContents }): boolean => {
-    const window = BrowserWindow.getAllWindows()[0]
+    const window = BrowserWindow.getAllWindows().find((candidate) => candidate !== screenPermissionCardWindow)
     return Boolean(
-      window &&
-      !window.isDestroyed() &&
-      !window.webContents.isDestroyed() &&
-      event.sender === window.webContents,
+      ((window && !window.isDestroyed() && !window.webContents.isDestroyed() && event.sender === window.webContents)
+        || (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()
+          && event.sender === screenPermissionCardWindow.webContents)),
     )
   }
 
@@ -3420,7 +3479,18 @@ function registerScreenCaptureHandlers(): void {
   })
   handle(SCREEN_CAPTURE_CHANNELS.openPermissionSettings, (event) => {
     if (!isAuthorized(event)) return
-    return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+    showScreenPermissionCard()
+    const opened = shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+    // 系统设置启动会抢走层级，延迟两次把卡片顶回去（保持卡片第一、系统设置第二）。
+    for (const delay of [600, 1600]) {
+      setTimeout(() => {
+        if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
+          screenPermissionCardWindow.setAlwaysOnTop(true, 'screen-saver')
+          screenPermissionCardWindow.moveTop()
+        }
+      }, delay)
+    }
+    return opened
   })
   handle(SCREEN_CAPTURE_CHANNELS.relaunchApp, (event) => {
     if (!isAuthorized(event)) return

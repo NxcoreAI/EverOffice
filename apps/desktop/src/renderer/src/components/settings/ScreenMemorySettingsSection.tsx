@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { ScreenRecordingPermissionCard } from '@/components/settings/ScreenRecordingPermissionCard'
 import type { ScreenMemorySettingsDto, ScreenMemoryStatusDto, ScreenMemoryStorageDto } from '../../../../shared/sources'
 
 function formatBytes(bytes: number): string {
@@ -89,10 +90,6 @@ export function ScreenMemorySettingsSection() {
     }
   }, [backfillFrom, backfillTo, backfillEstimateCount, t, reload])
 
-  const permissionLabel = status?.permission === 'granted'
-    ? t('surface:screenMemory.permissionGranted')
-    : t('surface:screenMemory.permissionMissing')
-
   return (
     <section id="settings-screen-memory" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-memory-settings-title">
       <header>
@@ -130,20 +127,7 @@ export function ScreenMemorySettingsSection() {
           {t(settings?.paused ? 'surface:settings.on' : 'surface:settings.off')}
         </button>
       </div>
-      <div className="reality-setting-row">
-        <div>
-          <strong>{t('surface:screenMemory.permission')}</strong>
-          <span className="settings-value-text">{permissionLabel}</span>
-          {status?.permission !== 'granted' ? (
-            <span className="screen-memory-permission-actions">
-              <button type="button" onClick={() => void window.nxcore?.screenMemory.openPermissionSettings()}>
-                {t('surface:screenMemory.openPermission')}
-              </button>
-              <span className="settings-value-text">{t('surface:screenMemory.permissionRestartHint')}</span>
-            </span>
-          ) : null}
-        </div>
-      </div>
+      <ScreenRecordingPermissionCard permission={status?.permission} />
       {status?.running ? (
         <div className="reality-setting-row">
           <div>
