@@ -107,7 +107,7 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
     type: "object",
     properties: {
       token: { type: "string", description: "输入里的 deckToken，原样传入（网关据此取本 deck 的布局契约）" },
-      tree: { type: "object", description: "布局树（root：role/title?/dark?/direction/weights?/gapScale?/pad?/children）" },
+      tree: { type: "object", description: "布局树（root：role/title?/dark?/bg?/direction(row|column|overlay)/weights?/gapScale?/pad?/children；overlay 直接子节点须带 place 百分比定位）" },
     },
     required: ["token", "tree"],
     additionalProperties: false,

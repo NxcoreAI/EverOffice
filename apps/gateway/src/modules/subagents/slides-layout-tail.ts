@@ -21,6 +21,7 @@ import { measureDefects, shrinkToFit, type LayoutDefect } from "../slides-layout
 import { auditSimilarity, treeSignature } from "../slides-layout/tree/similarity.js";
 import { resolveImageArs } from "../slides-layout/tree/aspect-ratio.js";
 import { dropReviewManuals, registerReviewManual } from "../slides-layout/review-context.js";
+import { pngBase64ToJpegBase64 } from "./screenshot-jpeg.js";
 
 const COMPOSITION_TENDENCY: Record<string, string> = {
   swiss: "强网格、克制留白、对齐严谨",
@@ -222,8 +223,13 @@ interface FinalPage {
   defects: LayoutDefect[];
 }
 
-function finalizeTree(tree: LayoutTree, contract: LayoutContract, imageArs: Map<string, number>): FinalPage {
-  const result = compileTree(tree, contract);
+function finalizeTree(
+  tree: LayoutTree,
+  contract: LayoutContract,
+  imageArs: Map<string, number>,
+  options?: { pageIndex?: number; pageCount?: number },
+): FinalPage {
+  const result = compileTree(tree, contract, undefined, options);
   const defects = measureDefects(result, contract, { imageArs });
   if (defects.length === 0) {
     return { spec: result.spec as unknown as Record<string, unknown>, degraded: false, focusHints: [], defects };
@@ -340,11 +346,13 @@ export async function runLayouterTail(
     const appliedFocusHints = new Map<number, string[]>();
     let livePageCount = 1;
     const applyPage = async (index: number, tree: LayoutTree): Promise<boolean> => {
-      let final = finalizeTree(tree, contract, imageArs);
+      // 页脚页码用逻辑页号（1 基）；总页数按计划页数（落页失败的页不占页码）。
+      const footerOpts = { pageIndex: index + 1, pageCount: pages.length };
+      let final = finalizeTree(tree, contract, imageArs, footerOpts);
       if (final.degraded) warnings.push(`第 ${index + 1} 页经引擎降档兜底装下内容`);
       if (final.defects.some((defect) => BLOCKING_DEFECTS.has(defect.type))) {
         warnings.push(`第 ${index + 1} 页布局树未收敛（${final.defects[0]!.type}），已用兜底版式`);
-        final = finalizeTree(fallbackTree(pages[index]!), contract, imageArs);
+        final = finalizeTree(fallbackTree(pages[index]!), contract, imageArs, footerOpts);
       }
       const specJson = JSON.stringify(final.spec);
       if (specJson.length > MAX_PAGE_SPEC_LENGTH) {
@@ -427,7 +435,16 @@ export async function runLayouterTail(
             currentTree: trees[pageIndex]!.tree,
           });
           try {
-            const pngBase64 = await bridge.renderPage({ fileId: fileEntryId, slideIndex });
+            // 压缩后再投：PNG 无损在背景图页可达 1.5MB+，直投会 413；失败回退原图。
+            const rawPng = await bridge.renderPage({ fileId: fileEntryId, slideIndex });
+            let shotBase64 = rawPng;
+            let shotMime = "image/png";
+            try {
+              shotBase64 = await pngBase64ToJpegBase64(rawPng);
+              shotMime = "image/jpeg";
+            } catch {
+              // sips 不可用时保持原 PNG 行为
+            }
             const invocation = await dispatchWithPageRetry(() => deps.dispatchReview!(
               {
                 task: "review",
@@ -446,8 +463,8 @@ export async function runLayouterTail(
               },
               deps.makeKey(args.runId, "slides-reviewer", `review:${pageIndex}`, { pageIndex }),
               args.parentRunId,
-              [{ filename: `page-${String(pageIndex + 1)}.png`, mimeType: "image/png", kind: "image", dataUrl: `data:image/png;base64,${pngBase64}` }],
-            ));
+              [{ filename: `page-${String(pageIndex + 1)}.${shotMime === "image/jpeg" ? "jpg" : "png"}`, mimeType: shotMime, kind: "image", dataUrl: `data:${shotMime};base64,${shotBase64}` }],
+            ));;
             if (invocation.status !== "completed") {
               throw new Error(invocation.errorCode ?? invocation.status);
             }
