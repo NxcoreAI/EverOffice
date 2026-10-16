@@ -34,6 +34,7 @@ import {
 import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
 import { truncateUtf8 } from "../ingest/normalizers.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 import { convertUploadedFile } from "./file-convert.js";
 import {
   KnowledgeLlm,
@@ -1930,6 +1931,7 @@ export class KnowledgeService {
       createdAt: new Date(),
       updatedAt: new Date(),
     }).onConflictDoNothing().run();
+    enqueueSearchIndex(this.db, { itemType: "room", refId: roomId, priority: "high" });
     this.entityRegistry.promoteToRoom(entity.id, roomId);
 
     // 资料沉淀拆为 per-room 串行的普通 ingest job。Room 创建在这里即可完成，
@@ -2855,6 +2857,7 @@ export class KnowledgeService {
   private async retireRoomWiki(roomId: string, reason: string): Promise<void> {
     this.db.update(rooms).set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(rooms.id, roomId)).run();
+    enqueueSearchIndex(this.db, { itemType: "room", refId: roomId, priority: "high" });
     this.db.update(roomWikis).set({ status: "archived" })
       .where(eq(roomWikis.roomId, roomId)).run();
     this.logger.info(
@@ -3567,6 +3570,7 @@ export class KnowledgeService {
     }
     this.relationRegistry.recomputeAll();
     this.roomDuplicateIndexTrigger?.();
+    enqueueSearchIndex(this.db, { itemType: "room", refId: input.id, priority: "high" });
     return this.toRoomDto(row!);
   }
 

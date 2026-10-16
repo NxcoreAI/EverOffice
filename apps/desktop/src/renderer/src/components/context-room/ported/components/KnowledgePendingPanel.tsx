@@ -204,6 +204,8 @@ interface RecommendationRun {
   readySnapshot: ReadonlySet<string>;
   phase: 'importing' | 'routing' | 'accumulating' | 'done' | 'timeout' | 'failed';
   imported: { completed: number; total: number };
+  /** 主进程正在展开目录（尚无文件计数）：横幅显示「正在扫描目录」而非 0/0。 */
+  scanning: boolean;
   files: UploadedFile[];
   /** 导入阶段无法解析的文件数（如扫描版 PDF）：蒙层显性展示，不再静默丢弃。 */
   failedImports: number;
@@ -240,6 +242,25 @@ function runPercentOf(run: RecommendationRun): number {
   return 85;
 }
 
+/** 后台横幅一行状态摘要：按阶段给一句话，超时按导入/路由分岔。 */
+function runPhaseSummary(run: RecommendationRun, t: Translate): string {
+  if (run.phase === 'failed') return t('contextRoom:creation.runImportFailed');
+  if (run.phase === 'importing') {
+    if (run.scanning) return t('contextRoom:creation.scanning');
+    return run.imported.total > 0
+      ? t('contextRoom:creation.importProgress', { current: run.imported.completed, total: run.imported.total })
+      : t('contextRoom:creation.stepImport');
+  }
+  if (run.phase === 'timeout') {
+    return run.files.length === 0
+      ? t('contextRoom:creation.runImportTimeoutHint')
+      : t('contextRoom:creation.runTimeoutHint');
+  }
+  if (run.phase === 'done') return t('contextRoom:creation.runDone');
+  if (run.phase === 'accumulating') return t('contextRoom:creation.runCandidates', { count: run.candidates });
+  return t('contextRoom:creation.stepRoute');
+}
+
 /** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。
  *  旧裸 key（无版本后缀）在首次读取时认领为规范 v1 key，裸 key 保留供旧二进制回滚。
  *  落盘形态 readySnapshot 为数组（Set 不可序列化），读取时转回 Set。 */
@@ -258,6 +279,7 @@ function adoptPersistedRun(raw: unknown): PersistedRun | null {
     failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
     skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
     okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
+    scanning: parsed.phase === 'importing' && parsed.scanning !== false,
     failureDetails: Array.isArray(parsed.failureDetails)
       ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
       : [],
@@ -335,6 +357,8 @@ export function KnowledgePendingPanel({
    * 停留 1.6s 展示全勾完成态再收，长等待有明确的终点画面。
    */
   const [completedFlash, setCompletedFlash] = useState<{ id: string; name: string } | null>(null);
+  /** 横幅收起态：关闭≠丢弃——进行中的会话收成小状态点，点开即找回。 */
+  const [runCollapsed, setRunCollapsed] = useState(false);
   const detailSnapshotRef = useRef<{ id: string | null; promoting: boolean; name: string }>({ id: null, promoting: false, name: '' });
   useEffect(() => {
     const snapshot = detailSnapshotRef.current;
@@ -517,10 +541,14 @@ export function KnowledgePendingPanel({
       patchRun({ phase: 'failed', error: 'files api unavailable' });
       return;
     }
-    patchRun({ phase: 'importing', imported: { completed: 0, total: 0 }, error: null });
+    patchRun({ phase: 'importing', imported: { completed: 0, total: 0 }, scanning: true, error: null });
     const unsubscribeProgress = filesApi.onImportProgress((event) => {
       setRun((current) => current && current.id === session.id
-        ? { ...current, imported: { completed: event.completed, total: event.total } }
+        ? {
+            ...current,
+            imported: { completed: event.completed, total: event.total },
+            scanning: event.status === 'scanning',
+          }
         : current);
     });
     let outcomes: Awaited<ReturnType<typeof filesApi.importPaths>> | null = null;
@@ -650,6 +678,7 @@ export function KnowledgePendingPanel({
       readySnapshot,
       phase: 'importing',
       imported: { completed: 0, total: 0 },
+      scanning: true,
       files: [],
       failedImports: 0,
       skippedImports: 0,
@@ -661,6 +690,7 @@ export function KnowledgePendingPanel({
       error: null,
     };
     setRun(session);
+    setRunCollapsed(false);
     void refresh();
     void continueImport(session);
   }, [continueImport, createEmptyRoomFromIntent, refresh]);
@@ -676,6 +706,7 @@ export function KnowledgePendingPanel({
     if (!persisted) return;
     runIdRef.current = Math.max(runIdRef.current, persisted.id);
     setRun(persisted);
+    setRunCollapsed(false);
     void refresh();
     if (persisted.phase === 'importing') {
       void continueImport(persisted);
@@ -773,6 +804,19 @@ export function KnowledgePendingPanel({
       if (timer !== null) window.clearInterval(timer);
     };
   }, [run?.id, runPolling]);
+
+  // 导入中同用「无进度」判停：completed 连续 RUN_IDLE_TIMEOUT_TICKS 拍不前进
+  // （importPaths 是单次 IPC，单文件挂起时永不 settle）转超时，给出关闭出口。
+  // 每有一份文件完成（completed 前进）即重置倒计时，推进中的慢导入不会被误杀。
+  useEffect(() => {
+    if (run?.phase !== 'importing') return
+    const timer = window.setTimeout(() => {
+      setRun((current) => current && current.phase === 'importing'
+        ? { ...current, phase: 'timeout' }
+        : current)
+    }, RUN_POLL_INTERVAL_MS * RUN_IDLE_TIMEOUT_TICKS)
+    return () => window.clearTimeout(timer)
+  }, [run?.id, run?.phase, run?.imported.completed]);
 
   // 完成态收尾：进度条先打满停留 RUN_DONE_LINGER_MS，再撤蒙层放行确认操作。
   useEffect(() => {
@@ -1034,6 +1078,8 @@ export function KnowledgePendingPanel({
   };
 
   /** 推荐生成蒙层：strip 区与管理面板都挂在各自容器内（dialog 打开时双处可见）。 */
+  /** 导入停滞转的超时（files 仍空）与路由停滞的超时在步骤条上表现不同。 */
+  const importStalled = run !== null && run.phase === 'timeout' && run.files.length === 0
   const runOverlay = run ? (
     <div
       className="context-room-knowledge-overlay"
@@ -1061,41 +1107,47 @@ export function KnowledgePendingPanel({
         <div style={{ width: `${Math.round(runPercentOf(run))}%` }} />
       </div>
       <ol className="context-room-creation-steps" data-testid="context-room-creation-steps">
-        <li data-state={run.phase === 'importing' ? 'active' : 'done'}>
+        <li data-state={run.phase === 'importing' || importStalled ? 'active' : 'done'}>
           <span className="context-room-creation-step-icon">
             {run.phase === 'importing'
               ? <LoaderCircle className="spin" aria-hidden="true" />
-              : <Check aria-hidden="true" />}
+              : importStalled
+                ? <Clock3 aria-hidden="true" />
+                : <Check aria-hidden="true" />}
           </span>
           <span className="context-room-creation-step-body">
             <b>{t('contextRoom:creation.stepImport')}</b>
             <small>{run.phase === 'importing'
-              ? t('contextRoom:creation.importProgress', {
-                  current: run.imported.completed,
-                  total: run.imported.total,
-                })
-              : run.failedImports > 0 || run.skippedImports > 0
-                ? runImportSummaryText(run.okImports, run.skippedImports, run.failedImports, t)
-                : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
+              ? run.scanning
+                ? t('contextRoom:creation.scanning')
+                : t('contextRoom:creation.importProgress', {
+                    current: run.imported.completed,
+                    total: run.imported.total,
+                  })
+              : importStalled
+                ? t('contextRoom:creation.runImportTimeoutHint')
+                : run.failedImports > 0 || run.skippedImports > 0
+                  ? runImportSummaryText(run.okImports, run.skippedImports, run.failedImports, t)
+                  : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
           </span>
         </li>
-        <li data-state={run.phase === 'routing' ? 'active' : run.phase === 'importing' ? undefined : 'done'}>
+        <li data-state={run.phase === 'routing' ? 'active' : run.phase === 'importing' || importStalled ? undefined : 'done'}>
           <span className="context-room-creation-step-icon">
             {run.phase === 'routing'
               ? <LoaderCircle className="spin" aria-hidden="true" />
-              : run.phase === 'importing' ? <span aria-hidden="true" /> : <Check aria-hidden="true" />}
+              : run.phase === 'importing' || importStalled ? <span aria-hidden="true" /> : <Check aria-hidden="true" />}
           </span>
           <span className="context-room-creation-step-body">
             <b>{t('contextRoom:creation.stepRoute')}</b>
             {/* 不展示「已解析 x/y」计数：路由决策落库节奏与用户感知不一致，只标等待/进行。 */}
-            {run.phase === 'importing'
+            {run.phase === 'importing' || importStalled
               ? <small>{t('contextRoom:creation.stepWaiting')}</small>
               : null}
           </span>
         </li>
-        <li data-state={run.phase === 'accumulating' || run.phase === 'timeout' ? 'active' : run.phase === 'done' ? 'done' : undefined}>
+        <li data-state={(run.phase === 'accumulating' || run.phase === 'timeout') && !importStalled ? 'active' : run.phase === 'done' ? 'done' : undefined}>
           <span className="context-room-creation-step-icon">
-            {run.phase === 'timeout'
+            {run.phase === 'timeout' && !importStalled
               ? <Clock3 aria-hidden="true" />
               : run.phase === 'done'
                 ? <Check aria-hidden="true" />
@@ -1105,7 +1157,7 @@ export function KnowledgePendingPanel({
           </span>
           <span className="context-room-creation-step-body">
             <b>{t('contextRoom:creation.stepAccumulate')}</b>
-            <small>{run.phase === 'timeout'
+            <small>{run.phase === 'timeout' && !importStalled
               ? t('contextRoom:creation.runTimeoutHint')
               : run.phase === 'done'
                 ? t('contextRoom:creation.runDone')
@@ -1156,28 +1208,117 @@ export function KnowledgePendingPanel({
       {run.phase === 'failed' ? (
         <p className="context-room-knowledge-overlay-note">{t('contextRoom:creation.runImportFailed')}</p>
       ) : null}
-      {run.phase === 'timeout' || run.phase === 'failed' ? (
-        <div className="context-room-knowledge-overlay-actions">
-          {run.phase === 'failed' ? (
-            <button
-              type="button"
-              className="context-room-knowledge-overlay-retry"
-              onClick={() => void continueImport(run)}
-            >
-              {t('contextRoom:creation.runImportRetry')}
-            </button>
-          ) : null}
+      <div className="context-room-knowledge-overlay-actions">
+        {run.phase === 'failed' ? (
           <button
             type="button"
-            className="context-room-knowledge-overlay-dismiss"
-            onClick={() => setRun(null)}
+            className="context-room-knowledge-overlay-retry"
+            onClick={() => void continueImport(run)}
           >
-            {t('contextRoom:creation.runDismiss')}
+            {t('contextRoom:creation.runImportRetry')}
           </button>
-        </div>
-      ) : null}
+        ) : null}
+        <button
+          type="button"
+          className="context-room-knowledge-overlay-dismiss"
+          onClick={() => {
+            // 与横幅同一语义：进行中收起（后台照跑），已结束清会话。
+            if (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating') {
+              setRunCollapsed(true);
+            } else {
+              setRun(null);
+            }
+          }}
+        >
+          {t('contextRoom:creation.runDismiss')}
+        </button>
+      </div>
     </div>
   </div>
+  ) : null;
+
+  /** 后台进度横幅（strip 用）：不蒙层不挡推荐卡，只占一行；关闭仅收起界面，
+   *  导入/推荐链路在后台照常推进，完成后以 toast 汇报。 */
+  const runBanner = run ? (
+    <div
+      className="context-room-knowledge-run-banner"
+      data-testid="context-room-recommendation-run"
+      data-phase={run.phase}
+      role="status"
+    >
+      {run.phase === 'failed'
+        ? <AlertCircle aria-hidden="true" />
+        : run.phase === 'timeout'
+          ? <Clock3 aria-hidden="true" />
+          : run.phase === 'done'
+            ? <Check aria-hidden="true" />
+            : <LoaderCircle className="spin" aria-hidden="true" />}
+      <div className="context-room-knowledge-run-banner-body">
+        <strong>{run.intent
+          ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
+          : t('contextRoom:creation.runTitle')}</strong>
+        <span>{runPhaseSummary(run, t)}</span>
+      </div>
+      <span className="context-room-knowledge-run-banner-percent">{runPercentOf(run)}%</span>
+      {run.phase === 'failed' ? (
+        <button
+          type="button"
+          className="context-room-knowledge-overlay-retry"
+          onClick={() => void continueImport(run)}
+        >
+          {t('contextRoom:creation.runImportRetry')}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="context-room-knowledge-overlay-dismiss"
+        onClick={() => {
+          // 进行中：收起为小状态点（后台照跑，可再点开）；已结束：清掉会话。
+          if (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating') {
+            setRunCollapsed(true);
+          } else {
+            setRun(null);
+          }
+        }}
+      >
+        {t('contextRoom:creation.runDismiss')}
+      </button>
+    </div>
+  ) : null;
+
+  /** 收起态小状态点：会话仍在后台推进，点开找回进度横幅。 */
+  const runChip = run && runCollapsed ? (
+    <button
+      type="button"
+      className="context-room-knowledge-run-chip"
+      data-testid="context-room-recommendation-run-chip"
+      data-phase={run.phase}
+      title={t('contextRoom:creation.runCollapsedExpand')}
+      aria-label={t('contextRoom:creation.runCollapsedExpand')}
+      onClick={() => setRunCollapsed(false)}
+    >
+      {run.phase === 'timeout'
+        ? <Clock3 aria-hidden="true" />
+        : run.phase === 'failed'
+          ? <AlertCircle aria-hidden="true" />
+          : run.phase === 'done'
+            ? <Check aria-hidden="true" />
+            : <LoaderCircle className="spin" aria-hidden="true" />}
+      <span>{run.phase === 'importing'
+        ? run.scanning
+          ? t('contextRoom:creation.scanning')
+          : t('contextRoom:creation.stepImport')
+        : run.phase === 'routing'
+          ? t('contextRoom:creation.stepRoute')
+          : run.phase === 'accumulating'
+            ? t('contextRoom:creation.stepAccumulate')
+            : run.phase === 'timeout'
+              ? t('contextRoom:creation.runStalledShort')
+              : run.phase === 'failed'
+                ? t('contextRoom:creation.runImportFailed')
+                : t('contextRoom:creation.runDone')}</span>
+      <b>{runPercentOf(run)}%</b>
+    </button>
   ) : null;
 
   const manageView = (
@@ -1429,7 +1570,7 @@ export function KnowledgePendingPanel({
         )}
       </div>
 
-      {runOverlay}
+      {runCollapsed ? runChip : runBanner}
 
       <ReferenceDialog
         open={manageOpen}

@@ -1,7 +1,9 @@
-import { dialog, shell } from 'electron'
+import { app, dialog, shell } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, extname, relative, resolve, sep } from 'node:path'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, extname, join, relative, resolve, sep } from 'node:path'
 import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
   FileDto,
@@ -37,24 +39,37 @@ export interface ImportCandidate {
   filename: string
 }
 
-const DEFAULT_IMPORT_EXTENSIONS = new Set([
+const DOCUMENT_IMPORT_EXTENSIONS = new Set([
   '.csv', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.html', '.htm', '.md', '.markdown',
   '.mdx', '.ods', '.odp', '.pdf', '.pot', '.potx', '.potm', '.pps', '.ppsx', '.ppsm', '.ppt',
   '.pptx', '.pptm', '.rtf', '.sldx', '.sldm', '.text', '.txt', '.xls', '.xla', '.xlam', '.xlsb',
   '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
-const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
-/** 图片资产扩展名（与网关 SUPPORTED_UPLOAD_EXTENSIONS 的图片段保持一致）。 */
-const IMAGE_IMPORT_EXTENSIONS = AGENT_IMAGE_EXTENSIONS
-/** 网关 /v1/files 的单文件上限（MAX_UPLOAD_BYTES），超限在本地先行拦截给出可读错误。 */
-const PHOTO_MAX_BYTES = 20 * 1024 * 1024
+/** 手动导入图片；heic 仅 macOS（导入时 sips 转 jpg 后再上传，网关不收裸 heic）。 */
+const IMAGE_FILE_EXTENSIONS = new Set([
+  '.bmp', '.gif', '.jpeg', '.jpg', '.png', '.webp',
+  ...(process.platform === 'darwin' ? ['.heic'] : []),
+])
+const HEIC_EXTENSION = '.heic'
+const DEFAULT_IMPORT_EXTENSIONS = new Set([...DOCUMENT_IMPORT_EXTENSIONS, ...IMAGE_FILE_EXTENSIONS])
+const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp', '.bmp'])
 const AGENT_MAX_ATTACHMENTS = 5
 const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 function imageMime(extension: string): string {
   return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg'
     : extension === '.png' ? 'image/png'
-      : extension === '.gif' ? 'image/gif' : 'image/webp'
+      : extension === '.gif' ? 'image/gif'
+        : extension === '.bmp' ? 'image/bmp' : 'image/webp'
+}
+
+/** heic 转 jpg（临时文件）：网关识别与应用内显示都不收 heic。 */
+async function convertHeicToJpg(filePath: string): Promise<{ filePath: string; filename: string }> {
+  const base = basename(filePath).replace(/\.heic$/i, '')
+  const directory = await mkdtemp(join(tmpdir(), 'everroom-heic-'))
+  const target = join(directory, `${base}.jpg`)
+  execFileSync('/usr/bin/sips', ['-s', 'format', 'jpeg', filePath, '--out', target], { stdio: 'pipe' })
+  return { filePath: target, filename: `${base}.jpg` }
 }
 
 interface ImportCollectionPlan {
@@ -195,12 +210,6 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/catalog?${query}`)
   }
 
-  /** 上传资产库（uploaded_files，含图片等无解析器格式）：文件页「图片」分类数据源。 */
-  listUploads(limit = 200): Promise<{ items: FileDto[] }> {
-    const query = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 200)) })
-    return this.request(`/v1/files?${query}`)
-  }
-
   listClipCaptures(inputOrLimit: BrowserExtensionClipperListInput | number = {}, legacyOffset = 0): Promise<BrowserExtensionClipperListResult> {
     const input: BrowserExtensionClipperListInput = typeof inputOrLimit === 'number'
       ? { limit: inputOrLimit, offset: legacyOffset }
@@ -304,6 +313,9 @@ export class FilesGatewayBridge {
             visibility: 'private',
           }),
         })
+        // 与截图管线同款两步：上传后注册视觉库（VLM 出描述，素材检索才能命中）；
+        // 注册失败不阻断附件发送。
+        await this.registerVisualObservation({ fileId: uploaded.id }).catch(() => {})
         attachments.push({
           fileId: uploaded.id,
           filename: uploaded.originalName,
@@ -375,6 +387,17 @@ export class FilesGatewayBridge {
     if (error) throw new Error(error)
   }
 
+  /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+  async exportReveal(fileId: string, originalName: string): Promise<void> {
+    const storagePath = await this.storagePath(fileId)
+    const safeName = originalName.replace(/[/\\]/g, '_').trim() || 'export.bin'
+    const dir = join(app.getPath('downloads'), 'EverRoom')
+    await mkdir(dir, { recursive: true })
+    const target = join(dir, safeName)
+    await copyFile(storagePath, target)
+    shell.showItemInFolder(target)
+  }
+
   /**
    * 统一导入（用户主路径）：系统选择框 → 逐文件 multipart 上传（唯一字节
    * 入口）→ ref 形态进引擎。失败互不影响，逐行回报。
@@ -392,17 +415,12 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
-          name: desktopText('dialog.importFiles.allSupported'),
-          extensions: [...new Set([...DEFAULT_IMPORT_EXTENSIONS, ...IMAGE_IMPORT_EXTENSIONS])]
-            .map((extension) => extension.slice(1)),
-        },
-        {
           name: desktopText('dialog.importFiles.documents'),
-          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
         },
         {
           name: desktopText('dialog.importFiles.images'),
-          extensions: [...IMAGE_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -421,17 +439,12 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
-          name: desktopText('dialog.importFiles.allSupported'),
-          extensions: [...new Set([...DEFAULT_IMPORT_EXTENSIONS, ...IMAGE_IMPORT_EXTENSIONS])]
-            .map((extension) => extension.slice(1)),
-        },
-        {
           name: desktopText('dialog.importFiles.documents'),
-          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
         },
         {
           name: desktopText('dialog.importFiles.images'),
-          extensions: [...IMAGE_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -450,24 +463,26 @@ export class FilesGatewayBridge {
   }): Promise<FileImportOutcome[]> {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
-    const manualExtensions = new Set((await this.capabilities()).items
-      .filter((item) => item.manualImport).map((item) => item.extension))
-    // 图片不在文档能力清单（无解析器）：与文档同批收集，但走 /v1/files 资产直传。
-    const acceptedExtensions = new Set([...manualExtensions, ...IMAGE_IMPORT_EXTENSIONS])
+    const manualExtensions = await this.manualImportExtensions()
+    // 目录展开阶段先发 scanning：大目录 walk 可能数分钟且无文件计数，
+    // 不发则界面停在 0/0 且无法区分「扫描中」与「卡死」。
+    this.emitImportProgress({ batchId: randomUUID(), status: 'scanning', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
+    const scanStartedAt = Date.now()
     const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
-      acceptedExtensions,
+      manualExtensions,
     )
+    console.info('[files] import plan ready', {
+      paths: selectedPaths.length,
+      candidates: importPlan.candidates.length,
+      unsupported: importPlan.unsupported.length,
+      scanMs: Date.now() - scanStartedAt,
+    })
     // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
     const highRiskImports = this.highRiskImports
     let candidates = highRiskImports
       ? importPlan.candidates.filter((candidate) => !highRiskImports.isSkippedManualPath(candidate.filePath))
       : importPlan.candidates
-    // 图片是静态资产（无解析器、不执行内容）：不参与高风险批量审查，直传资产库。
-    const photoCandidates = candidates.filter((candidate) =>
-      IMAGE_IMPORT_EXTENSIONS.has(extname(candidate.filePath).toLowerCase()))
-    candidates = candidates.filter((candidate) =>
-      !IMAGE_IMPORT_EXTENSIONS.has(extname(candidate.filePath).toLowerCase()))
     const highRiskFileCount = candidates
       .filter((candidate) => !isLowRiskFileExtension(extname(candidate.filePath))).length
     let heldForReview: ImportCandidate[] = []
@@ -484,7 +499,6 @@ export class FilesGatewayBridge {
     }
 
     const outcomes = await this.importCandidates(candidates, options)
-    if (photoCandidates.length) outcomes.push(...await this.importPhotoCandidates(photoCandidates))
     return [
       ...outcomes,
       ...importPlan.unsupported.map((candidate) => skippedOutcome(candidate.filename, 'unsupported_format')),
@@ -500,8 +514,7 @@ export class FilesGatewayBridge {
     roomId?: string
     resourceIdsByRelativePath?: Readonly<Record<string, string>>
   }): Promise<FileImportOutcome[]> {
-    const manualExtensions = new Set((await this.capabilities()).items
-      .filter((item) => item.manualImport).map((item) => item.extension))
+    const manualExtensions = await this.manualImportExtensions()
     const collected = await collectImportCandidates([input.rootPath], manualExtensions)
     const candidates = input.resourceIdsByRelativePath
       ? collected.filter((candidate) => Object.hasOwn(input.resourceIdsByRelativePath!, candidate.filename))
@@ -521,6 +534,14 @@ export class FilesGatewayBridge {
    *  截图管线会注册 observation——vault 图片附件走记忆同步入库后需补注册，
    *  PPT 素材检索才能按中文描述搜到。同一 fileId 重复注册幂等（服务端命中
    *  既有 observation 直接返回）。 */
+  /** 网关 manualImport 集；darwin 下补 heic（导入前转 jpg，网关能力表不登记 heic）。 */
+  private async manualImportExtensions(): Promise<Set<string>> {
+    const extensions = new Set((await this.capabilities()).items
+      .filter((item) => item.manualImport).map((item) => item.extension))
+    if (process.platform === 'darwin') extensions.add(HEIC_EXTENSION)
+    return extensions
+  }
+
   async registerVisualObservation(input: { fileId: string; capturedAt?: Date }): Promise<void> {
     await this.request('/v1/perception/visual-observations', {
       method: 'POST',
@@ -581,16 +602,27 @@ export class FilesGatewayBridge {
     for (const { filePath, filename } of candidates) {
       this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
       try {
+        let uploadPath = filePath
+        let originalName = basename(filePath)
+        let sourceModifiedAt: string | undefined
+        if (extname(filePath).toLowerCase() === HEIC_EXTENSION && process.platform === 'darwin') {
+          const originalStat = await stat(filePath)
+          const converted = await convertHeicToJpg(filePath)
+          uploadPath = converted.filePath
+          originalName = converted.filename
+          sourceModifiedAt = originalStat.mtime.toISOString()
+        }
         const uploaded = await this.importPath({
-          filePath,
+          filePath: uploadPath,
           sourceKind: 'manual-upload',
           sourceKey: options?.source
             ? `obsidian:${options.source.id}:${options.source.resourceIdsByRelativePath?.[filename] ?? filename}`
             // 确定性 key（同路径重导入命中同一 entry）：版本级去重才生效，
             // 否则每次重导入都铸新 entry + 重复排队路由，决策也挂到新 id 上。
             : `manual:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
-          originalName: basename(filePath),
+          originalName,
           relativePath: filename,
+          ...(sourceModifiedAt ? { sourceModifiedAt } : {}),
           ...(options?.source ? { provider: options.source.label, connectionId: options.source.id } : {}),
           ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
           ...(options?.roomId ? { roomId: options.roomId } : {}),
@@ -610,68 +642,10 @@ export class FilesGatewayBridge {
         })
         succeeded += 1
       } catch (error) {
-        outcomes.push({
+        console.warn('[files] manual import failed', {
           filename,
-          fileId: null,
-          fileVersionId: null,
-          eventId: null,
-          dataType: null,
-          deduped: false,
-          skippedReason: null,
-          pipelines: null,
-          memoryResult: null,
-          routeJobId: null,
           error: error instanceof Error ? error.message : String(error),
         })
-        failed += 1
-      }
-      this.emitImportProgress({ batchId, status: 'file-completed', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
-    }
-    this.emitImportProgress({ batchId, status: 'completed', total: candidates.length, completed: outcomes.length, filename: null, succeeded, failed })
-    return outcomes
-  }
-
-  /**
-   * 图片资产导入（/v1/files 直传 assetKind=photo）：与 Agent 附件同一资产库，
-   * 不走文档解析链路（图片无解析器）；逐行回报，失败不阻断同批其余文件。
-   */
-  private async importPhotoCandidates(candidates: ImportCandidate[]): Promise<FileImportOutcome[]> {
-    const outcomes: FileImportOutcome[] = []
-    const batchId = randomUUID()
-    let succeeded = 0
-    let failed = 0
-    this.emitImportProgress({ batchId, status: 'started', total: candidates.length, completed: 0, filename: null, succeeded, failed })
-    for (const { filePath, filename } of candidates) {
-      this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
-      try {
-        const buffer = await readFile(filePath)
-        if (buffer.byteLength > PHOTO_MAX_BYTES) throw new Error(`文件超过 20 MB 上限：${filename}`)
-        const uploaded = await this.request<{ id: string; deduped: boolean }>('/v1/files', {
-          method: 'POST',
-          body: JSON.stringify({
-            filename,
-            contentBase64: buffer.toString('base64'),
-            mime: imageMime(extname(filename).toLowerCase()),
-            assetKind: 'photo',
-            originChannel: 'manual-import',
-            visibility: 'private',
-          }),
-        })
-        outcomes.push({
-          filename,
-          fileId: uploaded.id,
-          fileVersionId: null,
-          eventId: null,
-          dataType: 'photo',
-          deduped: uploaded.deduped,
-          skippedReason: null,
-          pipelines: null,
-          memoryResult: null,
-          routeJobId: null,
-          error: null,
-        })
-        succeeded += 1
-      } catch (error) {
         outcomes.push({
           filename,
           fileId: null,
@@ -861,12 +835,16 @@ export class FilesGatewayBridge {
       ...(input.roomId ? { roomId: input.roomId } : {}),
       ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     }))
-    form.append('file', new Blob([new Uint8Array(buffer)]), input.originalName)
+    const uploadMime = imageMime(extname(input.originalName).toLowerCase())
+    form.append('file', new Blob([new Uint8Array(buffer)], uploadMime ? { type: uploadMime } : undefined), input.originalName)
     const connection = this.supervisor.getConnection()
+    // 上传必须有超时：网关侧或连接异常挂起时，无超时的 fetch 会把整个
+    // 目录导入循环无声冻结（2026-10-14 实证：扫描完成后 30 分钟零上传）。
     const response = await fetch(`${connection.baseUrl}/v1/file-imports`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${connection.token}` },
       body: form,
+      signal: AbortSignal.timeout(180_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { error?: unknown } | null
@@ -924,6 +902,7 @@ export class FilesGatewayBridge {
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
+      signal: init?.signal ?? AbortSignal.timeout(60_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { message?: unknown; error?: unknown } | null

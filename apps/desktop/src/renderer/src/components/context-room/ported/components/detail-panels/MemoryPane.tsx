@@ -25,12 +25,14 @@ import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({
   room,
+  rooms,
   onUpdateRoom,
   onOpenRoom,
   onOpenSource,
   focusEntityId,
 }: {
   room: ContextRoomRecord;
+  rooms: ContextRoomRecord[];
   onUpdateRoom: (updater: (room: ContextRoomRecord) => ContextRoomRecord) => void;
   /** 实体已建 Room 时从内联详情卡跳转（详情只在本面板内展示）。 */
   onOpenRoom: (roomId: string) => void;
@@ -110,6 +112,9 @@ export function MemoryPane({
         : t('contextRoom:memory.typeEntity', { type: t(uiText(selectedNode.entityType)) });
   const isRootEntity = selectedNode.id === graphData.rootId;
   const isPerson = selectedNode.kind === 'entity' && selectedNode.entityType === '人物';
+  // linkedRoomId 来自 knowledge 后端，本地房间名单可能已删：目标不存在时置灰，避免点击无声失败。
+  const linkedRoomMissing = selectedNode.kind === 'entity' && Boolean(selectedNode.linkedRoomId)
+    && !rooms.some((item) => item.id === selectedNode.linkedRoomId);
   const DetailIcon = selectedMemory
     ? MessageSquareText
     : isRootEntity
@@ -299,6 +304,8 @@ export function MemoryPane({
               <button
                 type="button"
                 className="context-room-primary context-room-memory-inline-action"
+                disabled={linkedRoomMissing}
+                title={linkedRoomMissing ? t('contextRoom:memory.linkedRoomMissing') : undefined}
                 onClick={() => onOpenRoom(selectedNode.linkedRoomId!)}
               >
                 {t('contextRoom:memory.openLinkedRoom')}

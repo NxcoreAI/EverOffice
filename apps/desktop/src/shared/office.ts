@@ -2,7 +2,7 @@
 export type OfficeAgentFileFormat = 'docx' | 'pptx' | 'xlsx'
 
 export interface OfficeAgentFileEvent {
-  type: 'phase' | 'done' | 'error' | 'edited'
+  type: 'phase' | 'done' | 'error' | 'edited' | 'open-edit'
   title: string
   /** 缺省 docx（旧事件无此字段）。 */
   format?: OfficeAgentFileFormat

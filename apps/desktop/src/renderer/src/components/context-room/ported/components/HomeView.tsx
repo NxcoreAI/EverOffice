@@ -2,13 +2,13 @@ import {
   ArrowRight,
   GitMerge,
   Layers3,
+  Plus,
   RotateCcw,
   Search,
   Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
-import obsidianLogo from '../../../../assets/obsidian.svg';
 
 import type { ContextRoomRecord } from '../types';
 import { localizedUiText, uiText } from '../adapters';
@@ -77,7 +77,6 @@ function RoomGraph({
 export function HomeView({
   rooms,
   deletedRooms,
-  onMountObsidian,
   onRenameRoom,
   onDeleteRoom,
   onRestoreRoom,
@@ -86,10 +85,10 @@ export function HomeView({
   onFocusAgent,
   onRefreshRooms,
   onManualMerge,
+  onRoomMounted,
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
-  onMountObsidian: () => Promise<void>;
   onRenameRoom: (roomId: string, name: string) => void;
   onDeleteRoom: (roomId: string) => void;
   onRestoreRoom: (roomId: string) => void;
@@ -99,6 +98,8 @@ export function HomeView({
   onRefreshRooms: () => Promise<void>;
   /** 手动合并入口：对话框与预览由 PortedContextRoom 宿主。 */
   onManualMerge?: (room: ContextRoomRecord) => void;
+  /** 挂载目录新建房间成功后的开房回调。 */
+  onRoomMounted?: (room: { id: string; title: string }) => void;
 }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
@@ -160,8 +161,16 @@ export function HomeView({
                   <h2>{t('contextRoom:home.myRooms')}</h2>
                 </div>
                 <div className="context-room-my-actions" aria-label={t('contextRoom:home.roomActions')}>
-                  <button type="button" aria-label={t('surface:obsidian.mount')} title={t('surface:obsidian.mount')} className="context-room-add-room" onClick={() => void onMountObsidian()}>
-                    <img className="obsidian-app-icon" src={obsidianLogo} alt="" />
+                  <button
+                    type="button"
+                    aria-label={t('contextRoom:home.newRoom')}
+                    title={t('contextRoom:home.newRoom')}
+                    className="context-room-new-room-button"
+                    data-testid="context-room-new-room-button"
+                    onClick={() => setNewRoomOpen(true)}
+                  >
+                    <Plus aria-hidden="true" />
+                    {t('contextRoom:home.newRoom')}
                   </button>
                   <button
                     type="button"
@@ -213,6 +222,15 @@ export function HomeView({
                   <Layers3 aria-hidden="true" />
                   <h3>{t('contextRoom:home.noMatchingRooms')}</h3>
                   <p>{t('contextRoom:home.tryAnotherSearchTermOrCreateANew')}</p>
+                  <button
+                    type="button"
+                    className="context-room-new-room-button"
+                    data-testid="context-room-new-room-empty-button"
+                    onClick={() => setNewRoomOpen(true)}
+                  >
+                    <Plus aria-hidden="true" />
+                    {t('contextRoom:home.newRoom')}
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -230,7 +248,7 @@ export function HomeView({
       </main>
 
       <ReferenceDialog open={newRoomOpen} onOpenChange={setNewRoomOpen} title={t('contextRoom:home.newContextRoom')}>
-        <RoomCreationStudio open={newRoomOpen} onOpenChange={setNewRoomOpen} />
+        <RoomCreationStudio open={newRoomOpen} onOpenChange={setNewRoomOpen} onRoomMounted={onRoomMounted} />
       </ReferenceDialog>
       <RoomDuplicateCenter
         open={duplicateCenterOpen}

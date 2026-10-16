@@ -47,17 +47,20 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
           connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           /** true = 只读上次列举缓存（面板打开即时回显）；未命中返回空列表。 */
           cachedOnly: Type.Optional(Type.Boolean()),
+          /** full = 全量列举替换缓存（手动重新拉取 / 每日对账）；delta = 有缓存
+           *  时增量合并，无缓存或增量不可用自动回退全量。 */
+          mode: Type.Optional(Type.Union([Type.Literal("full"), Type.Literal("delta")])),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        const { provider, connectionName, cachedOnly } = request.body;
+        const { provider, connectionName, cachedOnly, mode } = request.body;
         if (cachedOnly) {
           const cached = service.getCachedList(provider, connectionName);
           if (cached) return cached;
           return { provider, items: [], truncated: false, warnings: [], fetchedAt: null };
         }
-        return await service.listAllDocuments(provider, connectionName);
+        return await service.listAllDocuments(provider, connectionName, mode ?? "full");
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);

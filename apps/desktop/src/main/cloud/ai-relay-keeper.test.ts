@@ -26,7 +26,6 @@ const PLAN_MODELS_A = {
 
 function createKeeper(options?: {
   issue?: () => Promise<unknown>
-  selectedSource?: string
   isRunning?: boolean
   onEvent?: (event: { type: string }) => void
 }) {
@@ -42,20 +41,13 @@ function createKeeper(options?: {
     isRunning: () => options?.isRunning ?? true,
     getConnection: () => GATEWAY,
   }
-  // 源选择是网关侧状态：selectSource 后 get() 返回新值。
-  let selectedSource = options?.selectedSource ?? 'default'
-  const runtimeConfig = {
-    get: async () => ({ selectedSource }),
-    selectSource: vi.fn(async (source: string) => { selectedSource = source }),
-  }
   const onEvent = options?.onEvent ?? vi.fn()
   const keeper = new AiRelayKeeper(
     client as never,
     supervisor as never,
-    runtimeConfig as never,
     onEvent,
   )
-  return { keeper, client, runtimeConfig, onEvent }
+  return { keeper, client, onEvent }
 }
 
 function sessionRequests(method: string): Array<Record<string, unknown>> {
@@ -152,41 +144,42 @@ describe('AiRelayKeeper', () => {
       await keeper.renewNow()
       expect(sessionRequests('DELETE')).toHaveLength(1)
       expect(onEvent).toHaveBeenCalledWith({ type: 'quota-exhausted' })
-      // 403 是权威判定：不计网络失败，绝不回落 user 源。
-      expect(onEvent).not.toHaveBeenCalledWith({ type: 'fallback-user' })
     } finally {
       keeper.stop()
     }
   })
 
-  it('falls back to the user source exactly once after 3 consecutive network failures', async () => {
-    let calls = 0
-    const { keeper, runtimeConfig, onEvent } = createKeeper({
+  it('treats 402 quota exhaustion as authoritative and tracks the verdict flag', async () => {
+    let exhausted = true
+    const { keeper, onEvent } = createKeeper({
       issue: async () => {
-        calls += 1
-        throw new Error('network unreachable')
+        if (exhausted) throw new SaasRequestError('AI credit quota for this period is exhausted', 402)
+        return {
+          token: 'sk-relay-52',
+          expiresAt: new Date(Date.now() + 25 * 60_000).toISOString(),
+          baseUrl: 'https://relay.example.com',
+        }
       },
     })
     try {
       await keeper.renewNow()
-      await keeper.renewNow()
-      expect(runtimeConfig.selectSource).not.toHaveBeenCalled()
-      expect(onEvent).not.toHaveBeenCalledWith({ type: 'fallback-user' })
+      expect(sessionRequests('DELETE')).toHaveLength(1)
+      expect(onEvent).toHaveBeenCalledWith({ type: 'quota-exhausted' })
+      expect(keeper.isQuotaExhausted()).toBe(true)
 
+      // 兑换/周期重置后续签成功：判定清除。
+      exhausted = false
       await keeper.renewNow()
-      expect(calls).toBe(3)
-      expect(runtimeConfig.selectSource).toHaveBeenCalledTimes(1)
-      expect(runtimeConfig.selectSource).toHaveBeenCalledWith('user')
-      expect(onEvent).toHaveBeenCalledWith({ type: 'fallback-user' })
+      expect(keeper.isQuotaExhausted()).toBe(false)
     } finally {
       keeper.stop()
     }
   })
 
-  it('restores the default source after a successful renewal while the fallback is active', async () => {
+  it('keeps retrying network failures without flipping the config source', async () => {
     const onEvent = vi.fn()
     let fail = true
-    const { keeper, runtimeConfig } = createKeeper({
+    const { keeper } = createKeeper({
       issue: async () => {
         if (fail) throw new Error('network unreachable')
         return {
@@ -201,25 +194,14 @@ describe('AiRelayKeeper', () => {
       await keeper.renewNow()
       await keeper.renewNow()
       await keeper.renewNow()
-      expect(runtimeConfig.selectSource).toHaveBeenCalledWith('user')
-      expect(onEvent).toHaveBeenCalledWith({ type: 'fallback-user' })
+      // 网络失败只重试，不翻运行时配置源（issue #283：自动翻源会让用户已
+      // 保存的自定义配置在设置页看起来被重置）。
+      expect(onEvent).not.toHaveBeenCalled()
 
       fail = false
       await keeper.renewNow()
-      expect(runtimeConfig.selectSource).toHaveBeenLastCalledWith('default')
-      expect(onEvent).toHaveBeenCalledWith({ type: 'fallback-restored' })
-    } finally {
-      keeper.stop()
-    }
-  })
-
-  it('skips the fallback when the active source is not default', async () => {
-    const { keeper, runtimeConfig } = createKeeper({ selectedSource: 'user' })
-    try {
-      await keeper.renewNow()
-      await keeper.renewNow()
-      await keeper.renewNow()
-      expect(runtimeConfig.selectSource).not.toHaveBeenCalled()
+      expect(sessionRequests('PUT')).toHaveLength(1)
+      expect(onEvent).toHaveBeenCalledWith({ type: 'session-activated' })
     } finally {
       keeper.stop()
     }

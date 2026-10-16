@@ -1083,7 +1083,7 @@ export const externalDocumentBindings = sqliteTable(
   {
     documentId: text("document_id").primaryKey()
       .references(() => documents.id, { onDelete: "cascade" }),
-    sourceKind: text("source_kind", { enum: ["obsidian-vault"] }).notNull(),
+    sourceKind: text("source_kind", { enum: ["obsidian-vault", "local-directory"] }).notNull(),
     sourceId: text("source_id").notNull(),
     resourceId: text("resource_id").notNull(),
     roomId: text("room_id").notNull(),
@@ -1386,6 +1386,12 @@ export const documentImportListCache = sqliteTable(
       .default([]),
     itemCount: integer("item_count").notNull().default(0),
     fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    /** 最近一次写入的同步方式：full=全量替换（清删除），delta=增量合并。 */
+    syncMode: text("sync_mode", { enum: ["full", "delta"] }),
+    /** 增量水位线（取已见条目最大 updatedAt）：delta 从此时间往前 5 分钟重叠窗拉取。 */
+    watermarkAt: integer("watermark_at", { mode: "timestamp_ms" }),
+    /** 最近一次全量对账时间：超过 24h 由同步 worker 触发全量，清掉远端已删文档。 */
+    lastFullAt: integer("last_full_at", { mode: "timestamp_ms" }),
   },
   (table) => [primaryKey({ columns: [table.provider, table.connectionName] })],
 );
@@ -1679,7 +1685,7 @@ export const entityDocLinks = sqliteTable(
     id: text("id").primaryKey(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1733,7 +1739,7 @@ export const roomSourceMemberships = sqliteTable(
     id: text("id").primaryKey(),
     roomId: text("room_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1770,7 +1776,7 @@ export const roomEntityMentions = sqliteTable(
     roomId: text("room_id").notNull(),
     entityId: text("entity_id").notNull(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1816,7 +1822,7 @@ export const roomEntityFacts = sqliteTable(
     /** 涉及实体（抽取名称经 resolveMentionEntity 解析后的 id；解析不到的不进表）。 */
     entityIds: text("entity_ids", { mode: "json" }).$type<string[]>(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -1950,7 +1956,7 @@ export const routeDecisions = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull().default("everroom-doc"),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -2435,6 +2441,62 @@ export const visualProcessingJobs = sqliteTable(
   ],
 );
 
+export const screenIntervals = sqliteTable(
+  "screen_intervals",
+  {
+    id: text("id").primaryKey(),
+    bundleId: text("bundle_id").notNull(),
+    appName: text("app_name").notNull(),
+    windowTitle: text("window_title"),
+    title: text("title").notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }).notNull(),
+    endReason: text("end_reason", {
+      enum: ["app-switch", "lock", "suspend", "idle", "out-of-scope", "paused", "stopped"],
+    }).notNull(),
+    keyframeCount: integer("keyframe_count").notNull().default(0),
+    textLines: text("text_lines", { mode: "json" }).$type<string[]>().notNull().default([]),
+    textBlocks: text("text_blocks", { mode: "json" }).$type<string[]>(),
+    summaryStatus: text("summary_status", {
+      enum: ["pending", "processing", "ready", "waiting", "failed"],
+    }).notNull().default("pending"),
+    summary: text("summary"),
+    summaryKeyPoints: text("summary_key_points", { mode: "json" }).$type<string[]>().notNull().default([]),
+    summaryCompletedAt: integer("summary_completed_at", { mode: "timestamp_ms" }),
+    userEdited: integer("user_edited", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("screen_intervals_range_idx").on(table.startedAt, table.endedAt),
+    index("screen_intervals_app_idx").on(table.bundleId, table.startedAt),
+    index("screen_intervals_summary_idx").on(table.summaryStatus, table.updatedAt),
+  ],
+);
+
+export const screenKeyframes = sqliteTable(
+  "screen_keyframes",
+  {
+    id: text("id").primaryKey(),
+    intervalId: text("interval_id").notNull().references(() => screenIntervals.id, { onDelete: "cascade" }),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    imagePath: text("image_path").notNull(),
+    imageBytes: integer("image_bytes").notNull().default(0),
+    perceptualHash: text("perceptual_hash"),
+    width: integer("width"),
+    height: integer("height"),
+    lineCount: integer("line_count").notNull().default(0),
+    elapsedMs: real("elapsed_ms"),
+    materialHash: text("material_hash"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("screen_keyframes_interval_idx").on(table.intervalId, table.capturedAt),
+    index("screen_keyframes_material_idx").on(table.materialHash),
+  ],
+);
+
 export const diarySchedules = sqliteTable("diary_schedules", {
   ownerId: text("owner_id").primaryKey().default("local-user"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
@@ -2610,7 +2672,7 @@ export const ingestEvents = sqliteTable(
     /** ing-<uuid12> */
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
+      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
     }).notNull(),
     sourceId: text("source_id").notNull(),
     sourceVersion: integer("source_version").notNull(),
@@ -2731,10 +2793,86 @@ export interface LocalAgentDispatchMaterialRecord {
   sourceDispatchId: string | null;
 }
 
-export const localAgentDispatches = sqliteTable(
-  "local_agent_dispatches",
+/** slides 风格会话（无模版风格管线的跨轮次状态）。 */
+export const slidesStyleSessions = sqliteTable(
+  "slides_style_sessions",
   {
     id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id"),
+    instruction: text("instruction").notNull().default(""),
+    /** 用户累积反馈（「不要太蓝」等），逐条进入下轮生图提示词。 */
+    feedback: text("feedback", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** 候选纵览图（contentHash 寻址回源 /v1/materials/:hash）。 */
+    overviewImages: text("overview_images", { mode: "json" })
+      .$type<Array<{ contentHash: string; generation: number }>>()
+      .notNull()
+      .default([]),
+    selectedImageHash: text("selected_image_hash"),
+    styleParams: text("style_params", { mode: "json" }).$type<unknown>(),
+    demoImageHash: text("demo_image_hash"),
+    stage: text("stage", { enum: ["images_ready", "extracting", "card_ready", "confirmed"] }).notNull(),
+    /** 第几次「不满意」重生成（提示词反馈累积层数）。 */
+    generation: integer("generation").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_style_sessions_room_idx").on(table.roomId, table.stage),
+  ],
+);
+
+/** slides 正文配图会话（配图缺口的确认/过目两等待阶段的跨轮次状态）。 */
+export const slidesPageImageSessions = sqliteTable(
+  "slides_page_image_sessions",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id").notNull(),
+    styleSessionId: text("style_session_id"),
+    stage: text("stage", { enum: ["confirm", "review", "resolved"] }).notNull(),
+    /** 第几轮重生成（单张重掷递增，前端凭它重开过目卡）。 */
+    generation: integer("generation").notNull().default(1),
+    /** arrange 全量落页方案（等待期间唯一事实来源，resume 不重排）。 */
+    plan: text("plan", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 待配图页：pageIndex 指向 plan.pages 下标；rejected=过目打回（落页时剥图）。 */
+    pages: text("pages", { mode: "json" })
+      .$type<Array<{ pageIndex: number; title: string; imagePrompt: string; contentHash: string | null; rejected?: boolean }>>()
+      .notNull()
+      .default([]),
+    /** 创建时从风格卡固化的调色板（重生成复用，避免跨存储回查）。 */
+    stylePalette: text("style_palette", { mode: "json" })
+      .$type<{ primary?: string; accent?: string; background?: string } | null>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_page_image_sessions_draft_idx").on(table.roomId, table.draftDocumentId),
+  ],
+);
+
+/** 论文格式卡（thesis-format 管线）：一 Room 多卡，同 Room 内 (room_id, source_name) 唯一，重传同名模版即覆盖。 */
+export const thesisFormatCards = sqliteTable(
+  "thesis_format_cards",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    /** validate 后的 ThesisFormatCard 全量 JSON。 */
+    formatCard: text("format_card", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 设为模版的库内文件（parseFromDisk 直传时为空）。 */
+    sourceFileEntryId: text("source_file_entry_id"),
+    sourceName: text("source_name").notNull().default(""),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("thesis_format_cards_room_source_idx").on(table.roomId, table.sourceName),
+  ],
+);
+
+export const localAgentDispatches = sqliteTable(
+  "local_agent_dispatches",
+  {    id: text("id").primaryKey(),
     sessionId: text("session_id")
       .notNull()
       .references(() => agentSessions.id, { onDelete: "cascade" }),
@@ -2936,3 +3074,57 @@ export const writingStyleUserContent = sqliteTable("writing_style_user_content",
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * 统一搜索索引（PRD 0.2.0 §2.5）：每类内容一行，itemType+refId 即去重身份。
+ * 元信息先行（status=meta_only），正文解析后经队列写入 FTS（status=indexed）。
+ * FTS5 虚拟表 search_index_fts 由应用层维护，rowid 对齐本表 id 的 INTEGER 行号。
+ */
+export const searchIndex = sqliteTable(
+  "search_index",
+  {
+    id: text("id").primaryKey(),
+    itemType: text("item_type", {
+      enum: ["file", "message", "room", "document", "export"],
+    }).notNull(),
+    refId: text("ref_id").notNull(),
+    title: text("title").notNull(),
+    bodyPreview: text("body_preview").notNull().default(""),
+    sourceKind: text("source_kind"),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }),
+    ingestedAt: integer("ingested_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    timeBasis: text("time_basis", { enum: ["occurred", "ingested"] }).notNull().default("ingested"),
+    fileVersionId: text("file_version_id"),
+    versionLabel: text("version_label"),
+    /** itemType=message 时存所属会话 id（结果跳转用）；其余为 null。 */
+    sessionId: text("session_id"),
+    status: text("status", {
+      enum: ["meta_only", "indexed", "failed"],
+    })
+      .notNull()
+      .default("meta_only"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("search_index_item_ref_idx").on(table.itemType, table.refId),
+    index("search_index_status_idx").on(table.status),
+    index("search_index_item_type_idx").on(table.itemType),
+  ],
+);
+
+/** 搜索索引与 Room 的多对多关联（筛选维度独立成表，改名/移出不触碰 FTS token）。 */
+export const searchIndexRooms = sqliteTable(
+  "search_index_rooms",
+  {
+    indexId: text("index_id").notNull(),
+    roomId: text("room_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.indexId, table.roomId] }),
+    index("search_index_rooms_room_idx").on(table.roomId),
+  ],
+);

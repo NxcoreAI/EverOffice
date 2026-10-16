@@ -79,6 +79,24 @@ describe('collectImportCandidates', () => {
     ])
   })
 
+  it('collects image files by default (heic included on darwin)', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-images-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'photo.png'), 'png')
+    await writeFile(join(directory, 'shot.bmp'), 'bmp')
+    await writeFile(join(directory, 'camera.heic'), 'heic')
+
+    const plan = await collectImportPlan([directory])
+    const filenames = plan.candidates.map((candidate) => candidate.filename)
+    expect(filenames).toContain('photo.png')
+    expect(filenames).toContain('shot.bmp')
+    if (process.platform === 'darwin') {
+      expect(filenames).toContain('camera.heic')
+    } else {
+      expect(plan.unsupported.map((candidate) => candidate.filename)).toContain('camera.heic')
+    }
+  })
+
   it('counts supported non-Office/PDF files as high risk', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-import-risk-'))
     temporaryDirectories.push(directory)
@@ -326,87 +344,6 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
     expect(coordinator.list()).toEqual([])
     expect(uploadedNames).toEqual(['proposal.pdf', 'proposal.pdf'])
   })
-
-  it('routes images to the photo asset store while documents keep the import pipeline', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-photo-'))
-    temporaryDirectories.push(directory)
-    await writeFile(join(directory, 'pic.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
-    await writeFile(join(directory, 'notes.md'), '# notes')
-
-    const photoBodies: Record<string, unknown>[] = []
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input)
-      if (url.endsWith('/v1/files/capabilities')) {
-        return new Response(JSON.stringify({ items: [{ extension: '.md', manualImport: true }] }), { headers: { 'Content-Type': 'application/json' } })
-      }
-      if (url.endsWith('/v1/files')) {
-        photoBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
-        return new Response(JSON.stringify({
-          id: 'file-photo-1', contentHash: 'b'.repeat(64), deduped: false, bytes: 4, originalName: 'pic.png',
-        }), { headers: { 'Content-Type': 'application/json' } })
-      }
-      const metadata = JSON.parse(String((init?.body as FormData).get('metadata'))) as Record<string, unknown>
-      expect(metadata).toMatchObject({ sourceKind: 'manual-upload', originalName: 'notes.md' })
-      return new Response(JSON.stringify({
-        fileEntryId: 'file-entry-1', fileVersionId: 'version-1', versionDeduped: false, jobId: 'job-1',
-      }), { headers: { 'Content-Type': 'application/json' } })
-    })
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
-
-    const outcomes = await new FilesGatewayBridge(supervisor).importPathsOnce([directory])
-    expect(outcomes).toEqual([
-      expect.objectContaining({ filename: 'notes.md', fileId: 'file-entry-1', fileVersionId: 'version-1', error: null }),
-      expect.objectContaining({
-        filename: 'pic.png', fileId: 'file-photo-1', dataType: 'photo',
-        fileVersionId: null, skippedReason: null, error: null,
-      }),
-    ])
-    expect(photoBodies).toEqual([
-      expect.objectContaining({
-        filename: 'pic.png', assetKind: 'photo', originChannel: 'manual-import',
-        mime: 'image/png', visibility: 'private',
-      }),
-    ])
-  })
-
-  it('does not route image batches into high-risk review', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-photo-batch-'))
-    temporaryDirectories.push(directory)
-    await Promise.all(Array.from({ length: 101 }, (_, index) =>
-      writeFile(join(directory, `pic-${index}.png`), 'png')))
-
-    const enqueueManual = vi.fn()
-    const highRiskImports = {
-      enqueueManual,
-      enqueueAuto: vi.fn(),
-      setManualResolver: vi.fn(),
-      setAutoResolver: vi.fn(),
-      discardAutoSource: vi.fn(),
-      isSkippedManualPath: () => false,
-    } satisfies HighRiskImportQueue
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = String(input)
-      if (url.endsWith('/v1/files/capabilities')) {
-        return new Response(JSON.stringify({ items: [] }), { headers: { 'Content-Type': 'application/json' } })
-      }
-      if (url.endsWith('/v1/files')) {
-        return new Response(JSON.stringify({
-          id: 'file-photo', contentHash: 'c'.repeat(64), deduped: false, bytes: 3, originalName: 'pic',
-        }), { headers: { 'Content-Type': 'application/json' } })
-      }
-      throw new Error('unexpected document import for an image batch')
-    })
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
-
-    const outcomes = await new FilesGatewayBridge(supervisor, highRiskImports).importPathsOnce([directory])
-    expect(outcomes).toHaveLength(101)
-    expect(outcomes.every((outcome) => outcome.fileId === 'file-photo' && outcome.skippedReason === null)).toBe(true)
-    expect(enqueueManual).not.toHaveBeenCalled()
-  })
 })
 
 describe('FilesGatewayBridge.readMarkdown', () => {
@@ -453,5 +390,40 @@ describe('FilesGatewayBridge.createClipCapture', () => {
       canonicalUrl: 'https://example.com/article', capturedAt: '2026-08-24T12:00:00.000Z', captureId: 'capture-1',
       extractionMode: 'article', extractorVersion: 'test-1', assets: [],
     })).resolves.toMatchObject({ fileEntryId: 'file-1', fileVersionId: 'version-1' })
+  })
+})
+
+describe('FilesGatewayBridge.importAgentAttachments', () => {
+  it('uploads chat image attachments then registers them with the visual library', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attach-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'pic.png'), 'png-bytes')
+    const calls: string[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === 'http://gateway.test/v1/files') {
+        calls.push('upload')
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        expect(body).toMatchObject({ filename: 'pic.png', assetKind: 'photo', originChannel: 'agent-composer' })
+        return new Response(JSON.stringify({ id: 'upl-1', bytes: 9, originalName: 'pic.png' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url === 'http://gateway.test/v1/perception/visual-observations') {
+        calls.push('register')
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        expect(body).toMatchObject({ fileId: 'upl-1', kind: 'photo' })
+        return new Response(JSON.stringify({ observationId: 'obs-1' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
+
+    const attachments = await new FilesGatewayBridge(supervisor).importAgentAttachments([join(directory, 'pic.png')])
+
+    expect(attachments).toEqual([expect.objectContaining({ fileId: 'upl-1', kind: 'image', mimeType: 'image/png' })])
+    expect(calls).toEqual(['upload', 'register'])
   })
 })

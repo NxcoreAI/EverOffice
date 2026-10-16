@@ -39,6 +39,7 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import { ScreenMemorySettingsSection } from '../settings/ScreenMemorySettingsSection'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -191,7 +192,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
     refresh()
     const removeListener = window.nxcore.aiRelay.onEvent((event) => {
-      if (event.type === 'quota-exhausted' || event.type === 'fallback-restored') refresh()
+      if (event.type === 'quota-exhausted') refresh()
     })
     return () => { cancelled = true; removeListener() }
   }, [account?.authenticated, account?.user?.id])
@@ -335,6 +336,9 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       if (result.applied) {
         redeemCode.markDone('applied')
         await refreshAccountStatus()
+        // 兑换即恢复额度：立即触发一次续签回灌槽位（relayReady 内含
+        // renewNow），不等 keeper 的 20min 周期；失败静默，周期兜底。
+        void window.nxcore.runtimeConfig?.relayReady().catch(() => undefined)
       } else {
         redeemCode.markDone('already-pro')
       }
@@ -922,6 +926,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         </div>
       </section>
 
+      <ScreenMemorySettingsSection />
+
       <section id="settings-capture" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-capture-settings-title">
         <header>
           <span><Camera aria-hidden="true" /></span>
@@ -944,6 +950,20 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
+        {screenCaptureStatus?.permission !== undefined && screenCaptureStatus.permission !== 'granted' ? (
+          <div className="reality-setting-row">
+            <div>
+              <strong>{t('surface:screenMemory.permission')}</strong>
+              <span className="settings-value-text">{t('surface:screenMemory.permissionMissing')}</span>
+              <span className="screen-memory-permission-actions">
+                <button type="button" onClick={() => void window.nxcore?.screenMemory.openPermissionSettings()}>
+                  {t('surface:screenMemory.openPermission')}
+                </button>
+                <span className="settings-value-text">{t('surface:screenMemory.permissionRestartHint')}</span>
+              </span>
+            </div>
+          </div>
+        ) : null}
         <div className="reality-setting-row">
           <div><strong>{t('surface:settings.visualUnderstanding')}</strong></div>
           <button

@@ -25,6 +25,8 @@ export interface AdapterInstallOptions {
   adaptersRoot: string
   /** 内置 npm-cli.js 绝对路径；null 表示打包缺失（结果带 npm_cli_missing）。 */
   npmCliPath: string | null
+  /** 打包内置适配器目录（已装判定能看到内置包，避免无谓安装）。 */
+  bundledRoot?: string
   env?: NodeJS.ProcessEnv
   home?: string
   platform?: NodeJS.Platform
@@ -37,6 +39,8 @@ export interface AdapterInstallOptions {
 
 export interface AdapterSpawnOptions {
   adaptersRoot: string
+  /** 打包内置适配器目录；私有安装未命中时的兜底。 */
+  bundledRoot?: string
   env?: NodeJS.ProcessEnv
   home?: string
   platform?: NodeJS.Platform
@@ -105,7 +109,14 @@ export async function installLocalAgentAcpAdapter(
   const platform = options.platform ?? process.platform
   const probeTimeoutMs = options.probeTimeoutMs ?? 2_000
   const adaptersRoot = options.adaptersRoot
-  const probeOptions = { env, home, platform, probeTimeoutMs, adaptersRoot }
+  const probeOptions = {
+    env,
+    home,
+    platform,
+    probeTimeoutMs,
+    adaptersRoot,
+    ...(options.bundledRoot !== undefined ? { bundledRoot: options.bundledRoot } : {}),
+  }
   const provider = installation.provider
   if (provider !== 'claude' && provider !== 'codex') {
     return {
@@ -186,8 +197,9 @@ export async function installLocalAgentAcpAdapter(
 /**
  * 为派发 target 解析适配器的绝对路径 spawn 覆盖，gateway 拿到后免 PATH 解析：
  * 1. 用户自己装的适配器（登录 shell 合并 PATH 命中，含旧 bin 名）→ 直接绝对路径；
- * 2. app 私有安装 → Electron 运行时承载入口（ELECTRON_RUN_AS_NODE + entry.js）。
- * 两种情况都附上合并后的 PATH，适配器内部再拉起 claude/codex CLI 时同样免瘦 PATH 问题。
+ * 2. app 私有安装 → Electron 运行时承载入口（ELECTRON_RUN_AS_NODE + entry.js）；
+ * 3. 打包内置适配器（bundledRoot）→ 同 2 的承载方式，作为开箱保底。
+ * 各级都附上合并后的 PATH，适配器内部再拉起 claude/codex CLI 时同样免瘦 PATH 问题。
  */
 export async function resolveLocalAcpAdapterSpawn(
   installation: Pick<LocalAgentInstallation, 'provider' | 'executablePath' | 'callable'>,
@@ -208,8 +220,13 @@ export async function resolveLocalAcpAdapterSpawn(
       return { command: absolute, args: [], env: { PATH: searchEnv.PATH ?? '' } }
     }
   }
-  const privateInstall = await findPrivateAdapterInstall(adaptersRoot, provider)
-  if (privateInstall && isSafeLocalAgentPath(privateInstall.entry)) {
+  const installRoots = [
+    adaptersRoot,
+    ...(options.bundledRoot !== undefined ? [options.bundledRoot] : []),
+  ]
+  for (const installRoot of installRoots) {
+    const install = await findPrivateAdapterInstall(installRoot, provider)
+    if (!install || !isSafeLocalAgentPath(install.entry)) continue
     // 仅 darwin：LaunchServices 幽灵应用问题；win32 下 executablePath 可能是
     // npm 的 .cmd/.bat 垫片，Node spawn 直接拉会 EINVAL，不注入。
     const darwin = platform === 'darwin'
@@ -223,7 +240,7 @@ export async function resolveLocalAcpAdapterSpawn(
       : null
     return {
       command: options.execPath ?? process.execPath,
-      args: [privateInstall.entry],
+      args: [install.entry],
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         PATH: searchEnv.PATH ?? '',

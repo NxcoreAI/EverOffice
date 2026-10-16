@@ -52,11 +52,6 @@
         "additionalProperties": false
       },
       "description": "arrange only: pages parsed back from the user-confirmed draft document (their edits are authoritative)."
-    },
-    "style": {
-      "type": "string",
-      "maxLength": 40,
-      "description": "arrange only: requested style id, passed through to the builder."
     }
   },
   "required": ["instruction", "roomId"],

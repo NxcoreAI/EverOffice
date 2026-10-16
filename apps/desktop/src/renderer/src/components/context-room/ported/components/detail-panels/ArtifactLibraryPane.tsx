@@ -1,11 +1,12 @@
 import * as Popover from '@radix-ui/react-popover';
-import { FileText, FileSpreadsheet, FileUp, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileUp, FolderOpen, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
 import { getEmbeddedOffice } from '../../embeddedOffice';
+import { showToast } from '@/state/toast';
 import type {
   ContextRoomCloudDocResource,
   ContextRoomKnowledgeFileResource,
@@ -16,6 +17,7 @@ import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/m
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
 import { FilterSelect } from '../shared';
+import { ThesisReformatControl } from './ThesisReformatControl';
 
 type ArtifactFilter = 'all' | 'clouddoc' | 'office';
 type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
@@ -80,6 +82,10 @@ export function ArtifactLibraryPane({
   >(null);
   const [deletingArtifact, setDeletingArtifact] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // 论文排版：docx 产物行的「排版」打开格式卡选择面板（有卡选卡、无卡引导上传）；
+  // reformattingFileId 为全局装订锁（同屏同时只跑一个装订任务）。
+  const [reformattingFileId, setReformattingFileId] = useState<string | null>(null);
 
   const confirmArtifactDelete = async () => {
     if (!pendingDelete) return;
@@ -363,6 +369,36 @@ export function ArtifactLibraryPane({
               </button>
               {office || backendDocument ? (
                 <span className="context-room-artifact-acts">
+                  {office && /\.docx$/i.test(office.originalName) ? (
+                    <ThesisReformatControl
+                      room={room}
+                      fileId={office.fileId}
+                      fileName={office.originalName}
+                      busy={reformattingFileId !== null}
+                      onBusyChange={(isBusy) => setReformattingFileId(isBusy ? office.fileId : null)}
+                    />
+                  ) : null}
+                  {office ? (
+                    <button
+                      type="button"
+                      className="context-room-artifact-reveal"
+                      aria-label={t('contextRoom:artifactLibrary.revealInFolder')}
+                      title={t('contextRoom:artifactLibrary.revealInFolder')}
+                      onClick={async () => {
+                        try {
+                          await window.nxcore?.files?.exportReveal(office.fileId, office.originalName)
+                        } catch (error) {
+                          showToast({
+                            title: t('contextRoom:artifactLibrary.revealFailed'),
+                            message: error instanceof Error ? error.message : String(error),
+                            variant: 'error',
+                          })
+                        }
+                      }}
+                    >
+                      <FolderOpen aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <Popover.Root
                     open={pendingDelete?.key === key}
                     onOpenChange={(open) => {

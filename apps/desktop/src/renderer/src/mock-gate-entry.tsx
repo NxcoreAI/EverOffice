@@ -2,7 +2,8 @@
 // （配合 /@mock/nxcore.js；?delay=ms 控制账号态延迟，?authed=1 模拟登录有效，
 // ?ready=0 模拟 gateway 重启后槽位未重灌——primaryConfigured=false 的竞态，
 // ?blocked=1 模拟凭据在但网络验证失败（authenticated:false + authBlocked），
-// ?admission=1 模拟启动期设备额度挑战（authenticated:false + admission））。
+// ?admission=1 模拟启动期设备额度挑战（authenticated:false + admission），
+// ?quota=1 模拟已登录 + SaaS 权威额度耗尽——降级放行直接进应用（degraded））。
 import { createRoot } from 'react-dom/client'
 
 import { AccountProvider } from './state/AccountContext'
@@ -13,7 +14,8 @@ import './styles.css'
 
 const params = new URLSearchParams(window.location.search)
 const delayMs = Number(params.get('delay') ?? '4000')
-const authed = params.get('authed') === '1'
+const quota = params.get('quota') === '1'
+const authed = params.get('authed') === '1' || quota
 const ready = params.has('ready') ? params.get('ready') === '1' : authed
 const blocked = params.get('blocked') === '1'
 // ?getfail=N：前 N 次 runtimeConfig.get() 直接 reject，模拟 gateway 重启换
@@ -22,6 +24,7 @@ let getFailRemaining = Number(params.get('getfail') ?? '0')
 
 const state = {
   authed,
+  quota,
   admission: params.get('admission') === '1' ? {
     reason: 'device_limit',
     maxDevices: 3,
@@ -34,12 +37,26 @@ const state = {
   } : null,
 }
 
+const mockSnapshot = (configured: boolean) => ({
+  config: {},
+  userConfig: null,
+  source: 'default',
+  selectedSource: 'default',
+  availableSources: ['default'],
+  configVersion: 1,
+  updatedAt: new Date().toISOString(),
+  primaryConfigured: configured,
+  webSearchCredential: { configured: false, source: 'none' },
+})
+
 const accountStatus = () => ({
   authenticated: state.authed,
   apiBaseUrl: 'https://saas.example.com',
   ...(state.authed ? {} : blocked ? { authBlocked: 'network' } : {}),
   ...(state.authed || !state.admission ? {} : { admission: state.admission }),
 })
+
+const relayListeners = new Set<(event: { type: string }) => void>()
 
 const original = window.nxcore as unknown as Record<string, unknown>
 window.nxcore = new Proxy(original, {
@@ -81,18 +98,18 @@ window.nxcore = new Proxy(original, {
             getFailRemaining -= 1
             throw new Error('connect ECONNREFUSED 127.0.0.1:64233')
           }
-          return {
-            config: {},
-            source: 'default',
-            selectedSource: 'default',
-            availableSources: ['default'],
-            configVersion: 1,
-            updatedAt: new Date().toISOString(),
-            primaryConfigured: ready || state.authed,
-            webSearchCredential: { configured: false, source: 'none' },
-          }
+          return mockSnapshot(state.quota ? false : ready || state.authed)
         },
-        relayReady: async () => null,
+        relayReady: async () => (state.quota ? null : mockSnapshot(true)),
+      }
+    }
+    if (prop === 'aiRelay') {
+      return {
+        verdict: async () => ({ quotaExhausted: state.quota }),
+        onEvent: (listener: (event: { type: string }) => void) => {
+          relayListeners.add(listener)
+          return () => { relayListeners.delete(listener) }
+        },
       }
     }
     return target[prop as string]

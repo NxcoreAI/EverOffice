@@ -16,9 +16,17 @@ import type {
   MemoryOnboardingInput,
   MemoryRoomMemoriesPageDto,
 } from '../shared/memory'
+import type {
+  SearchItemType,
+  SearchMessageContextDto,
+  SearchPageDto,
+  SearchRequestDto,
+  SearchScopeDto,
+} from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
+import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -361,7 +369,7 @@ const api: NxcoreDesktopApi = {
   },
   externalDocuments: {
     importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
-    importList: (provider, connectionName, cachedOnly) => invoke('external-documents:import-list', provider, connectionName, cachedOnly),
+    importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
     importExistingInRoom: (provider, roomId, remoteDocumentIds) => invoke('external-documents:import-existing-in-room', provider, roomId, remoteDocumentIds),
     importBatch: (input) => invoke('external-documents:import-batch', input),
     importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
@@ -408,6 +416,22 @@ const api: NxcoreDesktopApi = {
     retryPerceptionNode: (id) => invoke('perception:retry', id),
     deletePerceptionNode: (id, deleteAssets) => invoke('perception:delete', id, deleteAssets),
   },
+  screenMemory: {
+    status: () => invoke('screen-memory:status'),
+    settings: () => invoke('screen-memory:settings'),
+    updateSettings: (patch) => invoke('screen-memory:update-settings', patch),
+    search: (query) => invokeQuietly('screen-memory:search', query),
+    listIntervals: (query) => invokeQuietly('screen-memory:intervals', query),
+    getInterval: (id) => invokeQuietly('screen-memory:interval', id),
+    stats: () => invokeQuietly('screen-memory:stats'),
+    correctInterval: (input) => invoke('screen-memory:correct', input),
+    storage: () => invokeQuietly('screen-memory:storage'),
+    frontmost: () => invoke('screen-memory:frontmost'),
+    openPermissionSettings: () => invoke('screen-memory:open-permission-settings'),
+    registerMaterial: (intervalId) => invoke('screen-memory:register-material', intervalId),
+    backfillEstimate: (input) => invoke('screen-memory:backfill-estimate', input),
+    backfillRun: (input) => invoke('screen-memory:backfill-run', input),
+  },
   diary: {
     settings: () => invoke('diary:settings'),
     updateSettings: (input) => invoke('diary:update-settings', input),
@@ -439,6 +463,11 @@ const api: NxcoreDesktopApi = {
     update: (id, input) => invoke('agent-scheduler:update', id, input),
     remove: (id) => invoke('agent-scheduler:remove', id),
     runNow: (id) => invoke('agent-scheduler:run-now', id),
+  },
+  slides: {
+    /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
+    pageImagesStatus: (documentId: string) =>
+      invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
   },
   contextRooms: {
     list: () => invokeQuietly('context-rooms:list'),
@@ -509,17 +538,18 @@ const api: NxcoreDesktopApi = {
   },
   aiRelay: {
     status: () => invokeQuietly('ai-relay:status'),
+    verdict: () => invokeQuietly('ai-relay:verdict'),
     onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
       const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
         const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
-        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored') return
+        if (eventType !== 'quota-exhausted' && eventType !== 'session-activated') return
         listener({ type: eventType })
       }
-      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
         ipcRenderer.on(channel, handle)
       }
       return () => {
-        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
           ipcRenderer.removeListener(channel, handle)
         }
       }
@@ -589,6 +619,14 @@ const api: NxcoreDesktopApi = {
     replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),
     renameTag: (tagId, label) => invoke('transcription:rename-tag', tagId, label),
     mergeTag: (targetTagId, sourceTagId) => invoke('transcription:merge-tag', targetTagId, sourceTagId),
+  },
+  search: {
+    invoke: (request: SearchRequestDto): Promise<SearchPageDto> => invoke('search:invoke', request),
+    status: (): Promise<SearchScopeDto> => invoke('search:status'),
+    prioritize: (itemType: SearchItemType, refId: string): Promise<{ ok: boolean }> =>
+      invoke('search:prioritize', itemType, refId),
+    messageContext: (messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto> =>
+      invoke('search:message-context', messageId, before, after),
   },
   memory: {
     overview: () => invoke('memory:overview'),
@@ -796,7 +834,6 @@ const api: NxcoreDesktopApi = {
       invoke('sources:disconnect', id, deleteLocalData),
   },
   obsidian: {
-    pickAndMount: () => invoke('obsidian:pick-and-mount'),
     discover: () => invoke('obsidian:discover'),
     pickCandidate: () => invoke('obsidian:pick-candidate'),
     importCandidate: (candidateId, target) => invoke('obsidian:import-candidate', candidateId, target),
@@ -886,7 +923,6 @@ const api: NxcoreDesktopApi = {
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
     catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
-    listUploads: (limit?: number) => invoke('files:list-uploads', limit),
     listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
     setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
     getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
@@ -900,6 +936,8 @@ const api: NxcoreDesktopApi = {
       invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
+    exportReveal: (fileId: string, originalName: string) =>
+      invoke('files:export-reveal', fileId, originalName),
     openOriginal: (
       fileId: string,
       originalName?: string,
@@ -934,6 +972,28 @@ const api: NxcoreDesktopApi = {
       const handleChanged = () => listener()
       ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
       return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
+    },
+  },
+  thesisFormat: {
+    listCards: (roomId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>> => invoke('thesis-format:cards:list', roomId),
+    setFromLibrary: (roomId: string, fileEntryId: string) =>
+      invoke('thesis-format:parse:library', roomId, fileEntryId),
+    pickAndSet: (roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> =>
+      invoke('thesis-format:parse:pick', roomId),
+    reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
+      invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
+    removeCard: (roomId: string, cardId: string) =>
+      invoke('thesis-format:cards:remove', roomId, cardId),
+    onCardChanged: (listener: () => void) => {
+      const handler = () => listener()
+      ipcRenderer.on('thesis-format:card-changed', handler)
+      return () => ipcRenderer.removeListener('thesis-format:card-changed', handler)
     },
   },
   ingest: {

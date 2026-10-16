@@ -22,6 +22,8 @@ import { scheduleRoomMarkdownSweep } from '../knowledgeMarkdownImport'
 import { createEmptyContextRoom } from './contextRoomFactory'
 import { mergeRoomMemoryItems } from './attributedRoomMemories'
 import { ROOM_MEMORY_CHANGED_EVENT } from '../roomMemoryChange'
+import { showToast } from '@/state/toast'
+import type { KnowledgeRoomDto } from '../../../../../shared/knowledge'
 import type { MemoryRoomMemoryItemDto } from '../../../../../shared/memory'
 
 const AllRoomsView = lazy(() =>
@@ -135,22 +137,25 @@ export function PortedContextRoom({
     setState((current) => {
       const dedicatedBindings = bindings.filter((vault) => vault.mountMode === 'dedicated')
       const byRoomId = new Map(dedicatedBindings.map((vault) => [vault.roomId, vault]))
+      const sourceTypeOf = (binding: { sourceType: 'obsidian-vault' | 'local-directory' }) =>
+        binding.sourceType === 'local-directory' ? '本地目录' : 'Obsidian Vault'
       const existingIds = new Set(current.rooms.map((room) => room.id))
       const rooms = current.rooms.map((room) => {
         const binding = byRoomId.get(room.id)
         return binding && (room.origin !== 'source' || room.title !== binding.name)
-          ? { ...room, title: binding.name, kind: '项目' as const, origin: 'source' as const, recentSource: { type: 'Obsidian Vault', name: binding.name } }
+          ? { ...room, title: binding.name, kind: '项目' as const, origin: 'source' as const, recentSource: { type: sourceTypeOf(binding), name: binding.name } }
           : room
       })
       for (const binding of dedicatedBindings) {
         if (existingIds.has(binding.roomId)) continue
+        const isVault = binding.sourceType === 'obsidian-vault'
         rooms.unshift(createEmptyContextRoom({
           id: binding.roomId, title: binding.name, kind: '项目', origin: 'source',
-          background: '持续挂载的 Obsidian Vault，源文件始终保留在原目录。',
-          goal: '在 EverRoom 中浏览、编辑并让 Agent 理解 Vault 内容。',
+          background: isVault ? '持续挂载的 Obsidian Vault，源文件始终保留在原目录。' : '挂载的本地目录，源文件始终保留在原位置。',
+          goal: '在 EverRoom 中浏览、编辑并让 Agent 理解目录内容。',
           briefStatus: binding.status === 'connected' ? '来源已连接' : '来源离线',
         }))
-        rooms[0] = { ...rooms[0]!, recentSource: { type: 'Obsidian Vault', name: binding.name } }
+        rooms[0] = { ...rooms[0]!, recentSource: { type: sourceTypeOf(binding), name: binding.name } }
       }
       return { ...current, rooms }
     })
@@ -329,10 +334,47 @@ export function PortedContextRoom({
     })
   }
 
+  const roomsRef = useRef(state.rooms)
+  const deletedRoomsRef = useRef(state.deletedRooms)
+  roomsRef.current = state.rooms
+  deletedRoomsRef.current = state.deletedRooms
+
+  // 跳转目标可能存在于 knowledge 后端而本地快照滞后：找不到时按后端名单补一次合并，
+  // 仍无才提示——已删除的 Room 不再静默吞掉点击。
   const openRoom = (roomId: string) => {
-    const room = state.rooms.find((item) => item.id === roomId)
-    if (!room) return
-    onOpenRoomTab({ id: room.id, title: room.title })
+    const room = roomsRef.current.find((item) => item.id === roomId)
+    if (room) {
+      onOpenRoomTab({ id: room.id, title: room.title })
+      return
+    }
+    void (async () => {
+      let reloaded: ContextRoomRecord | undefined
+      let remoteItems: KnowledgeRoomDto[] | undefined
+      try {
+        const remote = await window.nxcore?.knowledge?.listRooms()
+        remoteItems = remote?.items
+      } catch {
+        remoteItems = undefined
+      }
+      if (remoteItems) {
+        reloaded = mergeKnowledgeRooms(roomsRef.current, deletedRoomsRef.current, remoteItems)
+          .find((item) => item.id === roomId)
+        if (reloaded) {
+          setState((current) => {
+            const rooms = mergeKnowledgeRooms(current.rooms, current.deletedRooms, remoteItems!)
+            return rooms === current.rooms ? current : { ...current, rooms }
+          })
+        }
+      }
+      if (reloaded) {
+        onOpenRoomTab({ id: reloaded.id, title: reloaded.title })
+        return
+      }
+      showToast({
+        title: t('contextRoom:relations.openRoomFailed'),
+        message: t('contextRoom:relations.openRoomMissing'),
+      })
+    })()
   }
 
   const renameRoom = (roomId: string, name: string) => setState((current) => ({
@@ -419,11 +461,9 @@ export function PortedContextRoom({
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
-      onMountObsidian={async () => {
-        const binding = await window.nxcore?.obsidian.pickAndMount()
-        if (!binding) return
+      onRoomMounted={async (room) => {
         await refreshVaults()
-        onOpenRoomTab({ id: binding.roomId, title: binding.name })
+        onOpenRoomTab({ id: room.id, title: room.title })
       }}
       onRenameRoom={renameRoom}
       onDeleteRoom={deleteRoom}

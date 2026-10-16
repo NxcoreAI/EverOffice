@@ -230,6 +230,33 @@ export class OfficePreviewRegistry {
     }
   }
 
+  /**
+   * 渲染一个已打开 slides 产物的指定页为 1x PNG（视觉复检用）。fileId 解析
+   * 与 editSlidesArtifact 同规则（active/显式 id + 自动打开等待窗口）；只读
+   * 实例同样可渲染（复检不改内容）。
+   */
+  async renderSlidesPagePng(
+    fileId: string,
+    slideIndex: number,
+  ): Promise<{ ok: true; pngBase64: string } | { ok: false; error: string }> {
+    const resolvedId = fileId === 'active' ? this.resolveActiveSlides() : fileId
+    let instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
+    if (!instance && fileId !== 'active') {
+      instance = await this.waitForInstance(fileId)
+    }
+    const wcId = instance?.view.webContentsId
+    if (!instance || !this.runtime || typeof wcId !== 'number') {
+      return { ok: false, error: 'no open slides instance for this fileId' }
+    }
+    if (instance.descriptor.kind !== 'slides') {
+      return { ok: false, error: 'the open instance is not a slides deck' }
+    }
+    const rendered = await this.runtime.slides.renderAgentDeckPagePng(wcId, slideIndex)
+    return 'pngBase64' in rendered
+      ? { ok: true, pngBase64: rendered.pngBase64 }
+      : { ok: false, error: rendered.error }
+  }
+
   private async waitForInstance(
     fileId: string,
     timeoutMs = this.autoOpenWaitMs,

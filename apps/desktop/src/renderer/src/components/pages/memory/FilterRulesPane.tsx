@@ -11,7 +11,7 @@ import { formatDate, useAsyncData } from './useMemoryData'
  * 用户偏好段可编辑（保存 = PUT 只重写该段）；系统洞察段只读展示
  * （洞察 job 每小时基于记忆/wiki 自动重写，手改会被覆盖）。
  */
-export function FilterRulesPane() {
+export function FilterRulesPane({ refreshTick }: { refreshTick?: number } = {}) {
   const { locale, t } = useLocale()
   const { data, failure, loading, refresh } = useAsyncData<IngestFilterRulesDto>(
     () => window.nxcore!.ingest.getFilterRules(),
@@ -24,6 +24,12 @@ export function FilterRulesPane() {
   useEffect(() => {
     if (data && !editing) setDraft(data.preference)
   }, [data, editing])
+
+  // 顶部全局刷新：重读过滤规则。
+  useEffect(() => {
+    if (refreshTick) void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTick])
 
   const save = async () => {
     const content = draft.trim()

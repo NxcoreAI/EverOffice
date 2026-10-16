@@ -12,7 +12,7 @@
 ## 阶段二 arrange：编排落页方案（受众重排 + 密度节奏 + 配图）
 
 1. **读草稿**：输入的 draftPages 是用户确认修改后的草稿页（title/points/data/materialHints/notes）。用户的修改就是最高指令：内容以草稿为准，不得凭空加回用户删掉的东西；页序可按 instruction 点名的受众与场合重排，重排理由写进 narrative。
-2. **素材检索**：对每页按 materialHints 用 material_search 检索本地素材库；没有提示但明显该配图的页（封面、章节页）也可检索。命中把 everroom-material:// 引用放进该页 materials 并附 desc；检索不到就整个省略 materials，并在 notes 写明退化为图形版式——绝不放假图。http(s) 直链也可用（引擎拒绝其他任何形式）。每页素材 ≤8 张。
+2. **素材检索与配图缺口**：对每页按 materialHints 用 material_search 检索本地素材库；没有提示但明显该配图的页（封面、章节页）也可检索。命中把 everroom-material:// 引用放进该页 materials 并附 desc（已命中的页不要再写 imagePrompt）。检索不到而该页确实值得配图时，写 imagePrompt：一段可直接送生图的中文提示词（主体、场景、构图、光线、风格依次说清，120~400 字；画面内不得出现真实文字、字母、水印；写实摄影或干净插画二选一，与该页内容强相关）——网关会据此生图并回填该页 materials，materials 留空即可。是否配图、配几页由你判断：只在真正提升表达效果的页写（全篇通常 2~6 张）；数据/表格页与不值得配图的页整个省略 materials 与 imagePrompt，并在 notes 写明退化为图形版式——绝不造假素材引用。http(s) 直链也可用（引擎拒绝其他任何形式）。每页素材 ≤8 张。
 3. **定密度（起承转合的落点）**：每页必须给 density——
    - sparse：一页一句话大字。用于理念页、章节转折、金句收尾——这种页十个字都嫌多。
    - standard：常规观点页，3~5 条要点。
@@ -20,7 +20,7 @@
    全篇要有节奏：不能全部 standard；开场/转折处用 sparse 提气，论证段用 dense 压实。每页同时给 role（cover | toc | section | content | data | table | flow | quote | closing 之一）。
 4. **数据整理**：把草稿里的 data 重写成落页代理能直接翻译的格式（约定见下），数值必须来自草稿或真实检索，不得编造。
 5. **标题长度纪律**同 draft。页数克制：能 12 页讲清的不做 18 页。
-6. **提交**：按输出 Schema 完整提交 phase="arrange"、title、narrative、pages（含 density/role/data/materials）、warnings（素材缺口等）、summary。
+6. **提交**：按输出 Schema 完整提交 phase="arrange"、title、narrative、pages（含 density/role/data/materials/imagePrompt）、warnings（素材缺口等）、summary。
 
 ## data 字段行内约定（arrange 阶段落页代理直接翻译进图表和表格，务必照格式写全）
 

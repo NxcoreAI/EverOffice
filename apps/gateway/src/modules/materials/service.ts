@@ -3,6 +3,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { sniffImageMime } from "../../infrastructure/image-mime.js";
+import { contentHashOf, storageRelPath, storeFileBlob } from "../files/storage.js";
 import {
   clipperAssets,
   clipperCaptures,
@@ -14,6 +16,8 @@ import {
   uploadedFiles,
   visualNodes,
   visualObservations,
+  screenIntervals,
+  screenKeyframes,
 } from "../../infrastructure/database/schema.js";
 
 /** 素材检索命中项：ref 即 slides PageSpec image 元素可直接使用的引用。 */
@@ -50,12 +54,32 @@ export class MaterialsService {
       ...this.searchPerception(terms),
       ...this.searchClipper(terms),
       ...this.searchDocumentAssets(terms),
+      ...this.searchScreenIntervals(terms),
     ];
     hits.sort((left, right) => right.rank - left.rank);
     return hits.slice(0, capped);
   }
 
   /** 按内容哈希取图：file_blobs（截图/照片/剪藏）优先，回退 document-artifacts（文档内嵌图）。 */
+  /** 存图片字节进对象库（CAS + file_blobs 行，幂等）：生图产物（风格纵览/演示页）
+   *  不走 file-imports——那条通道的白名单只有文档格式，图片本来就不进文件库，
+   *  素材体系按内容哈希寻址即可。返回 hash 供 everroom-material:// 引用。 */
+  async saveImageBlob(buffer: Buffer, mime: string): Promise<{ contentHash: string }> {
+    if (!mime.startsWith("image/") || buffer.byteLength === 0) {
+      throw new Error("仅接受非空图片数据");
+    }
+    const contentHash = contentHashOf(buffer);
+    await storeFileBlob(this.dataDir, contentHash, buffer);
+    this.db.insert(fileBlobs).values({
+      contentHash,
+      storagePath: storageRelPath(contentHash),
+      byteSize: buffer.byteLength,
+      mime,
+      createdAt: new Date(),
+    }).onConflictDoNothing().run();
+    return { contentHash };
+  }
+
   async readByHash(hash: string): Promise<{ buffer: Buffer; mime: string } | null> {
     if (!/^[a-f0-9]{64}$/.test(hash)) return null;
     const blob = this.db.select({ storagePath: fileBlobs.storagePath, mime: fileBlobs.mime })
@@ -109,6 +133,38 @@ export class MaterialsService {
         desc,
         meta: `${row.kind === "screenshot" ? "截图" : "照片"}${size}`,
         rank: matched * 2 + (row.width && row.width >= 600 ? 1 : 0),
+      });
+    }
+    return hits;
+  }
+
+  /** 屏幕记忆：加入素材库的压缩关键帧（materialHash 非空），用区间标题/摘要/原文检索。 */
+  private searchScreenIntervals(terms: string[]): MaterialHit[] {
+    const rows = this.db.select({
+      hash: screenKeyframes.materialHash,
+      width: screenKeyframes.width,
+      height: screenKeyframes.height,
+      title: screenIntervals.title,
+      summary: screenIntervals.summary,
+      textLines: screenIntervals.textLines,
+      appName: screenIntervals.appName,
+    }).from(screenKeyframes)
+      .innerJoin(screenIntervals, eq(screenKeyframes.intervalId, screenIntervals.id))
+      .where(isNotNull(screenKeyframes.materialHash))
+      .all();
+    const hits: MaterialHit[] = [];
+    for (const row of rows) {
+      const primary = [row.title ?? "", row.summary ?? ""].join(" ");
+      const secondary = [...(row.textLines ?? []).slice(0, 10), row.appName ?? ""].join(" ");
+      const matched = matchTerms(terms, primary, secondary);
+      if (matched === 0) continue;
+      const size = row.width && row.height ? ` ${String(row.width)}×${String(row.height)}` : "";
+      hits.push({
+        ref: `everroom-material://${row.hash}`,
+        kind: "screenshot",
+        desc: row.title || row.summary || "屏幕记忆素材",
+        meta: `屏幕记忆${size}`,
+        rank: matched * 2,
       });
     }
     return hits;
@@ -249,15 +305,4 @@ function matchTerms(terms: string[], primary: string, secondary: string): number
     else if (haystackSecondary.includes(term)) matched += 1;
   }
   return matched;
-}
-
-/** 图片魔数嗅探（读盘路径无可信 mime 时兜底判定）。 */
-function sniffImageMime(buffer: Buffer): string | null {
-  if (buffer.length < 12) return null;
-  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
-  if (buffer.subarray(0, 4).toString("ascii") === "GIF8") return "image/gif";
-  if (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
-  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return "image/bmp";
-  return null;
 }

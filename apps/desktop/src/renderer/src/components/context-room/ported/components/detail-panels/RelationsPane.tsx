@@ -113,7 +113,7 @@ export function RelationsPane({
           contextLabel={t(selectedRoom.id === room.id ? 'contextRoom:relations.currentRoom' : 'contextRoom:relations.relatedRoom')}
           relationshipSummary={relationToSelected ? `${relationTypeLabel(relationToSelected.type, t)} · ${t('contextRoom:relations.scoreValue', { score: relationToSelected.score.toFixed(2) })}` : t('contextRoom:relations.centerOfTheCurrentGraph')}
           onClose={() => setInspectorOpen(false)}
-          onOpenRoom={onOpenRoom}
+          onOpenRoom={selectedRoom.id === room.id ? undefined : onOpenRoom}
         />
       ) : null}
 

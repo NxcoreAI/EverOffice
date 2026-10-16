@@ -413,7 +413,7 @@ export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
 }
 
-export type AiRelayKeeperEventType = 'quota-exhausted' | 'fallback-user' | 'fallback-restored'
+export type AiRelayKeeperEventType = 'quota-exhausted' | 'session-activated'
 
 /** 扫码登录 renderer 可见的展示信息（二维码载荷要素，无桌面交换凭证）。 */
 export interface QrLoginPresentation {
@@ -510,13 +510,122 @@ export type WindowScreenshotResult =
     }
   | {
       ok: false
-      code: 'window-unavailable' | 'capture-failed' | 'save-failed'
+      code: 'window-unavailable' | 'permission-denied' | 'capture-failed' | 'save-failed'
       message: string
     }
+
+
+export interface ScreenMemorySettingsDto {
+  enabled: boolean
+  paused: boolean
+  scopeMode: 'all' | 'allowlist'
+  allowedApps: string[]
+  excludedApps: string[]
+}
+
+export interface ScreenMemorySchedulerStatusDto {
+  running: boolean
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
+  helperAvailable: boolean
+  paused: boolean
+  enabled: boolean
+  currentBundleId: string | null
+  currentAppName: string | null
+  openIntervalSince: string | null
+  currentKeyframes: number
+  heartbeatMs: number
+  lastBeatAt: string | null
+  lastError: string | null
+}
+
+export interface ScreenMemoryStatusDto extends ScreenMemorySchedulerStatusDto {
+  directory: string
+  deviceReady: ScreenMemoryDeviceReadinessDto
+}
+
+export interface ScreenMemoryKeyframeDto {
+  id: string
+  capturedAt: string
+  imagePath: string
+  imageBytes: number
+  perceptualHash: string | null
+  width: number | null
+  height: number | null
+  lineCount: number
+  elapsedMs: number | null
+}
+
+export interface ScreenMemoryIntervalDto {
+  id: string
+  bundleId: string
+  appName: string
+  windowTitle: string | null
+  title: string
+  startedAt: string
+  endedAt: string
+  endReason: string
+  keyframeCount: number
+  textLines: string[]
+  summaryStatus: 'pending' | 'processing' | 'ready' | 'waiting' | 'failed'
+  summary: string | null
+  summaryKeyPoints: string[]
+  userEdited: boolean
+  keyframes?: ScreenMemoryKeyframeDto[]
+}
+
+export interface ScreenMemorySearchQuery {
+  q: string
+  bundleId?: string
+  from?: string
+  to?: string
+  limit?: number
+}
+
+export interface ScreenMemoryListQuery {
+  from?: string
+  to?: string
+  bundleId?: string
+  summaryStatus?: string
+  limit?: number
+  offset?: number
+}
+
+export interface ScreenMemoryStatsDto {
+  intervals: number
+  keyframes: number
+  pendingSummaries: number
+  summariesToday: number
+  dailySummaryCap: number
+  dispatchAllowed: boolean
+}
+
+export interface ScreenMemoryStorageDto {
+  imagesBytes: number
+}
+
+export interface ScreenMemoryDeviceReadinessDto {
+  archOk: boolean
+  memoryOk: boolean
+  diskOk: boolean
+}
+
+export interface ScreenMemoryBackfillSummaryDto {
+  processed: number
+  intervals: number
+  keyframes: number
+}
+
+export interface ScreenMemoryFrontmostDto {
+  bundleId: string | null
+  appName: string | null
+  pid: number | null
+  windowTitle: string | null
+}
 
 export interface WindowScreenshotStatus {
   enabled: boolean
   intervalMs: number
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
   lastResult: WindowScreenshotResult | null
 }
 
@@ -530,6 +639,8 @@ export interface PerceptionSettings {
 
 export interface RuntimeConfigSnapshot {
   config: Record<string, unknown>
+  /** user 源原始 payload（脱敏后）；从未保存过自定义配置时为 null。 */
+  userConfig: Record<string, unknown> | null
   source: 'user' | 'default'
   selectedSource: 'user' | 'default'
   availableSources: Array<'user' | 'default'>
@@ -938,8 +1049,9 @@ export interface NxcoreDesktopApi {
   }
   externalDocuments: {
     importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
-    /** 连接器页按连接全量列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存。 */
-    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean): Promise<ExternalDocumentListResponse>
+    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
+     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
     /** 目标 Room 已导入检查：返回这批远端文档中已在该 Room 落 primary 的 remoteDocumentId。 */
     importExistingInRoom(provider: ExternalDocumentProvider, roomId: string, remoteDocumentIds: string[]): Promise<{ existingRemoteIds: string[] }>
     importBatch(input: {
@@ -1033,6 +1145,22 @@ export interface NxcoreDesktopApi {
       retainedAssets: string[]
     }>
   }
+  screenMemory: {
+    status(): Promise<ScreenMemoryStatusDto>
+    settings(): Promise<ScreenMemorySettingsDto>
+    updateSettings(patch: Partial<ScreenMemorySettingsDto>): Promise<ScreenMemorySettingsDto>
+    search(query: ScreenMemorySearchQuery): Promise<{ items: ScreenMemoryIntervalDto[] }>
+    listIntervals(query?: ScreenMemoryListQuery): Promise<{ total: number; items: ScreenMemoryIntervalDto[] }>
+    getInterval(id: string): Promise<ScreenMemoryIntervalDto>
+    stats(): Promise<ScreenMemoryStatsDto>
+    correctInterval(input: { id: string; title?: string; textLines?: string[] }): Promise<ScreenMemoryIntervalDto>
+    storage(): Promise<ScreenMemoryStorageDto>
+    frontmost(): Promise<ScreenMemoryFrontmostDto>
+    openPermissionSettings(): Promise<void>
+    registerMaterial(intervalId: string): Promise<{ ref: string }>
+    backfillEstimate(input: { from: string; to: string }): Promise<{ count: number }>
+    backfillRun(input: { from: string; to: string; maxItems: number }): Promise<ScreenMemoryBackfillSummaryDto>
+  }
   diary: {
     settings(): Promise<DiarySettings>
     updateSettings(input: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<DiarySettings>
@@ -1064,6 +1192,9 @@ export interface NxcoreDesktopApi {
     update(id: string, input: Partial<Pick<AgentScheduledTask, 'name' | 'description' | 'prompt' | 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<AgentScheduledTask>
     remove(id: string): Promise<void>
     runNow(id: string): Promise<{ runId: string }>
+  }
+  slides: {
+    pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }
   contextRooms: {
     list(): Promise<ContextRoomSnapshot>
@@ -1119,6 +1250,8 @@ export interface NxcoreDesktopApi {
   aiRelay: {
     /** 中转额度视图（订阅周期开窗）；未登录/未配置时为 null。 */
     status(): Promise<AiGatewayStatus | null>
+    /** SaaS 权威额度判定；keeper 未启动/未判定时 false。 */
+    verdict(): Promise<{ quotaExhausted: boolean }>
     onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
   }
   notifications: {
@@ -1156,6 +1289,12 @@ export interface NxcoreDesktopApi {
     replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>
     renameTag(tagId: string, label: string): Promise<void>
     mergeTag(targetTagId: string, sourceTagId: string): Promise<void>
+  }
+  search: {
+    invoke(request: SearchRequestDto): Promise<SearchPageDto>
+    status(): Promise<SearchScopeDto>
+    prioritize(itemType: SearchItemType, refId: string): Promise<{ ok: boolean }>
+    messageContext(messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto>
   }
   memory: {
     overview(): Promise<MemoryOverviewDto>
@@ -1412,8 +1551,6 @@ export interface NxcoreDesktopApi {
   }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
-    /** 上传资产库（uploaded_files，含图片等无解析器格式；文件页「图片」分类数据源）。 */
-    listUploads(limit?: number): Promise<{ items: FileDto[] }>
     catalogEntry(fileId: string): Promise<FileCatalogDto>
     listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
     setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
@@ -1434,6 +1571,8 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
+    /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+    exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
      * options.editable：Room 产物 docx 的编辑预览（保存回填版本链）；缺省只读。 */
@@ -1459,6 +1598,25 @@ export interface NxcoreDesktopApi {
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
+  }
+  thesisFormat: {
+    /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
+    listCards(roomId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>>
+    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
+    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
+    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
+    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    /** 删除一张格式卡。 */
+    removeCard(roomId: string, cardId: string): Promise<void>
+    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */
+    reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
+    onCardChanged(listener: () => void): () => void
   }
   ingest: {
     /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
@@ -1502,6 +1660,7 @@ import type {
   MemoryScenarioContentDto,
   MemoryScenarioEntryDto,
 } from './memory'
+import type { SearchItemType, SearchMessageContextDto, SearchPageDto, SearchRequestDto, SearchScopeDto } from './search'
 import type {
   FileCatalogDto,
   FileDto,

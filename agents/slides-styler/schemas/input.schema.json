@@ -1,0 +1,90 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": ["direction", "settle"],
+      "description": "direction = compose the overview image-generation prompt; settle = review extraction results into full style params."
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000,
+      "description": "User style intent; highest priority. Required."
+    },
+    "deckTitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Deck title for theme framing."
+    },
+    "themeSummary": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "One-paragraph theme/audience summary of the confirmed outline (settle input usually carries it too)."
+    },
+    "feedback": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 500 },
+      "maxItems": 20,
+      "description": "Accumulated user dissatisfaction notes; every entry must be honored as a hard constraint."
+    },
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "ratio": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["hex", "ratio"],
+        "additionalProperties": false
+      },
+      "maxItems": 6,
+      "description": "Pixel color clusters from the selected overview image; the only source of truth for hex values."
+    },
+    "roles": {
+      "type": "object",
+      "description": "Heuristic palette role assignment to review (background/surface/primary/accent/text/textMuted/onDarkText/darkCover)."
+    },
+    "fontTemperament": {
+      "type": "object",
+      "properties": {
+        "serif": { "type": "boolean" },
+        "weight": { "type": "string", "enum": ["light", "regular", "bold"] },
+        "geometric": { "type": "string", "enum": ["geometric", "humanist", "neutral"] },
+        "rounded": { "type": "boolean" }
+      },
+      "additionalProperties": false,
+      "description": "Closed-question VLM reading of the overview typography temperament."
+    },
+    "decorationReading": {
+      "type": "object",
+      "properties": {
+        "cornerRadius": { "type": "string", "enum": ["none", "small", "medium", "large"] },
+        "stroke": { "type": "string", "enum": ["none", "thin", "medium", "thick"] },
+        "shadow": { "type": "string", "enum": ["none", "soft", "strong"] },
+        "motif": { "type": "string", "enum": ["ghost", "band", "corner", "none"] }
+      },
+      "additionalProperties": false,
+      "description": "Closed-question VLM reading of the decoration language."
+    },
+    "fontOptions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 12,
+      "description": "Allowed font stacks; settle must pick heading/body fonts from this list only."
+    },
+    "layoutPresetIds": {
+      "type": "object",
+      "description": "Allowed layout preset ids grouped by page role (cover/section/content/closing); hints must reference these ids only."
+    },
+    "outlineRoles": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["cover", "toc", "section", "content", "data", "table", "flow", "quote", "closing"] },
+      "maxItems": 24,
+      "description": "Page roles of the confirmed outline, for motif and type-ladder decisions."
+    }
+  },
+  "required": ["task", "instruction"],
+  "additionalProperties": false
+}

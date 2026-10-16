@@ -915,3 +915,11 @@
     box-shadow: 0 -12px 28px rgba(17, 24, 39, 0.1);
   }
 }
+
+.wiki-refresh-spin {
+  animation: wiki-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes wiki-refresh-spin {
+  to { transform: rotate(360deg); }
+}

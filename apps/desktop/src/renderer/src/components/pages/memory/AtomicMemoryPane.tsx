@@ -294,10 +294,11 @@ function timeBucket(updatedAt: string): TimelineBucketId {
   return 'earlier'
 }
 
-export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversation }: {
+export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversation, refreshTick }: {
   focusItemId?: string | null
   onOpenDocument?: (documentId: string) => void
   onOpenConversation?: (sessionId: string) => void
+  refreshTick?: number
 } = {}) {
   const { locale, t } = useLocale()
   const [type, setType] = useState<string>('all')
@@ -354,6 +355,11 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
   useEffect(() => {
     if (reloadTick > 0) void load(0, true)
   }, [load, reloadTick])
+
+  // 顶部全局刷新：等价于本面板手动刷新。
+  useEffect(() => {
+    if (refreshTick) setReloadTick((tick) => tick + 1)
+  }, [refreshTick])
 
   useEffect(() => {
     if (!focusItemId || focusAppliedRef.current || items.length === 0) return
