@@ -23,6 +23,7 @@
   "agentChat.doYouWantToCreateADocumentAbout": "Do you want to create a document about “{topic}”?",
   "agentChat.editingDocument": "Editing document...",
   "agentChat.editingDocumentLabel": "Editing document",
+  "agentChat.backToLatest": "Back to latest",
   "agentChat.goToPage": "Go to {page}",
   "agentChat.loadingConversation": "Loading conversation...",
   "agentChat.mentionJumpTitle": "Open {name}",

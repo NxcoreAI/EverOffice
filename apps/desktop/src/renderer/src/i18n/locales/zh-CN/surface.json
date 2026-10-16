@@ -23,6 +23,7 @@
   "agentChat.doYouWantToCreateADocumentAbout": "你是想创建一篇关于“{topic}”的文档吗？",
   "agentChat.editingDocument": "正在编辑文档...",
   "agentChat.editingDocumentLabel": "正在编辑文档",
+  "agentChat.backToLatest": "回到最新",
   "agentChat.goToPage": "前往 {page}",
   "agentChat.loadingConversation": "正在载入会话...",
   "agentChat.mentionJumpTitle": "跳转：{name}",
