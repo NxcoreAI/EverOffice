@@ -2527,7 +2527,6 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--cr-border);
   background: var(--cr-surface);
   container-name: context-room-detail-content;
   container-type: inline-size;
@@ -8809,6 +8808,18 @@
   font-size: 11px;
 }
 
+.context-room-relation-form button.filter-select,
+.context-room-relation-create button.filter-select {
+  width: 100%;
+  min-height: 32px;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-color: var(--cr-border);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 11px;
+}
+
 .context-room-relation-form textarea,
 .context-room-relation-create textarea {
   resize: vertical;
@@ -13960,17 +13971,6 @@
   background: var(--cr-surface);
   color: var(--cr-muted);
   text-align: left;
-}
-
-/* 建联图谱头部筛选下拉。 */
-.context-room-link-graph-filter {
-  min-height: 26px;
-  padding: 2px 6px;
-  border: 1px solid var(--cr-border);
-  border-radius: 6px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font-size: 12px;
 }
 
 /* 版本时间轴的"导入版本"卡片（外部更新候选） */
