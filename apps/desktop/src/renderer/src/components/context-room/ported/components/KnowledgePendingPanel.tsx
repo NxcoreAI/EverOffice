@@ -19,6 +19,8 @@ import {
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import '../../ContextRoomHomeSkeleton.css';
+
 import { showToast } from '@/state/toast';
 import { useContextRoomState } from '../../ContextRoomStateProvider';
 import { useLocale } from '../../../../i18n/LocaleContext';
@@ -138,6 +140,17 @@ function promotionStepsList(promotion: KnowledgePromotionProgressDto, t: Transla
 
 /** 仅展示证据分最高的三个待创建候选。 */
 const RECOMMEND_LIMIT = 3;
+
+/**
+ * 会话级快照缓存：页面切换会整页卸载（PageCanvas 按 page 换 key），
+ * 重挂载时先用上一拍数据渲染，挂载刷新静默收敛，推荐区不再闪空。
+ */
+interface KnowledgeSnapshot {
+  recommended: KnowledgeEntityDto[];
+  recent: KnowledgeDecisionDto[];
+  suppressed: KnowledgeEntityDto[];
+}
+let knowledgeSnapshotCache: KnowledgeSnapshot | null = null;
 
 /**
  * 证据进度条的真值分母：达到该证据分即视为凑满（clamp 到 1）。与网关
@@ -343,12 +356,18 @@ export function KnowledgePendingPanel({
 }) {
   const { t } = useLocale();
   const { refreshFromBackend } = useContextRoomState();
-  const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>([]);
-  const [recent, setRecent] = useState<KnowledgeDecisionDto[]>([]);
-  const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>([]);
+  const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>(
+    () => knowledgeSnapshotCache?.recommended ?? [],
+  );
+  const [recent, setRecent] = useState<KnowledgeDecisionDto[]>(
+    () => knowledgeSnapshotCache?.recent ?? [],
+  );
+  const [suppressed, setSuppressed] = useState<KnowledgeEntityDto[]>(
+    () => knowledgeSnapshotCache?.suppressed ?? [],
+  );
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => knowledgeSnapshotCache !== null);
   /** strip 视图：详情弹框存实体 id（实体对象每拍刷新，进度可实时跟进）。 */
   const [detailId, setDetailId] = useState<string | null>(null);
   /**
@@ -393,7 +412,10 @@ export function KnowledgePendingPanel({
 
   const refresh = useCallback(async () => {
     const knowledge = window.nxcore?.knowledge;
-    if (!knowledge) return;
+    if (!knowledge) {
+      setLoaded(true);
+      return;
+    }
     try {
       const [ready, promoting, rooms, suppressedData, recentData] = await Promise.all([
         knowledge.listEntities('ready'),
@@ -437,6 +459,11 @@ export function KnowledgePendingPanel({
       });
       setRecent(recentData.items);
       setSuppressed(suppressedData.items);
+      knowledgeSnapshotCache = {
+        recommended: nextRecommended,
+        recent: recentData.items,
+        suppressed: suppressedData.items,
+      };
       setLoaded(true);
       setLoadError(false);
       const previous = activePromotionsRef.current;
@@ -945,7 +972,37 @@ export function KnowledgePendingPanel({
       }
     });
 
-  if (!loaded) return null;
+  if (!loaded) {
+    if (variant !== 'strip') return null;
+    // 首次加载（会话内无快照缓存）：骨架占位保住推荐区高度，
+    // 页面级骨架 → 面板骨架 → 内容三段连贯，不再塌掉闪现。
+    return (
+      <section className="context-room-knowledge-strip" data-loading="true" aria-busy="true">
+        <div className="context-room-strip-head">
+          <div className="context-room-home-section-title">
+            <span>{t('contextRoom:home.recommend')}</span>
+            <h2>{t('contextRoom:knowledgePending.recommendedRooms')}</h2>
+          </div>
+        </div>
+        <div className="context-room-knowledge-strip-body">
+          <div className="context-room-skeleton-grid" aria-hidden="true">
+            {Array.from({ length: RECOMMEND_LIMIT }, (_, index) => (
+              <div className="context-room-skeleton-card" key={index}>
+                <span className="context-room-skeleton-card-main">
+                  <span className="context-room-skeleton-block context-room-skeleton-icon" />
+                  <span className="context-room-skeleton-card-copy">
+                    <span className="context-room-skeleton-block context-room-skeleton-line" style={{ width: '42%' }} />
+                    <span className="context-room-skeleton-block context-room-skeleton-line" style={{ width: '78%' }} />
+                  </span>
+                </span>
+                <span className="context-room-skeleton-block context-room-skeleton-chip" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const promotionActive = (entity: KnowledgeEntityDto) =>
     entity.promotion?.status === 'queued' || entity.promotion?.status === 'running';

@@ -1577,6 +1577,7 @@
   "wiki.countPages": "{count} pages",
   "wiki.countPagesGenerated": "{count} pages generated",
   "wiki.countSources": "{count} sources",
+  "wiki.countSourcesPending": "{count} sources pending",
   "wiki.failedToLoadGraph": "Failed to load graph",
   "wiki.failedToLocateFile": "Failed to locate file",
   "wiki.failedToReadFile": "Failed to read file",
