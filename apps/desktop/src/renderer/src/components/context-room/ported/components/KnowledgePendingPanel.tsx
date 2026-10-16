@@ -1369,7 +1369,11 @@ export function KnowledgePendingPanel({
           <Inbox aria-hidden="true" />
           <h3>{t('contextRoom:knowledgePending.understandingResources')}</h3>
           <p>{t('contextRoom:knowledgePending.tellAgentWhatRoomToCreate')}</p>
-          <button type="button" className="context-room-knowledge-empty-cta" onClick={onFocusAgent}>
+          <button type="button" className="context-room-knowledge-empty-cta" onClick={() => {
+            // 管理弹窗是模态覆盖层：不先关掉，Agent 面板在背后打开用户感知不到（表现为点了没反应）。
+            setManageOpen(false)
+            onFocusAgent()
+          }}>
             <span className="context-room-knowledge-empty-cta-icon">
               <MessageCircle aria-hidden="true" />
             </span>
@@ -1524,6 +1528,10 @@ export function KnowledgePendingPanel({
             <Sparkles aria-hidden="true" />
             <h3>{t('contextRoom:knowledgePending.understandingResources')}</h3>
             <p>{t('contextRoom:knowledgePending.tellAgentWhatRoomToCreate')}</p>
+            <button type="button" className="context-room-rec-retry" onClick={onFocusAgent}>
+              <MessageCircle aria-hidden="true" />
+              {t('contextRoom:knowledgePending.talkToAgent')}
+            </button>
           </div>
         ) : (
           <div className="context-room-rec-grid">
