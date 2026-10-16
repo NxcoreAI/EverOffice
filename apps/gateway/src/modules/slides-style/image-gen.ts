@@ -1,18 +1,30 @@
 /**
  * 纵览图生成：经 ai-relay 会话直连中转的 /v1/images/generations
- * （qwen-image-3.0，1792×1024，prompt_extend:false 防改写版式规格，
+ * （模型随 SaaS 套餐下发（session.models.image），未下发即禁用生图，本地不再硬编码模型名；
+ * 1792×1024，prompt_extend:false 防改写版式规格，
  * watermark:false；单张 ~100s，候选并行生成）。产物按内容哈希进对象库
  * （CAS 天然幂等），只按 hash 寻址供风格卡/提取用——不进文件库产物列表
  * （file-imports 白名单本就只有文档格式，图片走素材体系）。
  */
 
-import type { AiRelaySessionStore } from "../ai-relay/session.js";
+import type { AiRelaySession, AiRelaySessionStore } from "../ai-relay/session.js";
 import { relayPathPrefix } from "../ai-relay/session.js";
 import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 
-/** 生图模型与出图规格（中转实测配方，勿改 prompt_extend/watermark）。 */
-const SLIDES_IMAGE_MODEL = "qwen-image-3.0";
+/** 出图规格（中转实测配方，勿改 prompt_extend/watermark）。 */
 const SLIDES_IMAGE_SIZE = "1792x1024";
+/** 生图模型未配置（套餐未下发）：正文配图据此与中转会话不可用同级整批跳过。 */
+export const IMAGE_MODEL_UNCONFIGURED_MARKER = "生图模型未在套餐中配置";
+
+/** 套餐下发的生图模型（session.models.image）；空串/未下发为 null=未配置。 */
+function planImageModel(session: AiRelaySession): string | null {
+  const model = session.models?.image?.trim();
+  return model ? model : null;
+}
+
+function unconfiguredError(): Error {
+  return new Error(`${IMAGE_MODEL_UNCONFIGURED_MARKER}：请联系管理员在管理后台的套餐模型里填写生图模型。`);
+}
 /** 单张生图实测 ~100s；超时给到 180s。 */
 const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -72,6 +84,8 @@ export class SlidesStyleImageGenerator {
     if (!session) {
       throw new Error("生图中转会话不可用：需要已订阅账号且网关在线");
     }
+    const imageModel = planImageModel(session);
+    if (!imageModel) throw unconfiguredError();
     const prompts = input.candidates
       .map((candidate) => candidate.prompt.trim())
       .filter((prompt) => prompt.length > 0)
@@ -80,7 +94,7 @@ export class SlidesStyleImageGenerator {
     // 部分成功即接受：限流窗口内能出几张是几张（≥1 张用户就能挑/说不满意），
     // 只有全军覆没才向上抛。结果带原候选下标，存活张的元数据不会错位。
     const settled = await Promise.allSettled(prompts.map((prompt, index) =>
-      this.generateOneWithRetry(session, prompt, input.idempotencyKey, index)
+      this.generateOneWithRetry(session, imageModel, prompt, input.idempotencyKey, index)
         .then((result) => ({ ...result, index }))));
     const succeeded = settled
       .flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
@@ -98,13 +112,16 @@ export class SlidesStyleImageGenerator {
     if (!session) {
       throw new Error("生图中转会话不可用：需要已订阅账号且网关在线");
     }
+    const imageModel = planImageModel(session);
+    if (!imageModel) throw unconfiguredError();
     const prompt = input.prompt.trim();
     if (!prompt) throw new Error("生图提示词不能为空");
-    return this.generateOneWithRetry(session, prompt, "page", 0, input.retryDelaysMs);
+    return this.generateOneWithRetry(session, imageModel, prompt, "page", 0, input.retryDelaysMs);
   }
 
   private async generateOneWithRetry(
-    session: { baseUrl: string; token: string },
+    session: AiRelaySession,
+    imageModel: string,
     prompt: string,
     idempotencyKey: string,
     index: number,
@@ -115,7 +132,7 @@ export class SlidesStyleImageGenerator {
     for (const delayMs of delays) {
       if (delayMs > 0) await sleep(delayMs);
       try {
-        return await this.generateOne(session, prompt, idempotencyKey, index);
+        return await this.generateOne(session, imageModel, prompt, idempotencyKey, index);
       } catch (error) {
         lastError = error;
         if (!(error instanceof Error) || !isRetryableGenerationError(error.message)) throw error;
@@ -125,7 +142,8 @@ export class SlidesStyleImageGenerator {
   }
 
   private async generateOne(
-    session: { baseUrl: string; token: string },
+    session: AiRelaySession,
+    imageModel: string,
     prompt: string,
     idempotencyKey: string,
     index: number,
@@ -138,7 +156,7 @@ export class SlidesStyleImageGenerator {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: SLIDES_IMAGE_MODEL,
+        model: imageModel,
         prompt,
         n: 1,
         size: SLIDES_IMAGE_SIZE,

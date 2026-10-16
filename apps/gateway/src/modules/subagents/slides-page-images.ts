@@ -7,6 +7,7 @@
  */
 
 import type { SlidesStyleImageGenerator } from "../slides-style/image-gen.js";
+import { IMAGE_MODEL_UNCONFIGURED_MARKER } from "../slides-style/image-gen.js";
 
 export const MAX_PAGE_IMAGES = 8;
 export const PAGE_IMAGES_DEADLINE_MS = 15 * 60_000;
@@ -148,9 +149,13 @@ export async function generateSlidesPageImages(
         summary.generated += 1;
         summary.results.push({ pageIndex: item.pageIndex, contentHash: result.contentHash });
       } catch (error) {
-        // 无中转会话是环境性失败：后续页同样生不出，整批放弃（该次 generate 照常落页）。
+        // 无中转会话/套餐未配生图模型都是环境性失败：后续页同样生不出，整批放弃（该次 generate 照常落页）。
         if (error instanceof Error && error.message.includes(NO_RELAY_SESSION_MARKER)) {
           skipped = "生图中转会话不可用，正文配图全部跳过";
+          return;
+        }
+        if (error instanceof Error && error.message.includes(IMAGE_MODEL_UNCONFIGURED_MARKER)) {
+          skipped = `${IMAGE_MODEL_UNCONFIGURED_MARKER}，正文配图全部跳过`;
           return;
         }
         summary.failed += 1;
