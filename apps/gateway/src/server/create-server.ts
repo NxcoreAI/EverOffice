@@ -272,6 +272,10 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   } else {
     apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
   }
+  // 审页档（slides-reviewer）同样吃 vlm 槽：SaaS 套餐下发的视觉模型（或内置
+  // 默认/BYOK）直接作为审页模型。vlm 槽自带连接（中转重写或 BYOK 继承）时一并
+  // 补齐；空连接时审页档保留从 pi 继承的连接。model 未变化时 apply 不触碰。
+  apply(config.slidesReviewerPi as unknown as Record<string, unknown> | null, runtime.vlm);
   // ASR（仅 aliyun provider）：runtime 标量 + OSS 必填项齐全可直接构造
   // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
   // 仅标量齐全时保持补丁行为，env 配置的 OSS 保留。

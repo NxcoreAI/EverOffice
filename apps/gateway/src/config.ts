@@ -1134,9 +1134,10 @@ export function loadConfig(
           maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
-    // 审页档（slides-reviewer 专用，多模态）：model 空＝未配置（回退 backgroundPi，
-    // 主模型多模态时开箱可用）；配置后连接要素仍继承主 pi。
-    slidesReviewerPi: pi && rawConfig.aiSlidesReviewerModel
+    // 审页档（slides-reviewer 专用，多模态）：model 可来自 env 专用键，也可由
+    // runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
+    // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
+    slidesReviewerPi: pi
       ? { ...pi, model: rawConfig.aiSlidesReviewerModel }
       : null,
     subagents: {
