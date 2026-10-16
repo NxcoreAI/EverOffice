@@ -4,11 +4,30 @@
  * 坐标由 compile.ts 确定性计算；报错文案面向模型自纠（沿用 PRESET_INVALID 风格）。
  */
 
-export type Direction = "row" | "column";
+import { ICON_NAMES } from "./icons.js";
+import { normalizeComponentLeaf, type ComponentLeaf } from "./components/index.js";
+
+export type Direction = "row" | "column" | "overlay";
 export type MainJustify = "start" | "center" | "end";
 export type TextAlign = "left" | "center" | "right";
 export type TextTone = "normal" | "muted" | "inverse";
 export type TableStyle = "lines" | "darkHeader" | "zebra";
+
+/**
+ * 容器面板底色档（主题词，不是色号）。同一 panel 组件的五种视觉变种：
+ * surface=主题卡面平贴 · soft=主色浅档 · tint=渐层釉面（主色 8.5%→3.5% 上下渐层+发丝描边）
+ * dark=墨面渐层（深底翻字） · leftBar=白卡+左主色刻标 · nested=tint 洗地+白卡浮起 · outline=细线框。
+ */
+export type PanelTone = "surface" | "soft" | "dark" | "tint" | "leftBar" | "nested" | "outline";
+
+/** 容器面板：先铺底板再排子节点；dark 面板内文字自动换深色页文字色。 */
+export interface PanelSpec {
+  tone: PanelTone;
+  /** 显式 false 关掉圆角。 */
+  radius?: false;
+  /** 显式 false 关掉主题描边与阴影。 */
+  stroke?: false;
+}
 
 export interface TextLeaf {
   type: "text";
@@ -24,18 +43,18 @@ export interface ImageLeaf {
   url: string;
   /** true=完整放框（contain，可能留空带）；缺省=裁切填满（cover）。两种都不变形。 */
   contain?: boolean;
-}
-
-export interface CardLeaf {
-  type: "card";
-  /** KPI 卡：value 大数字 + label 标签（value 存在时 title/body 不用）。 */
-  value?: string;
-  unit?: string;
-  label?: string;
-  /** 文字卡：title + 可选 body/icon。 */
-  title?: string;
-  body?: string;
-  icon?: string;
+  /** true＝圆角卡（圆角随主题 cornerRadius）。 */
+  radius?: true;
+  /** true＝圆形裁切（头像/徽标用；框宜取方形）。circle 赢过 radius。 */
+  circle?: true;
+  /** cover 裁切焦点（图片宽高的百分比 0~100）；缺省居中。仅 cover 生效。 */
+  focus?: { x?: number; y?: number };
+  /** true＝主题双色调（主色染的明暗两端）。 */
+  duotone?: true;
+  /** true＝灰度化（logo 墙等单色化场景）。 */
+  grayscale?: true;
+  /** 压图小字签（左下角玻璃底）；≤40 字。 */
+  caption?: string;
 }
 
 export interface PathLeaf {
@@ -43,7 +62,18 @@ export interface PathLeaf {
   d: string;
 }
 
-export type ChartKind = "bar" | "barStacked" | "line" | "pie" | "doughnut" | "scatter" | "comboBarLine";
+/** 分隔线：高框渲染竖线、扁框渲染横线（主题分隔线色）。 */
+export interface DividerLeaf {
+  type: "divider";
+}
+
+/** 图标：名称必须在引擎图标集内（Heroicons v2 solid 命名）。 */
+export interface IconLeaf {
+  type: "icon";
+  icon: string;
+}
+
+export type ChartKind = "bar" | "barStacked" | "line" | "area" | "waterfall" | "pie" | "doughnut" | "scatter" | "comboBarLine";
 
 export interface ChartLeaf {
   type: "chart";
@@ -51,6 +81,13 @@ export interface ChartLeaf {
   categories: string[];
   series: { name: string; values: number[] }[];
   legend?: boolean;
+  /**
+   * 单点高亮（bar/area 首系列）：把该类目画成主色实心、其余降为主色浅档。
+   * 数字=类目下标（0 基），"last"=末位。
+   */
+  highlight?: number | "last";
+  /** 涨跌徽章（图表右上角主色圆角签），≤12 字，如 "+42%"。 */
+  delta?: string;
 }
 
 export interface TableLeaf {
@@ -58,9 +95,35 @@ export interface TableLeaf {
   rows: (string | { text: string; bold?: boolean; align?: TextAlign })[][];
   colWidths?: number[];
   style?: TableStyle;
+  /** 显式 false＝无表头：rows 全是数据行（账目式两列表）。darkHeader 需要表头，二者互斥。 */
+  header?: false;
+  /** true＝表格顶部压一条 2px 墨线（账目式顶线），表格整体下移让位。 */
+  topRule?: true;
 }
 
-export type LeafNode = TextLeaf | ImageLeaf | CardLeaf | PathLeaf | ChartLeaf | TableLeaf;
+export type LeafNode = TextLeaf | ImageLeaf | PathLeaf | ChartLeaf | TableLeaf | DividerLeaf | IconLeaf | ComponentLeaf;
+
+/** 页级背景：整页铺图 + 纱罩（缺省深色纱罩；"gradient"＝上深下透的渐层纱罩；"none"＝不压）。 */
+export interface BgSpec {
+  image: string;
+  /** "none" 不压纱罩；"gradient" 渐层纱罩；缺省深色纱罩。 */
+  scrim?: "none" | "gradient";
+}
+
+/** overlay 容器直接子节点的定位：容器区域的百分比（0~100）。 */
+export interface OverlayPlace {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface PlaceFields {
+  place?: OverlayPlace;
+}
+
+/** 容器与根的子节点：place 仅在 overlay 容器的直接子节点上合法。 */
+export type ChildNode = (ContainerNode | LeafNode) & PlaceFields;
 
 export interface ContainerNode {
   direction: Direction;
@@ -72,7 +135,9 @@ export interface ContainerNode {
   pad?: number;
   /** 主轴打包（仅 column）：text 叶子按内容自然高、其余均分剩余，整组按 justify 落位。 */
   justify?: MainJustify;
-  children: TreeNode[];
+  /** 面板底板（先铺板再排子节点）。 */
+  panel?: PanelSpec;
+  children: ChildNode[];
 }
 
 /** 页根节点：内容区容器 + 页元数据。 */
@@ -82,12 +147,16 @@ export interface LayoutTree {
   title?: string;
   /** 深色页（封面/章节）：背景用 darkBackground，文字自动换 onDarkText。 */
   dark?: boolean;
+  /** 整页背景图（视同深色页：自动压深色纱罩、文字自动换 onDarkText）。 */
+  bg?: BgSpec;
   direction: Direction;
   weights?: number[];
   gapScale?: number;
   pad?: number;
   justify?: MainJustify;
-  children: TreeNode[];
+  /** 面板底板（铺满内容区，先铺板再排子节点）。 */
+  panel?: PanelSpec;
+  children: ChildNode[];
 }
 
 export type TreeNode = ContainerNode | LeafNode;
@@ -99,8 +168,27 @@ export function isLeaf(node: TreeNode): node is LeafNode {
 const MAX_TEXT = 2000;
 const MAX_CHILDREN = 12;
 const MAX_TOTAL_NODES = 200;
-const CHART_KINDS: ChartKind[] = ["bar", "barStacked", "line", "pie", "doughnut", "scatter", "comboBarLine"];
+const CHART_KINDS: ChartKind[] = ["bar", "barStacked", "line", "area", "waterfall", "pie", "doughnut", "scatter", "comboBarLine"];
 const TEXT_VARIANTS = ["display", "heading", "subtitle", "body", "caption"] as const;
+const PANEL_TONES = ["surface", "soft", "dark", "tint", "leftBar", "nested", "outline"] as const;
+
+/** 容器面板的归一。 */
+function normalizePanel(raw: unknown, path: string): PanelSpec | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) bad(`${path}.panel 必须是 { tone, radius?, stroke? }`);
+  const p = raw as Record<string, unknown>;
+  const tone = p.tone;
+  if (typeof tone !== "string" || !(PANEL_TONES as readonly string[]).includes(tone)) {
+    bad(`${path}.panel.tone 必须是 ${PANEL_TONES.join("|")}，收到 ${String(tone)}`);
+  }
+  if (p.radius !== undefined && p.radius !== false) bad(`${path}.panel.radius 只接受 false（关掉圆角）`);
+  if (p.stroke !== undefined && p.stroke !== false) bad(`${path}.panel.stroke 只接受 false（关掉描边与阴影）`);
+  return {
+    tone: tone as PanelTone,
+    ...(p.radius === false ? { radius: false } : {}),
+    ...(p.stroke === false ? { stroke: false } : {}),
+  };
+}
 
 class TreeError extends Error {}
 
@@ -113,8 +201,32 @@ function asNode(value: unknown, path: string): TreeNode {
   if (typeof value !== "object" || value === null || Array.isArray(value)) bad(`${path} 必须是对象`);
   const node = value as Record<string, unknown>;
   if (typeof node.type === "string") return asLeaf(node, path);
-  if (node.direction === "row" || node.direction === "column") return asContainer(node, path);
+  if (node.direction === "row" || node.direction === "column" || node.direction === "overlay") return asContainer(node, path);
   bad(`${path} 无法识别：既不是叶子（缺 type）也不是容器（缺 direction）`);
+}
+
+/** place 字段的归一（存在性合法性由调用方按容器方向判定）。 */
+function normalizePlace(raw: unknown, path: string): OverlayPlace | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) bad(`${path}.place 必须是 {x,y,w,h}（容器区域的百分比 0~100）`);
+  const p = raw as Record<string, unknown>;
+  const vals = (["x", "y", "w", "h"] as const).map((key) => {
+    const v = p[key];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) {
+      bad(`${path}.place.${key} 必须是 0~100 的数字，收到 ${String(v)}`);
+    }
+    return v as number;
+  });
+  const [x, y, w, h] = vals as [number, number, number, number];
+  if (w <= 0 || h <= 0) bad(`${path}.place 的 w/h 必须大于 0`);
+  if (x + w > 100.01 || y + h > 100.01) {
+    bad(`${path}.place 越界：x+w=${round2(x + w)}、y+h=${round2(y + h)}，均不得超过 100`);
+  }
+  return { x, y, w, h };
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
 }
 
 function asLeaf(node: Record<string, unknown>, path: string): LeafNode {
@@ -140,25 +252,55 @@ function asLeaf(node: Record<string, unknown>, path: string): LeafNode {
       if (!/^(https?:\/\/|everroom-material:\/\/)/i.test(url)) {
         bad(`${path}.url 只接受 http(s) 直链或 everroom-material:// 素材引用，收到 ${url.slice(0, 60)}`);
       }
-      return { type: "image", url, ...(node.contain === true ? { contain: true } : {}) };
+      const leaf: ImageLeaf = { type: "image", url, ...(node.contain === true ? { contain: true } : {}) };
+      if (node.radius === true) leaf.radius = true;
+      else if (node.radius !== undefined) bad(`${path}.radius 只接受 true（圆角卡）`);
+      if (node.circle === true) leaf.circle = true;
+      else if (node.circle !== undefined) bad(`${path}.circle 只接受 true（圆形裁切）`);
+      if (leaf.circle && leaf.radius) bad(`${path}.circle 与 radius 二选一`);
+      if (node.focus !== undefined) {
+        if (typeof node.focus !== "object" || node.focus === null || Array.isArray(node.focus)) {
+          bad(`${path}.focus 必须是 { x?, y? }（图片宽高的百分比 0~100）`);
+        }
+        const f = node.focus as { x?: unknown; y?: unknown };
+        const pct = (v: unknown, what: string): number | undefined => {
+          if (v === undefined) return undefined;
+          if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) {
+            bad(`${path}.focus.${what} 必须是 0~100 的数字，收到 ${String(v)}`);
+          }
+          return v as number;
+        };
+        const x = pct(f.x, "x");
+        const y = pct(f.y, "y");
+        if (x !== undefined || y !== undefined) leaf.focus = { ...(x !== undefined ? { x } : {}), ...(y !== undefined ? { y } : {}) };
+      }
+      if (node.duotone === true) leaf.duotone = true;
+      else if (node.duotone !== undefined) bad(`${path}.duotone 只接受 true（主题双色调）`);
+      if (node.grayscale === true) leaf.grayscale = true;
+      else if (node.grayscale !== undefined) bad(`${path}.grayscale 只接受 true（灰度化）`);
+      if (leaf.grayscale && leaf.duotone) bad(`${path}.grayscale 与 duotone 二选一`);
+      if (node.caption !== undefined) leaf.caption = optionalText(node.caption, 40);
+      return leaf;
     }
     case "card": {
-      const value = optionalText(node.value, 16);
-      const title = optionalText(node.title, 30);
-      if (!value && !title) bad(`${path} 卡叶子必须有 value（KPI 卡）或 title（文字卡）`);
-      if (value) {
-        const label = optionalText(node.label, 40);
-        if (!label) bad(`${path} KPI 卡必须有 label（数字下方的标签）`);
-        const unit = optionalText(node.unit, 8);
-        return { type: "card", value, label: label!, ...(unit ? { unit } : {}) };
-      }
-      const body = optionalText(node.body, 200);
-      const icon = optionalText(node.icon, 40);
-      return { type: "card", title: title!, ...(body ? { body } : {}), ...(icon ? { icon } : {}) };
+      bad(`${path}.type "card" 已拆分为组件——KPI 卡用 { "type": "component", "name": "stats", items: [...] }，文字卡用 "name": "featureCards"`);
+    }
+    case "component": {
+      return normalizeComponentLeaf(node, path);
     }
     case "path": {
       const d = requiredText(node.d, `${path}.d`);
       return { type: "path", d };
+    }
+    case "divider": {
+      return { type: "divider" };
+    }
+    case "icon": {
+      const icon = requiredText(node.icon, `${path}.icon`).toLowerCase();
+      if (!ICON_NAMES.includes(icon)) {
+        bad(`${path}.icon 必须是引擎图标集内的名称（如 check-circle、light-bulb、chart-bar、rocket-launch、users），收到 ${icon}`);
+      }
+      return { type: "icon", icon };
     }
     case "chart": {
       const kind = node.kind;
@@ -180,15 +322,41 @@ function asLeaf(node: Record<string, unknown>, path: string): LeafNode {
         return { name, values: values as number[] };
       });
       if (kind === "comboBarLine" && series.length < 2) bad(`${path} comboBarLine 必须至少 2 个系列`);
-      return { type: "chart", kind: kind as ChartKind, categories, series, ...(node.legend === true ? { legend: true } : {}) };
+      if (kind === "waterfall") {
+        if (series.length !== 1) bad(`${path} waterfall 只接受 1 个系列（values 为有符号增减，正=升、负=降；末列画 0→合计的结果柱）`);
+        if (categories.length > 8) bad(`${path} waterfall 最多 8 列（收到 ${categories.length}）`);
+      }
+      const leaf: ChartLeaf = { type: "chart", kind: kind as ChartKind, categories, series, ...(node.legend === true ? { legend: true } : {}) };
+      if (node.highlight !== undefined) {
+        if (node.highlight === "last") leaf.highlight = "last";
+        else if (typeof node.highlight === "number" && Number.isInteger(node.highlight) && node.highlight >= 0 && node.highlight < categories.length) {
+          leaf.highlight = node.highlight;
+        } else {
+          bad(`${path}.highlight 必须是 "last" 或 0~${categories.length - 1} 的整数，收到 ${String(node.highlight)}`);
+        }
+        if (kind === "pie" || kind === "doughnut" || kind === "scatter" || kind === "waterfall") {
+          bad(`${path}.highlight 不支持 ${kind}（用于 bar/barStacked/line/area/comboBarLine）`);
+        }
+      }
+      if (node.delta !== undefined) {
+        if (kind === "pie" || kind === "doughnut" || kind === "waterfall") {
+          bad(`${path}.delta 不支持 ${kind}`);
+        }
+        leaf.delta = optionalText(node.delta, 12);
+      }
+      return leaf;
     }
     case "table": {
+      const headerOff = node.header === false;
+      if (node.header !== undefined && node.header !== false) {
+        bad(`${path}.header 只接受 false（关掉表头，rows 全为数据行）`);
+      }
       const rowsRaw = node.rows;
-      if (!Array.isArray(rowsRaw) || rowsRaw.length < 2 || rowsRaw.length > 12) bad(`${path}.rows 必须是 2~12 行（表头+数据）`);
+      if (!Array.isArray(rowsRaw) || rowsRaw.length < 2 || rowsRaw.length > 12) bad(`${path}.rows 必须是 2~12 行${headerOff ? "" : "（表头+数据）"}`);
       const colCount = Array.isArray(rowsRaw[0]) ? (rowsRaw[0] as unknown[]).length : -1;
-      if (colCount < 2 || colCount > 8) bad(`${path} 表头必须是 2~8 列`);
+      if (colCount < 2 || colCount > 8) bad(`${path} 每行必须是 2~8 列`);
       const rows = (rowsRaw as unknown[][]).map((row, r) => {
-        if (!Array.isArray(row) || row.length !== colCount) bad(`${path}.rows[${r}] 列数必须与表头一致（${colCount} 列）`);
+        if (!Array.isArray(row) || row.length !== colCount) bad(`${path}.rows[${r}] 列数必须一致（${colCount} 列）`);
         return row.map((cell) => {
           if (typeof cell === "string") return cell.slice(0, 300);
           if (typeof cell === "object" && cell !== null && typeof (cell as { text?: unknown }).text === "string") {
@@ -210,29 +378,53 @@ function asLeaf(node: Record<string, unknown>, path: string): LeafNode {
       if (style !== undefined && !["lines", "darkHeader", "zebra"].includes(style as string)) {
         bad(`${path}.style 必须是 lines|darkHeader|zebra`);
       }
+      if (headerOff && style === "darkHeader") {
+        bad(`${path} darkHeader 样式需要表头——与 header: false 互斥`);
+      }
       const leaf: TableLeaf = { type: "table", rows };
       if (colWidths) leaf.colWidths = colWidths;
       if (style) leaf.style = style as TableStyle;
+      if (headerOff) leaf.header = false;
+      if (node.topRule !== undefined) {
+        if (node.topRule !== true) bad(`${path}.topRule 只接受 true（表格顶部压 2px 墨线）`);
+        leaf.topRule = true;
+      }
       return leaf;
     }
     default:
-      bad(`${path}.type 必须是 text|image|card|path|chart|table，收到 ${String(node.type)}`);
+      bad(`${path}.type 必须是 text|image|path|chart|table|divider|icon|component，收到 ${String(node.type)}`);
   }
 }
 
 function asContainer(node: Record<string, unknown>, path: string): ContainerNode {
   const direction = node.direction as Direction;
+  if (direction === "overlay") {
+    if (node.weights !== undefined) bad(`${path}.weights 不支持 overlay 容器——叠层子节点各自用 place 定位`);
+    if (node.gapScale !== undefined) bad(`${path}.gapScale 不支持 overlay 容器——子节点间距用 place 自行留出`);
+  }
   const childrenRaw = node.children;
   if (!Array.isArray(childrenRaw) || childrenRaw.length < 1) bad(`${path}.children 至少 1 项`);
   if (childrenRaw.length > MAX_CHILDREN) bad(`${path}.children 最多 ${MAX_CHILDREN} 项，收到 ${childrenRaw.length}——拆层级或精简`);
-  const children = childrenRaw.map((child, i) => asNode(child, `${path}/${i}`));
-  const weights = normalizeWeights(node.weights, children.length, path);
+  const children = childrenRaw.map((rawChild, i) => {
+    const child = asNode(rawChild, `${path}/${i}`) as ChildNode;
+    const placeRaw = (rawChild as Record<string, unknown>).place;
+    const place = normalizePlace(placeRaw, `${path}/${i}`);
+    if (direction === "overlay") {
+      if (!place) bad(`${path}/${i} 缺 place——overlay 容器的每个直接子节点必须用 place 定位（百分比）`);
+      return { ...child, place } as ChildNode;
+    }
+    if (place) bad(`${path}/${i}.place 只允许出现在 overlay 容器的直接子节点上`);
+    return child;
+  });
+  const weights = direction === "overlay" ? undefined : normalizeWeights(node.weights, children.length, path);
+  const panel = normalizePanel(node.panel, path);
   return {
     direction,
     ...(weights ? { weights } : {}),
-    ...normalizeGapScale(node.gapScale, path),
+    ...(direction === "overlay" ? {} : normalizeGapScale(node.gapScale, path)),
     ...normalizePad(node.pad, path),
     ...normalizeJustify(node.justify, direction, path),
+    ...(panel ? { panel } : {}),
     children,
   };
 }
@@ -241,8 +433,23 @@ function normalizeJustify(raw: unknown, direction: Direction, path: string): { j
   if (raw === undefined) return {};
   if (raw === "start") return {}; // 与缺省等价，省字段
   if (raw !== "center" && raw !== "end") bad(`${path}.justify 必须是 start|center|end`);
-  if (direction !== "column") bad(`${path}.justify 只用于 column 容器（row 上下分无打包语义）`);
+  if (direction !== "column") bad(`${path}.justify 只用于 column 容器（overlay 子节点用 place 定位，row 上下分无打包语义）`);
   return { justify: raw as MainJustify };
+}
+
+/** 根 bg 字段的归一。 */
+function normalizeBg(raw: unknown): BgSpec | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) bad("bg 必须是 { image, scrim? }");
+  const b = raw as Record<string, unknown>;
+  const image = requiredText(b.image, "bg.image");
+  if (!/^(https?:\/\/|everroom-material:\/\/)/i.test(image)) {
+    bad(`bg.image 只接受 http(s) 直链或 everroom-material:// 素材引用，收到 ${image.slice(0, 60)}`);
+  }
+  if (b.scrim !== undefined && b.scrim !== "none" && b.scrim !== "gradient") {
+    bad('bg.scrim 只接受 "none"（不压纱罩）或 "gradient"（渐层纱罩）；缺省自动压深色纱罩');
+  }
+  return { image, ...(b.scrim === "none" || b.scrim === "gradient" ? { scrim: b.scrim } : {}) };
 }
 
 function normalizeWeights(raw: unknown, count: number, path: string): number[] | undefined {
@@ -302,22 +509,40 @@ export function normalizeTree(raw: unknown): LayoutTree {
   const root = raw as Record<string, unknown>;
   const role = typeof root.role === "string" && root.role.trim() ? root.role.trim().slice(0, 24) : "content";
   const title = optionalText(root.title, 80);
-  if (root.direction !== "row" && root.direction !== "column") bad("root.direction 必须是 row|column");
+  const bg = normalizeBg(root.bg);
+  if (root.direction !== "row" && root.direction !== "column" && root.direction !== "overlay") bad("root.direction 必须是 row|column|overlay");
+  const direction = root.direction as Direction;
+  if (direction === "overlay") {
+    if (root.weights !== undefined) bad("root.weights 不支持 overlay 根——叠层子节点各自用 place 定位");
+    if (root.gapScale !== undefined) bad("root.gapScale 不支持 overlay 根——子节点间距用 place 自行留出");
+  }
   const childrenRaw = root.children;
   if (!Array.isArray(childrenRaw) || childrenRaw.length < 1) bad("root.children 至少 1 项");
   if (childrenRaw.length > MAX_CHILDREN) bad(`root.children 最多 ${MAX_CHILDREN} 项`);
   spendBudget("root");
-  const children = childrenRaw.map((child, i) => asNode(child, `root/${i}`));
-  const weights = normalizeWeights(root.weights, children.length, "root");
+  const children = childrenRaw.map((rawChild, i) => {
+    const child = asNode(rawChild, `root/${i}`) as ChildNode;
+    const place = normalizePlace((rawChild as Record<string, unknown>).place, `root/${i}`);
+    if (direction === "overlay") {
+      if (!place) bad(`root/${i} 缺 place——overlay 根的每个直接子节点必须用 place 定位（百分比）`);
+      return { ...child, place } as ChildNode;
+    }
+    if (place) bad(`root/${i}.place 只允许出现在 overlay 容器的直接子节点上`);
+    return child;
+  });
+  const weights = direction === "overlay" ? undefined : normalizeWeights(root.weights, children.length, "root");
+  const panel = normalizePanel(root.panel, "root");
   return {
     role,
     ...(title ? { title } : {}),
     ...(root.dark === true ? { dark: true } : {}),
-    direction: root.direction,
+    ...(bg ? { bg } : {}),
+    direction,
     ...(weights ? { weights } : {}),
-    ...normalizeGapScale(root.gapScale, "root"),
+    ...(direction === "overlay" ? {} : normalizeGapScale(root.gapScale, "root")),
     ...normalizePad(root.pad, "root"),
-    ...normalizeJustify(root.justify, root.direction, "root"),
+    ...normalizeJustify(root.justify, direction, "root"),
+    ...(panel ? { panel } : {}),
     children,
   };
 }

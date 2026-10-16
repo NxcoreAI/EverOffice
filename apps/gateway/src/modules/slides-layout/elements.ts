@@ -3,7 +3,8 @@
  * 全部由主题统一盖在这里——描述符不出现任何色号。
  */
 
-import type { ResolvedTheme } from "./theme.js";
+import { duotonePair, withAlpha, type ResolvedTheme } from "./theme.js";
+import { estimateTextWidth } from "./text-metrics.js";
 
 export interface SpecRun {
   text: string;
@@ -12,6 +13,8 @@ export interface SpecRun {
   italic?: boolean;
   color?: string;
   font?: string;
+  /** 字距（pt）；眉标/字标用。genoffice 写为 a:rPr@spc。 */
+  letterSpacing?: number;
 }
 
 export interface SpecParagraph {
@@ -53,6 +56,16 @@ export interface ImageElement extends SpecBase {
   url: string;
   fit?: "cover" | "contain";
   shadow?: "soft" | "medium" | "strong";
+  /** 圆角卡（roundRect adj，1/1000 %）；缺省直角。 */
+  radiusAdj?: number;
+  /** 圆形裁切（ellipse）；赢过 radiusAdj。 */
+  circle?: boolean;
+  /** cover 裁切焦点（图片宽高百分比 0~100）；缺省居中。 */
+  focus?: { x: number; y: number };
+  /** 主题双色调 [暗部, 亮部]（srgbClr hex）。 */
+  duotone?: [string, string];
+  /** 灰度化（a:grayscl）。 */
+  grayscale?: boolean;
 }
 
 export interface ChartSeries {
@@ -67,6 +80,8 @@ export interface ChartElement extends SpecBase {
   series: ChartSeries[];
   title?: string;
   colors?: string[];
+  /** 逐点填色 [系列][类目]（稀疏；null=系列色）；单点高亮走这里。 */
+  pointColors?: (string | null)[][];
   legend?: boolean;
   dataLabels?: boolean;
   gridlines?: boolean;
@@ -144,6 +159,11 @@ export function shapeElement(
   } = {},
 ): ShapeElement {
   const fill = options.fill ?? theme.colors.cardSurface;
+  // 圆角随主题（绝对像素），不随卡变大变肿：OOXML 默认 adj = 短边 1/6，大卡会气球化
+  const adj =
+    shape === "roundRect"
+      ? Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.max(1, Math.min(frame.w, frame.h))) * 100000))
+      : undefined;
   return {
     type: "shape",
     shape,
@@ -152,6 +172,7 @@ export function shapeElement(
     w: Math.round(frame.w),
     h: Math.round(frame.h),
     fill,
+    ...(adj !== undefined ? { adj } : {}),
     ...(options.paragraphs ? { paragraphs: options.paragraphs, valign: options.valign ?? "middle" } : {}),
     ...(options.stroke ?? (theme.decoration.cardStroke
       ? { stroke: { color: theme.decoration.cardStroke, widthPt: theme.decoration.cardStrokeWidthPt } }
@@ -160,6 +181,12 @@ export function shapeElement(
       ? { shadow: (options.shadow ?? theme.decoration.cardShadow) as "soft" | "medium" | "strong" }
       : {}),
   };
+}
+
+/** 编辑系统数字衬线：主题标题字体优先，缺省宋体系——数字用衬线是整套组件的排印签名。 */
+export function numeralFont(theme: ResolvedTheme): string | undefined {
+  const font = theme.fonts.heading || "Songti SC";
+  return font || undefined;
 }
 
 /** 卡片底色 roundRect（主题卡面 + 主题描边/阴影）。 */
@@ -172,8 +199,21 @@ export function imageElement(
   url: string,
   theme: ResolvedTheme,
   fit?: "cover" | "contain",
-): ImageElement {
-  return {
+  opts: {
+    radius?: boolean;
+    circle?: boolean;
+    focus?: { x?: number; y?: number };
+    duotone?: boolean;
+    grayscale?: boolean;
+    caption?: string;
+  } = {},
+): { element: ImageElement; extra: SpecElement[] } {
+  // 圆角随主题绝对像素换算成 roundRect adj（与 shapeElement 同口径：不随卡变肿）。
+  const radiusAdj =
+    opts.radius && !opts.circle && theme.spacing.cornerRadius > 0
+      ? Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.max(1, Math.min(frame.w, frame.h))) * 100000))
+      : undefined;
+  const element: ImageElement = {
     type: "image",
     x: Math.round(frame.x),
     y: Math.round(frame.y),
@@ -182,7 +222,36 @@ export function imageElement(
     url,
     fit: fit ?? theme.decoration.imageFit,
     ...(theme.decoration.cardShadow !== "none" ? { shadow: theme.decoration.cardShadow as "soft" } : {}),
+    ...(radiusAdj !== undefined ? { radiusAdj } : {}),
+    ...(opts.circle ? { circle: true } : {}),
+    ...(opts.focus && (opts.focus.x !== undefined || opts.focus.y !== undefined)
+      ? { focus: { x: opts.focus.x ?? 50, y: opts.focus.y ?? 50 } }
+      : {}),
+    ...(opts.duotone ? { duotone: duotonePair(theme) } : {}),
+    ...(opts.grayscale ? { grayscale: true } : {}),
   };
+  // 压图小字签：左下角玻璃底（深色 55% alpha）+ onDark 小字，宽随文字（统一量测器，中英文同口径）、不超框。
+  const extra: SpecElement[] = [];
+  if (opts.caption) {
+    const textW = estimateTextWidth(opts.caption, theme.sizes.caption);
+    const w = Math.min(Math.round(frame.w) - 24, Math.max(48, Math.round(textW + theme.sizes.caption * 2)));
+    const h = 26;
+    const x = Math.round(frame.x) + 12;
+    const y = Math.round(frame.y + frame.h) - h - 12;
+    extra.push({
+      type: "shape",
+      shape: "roundRect",
+      x,
+      y,
+      w,
+      h,
+      fill: withAlpha(theme.colors.darkBackground, 0.55),
+      adj: 50000,
+      paragraphs: [{ runs: [{ text: opts.caption, sizePt: theme.sizes.caption, color: theme.colors.onDarkText }] }],
+      valign: "middle",
+    });
+  }
+  return { element, extra };
 }
 
 export function httpUrl(url: string, what: string): string {

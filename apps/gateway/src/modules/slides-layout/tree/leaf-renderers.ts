@@ -16,7 +16,7 @@ import {
   type TableElement,
   type TableCell,
 } from "../elements.js";
-import type { ResolvedTheme } from "../theme.js";
+import { mixHex, withAlpha, type ResolvedTheme } from "../theme.js";
 import {
   estimateLineHeight,
   estimateLines,
@@ -24,7 +24,7 @@ import {
   singleLineBoxHeight,
   textBoxHeight,
 } from "../text-metrics.js";
-import type { CardLeaf, ChartLeaf, TableLeaf, TextLeaf } from "./schema.js";
+import type { ChartLeaf, TableLeaf, TextLeaf } from "./schema.js";
 
 export function isTreeErrorLike(error: unknown): error is Error {
   return error instanceof Error && error.message.startsWith("LAYOUT_LEAF_INVALID");
@@ -114,8 +114,13 @@ export function statCell(stat: StatInput, frame: Frame, theme: ResolvedTheme, fo
     bad(`KPI 卡「${stat.value}」内容高约 ${Math.round(total)}px 超过卡框 ${Math.round(frame.h)}px——加大该子树权重或换文字卡`);
   }
   const top = frame.y + Math.max(0, (frame.h - total) / 2);
+  // 卡高跟内容走（上下各约一倍 padding 的呼吸），整卡在框内垂直居中——
+  // 满框拉高会把卡片变空壳（内容占比不足三成，PPT 卡片惯例内容占 55%~75%）
+  const cardH = Math.min(frame.h, Math.max(180, Math.round(total + padding * 4)));
+  const cardY = frame.y + Math.max(0, Math.round((frame.h - cardH) / 2));
+  const cardFrame = { ...frame, y: cardY, h: cardH };
   return [
-    card(frame, theme, focus ? theme.colors.primarySoft : undefined),
+    card(cardFrame, theme, focus ? theme.colors.primarySoft : undefined),
     textElement({ x: frame.x + padding, y: top, w: innerW, h: valueH }, [{ runs: valueRuns }]),
     textElement(
       { x: frame.x + padding, y: top + valueH + gap, w: innerW, h: labelLines * estimateLineHeight(labelSize) + 4 },
@@ -133,27 +138,29 @@ export interface CardInput {
 /** 图文卡：卡面 + 可选 icon + 标题 + 正文；装不下报错点名。 */
 export function textCard(input: CardInput, frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
   const padding = theme.spacing.cardPadding;
-  const inner = { x: frame.x + padding, y: frame.y + padding, w: frame.w - padding * 2, h: frame.h - padding * 2 };
-  if (inner.w < 60 || inner.h < 40) {
-    bad(`${what}「${input.title.slice(0, 12)}」卡框过小（${Math.round(frame.w)}×${Math.round(frame.h)}px）——加大权重`);
-  }
   const titleSize = Math.min(18, Math.max(14, theme.sizes.body + 2));
   const bodySize = Math.min(15, Math.max(12, theme.sizes.body));
   const iconSize = 28;
   const iconW = input.icon ? iconSize + 12 : 0;
-  const textW = inner.w - iconW;
-  const titleLines = estimateLines(input.title, titleSize, textW);
-  const titleH = titleLines * estimateLineHeight(titleSize);
-  const bodyLines = input.body ? estimateLines(input.body, bodySize, textW) : 0;
-  const bodyH = input.body ? bodyLines * estimateLineHeight(bodySize) + 4 : 0;
+  const textW = frame.w - padding * 2 - iconW;
+  const titleH = estimateLines(input.title, titleSize, textW) * estimateLineHeight(titleSize);
+  const bodyH = input.body ? estimateLines(input.body, bodySize, textW) * estimateLineHeight(bodySize) + 4 : 0;
   const gap = input.body ? 8 : 0;
   const total = titleH + gap + bodyH;
+  // 卡高跟内容走，框内垂直居中——满框拉高会把图文卡变空壳
+  const cardH = Math.min(frame.h, Math.max(170, Math.round(total + padding * 2 + 28)));
+  const cardY = frame.y + Math.max(0, Math.round((frame.h - cardH) / 2));
+  const cardFrame = { ...frame, y: cardY, h: cardH };
+  const inner = { x: frame.x + padding, y: cardY + padding, w: frame.w - padding * 2, h: cardH - padding * 2 };
+  if (inner.w < 60 || inner.h < 40) {
+    bad(`${what}「${input.title.slice(0, 12)}」卡框过小（${Math.round(frame.w)}×${Math.round(frame.h)}px）——加大权重`);
+  }
   if (total > inner.h) {
     bad(
       `${what}「${input.title.slice(0, 12)}」内容超卡高（约 ${Math.round(total)}px > ${Math.round(inner.h)}px）——精简正文或加大权重`,
     );
   }
-  const elements: SpecElement[] = [card(frame, theme)];
+  const elements: SpecElement[] = [card(cardFrame, theme)];
   const top = inner.y + Math.max(0, (inner.h - total) / 2);
   if (input.icon) {
     elements.push({
@@ -183,45 +190,163 @@ export function textCard(input: CardInput, frame: Frame, theme: ResolvedTheme, w
   return elements;
 }
 
-export function renderCardLeaf(leaf: CardLeaf, frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
-  if (leaf.value !== undefined) {
-    return statCell({ value: leaf.value, label: leaf.label ?? "", ...(leaf.unit ? { unit: leaf.unit } : {}) }, frame, theme);
+/**
+ * 图表叶子 → PageSpec 元素（可能多个：waterfall 展开成形状组，delta 徽章是独立元素）。
+ * area 用引擎原生面积图；bar/area 高亮走逐点填色——高亮列主色实心、其余主色浅档，
+ * 不靠网格线和图例讲故事（商用图表语言：直接标注 + 重点色）。
+ */
+export function renderChartLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTheme): SpecElement[] {
+  if (leaf.kind === "waterfall") return renderWaterfallLeaf(leaf, frame, theme);
+  const points = leaf.categories.length;
+  const highlightIdx =
+    leaf.highlight === undefined
+      ? undefined
+      : leaf.highlight === "last"
+        ? points - 1
+        : leaf.highlight;
+  const tint = mixHex(theme.colors.primary, theme.colors.background, 0.8);
+  const pointColors =
+    highlightIdx === undefined
+      ? undefined
+      : [leaf.categories.map((_, i) => (i === highlightIdx ? theme.colors.primary : tint))];
+  const elements: SpecElement[] = [
+    {
+      type: "chart",
+      chart: leaf.kind === "area" ? "area" : leaf.kind,
+      x: Math.round(frame.x),
+      y: Math.round(frame.y),
+      w: Math.round(frame.w),
+      h: Math.round(frame.h),
+      categories: leaf.categories,
+      series: leaf.series,
+      colors: theme.colors.chartSeries.slice(
+        0,
+        Math.max(leaf.series.length, leaf.kind === "pie" || leaf.kind === "doughnut" ? points : leaf.series.length),
+      ),
+      ...(pointColors ? { pointColors } : {}),
+      ...(points <= 8 && leaf.kind !== "scatter" ? { dataLabels: true } : {}),
+      ...(leaf.legend ? { legend: true } : {}),
+    },
+  ];
+  // 涨跌徽章：图表右上角主色圆角签（白字），宽随文字。
+  if (leaf.delta) {
+    const sizePt = theme.sizes.caption;
+    const w = Math.min(Math.round(frame.w), Math.round(leaf.delta.length * sizePt * 0.66 + sizePt * 2.4));
+    const h = 26;
+    elements.push({
+      type: "shape",
+      shape: "roundRect",
+      x: Math.round(frame.x + frame.w - w),
+      y: Math.round(frame.y),
+      w,
+      h,
+      fill: theme.colors.primary,
+      adj: 50000,
+      paragraphs: [{ runs: [{ text: leaf.delta, sizePt, bold: true, color: theme.colors.onDarkText }], align: "center" }],
+      valign: "middle",
+    } as SpecElement);
   }
-  return textCard(
-    { title: leaf.title ?? "", ...(leaf.body ? { body: leaf.body } : {}), ...(leaf.icon ? { icon: leaf.icon } : {}) },
-    frame,
-    theme,
-    what,
-  );
+  return elements;
 }
 
-/** 图表叶子 → 引擎 chart 元素（沿用 D 系 buildChart 的校验与主题系列色）。 */
-export function renderChartLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTheme): ChartElement {
-  const points = leaf.categories.length;
-  const element: ChartElement = {
-    type: "chart",
-    chart: leaf.kind,
-    x: Math.round(frame.x),
-    y: Math.round(frame.y),
-    w: Math.round(frame.w),
-    h: Math.round(frame.h),
-    categories: leaf.categories,
-    series: leaf.series,
-    colors: theme.colors.chartSeries.slice(
-      0,
-      Math.max(leaf.series.length, leaf.kind === "pie" || leaf.kind === "doughnut" ? points : leaf.series.length),
-    ),
-    ...(points <= 8 && leaf.kind !== "scatter" ? { dataLabels: true } : {}),
-    ...(leaf.legend ? { legend: true } : {}),
-  };
-  return element;
+const WF_PAD_TOP = 26;
+const WF_PAD_BOTTOM = 30;
+const WF_PAD_X = 6;
+
+/**
+ * 瀑布图：形状组（不依赖图表引擎，跨渲染器稳定）。
+ * values 为有符号增减（正=升、负=降）；首列从 0 起画，末列画 0→合计的结果柱
+ * （商用瀑布惯例：营收→减项→…→利润）。升=主色、降=墨色浅档、结果=系列第 4 档。
+ */
+function renderWaterfallLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTheme): SpecElement[] {
+  const values = leaf.series[0]!.values;
+  const n = values.length;
+  const running: { start: number; end: number }[] = [];
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const isResult = i === n - 1;
+    const start = isResult ? 0 : total;
+    const end = isResult ? total + values[i]! : total + values[i]!;
+    running.push({ start, end });
+    total = end;
+  }
+  if (total <= 0) bad("waterfall 合计必须为正——检查 values 的正负与量级");
+  const maxV = Math.max(...running.map((r) => Math.max(r.start, r.end)), total);
+  const plotY = frame.y + WF_PAD_TOP;
+  const plotH = frame.h - WF_PAD_TOP - WF_PAD_BOTTOM;
+  const slotW = (frame.w - WF_PAD_X * 2) / n;
+  const barW = Math.max(12, Math.min(72, slotW * 0.5));
+  const yOf = (v: number) => plotY + plotH * (1 - v / maxV);
+  const rise = theme.colors.primary;
+  const fall = mixHex(theme.colors.text, theme.colors.background, 0.62);
+  const resultColor = theme.colors.chartSeries[3] ?? theme.colors.accent;
+  const labelSize = Math.min(theme.sizes.caption, 11);
+  const elements: SpecElement[] = [];
+  const fmt = (v: number) => (Number.isInteger(v) ? `${v}` : `${Math.round(v * 10) / 10}`);
+  for (let i = 0; i < n; i++) {
+    const { start, end } = running[i]!;
+    const isResult = i === n - 1;
+    const isFall = !isResult && end < start;
+    const cx = frame.x + WF_PAD_X + slotW * i + slotW / 2;
+    const top = yOf(Math.max(start, end));
+    const h = Math.max(2, yOf(Math.min(start, end)) - top);
+    const color = isResult ? resultColor : isFall ? fall : rise;
+    elements.push({
+      type: "shape",
+      shape: "roundRect",
+      x: Math.round(cx - barW / 2),
+      y: Math.round(top),
+      w: Math.round(barW),
+      h: Math.round(h),
+      fill: color,
+      adj: Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.max(1, Math.min(barW, h))) * 100000)),
+    });
+    // 数值标注：升/结果标在上缘上方，降标在下缘下方——落点永远不压柱。
+    const labelText = fmt(isResult ? end : Math.abs(values[i]!));
+    const labelY = isFall ? top + h + 4 : top - labelSize * 1.6 - 2;
+    elements.push(
+      textElement(
+        { x: Math.round(cx - slotW / 2), y: Math.round(labelY), w: Math.round(slotW), h: Math.round(labelSize * 1.6) },
+        [{ runs: [{ text: labelText, sizePt: labelSize, bold: isResult, color: isFall ? theme.colors.textMuted : color }] }],
+      ),
+    );
+    // 类目标签：图底部一行。
+    elements.push(
+      textElement(
+        { x: Math.round(cx - slotW / 2), y: Math.round(plotY + plotH + 6), w: Math.round(slotW), h: Math.round(labelSize * 1.6) },
+        [{ runs: [{ text: leaf.categories[i]!, sizePt: labelSize, color: theme.colors.textMuted }] }],
+      ),
+    );
+    // 虚线基准线：在每段的起点水位连接左右柱缘（首列除外）——瀑布的「台阶」读法。
+    if (i > 0) {
+      const level = yOf(i === n - 1 ? running[i]!.end : running[i]!.start);
+      const prevCx = frame.x + WF_PAD_X + slotW * (i - 1) + slotW / 2;
+      elements.push({
+        type: "shape",
+        shape: "rect",
+        fill: theme.colors.divider,
+        x: Math.round(Math.min(prevCx + barW / 2, cx - barW / 2)),
+        y: Math.round(level),
+        w: Math.max(1, Math.round(Math.abs(cx - prevCx) - barW)),
+        h: 1,
+      });
+    }
+  }
+  return elements;
 }
 
 const CHECK_CELL = /^[✓✗★☆]{1,6}$/;
 const NUMERIC_CELL = /^[-+￥$€%]?[\d,.．]+[%万亿]?$/;
 
-/** 表格叶子 → 引擎 table 元素（列对齐推断 + 行高预算，迁自 preset-common buildTable）。 */
-export function renderTableLeaf(leaf: TableLeaf, frame: Frame, theme: ResolvedTheme, what: string): TableElement {
+/** 表格叶子 → 引擎 table 元素（列对齐推断 + 行高预算，迁自 preset-common buildTable）。
+ *  `header: false` 时 rows 全按数据行渲染（账目式两列表）；`topRule: true` 顶部压 2px 墨线、表格下移让位。 */
+export function renderTableLeaf(leaf: TableLeaf, frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
+  const headerOff = leaf.header === false;
+  // 账目式顶线：2px 墨线压框顶，表格下移让位
+  const ruleH = leaf.topRule === true ? 2 : 0;
+  const tableFrame: Frame = leaf.topRule === true
+    ? { ...frame, y: frame.y + ruleH + 8, h: frame.h - ruleH - 8 }
+    : frame;
   const parsed = leaf.rows as TableCell[][];
   const colCount = parsed[0]!.length;
   const fontSize = Math.min(14, Math.max(12, theme.sizes.table));
@@ -231,9 +356,10 @@ export function renderTableLeaf(leaf: TableLeaf, frame: Frame, theme: ResolvedTh
     const cell = row[c]!;
     return typeof cell === "string" ? cell : cell.text;
   };
+  const dataRows = headerOff ? parsed : parsed.slice(1);
   const aligns: ("left" | "center" | "right")[] = [];
   for (let c = 0; c < colCount; c++) {
-    const column = parsed.slice(1).map((row) => cellText(row, c));
+    const column = dataRows.map((row) => cellText(row, c));
     if (column.every((t) => CHECK_CELL.test(t))) aligns.push("center");
     else if (c > 0 && column.length > 0 && column.every((t) => NUMERIC_CELL.test(t))) aligns.push("right");
     else aligns.push("left");
@@ -245,19 +371,19 @@ export function renderTableLeaf(leaf: TableLeaf, frame: Frame, theme: ResolvedTh
   for (const [r, row] of parsed.entries()) {
     let maxLines = 1;
     for (let c = 0; c < colCount; c++) {
-      const colW = ((leaf.colWidths ?? parsed[0]!.map(() => 1))[c]! / widthSum) * frame.w - 12;
+      const colW = ((leaf.colWidths ?? parsed[0]!.map(() => 1))[c]! / widthSum) * tableFrame.w - 12;
       maxLines = Math.max(maxLines, estimateLines(cellText(row, c), fontSize, colW));
     }
-    const rowFactor = r === 0 ? 1.15 : (/合计|总计|小计/.test(cellText(row, 0)) ? 1.2 : 1);
+    const rowFactor = !headerOff && r === 0 ? 1.15 : /合计|总计|小计/.test(cellText(row, 0)) ? 1.2 : 1;
     estHeight += maxLines * lineH * rowFactor + 10;
   }
-  if (estHeight > frame.h + 4) {
-    bad(`${what} 行高预算约 ${Math.round(estHeight)}px 超过区域 ${Math.round(frame.h)}px——砍行、精简单元格文字或加大权重`);
+  if (estHeight > tableFrame.h + 4) {
+    bad(`${what} 行高预算约 ${Math.round(estHeight)}px 超过区域 ${Math.round(tableFrame.h)}px——砍行、精简单元格文字或加大权重`);
   }
 
   const styled: TableCell[][] = parsed.map((row, r) =>
     row.map((cell, c): TableCell => {
-      const isHeader = r === 0;
+      const isHeader = r === 0 && !headerOff;
       if (typeof cell === "string") {
         if (isHeader) {
           if (style === "darkHeader") {
@@ -277,16 +403,30 @@ export function renderTableLeaf(leaf: TableLeaf, frame: Frame, theme: ResolvedTh
     }),
   );
 
-  return {
+  const table: TableElement = {
     type: "table",
-    x: Math.round(frame.x),
-    y: Math.round(frame.y),
-    w: Math.round(frame.w),
-    h: Math.round(frame.h),
+    x: Math.round(tableFrame.x),
+    y: Math.round(tableFrame.y),
+    w: Math.round(tableFrame.w),
+    h: Math.round(tableFrame.h),
     rows: styled,
     fontSize,
     ...(leaf.colWidths ? { colWidths: leaf.colWidths } : {}),
     ...(style === "lines" ? { borderColor: theme.colors.divider, horizontalBordersOnly: true, borderWidthPt: 0.5 } : {}),
     ...(style === "zebra" ? { zebra: theme.colors.cardSurface } : {}),
   };
+  if (leaf.topRule !== true) return [table];
+  // 2px 墨色顶线独立成形状（引擎 table 无顶线参数）；元素序=线先、表后。
+  return [
+    {
+      type: "shape",
+      shape: "rect",
+      fill: theme.colors.text,
+      x: Math.round(frame.x),
+      y: Math.round(frame.y),
+      w: Math.round(frame.w),
+      h: ruleH,
+    },
+    table,
+  ];
 }

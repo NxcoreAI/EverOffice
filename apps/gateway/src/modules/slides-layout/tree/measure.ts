@@ -13,7 +13,7 @@ import { contractFromStyleParams } from "./layout-contract.js";
 import { estimateLineHeight, estimateTextWidth } from "../text-metrics.js";
 import type { PageSpec } from "../elements.js";
 
-export type DefectType = "schema" | "overflow" | "min_size" | "font_floor" | "element_cap" | "image_ar" | "canvas" | "overlap" | "emoji";
+export type DefectType = "schema" | "overflow" | "min_size" | "font_floor" | "element_cap" | "image_ar" | "canvas" | "overlap" | "emoji" | "contrast";
 
 export interface LayoutDefect {
   path: string;
@@ -29,6 +29,9 @@ export interface MeasureInput {
 
 const OVERFLOW_TOLERANCE_PX = 2;
 const OVERLAP_TOLERANCE_PX = 6;
+/** overlay 子节点的最小尺寸下限（角标类小件，低于常规叶子下限）。 */
+const OVERLAY_MIN_W = 48;
+const OVERLAY_MIN_H = 32;
 /** 与 genoffice 引擎同口径的 emoji 判定（含变体选择符/零宽连接符区段）。 */
 const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u;
 
@@ -75,13 +78,18 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
 
   for (const placement of result.placements) {
     const { frame } = placement;
-    // justify 打包的叶子框高=内容自然高（刻意贴合），只查宽度下限。
-    const minHeight = placement.packed ? 0 : contract.minLeaf.h;
-    if (frame.w < contract.minLeaf.w || frame.h < minHeight) {
+    // justify 打包的叶子框高=内容自然高（刻意贴合），只查宽度下限；
+    // overlay 子节点与 icon 是小件定位（角标/压图短句/图标），下限单独放宽；
+    // divider 是 1px 装饰线，天然窄条，豁免尺寸下限。
+    const small = placement.overlay === true || placement.kind === "icon";
+    const isThin = placement.kind === "divider";
+    const minW = isThin ? 0 : small ? OVERLAY_MIN_W : contract.minLeaf.w;
+    const minHeight = placement.packed || isThin ? 0 : small ? OVERLAY_MIN_H : contract.minLeaf.h;
+    if (frame.w < minW || frame.h < minHeight) {
       push(
         placement.path,
         "min_size",
-        `区域过小（${Math.round(frame.w)}×${Math.round(frame.h)}px，下限 ${contract.minLeaf.w}×${contract.minLeaf.h}px）`,
+        `区域过小（${Math.round(frame.w)}×${Math.round(frame.h)}px，下限 ${minW}×${minHeight}px）`,
         "加大该子树的权重，或减少兄弟节点数量",
       );
       continue;
@@ -116,6 +124,24 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
   // 引擎硬闸镜像①：emoji 直接拒页（任何元素的任何文本都不允许）。
   if (EMOJI_PATTERN.test(JSON.stringify(result.spec.elements))) {
     push("root", "emoji", "页面文本含 emoji（引擎直接拒页）", "删除 emoji；装饰用 path，图标留给后续 icon 叶子");
+  }
+
+  // 背景图未压纱罩且存在非深色调文字：图上直排文字对比度无保障。
+  if (result.bg && !result.bg.scrim) {
+    const onDark = contract.theme.colors.onDarkText;
+    const offender = result.spec.elements.find(
+      (el) =>
+        (el.type === "text" || (el.type === "shape" && el.paragraphs)) &&
+        el.paragraphs!.some((p) => p.runs.some((r) => r.color !== undefined && r.color !== onDark)),
+    );
+    if (offender) {
+      push(
+        "root.bg",
+        "contrast",
+        "背景图未压纱罩（bg.scrim: none）且存在非 inverse 文字——图上直排文字对比度无保障",
+        "去掉 bg.scrim 让引擎自动压深纱罩，或把压图文字全部改 tone: inverse",
+      );
+    }
   }
 
   // 引擎硬闸镜像②：有字元素墨迹两两相交（6px 容差）直接拒页。
