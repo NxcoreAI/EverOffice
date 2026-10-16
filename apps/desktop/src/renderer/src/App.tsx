@@ -26,6 +26,7 @@ import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGa
 import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
 import { MicrophonePermissionOnboarding } from '@/components/onboarding/MicrophonePermissionOnboarding'
+import { ScreenRecordingPermissionOnboarding } from '@/components/onboarding/ScreenRecordingPermissionOnboarding'
 import { AgentMigrationOnboarding } from '@/components/onboarding/AgentMigrationOnboarding'
 import { OnboardingFlowChrome, type OnboardingFlowStage } from '@/components/onboarding/OnboardingFlowChrome'
 import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
@@ -48,6 +49,7 @@ import {
 } from '@/components/context-room/roomOverviewCitation'
 import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
 import { requestRoomOfficeFocus, useEmbeddedOffice } from '@/components/context-room/ported/embeddedOffice'
+import { attachOfficeViewport } from '@/components/context-room/ported/officeViewport'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
@@ -157,7 +159,7 @@ export function App() {
   const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
   const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
   const [fullOnboardingStage, setFullOnboardingStage] = useState<OnboardingFlowStage>('idle')
-  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'microphone' | 'memory' | 'agents' | 'room'>>(() => new Set())
+  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'microphone' | 'screen' | 'memory' | 'agents' | 'room'>>(() => new Set())
   const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [memoryReady, setMemoryReady] = useState(false)
@@ -188,49 +190,23 @@ export function App() {
     : null
 
   useEffect(() => {
-    const workspace = workspaceMainRef.current
     const office = window.nxcore?.office
-    if (!workspace || !office) return
-
-    if (!focusedOfficeInstanceId) {
-      void office.setActiveInstance(null).catch((error) => {
-        console.error('Failed to hide the Office view.', error)
-      })
-      return
-    }
-
-    // Room 内嵌预览：占位矩形由 EmbeddedOfficePreview 自行上报，这里只激活。
-    if (activePage === 'rooms') {
-      void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
-        console.error('Failed to open the Office view.', error)
-      })
-      return
-    }
-
-    const reportBounds = () => {
-      const bounds = workspace.getBoundingClientRect()
-      office.setWorkspaceBounds({
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      })
-    }
-    const observer = new ResizeObserver(reportBounds)
-    observer.observe(workspace)
-    window.addEventListener('resize', reportBounds)
-    let disposed = false
-    void office.setActiveInstance(focusedOfficeInstanceId).then(() => {
-      if (!disposed) reportBounds()
-    }).catch((error) => {
-      console.error('Failed to open the Office view.', error)
+    if (!office) return
+    void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
+      console.error('Failed to update the Office view visibility.', error)
     })
-    return () => {
-      disposed = true
-      observer.disconnect()
-      window.removeEventListener('resize', reportBounds)
-    }
-  }, [activePage, focusedOfficeInstanceId, agentOpen, effectiveNavCollapsed])
+  }, [focusedOfficeInstanceId])
+
+  // office-document 顶栏页：矩形上报与弹层遮挡显隐交给共享视口模块
+  //（Room 内嵌宿主 EmbeddedOfficePreview 挂同一模块；侧栏开合等布局变化
+  // 由模块内 ResizeObserver 跟随，不随 agentOpen 重挂）。
+  useEffect(() => {
+    if (activePage !== 'office-document' || !focusedOfficeInstanceId) return
+    const workspace = workspaceMainRef.current
+    if (!workspace) return
+    const attachment = attachOfficeViewport(workspace)
+    return () => attachment.detach()
+  }, [activePage, focusedOfficeInstanceId])
 
   useEffect(() => {
     logOnboarding('state', {
@@ -242,7 +218,7 @@ export function App() {
     })
   }, [activePage, folderOnboardingOpen, fullOnboardingStage, suppressRoomOnboarding])
 
-  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'microphone' | 'memory' | 'agents' | 'room') => {
+  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'microphone' | 'screen' | 'memory' | 'agents' | 'room') => {
     setCompletedOnboardingStages((current) => {
       if (current.has(stage)) return current
       return new Set([...current, stage])
@@ -1244,6 +1220,19 @@ export function App() {
             logOnboarding('microphone-finished', { stage: fullOnboardingStageRef.current })
             markOnboardingStageCompleted('microphone')
             if (fullOnboardingStageRef.current !== 'microphone') return
+            fullOnboardingStageRef.current = 'screen'
+            setFullOnboardingStage('screen')
+            setSuppressRoomOnboarding(true)
+          }}
+        />
+      ) : null}
+      {fullOnboardingStage === 'screen' ? (
+        <ScreenRecordingPermissionOnboarding
+          onNavigateStage={switchOnboardingStage}
+          onFinished={() => {
+            logOnboarding('screen-finished', { stage: fullOnboardingStageRef.current })
+            markOnboardingStageCompleted('screen')
+            if (fullOnboardingStageRef.current !== 'screen') return
             fullOnboardingStageRef.current = 'memory'
             setFullOnboardingStage('memory')
             setSuppressRoomOnboarding(true)

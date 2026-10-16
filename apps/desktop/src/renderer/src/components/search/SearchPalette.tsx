@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Search } from 'lucide-react'
 import type { LocalAgentInstallation } from '@nxcore/agent-contract'
 import type { SearchHitDto, SearchItemType, SearchMessageContextDto, SearchPageDto } from '../../../../shared/search'
 import { useLocale } from '@/i18n/LocaleContext'
+import { FilterSelect } from '@/components/ui/FilterSelect'
 import { splitHighlight } from './search-highlight'
 import './search-i18n'
 import './SearchPalette.css'
@@ -110,21 +112,21 @@ export function SearchPalette({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
 
-  // 索引仍在消化时轮询补齐（结果按稳定 id 原位刷新）。
+  // 索引仍在消化时轮询补齐（结果按稳定 id 原位刷新）。scope 缺失（旧网关/降级数据面）不轮询。
   useEffect(() => {
     if (!open) return
-    const pending = page?.scope.pendingCount ?? 0
+    const pending = page?.scope?.pendingCount ?? 0
     if (pending === 0) return
     const timer = window.setInterval(() => void fetchPage(query), 3_000)
     return () => window.clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, page?.scope.pendingCount])
+  }, [open, page?.scope?.pendingCount])
 
   useEffect(() => {
     if (!open) return
     inputRef.current?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -192,6 +194,7 @@ export function SearchPalette({
     <div className="search-palette-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <div className="search-palette" role="dialog" aria-modal="true">
         <div className="search-palette-input-row">
+          <Search className="search-palette-input-icon" size={18} strokeWidth={1.8} aria-hidden="true" />
           <input
             ref={inputRef}
             className="search-palette-input"
@@ -202,14 +205,6 @@ export function SearchPalette({
             }}
             placeholder={t('search:palette.placeholder')}
           />
-          {page && (
-            <div className="search-palette-scope">
-              <span>{t('search:palette.scopeReady', { count: page.scope.indexedCount })}</span>
-              {page.scope.pendingCount > 0 && (
-                <span className="search-palette-pending">{t('search:palette.scopePending', { count: page.scope.pendingCount })}</span>
-              )}
-            </div>
-          )}
         </div>
 
         <div className="search-palette-filters">
@@ -221,24 +216,32 @@ export function SearchPalette({
               onClick={() => setTypeFilter(item.value)}
             >{t(item.key)}</button>
           ))}
-          <select className="search-select" value={roomFilter} onChange={(event) => setRoomFilter(event.target.value)}>
-            <option value="">{t('search:filter.roomAll')}</option>
-            {rooms.map((room) => <option key={room.id} value={room.id}>{room.title}</option>)}
-          </select>
-          <select className="search-select" value={timeRange} onChange={(event) => setTimeRange(event.target.value as TimeRange)}>
-            <option value="all">{t('search:filter.range.all')}</option>
-            <option value="today">{t('search:filter.range.today')}</option>
-            <option value="days7">{t('search:filter.range.days7')}</option>
-            <option value="days30">{t('search:filter.range.days30')}</option>
-          </select>
-          <select
-            className="search-select"
+          <FilterSelect
+            value={roomFilter}
+            options={[{ value: '', label: t('search:filter.roomAll') }, ...rooms.map((room) => ({ value: room.id, label: room.title }))]}
+            onChange={setRoomFilter}
+            ariaLabel={t('search:filter.roomAll')}
+          />
+          <FilterSelect
+            value={timeRange}
+            options={[
+              { value: 'all', label: t('search:filter.range.all') },
+              { value: 'today', label: t('search:filter.range.today') },
+              { value: 'days7', label: t('search:filter.range.days7') },
+              { value: 'days30', label: t('search:filter.range.days30') },
+            ]}
+            onChange={setTimeRange}
+            ariaLabel={t('search:filter.range.all')}
+          />
+          <FilterSelect
             value={timeBasis}
-            onChange={(event) => setTimeBasis(event.target.value === 'occurred' ? 'occurred' : 'ingested')}
-          >
-            <option value="occurred">{t('search:filter.basisOccurred')}</option>
-            <option value="ingested">{t('search:filter.basisIngested')}</option>
-          </select>
+            options={[
+              { value: 'occurred', label: t('search:filter.basisOccurred') },
+              { value: 'ingested', label: t('search:filter.basisIngested') },
+            ]}
+            onChange={setTimeBasis}
+            ariaLabel={t('search:filter.basisIngested')}
+          />
         </div>
 
         <div className="search-palette-results" ref={resultsRef}>
@@ -268,14 +271,12 @@ export function SearchPalette({
           <div className="search-palette-dispatch">
             <div className="search-palette-dispatch-title">{t('search:dispatch.title')}：{dispatchPick.title}</div>
             <div className="search-palette-dispatch-row">
-              <select
-                className="search-select"
+              <FilterSelect
                 value={dispatchAgentId}
-                onChange={(event) => setDispatchAgentId(event.target.value)}
-              >
-                <option value="">main</option>
-                {dispatchAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.displayName}</option>)}
-              </select>
+                options={[{ value: '', label: 'main' }, ...dispatchAgents.map((agent) => ({ value: agent.id, label: agent.displayName }))]}
+                onChange={setDispatchAgentId}
+                ariaLabel={t('search:dispatch.title')}
+              />
               <input
                 className="search-palette-dispatch-input"
                 value={dispatchInstruction}
@@ -289,6 +290,17 @@ export function SearchPalette({
             </div>
           </div>
         )}
+
+        <div className="search-palette-footer">
+          {page?.scope && (
+            <>
+              <span>{t('search:palette.scopeReady', { count: page.scope.indexedCount })}</span>
+              {page.scope.pendingCount > 0 && (
+                <span className="search-palette-pending">{t('search:palette.scopePending', { count: page.scope.pendingCount })}</span>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -345,7 +357,7 @@ const SearchHitRow = memo(function SearchHitRow({
         </div>
       </button>
       <div className="search-hit-actions">
-        <button type="button" className="search-action" onClick={() => onOpen(hit)}>{t('search:hit.open')}</button>
+        <button type="button" className="search-action" onClick={() => onOpen(hit)}>{t(`search:hit.open.${hit.itemType}`)}</button>
         {hit.itemType === 'file' && (
           <button type="button" className="search-action" onClick={() => onAttach(hit)}>{t('search:hit.attach')}</button>
         )}

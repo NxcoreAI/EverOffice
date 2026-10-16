@@ -78,6 +78,48 @@
   pointer-events: none;
 }
 
+/* 脱离底部时的「回到最新」悬浮按钮（#297）。 */
+.agent-chat-jump-latest {
+  position: absolute;
+  bottom: calc(var(--agent-composer-height) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+}
+
+.agent-chat-jump-latest:hover {
+  color: var(--accent-strong, #4d6faf);
+  border-color: rgba(88, 118, 216, 0.4);
+}
+
+.agent-chat-jump-latest svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-chat-jump-latest-count {
+  min-width: 16px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #eef1fb;
+  color: #5876d8;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}
+
 .agent-message {
   display: flex;
   width: 100%;

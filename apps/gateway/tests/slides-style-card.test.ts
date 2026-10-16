@@ -14,13 +14,12 @@ const params: StyleParams = defaultStyleParams({
 });
 
 describe("presetThumbnails", () => {
-  it("每个构图家族出封面/内容/数据三张真实预设", () => {
+  it("每个构图家族出封面/内容/数据三张通用线框", () => {
     for (const composition of ["swiss", "editorial", "poster", "immersive"] as const) {
       const thumbs = presetThumbnails({ ...params, composition });
       expect(thumbs).toHaveLength(3);
       expect(thumbs.map((t) => t.role)).toEqual(["cover", "content", "data"]);
       for (const thumb of thumbs) {
-        expect(thumb.label).toContain(thumb.presetId);
         expect(thumb.svg).toContain("<svg");
         // 假字条版式图：只画形状，不渲染文字元素。
         expect(thumb.svg).not.toContain("<text");
@@ -31,15 +30,13 @@ describe("presetThumbnails", () => {
     }
   });
 
-  it("预设选型对齐构图家族权重表", () => {
-    const ids = (p: StyleParams | null) => presetThumbnails(p).map((t) => t.presetId);
-    expect(ids({ ...params, composition: "swiss" })).toEqual(["P1a", "F2", "D3"]);
-    expect(ids({ ...params, composition: "swiss", darkCover: false })).toEqual(["P1c", "F2", "D3"]);
-    expect(ids({ ...params, composition: "editorial" })).toEqual(["P1c", "P7", "D5"]);
-    expect(ids({ ...params, composition: "poster" })).toEqual(["P1b", "D2", "D1"]);
-    expect(ids({ ...params, composition: "immersive" })).toEqual(["P2", "P6", "D4"]);
-    // 旧会话无 params：按 swiss 深色封面兜底，不报错。
-    expect(ids(null)).toEqual(["P1a", "F2", "D3"]);
+  it("标签随构图家族变化；darkCover 只换画法不改标签", () => {
+    const labels = (p: StyleParams | null) => presetThumbnails(p).map((t) => t.label);
+    expect(labels({ ...params, composition: "swiss" })).toEqual(["封面 · 瑞士网格", "内容页 · 瑞士网格", "数据页 · 瑞士网格"]);
+    expect(labels({ ...params, composition: "swiss", darkCover: false })).toEqual(["封面 · 瑞士网格", "内容页 · 瑞士网格", "数据页 · 瑞士网格"]);
+    expect(labels({ ...params, composition: "immersive" })[0]).toBe("封面 · 沉浸大图");
+    // 旧会话无 params：按 swiss 兜底，不报错。
+    expect(labels(null)).toEqual(["封面 · 瑞士网格", "内容页 · 瑞士网格", "数据页 · 瑞士网格"]);
   });
 
   it("缩略图用会话色板上色而非灰框", () => {
@@ -189,7 +186,7 @@ describe("style card payloads", () => {
     expect(payload.swatches[1]).toEqual({ hex: "#1e3a5f", label: "主色" });
     expect(payload.typography[0]?.value).toBe("64pt");
     expect(payload.wireframes).toHaveLength(3);
-    expect(payload.wireframes.map((frame) => frame.label)).toEqual(["封面 P1a", "内容页 F2", "数据页 D3"]);
+    expect(payload.wireframes.map((frame) => frame.label)).toEqual(["封面 · 瑞士网格", "内容页 · 瑞士网格", "数据页 · 瑞士网格"]);
     expect(payload.demoImageUrl).toBe(`everroom-material://${"d".repeat(64)}`);
     expect(payload.effectLines).toEqual([]);
   });
@@ -201,7 +198,7 @@ describe("style card payloads", () => {
       styleParams: { ...params, composition: "editorial" }, demoImageHash: null,
       stage: "card_ready", generation: 1,
     });
-    expect(editorial.wireframes.map((frame) => frame.label)).toEqual(["封面 P1c", "内容页 P7", "数据页 D5"]);
+    expect(editorial.wireframes.map((frame) => frame.label)).toEqual(["封面 · 编辑杂志", "内容页 · 编辑杂志", "数据页 · 编辑杂志"]);
     // 无 composition（旧会话）退 swiss 配方，不报错（exactOptionalPropertyTypes：解构剔除键而非直写 undefined）。
     const { composition: _omitted, ...legacyBase } = params;
     void _omitted;
@@ -211,6 +208,6 @@ describe("style card payloads", () => {
       styleParams: legacyBase, demoImageHash: null,
       stage: "card_ready", generation: 1,
     });
-    expect(legacy.wireframes.map((frame) => frame.label.split(" ")[1])).toEqual(["P1a", "F2", "D3"]);
+    expect(legacy.wireframes.map((frame) => frame.label.split(" · ")[1])).toEqual(["瑞士网格", "瑞士网格", "瑞士网格"]);
   });
 });

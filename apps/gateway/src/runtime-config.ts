@@ -55,6 +55,8 @@ export interface RelayModels {
   lite?: string;
   cursorCompletion?: string;
   vlm?: string;
+  /** 生图（/v1/images/generations）：不走 runtime-config 槽位，image-gen 直读会话；空串=未配置（禁用生图）。 */
+  image?: string;
   webSearch?: string;
   embedding?: string;
   embeddingDimensions?: number;

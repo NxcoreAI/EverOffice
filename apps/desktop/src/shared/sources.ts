@@ -1134,6 +1134,10 @@ export interface NxcoreDesktopApi {
     updateInterval(intervalMs: number): Promise<WindowScreenshotStatus>
     stop(): Promise<WindowScreenshotStatus>
     status(): Promise<WindowScreenshotStatus>
+    appInfo(): Promise<{ appPath: string; appName: string; iconDataUrl: string; devMode: boolean } | null>
+    openPermissionSettings(): Promise<void>
+    startAppDrag(): void
+    relaunchApp(): Promise<void>
     perceptionSettings(): Promise<PerceptionSettings>
     updateOnlineVlm(enabled: boolean, configVersion: number): Promise<PerceptionSettings>
     listPerceptionNodes(query?: PerceptionNodeQuery): Promise<{ items: PerceptionNode[] }>
@@ -1156,7 +1160,6 @@ export interface NxcoreDesktopApi {
     correctInterval(input: { id: string; title?: string; textLines?: string[] }): Promise<ScreenMemoryIntervalDto>
     storage(): Promise<ScreenMemoryStorageDto>
     frontmost(): Promise<ScreenMemoryFrontmostDto>
-    openPermissionSettings(): Promise<void>
     registerMaterial(intervalId: string): Promise<{ ref: string }>
     backfillEstimate(input: { from: string; to: string }): Promise<{ count: number }>
     backfillRun(input: { from: string; to: string; maxItems: number }): Promise<ScreenMemoryBackfillSummaryDto>

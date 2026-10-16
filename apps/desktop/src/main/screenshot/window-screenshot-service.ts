@@ -144,6 +144,7 @@ export function createWindowScreenshotScheduler(
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<void> | null = null
   let lastResult: WindowScreenshotCaptureResult | null = null
+  let lastFailureCode: WindowScreenshotFailure['code'] | null = null
 
   const clearScheduledTimer = () => {
     if (timer) timerApi.clearTimeout(timer)
@@ -164,6 +165,11 @@ export function createWindowScreenshotScheduler(
     if (!enabled || inFlight) return
     const current = capture().then(async (result) => {
       lastResult = result
+      const failureCode = result.ok ? null : result.code
+      if (failureCode !== lastFailureCode) {
+        lastFailureCode = failureCode
+        if (failureCode && !result.ok) console.warn(`[screen-capture] capture failed (${failureCode}): ${result.message}`)
+      }
       if (result.ok) await Promise.resolve(onCaptured?.(result)).catch(() => undefined)
     }).catch(() => {
       lastResult = { ok: false, code: 'capture-failed', message: desktopText('error.screenshot.captureFailed') }
