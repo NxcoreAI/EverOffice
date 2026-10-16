@@ -921,6 +921,8 @@
   "objectDetail.archivedEmailIndexSummary": "归档邮件和附件已完成索引，可在 Context Room 中追溯。",
   "objectDetail.askAgentToAnalyze": "让 Agent 分析",
   "objectDetail.askAgentToHelp": "让 Agent 协助推进",
+  "objectDetail.assistTaskPrompt": "请协助推进 Room「{room}」中的任务「{task}」（状态：{status}，负责人：{owner}，截止：{deadline}）：拆解执行步骤、指出风险，并给出建议的下一步。",
+  "objectDetail.analyzeFilePrompt": "请结合当前 Room「{room}」的上下文，分析文件「{name}」：总结要点、评估与 Room 目标的关联，并给出下一步建议。\n\n文件摘要：{summary}",
   "objectDetail.backToContextRoomDetails": "返回 Context Room 详情",
   "objectDetail.backToRoom": "返回 Room",
   "objectDetail.backToTasks": "返回任务列表",

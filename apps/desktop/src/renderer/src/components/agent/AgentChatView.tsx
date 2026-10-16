@@ -399,6 +399,7 @@ export function AgentChatView({
   messages,
   notificationRunTarget,
   onNotificationRunLocated,
+  onRetryError,
   pendingApprovals = [],
   composerNotice,
   onRetryPrompt,
@@ -436,6 +437,8 @@ export function AgentChatView({
   messages: DisplayAgentMessage[]
   notificationRunTarget?: { key: string; runId: string } | null
   onNotificationRunLocated?: (key: string) => void
+  /** 会话加载/运行报错后的手动重试（重连并重拉当前会话）；缺省只展示错误文案。 */
+  onRetryError?: () => void
   pendingApprovals?: PendingShellApproval[]
   composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
@@ -1223,7 +1226,16 @@ export function AgentChatView({
             />
           ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">{t('surface:agentChat.loadingConversation')}</div> : null}
-          {error ? <div className="agent-error" role="alert">{error}</div> : null}
+          {error ? (
+            <div className="agent-error" role="alert">
+              <span>{error}</span>
+              {onRetryError ? (
+                <button type="button" className="agent-error-retry" onClick={onRetryError}>
+                  {t('surface:agentComposer.retry')}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
       </div>
       {scrollDetached ? (
         <button

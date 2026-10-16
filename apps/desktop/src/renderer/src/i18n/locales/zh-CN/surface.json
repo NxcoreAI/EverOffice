@@ -352,6 +352,8 @@
   "agentInfo.waitingForTheNextTask": "等待下一项任务",
   "agentInfo.workspaceReady": "工作区已就绪",
   "agentPanel.resizeWidth": "调整对话区宽度",
+  "agentPanel.unavailableBody": "Agent 服务未连接，无法唤起对话。点击重试重新检测；若仍失败，请检查本地服务或重启应用。",
+  "agentPanel.unavailableTitle": "暂时无法唤起 AI 对话",
   "agentPanelSkeleton.agentServiceIsStarting": "Agent 服务启动中",
   "agentSessionSwitcher.aRunningConversationCannotBeDeleted": "运行中的会话不能删除",
   "agentSessionSwitcher.cancel": "取消",
