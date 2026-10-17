@@ -1193,6 +1193,22 @@ export interface NxcoreDesktopApi {
     remove(id: string): Promise<void>
     runNow(id: string): Promise<{ runId: string }>
   }
+  agentAccess: {
+    listConnections(): Promise<{ connections: import('./agent-access').AgentConnectionDto[] }>
+    createConnection(input: import('./agent-access').AgentAccessCreateInput): Promise<{ connection: import('./agent-access').AgentConnectionDto; token: string }>
+    updateConnection(id: string, input: import('./agent-access').AgentAccessUpdateInput): Promise<{ connection: import('./agent-access').AgentConnectionDto }>
+    revokeConnection(id: string): Promise<{ connection: import('./agent-access').AgentConnectionDto }>
+    rotateToken(id: string): Promise<{ connection: import('./agent-access').AgentConnectionDto; token: string }>
+    submissions(id: string): Promise<{ submissions: Array<Record<string, unknown>> }>
+    events(id: string): Promise<{ events: Array<Record<string, unknown>> }>
+    selftest(id: string): Promise<import('./agent-access').AgentAccessSelftestDto>
+    exampleQuery(id: string, query?: string): Promise<import('./agent-access').AgentAccessExampleQueryDto>
+    install(connectionId: string, target: string, token: string): Promise<{ outcome: import('./agent-access').AgentAccessInstallOutcomeDto; plan: { url: string; notes: string[] } }>
+    uninstall(target: string): Promise<import('./agent-access').AgentAccessUninstallOutcomeDto>
+    settingsGet(): Promise<import('./agent-access').AgentAccessSettingsDto>
+    setFixedPort(port: number | null): Promise<{ fixedPort: number | null; needsRestart: boolean }>
+    restartGateway(): Promise<{ baseUrl: string }>
+  }
   slides: {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }

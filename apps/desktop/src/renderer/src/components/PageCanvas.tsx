@@ -15,6 +15,7 @@ import { SourcesPage } from './pages/SourcesPage'
 import { WikiPage } from './pages/WikiPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
 import { AgentSchedulesPage } from './pages/AgentSchedulesPage'
+import { AgentConnectionsPage } from './pages/AgentConnectionsPage'
 import { useLocale } from '@/i18n/LocaleContext'
 
 const ContextRoomPage = lazy(() =>
@@ -77,6 +78,7 @@ export function PageCanvas({
     )
   }
   if (page === 'schedules') content = <AgentSchedulesPage />
+  if (page === 'agent-connections') content = <AgentConnectionsPage />
   if (page === 'rooms') {
     content = (
       <Suspense fallback={<ContextRoomHomeSkeleton />}>
