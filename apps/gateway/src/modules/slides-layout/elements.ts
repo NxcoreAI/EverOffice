@@ -49,6 +49,8 @@ export interface ShapeElement extends SpecBase {
   paragraphs?: SpecParagraph[];
   valign?: "top" | "middle" | "bottom";
   shadow?: "soft" | "medium" | "strong";
+  /** 形状调节值（OOXML prst adj，1/1000 %，50000 = 短边一半）；缺省按形状默认。 */
+  adj?: number;
 }
 
 export interface ImageElement extends SpecBase {

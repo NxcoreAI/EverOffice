@@ -1,7 +1,7 @@
 /**
- * pricingTiers 组件（editorial）：2~4 档套餐定价卡。featured 档（恰一个）：
- * tint 垫板 + 3px 主色顶条 + 徽章（tag 文案）+ 实心主色按钮，整列上浮；
- * 其余档：平面内容 + 发丝描边按钮。
+ * pricingTiers 组件（editorial）：2~4 档套餐定价卡。三档统一卡框——卡距即视觉间距，
+ * featured 档（恰一个）凭 tint 垫板 + 3px 主色顶条 + 实心按钮 + 阴影 + 内容上浮强调；
+ * 其余档白底发丝描边（outline 语言）。三档内容统一内缩 18px，顶条只覆盖圆角后的平直段。
  */
 
 import { splitColumns, type Frame } from "../../grid.js";
@@ -22,6 +22,8 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
+const INSET = 18;
+
 export function expandPricingTiers(
   tiers: PricingTier[],
   featured: number,
@@ -40,8 +42,8 @@ export function expandPricingTiers(
   const rendered = tiers.map((tier, i) => {
     const isFeatured = featured === i;
     const col = cols[i]!;
-    const innerX = col.x + (isFeatured ? 18 : 0);
-    const innerW = col.w - (isFeatured ? 36 : 0);
+    const innerX = col.x + INSET;
+    const innerW = col.w - INSET * 2;
     const nameH = estimateLines(tier.name, nameSize, innerW) * estimateLineHeight(nameSize) + 4;
     const priceH = estimateLineHeight(priceSize) + 6;
     const featureHs = tier.features.map(
@@ -54,35 +56,52 @@ export function expandPricingTiers(
     }
     return { tier, isFeatured, col, innerX, innerW, nameH, priceH, featureHs, ctaW, need };
   });
+  // 三档统一卡框：卡顶取 featured（上浮 12px 后）的卡顶，卡底罩住最高内容 + 12px 呼吸
   const contentH = Math.max(...rendered.map((r) => r.need));
+  const baseTop = frame.y + Math.max(0, (frame.h - contentH) / 2);
+  const cardY = Math.round(baseTop - 28);
+  const contentBottom = Math.max(...rendered.map((r) => (r.isFeatured ? baseTop - 12 : baseTop) + 6 + r.need));
+  const cardH = Math.round(contentBottom + 12 - cardY);
+  const radiusAdj = Math.min(
+    50000,
+    Math.round((theme.spacing.cornerRadius / Math.max(1, Math.min(cols[0]!.w, cardH))) * 100000),
+  );
   rendered.forEach(({ tier, isFeatured, col, innerX, innerW, nameH, priceH, featureHs, ctaW, need }, i) => {
-    // featured 整列上浮：先算基准 top，再统一 -12
-    const top = frame.y + Math.max(0, (frame.h - contentH) / 2) + (isFeatured ? -12 : 0);
+    const top = baseTop + (isFeatured ? -12 : 0);
     if (isFeatured) {
-      const panelH = Math.min(frame.h - (top - frame.y), need + 32);
       elements.push({
         type: "shape",
         shape: "roundRect",
         fill: mixHex(theme.colors.primary, theme.colors.background, 0.93),
         stroke: { color: theme.colors.primary, widthPt: 1.25 },
         x: Math.round(col.x),
-        y: Math.round(top - 16),
+        y: cardY,
         w: Math.round(col.w),
-        h: Math.round(panelH),
-        adj: Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.max(1, Math.min(col.w, panelH))) * 100000)),
+        h: cardH,
+        adj: radiusAdj,
         shadow: "medium",
       });
-      elements.push({ type: "shape", shape: "rect", fill: theme.colors.primary, x: Math.round(col.x), y: Math.round(top - 16), w: Math.round(col.w), h: 3 });
-    } else {
-      // 非重点档：短顶发丝线
+      // 顶条内缩：只覆盖圆角之后的平直段，不压弧线
       elements.push({
         type: "shape",
         shape: "rect",
-        fill: theme.colors.divider,
+        fill: theme.colors.primary,
+        x: Math.round(col.x + INSET),
+        y: cardY,
+        w: Math.round(col.w - INSET * 2),
+        h: 3,
+      });
+    } else {
+      elements.push({
+        type: "shape",
+        shape: "roundRect",
+        fill: theme.colors.background,
+        stroke: { color: theme.colors.divider, widthPt: 1 },
         x: Math.round(col.x),
-        y: Math.round(top),
-        w: Math.round(Math.min(col.w, 56)),
-        h: 2,
+        y: cardY,
+        w: Math.round(col.w),
+        h: cardH,
+        adj: radiusAdj,
       });
     }
     let y = top + 6;

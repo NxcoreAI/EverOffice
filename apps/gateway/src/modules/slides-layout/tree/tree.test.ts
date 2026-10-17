@@ -1074,6 +1074,50 @@ describe("组件库扩展（第一批+第二批）", () => {
     }
   });
 
+  it("chevron 相扣链：右尖伸至邻格凹底、全链等高等距，文字落在身体区中心", () => {
+    const result = compileTree(tree(LIB_TREES.chevron!), CONTRACT);
+    const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; x: number; y: number; w: number; h: number }[];
+    const [first, second] = shapes;
+    for (const s of shapes) {
+      expect(s.y).toBe(first!.y);
+      expect(s.h).toBe(first!.h);
+    }
+    const step = second!.x - first!.x;
+    const tip = Math.round(first!.h / 2); // ss = min(w,h) = h，尖深 = h/2
+    for (let i = 0; i < shapes.length; i++) {
+      expect(shapes[i]!.x).toBe(first!.x + i * step); // 等距列
+      expect(shapes[i]!.w).toBe(step + tip); // 宽 = 列距 + 尖深：右尖顶点 = 下一形状凹底
+    }
+    // 各段文字框（有说明的段 2 个、无说明的段 1 个）落在该段身体区中心 [x + (i===0?0:tip), x + step]
+    const texts = result.spec.elements.filter((el) => el.type === "text" && el.y > first!.y) as { x: number; y: number; w: number }[];
+    expect(texts.length).toBe(6);
+    const bodyL = (i: number) => shapes[i]!.x + (i === 0 ? 0 : tip);
+    for (let i = 0; i < shapes.length; i++) {
+      const own = texts.filter((t) => t.x >= shapes[i]!.x && t.x + t.w <= shapes[i]!.x + shapes[i]!.w);
+      expect(own.length).toBeGreaterThanOrEqual(1);
+      const centers = own.map((t) => t.x + t.w / 2);
+      const bodyMid = (bodyL(i) + shapes[i]!.x + step) / 2;
+      for (const c of centers) expect(Math.abs(c - bodyMid)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("venn 两圆相交成透镜、主色淡填充可见，交集标签对透镜中心", () => {
+    const result = compileTree(tree(LIB_TREES.venn!), CONTRACT);
+    const circles = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "ellipse") as { x: number; w: number; fill?: string }[];
+    expect(circles).toHaveLength(2);
+    const [c1, c2] = circles;
+    expect(c2.x).toBeLessThan(c1.x + c1.w); // 相交
+    const lens = c1.x + c1.w - c2.x;
+    expect(lens).toBeGreaterThanOrEqual(100); // 透镜宽可辨（目标 140）
+    for (const c of circles) expect(c.fill).toBe(`${CONTRACT.theme.colors.primary}14`);
+    const both = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs[0]?.runs[0]?.color === CONTRACT.theme.colors.primary,
+    ) as { x: number; w: number } | undefined;
+    expect(both).toBeDefined();
+    const lensMid = (c1.x + c1.w + c2.x) / 2;
+    expect(Math.abs(both!.x + both!.w / 2 - lensMid)).toBeLessThanOrEqual(2);
+  });
+
   it("funnel 横条逐级收窄且数值落在条内", () => {
     const result = compileTree(tree(LIB_TREES.funnel!), CONTRACT);
     const bars = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect") as { w: number }[];
@@ -1488,6 +1532,16 @@ describe("批次2 扩展：五个新组件", () => {
     // featured 面板（tint 底）+ 顶条 + 实心按钮
     const solids = result.spec.elements.filter((el) => el.type === "shape" && el.fill === CONTRACT.theme.colors.primary);
     expect(solids.length).toBeGreaterThanOrEqual(2); // 顶条 + 按钮
+    // 三档统一卡框：同 y 同高，卡距相等（间距由卡承载）；顶条窄于卡（不压圆角）
+    const cards = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100) as { x: number; y: number; w: number; h: number }[];
+    expect(cards.length).toBe(2);
+    expect(cards[0]!.y).toBe(cards[1]!.y);
+    expect(cards[0]!.h).toBe(cards[1]!.h);
+    const gap = cards[1]!.x - (cards[0]!.x + cards[0]!.w);
+    expect(gap).toBeGreaterThan(0);
+    const bars = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect" && el.h === 3) as { x: number; w: number; y: number }[];
+    expect(bars.length).toBe(1);
+    expect(bars[0]!.x).toBeGreaterThan(cards.find((c) => c.y === bars[0]!.y)!.x); // 顶条起于卡左缘内侧
     expect(() => tree({ role: "定价", direction: "row", children: [{ type: "component", name: "pricingTiers",
       tiers: [{ name: "甲", price: "1", features: ["a", "b"] }, { name: "乙", price: "2", features: ["a", "b"] }] }] })).toThrow(/featured/);
     expect(() => tree({ role: "定价", direction: "row", children: [{ type: "component", name: "pricingTiers",
