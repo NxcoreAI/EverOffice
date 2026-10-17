@@ -1672,3 +1672,98 @@ describe("表格参数与 pointList（xPoint 嫁接）", () => {
     expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", numbered: false, items: [...one, ...one] }] })).toThrow(/numbered 只接受 true/);
   });
 });
+
+describe("indexHeader 与 eraRail（fork 转正）", () => {
+  it("indexHeader：衬线序号主色+标题+右侧小注，发丝线贴区域下缘", () => {
+    const result = compileTree(tree({
+      role: "content", title: "并列栏", direction: "row", children: [
+        { direction: "column", weights: [0.32, 1], gapScale: 1.2, children: [
+          { type: "component", name: "indexHeader", num: "壹", title: "茶之源", note: "起源" },
+          { type: "text", variant: "body", text: "从战国遗存到三代饮法。" },
+        ] },
+        { direction: "column", weights: [0.32, 1], gapScale: 1.2, children: [
+          { type: "component", name: "indexHeader", num: "贰", title: "茶之典" },
+          { type: "text", variant: "body", text: "一部《茶经》写成了文明。" },
+        ] },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(measureDefects(result, CONTRACT)).toEqual([]);
+    const headers = result.spec.elements.filter(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "壹" || r.text === "贰")),
+    ) as TextElement[];
+    expect(headers).toHaveLength(2);
+    expect(headers[0]!.paragraphs[0]!.runs[0]!.color).toBe(CONTRACT.theme.colors.primary);
+    const rules = result.spec.elements.filter((el) => el.type === "shape" && el.h === 1);
+    expect(rules).toHaveLength(2);
+    expect(new Set(rules.map((r) => (r as { y: number }).y)).size).toBe(1); // 两条线同一水平线
+  });
+
+  it("eraRail：脊线压顶+刻度+衬线年代+静音短注，highlight 条目主色", () => {
+    const result = compileTree(tree({
+      role: "content", title: "茶之远", direction: "column", children: [
+        { type: "component", name: "eraRail", items: [
+          { era: "唐代", note: "东传日韩" },
+          { era: "北宋", note: "茶马贸易" },
+          { era: "1610 年", note: "荷船抵欧" },
+          { era: "1773 年", note: "倾茶事件" },
+        ], highlight: 3 },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(measureDefects(result, CONTRACT)).toEqual([]);
+    // 脊线 1 + 每条(刻度+年代+短注)×4
+    expect(result.stats.elements).toBe(1 + 1 + 4 * 3); // 标题带 + 脊线 + 每条 3 元素
+    const hotTick = result.spec.elements.find(
+      (el) => el.type === "shape" && (el as unknown as { h: number }).h === 18,
+    ) as unknown as { fill: string } | undefined;
+    expect(hotTick).toBeDefined();
+    expect(hotTick!.fill).toBe(CONTRACT.theme.colors.primary);
+    const era = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "1773 年" && r.color === CONTRACT.theme.colors.primary)),
+    );
+    expect(era).toBeDefined();
+  });
+
+  it("eraRail 年代超 8 字、短注超 12 字在归一层拦下", () => {
+    const base = { role: "content", direction: "column" };
+    const items = [
+      { era: "距今近 2500 年", note: "茶叶遗存" },
+      { era: "西汉", note: "《僮约》茶市" },
+      { era: "唐", note: "饮茶大行" },
+    ];
+    expect(() => tree({ ...base, children: [{ type: "component", name: "eraRail", items }] }))
+      .toThrow(/era「距今近 2500 年」超 8 字/);
+    expect(() => tree({ ...base, children: [{ type: "component", name: "eraRail", items: [
+      { era: "战国早期", note: "这是一条非常非常长的短注早就超过十二个字了" },
+      { era: "西汉", note: "《僮约》茶市" },
+      { era: "唐", note: "饮茶大行" },
+    ] }] })).toThrow(/note「[^」]+」超 12 字/);
+    expect(() => tree({ ...base, children: [{ type: "component", name: "eraRail", items: [
+      { era: "战国早期", note: "茶叶遗存" },
+      { era: "西汉", note: "《僮约》茶市" },
+      { era: "唐", note: "饮茶大行" },
+    ], highlight: 9 }] })).toThrow(/highlight 必须是 0~2 的整数/);
+  });
+
+  it("indexHeader num 超 2 字在归一层拦下", () => {
+    expect(() => tree({ role: "content", direction: "column", children: [
+      { type: "component", name: "indexHeader", num: "第一栏", title: "栏目标题" },
+    ] })).toThrow(/num 须为 1~2 字/);
+  });
+
+  it("timeline 年代超宽降档后仍放不下报缺陷", () => {
+    const result = compileTree(tree({
+      role: "content", direction: "row", weights: [1.6, 1], children: [
+        { type: "text", variant: "body", text: "占位栏，压缩右侧年代轴的格宽。" },
+        { type: "component", name: "timeline", items: [
+          { label: "距今近两千五百年", text: "战国遗存" },
+          { label: "距今更久远的年代", text: "更早的起点" },
+          { label: "无法追溯的上古", text: "传说时代" },
+        ] },
+      ],
+    }), CONTRACT);
+    const defects = measureDefects(result, CONTRACT);
+    expect(defects.some((d) => d.type === "overflow" && /统一短年代格式/.test(d.detail))).toBe(true);
+  });
+});

@@ -91,7 +91,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools } from "../modules/subagents/slides-agent-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -872,6 +872,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
   // slides-reviewer（审页代理）工具面：说明书按需取（review-context 按 manualToken）+ 复用布局树校验。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-reviewer", () => createSlidesReviewerAgentTools());
+  // layouter/reviewer 的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
+  // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
+  subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
+  subagentRuntimeManager.registerAgentResultValidator("slides-reviewer", createSlidesTreeResultValidator());
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
   subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {

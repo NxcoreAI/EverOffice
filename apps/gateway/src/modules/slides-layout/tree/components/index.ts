@@ -33,6 +33,8 @@ import { expandQuotes, type QuoteEntry } from "./quotes.js";
 import { expandPricingTiers, type PricingTier } from "./pricing-tiers.js";
 import { expandLogoWall, type LogoSlot } from "./logo-wall.js";
 import { expandPointList, type PointItem } from "./point-list.js";
+import { expandIndexHeader, type IndexHeaderInput } from "./index-header.js";
+import { expandEraRail, type EraRailItem } from "./era-rail.js";
 
 export type {
   TimelineItem, StepItem, StatItem, FeatureItem, ComparisonSide, ComparisonPoint,
@@ -40,6 +42,7 @@ export type {
   FunnelItem, VennInput, CalloutInput, CycleItem, ProgressItem,
   OrgNode, PersonaInput, BentoItem, LayerItem,
   TeamMember, QuoteEntry, PricingTier, LogoSlot, PointItem,
+  IndexHeaderInput, EraRailItem,
 };
 
 export type ComponentLeaf =
@@ -68,13 +71,16 @@ export type ComponentLeaf =
   | { type: "component"; name: "quotes"; items: QuoteEntry[] }
   | { type: "component"; name: "pricingTiers"; tiers: PricingTier[]; featured: number }
   | { type: "component"; name: "logoWall"; logos: LogoSlot[] }
-  | { type: "component"; name: "pointList"; numbered?: true; items: PointItem[] };
+  | { type: "component"; name: "pointList"; numbered?: true; items: PointItem[] }
+  | { type: "component"; name: "indexHeader"; num: string; title: string; note?: string }
+  | { type: "component"; name: "eraRail"; items: EraRailItem[]; highlight?: number };
 
 export const COMPONENT_NAMES = [
   "timeline", "steps", "stats", "featureCards", "quote", "comparison",
   "matrix2x2", "prosCons", "agenda", "chevron", "pyramid", "funnel",
   "venn", "calloutBox", "cycle", "progress", "orgChart", "persona",
   "bentoGrid", "layeredStack", "teamGrid", "quotes", "pricingTiers", "logoWall", "pointList",
+  "indexHeader", "eraRail",
 ] as const;
 
 function bad(message: string): never {
@@ -282,6 +288,29 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       }));
       return { type: "component", name: "pointList", ...(node.numbered === true ? { numbered: true } : {}), items };
     }
+    case "indexHeader": {
+      const num = reqText(node.num, `${path}.num`, 8);
+      if ([...num].length > 2) bad(`${path}.num 须为 1~2 字（壹/儒/01），收到「${num}」`);
+      const title = reqText(node.title, `${path}.title`, 12);
+      const note = optText(node.note, 12);
+      return { type: "component", name: "indexHeader", num, title, ...(note ? { note } : {}) };
+    }
+    case "eraRail": {
+      const items = itemArray(node.items, `${path}.items`, 3, 6).map((item, i) => {
+        const era = reqText(item.era, `${path}.items[${i}].era`, 20);
+        if ([...era].length > 8) bad(`${path}.items[${i}].era「${era}」超 8 字——统一短年代格式（如「2026」「唐代」「1610 年」）`);
+        const note = reqText(item.note, `${path}.items[${i}].note`, 20);
+        if ([...note].length > 12) bad(`${path}.items[${i}].note「${note}」超 12 字——细节挪进正文，轴线只留路标`);
+        return { era, note };
+      });
+      if (node.highlight !== undefined) {
+        if (typeof node.highlight !== "number" || !Number.isInteger(node.highlight) || node.highlight < 0 || node.highlight >= items.length) {
+          bad(`${path}.highlight 必须是 0~${items.length - 1} 的整数，收到 ${String(node.highlight)}`);
+        }
+        return { type: "component", name: "eraRail", items, highlight: node.highlight };
+      }
+      return { type: "component", name: "eraRail", items };
+    }
     case "matrix2x2": {
       const quadrants = itemArray(node.quadrants, `${path}.quadrants`, 4, 4).map((item, i) => {
         const title = reqText(item.title, `${path}.quadrants[${i}].title`, 24);
@@ -485,5 +514,9 @@ export function expandComponent(leaf: ComponentLeaf, frame: Frame, theme: Resolv
       return expandLogoWall(leaf.logos, frame, theme, what);
     case "pointList":
       return expandPointList(leaf.items, frame, theme, what, leaf.numbered === true);
+    case "indexHeader":
+      return expandIndexHeader(leaf, frame, theme, what);
+    case "eraRail":
+      return expandEraRail(leaf.items, frame, theme, what, leaf.highlight);
   }
 }

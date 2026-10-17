@@ -110,22 +110,91 @@ function styleBriefFrom(styleParams: Record<string, unknown> | null): string {
   return parts.join("；").slice(0, 400);
 }
 
-/** 布局代理失败/未交树时的确定性兜底：标题 + 要点竖排。 */
+/** 散文要点 → pointList 条目：找得到短帽（冒号/逗号/年份头）就拆标签，否则编号标签。 */
+function pointListItem(point: string, index: number): { label: string; body: string } {
+  const text = point.trim();
+  const colon = text.search(/[：:]/);
+  if (colon >= 2 && colon <= 12) {
+    const body = text.slice(colon + 1).trim();
+    if (body) return { label: text.slice(0, colon).trim(), body: body.slice(0, 100) };
+  }
+  const comma = /^([^，,。；\n]{2,12})[，,]/.exec(text);
+  if (comma) {
+    const body = text.slice(comma[1]!.length + 1).trim();
+    if (body) return { label: comma[1]!.trim(), body: body.slice(0, 100) };
+  }
+  const year = /^([12]\d{3}\s*年(?:\s*[0-9一二三四五六七八九十]{1,3}\s*月)?)[\s，,]/.exec(text);
+  if (year) {
+    const body = text.slice(year[0].length).trim();
+    if (body) return { label: year[1]!.trim(), body: body.slice(0, 100) };
+  }
+  return { label: `要点 ${String(index + 1).padStart(2, "0")}`, body: text.slice(0, 100) };
+}
+
+/** data 的 KPI 行（「指标: 数值 单位（+x%）」）→ stats 条目；图表行跳过；最多 4 条。 */
+function kpiStatsItems(data: string): { value: string; label: string; unit?: string }[] {
+  const items: { value: string; label: string; unit?: string }[] = [];
+  for (const lineRaw of data.split("\n")) {
+    if (items.length >= 4) break;
+    const line = lineRaw.trim();
+    if (!line || /^[a-zA-Z][a-zA-Z0-9]*\s*\|/.test(line)) continue;
+    const at = line.search(/[：:]/);
+    if (at < 1) continue;
+    const rest = line.slice(at + 1).trim();
+    const m = /^([\d,.．]+)\s*([^（(\s]+)?/.exec(rest);
+    if (!m) continue;
+    const growth = /[（(]([+±-][^）)]*)[）)]/.exec(rest);
+    const base = line.slice(0, at).trim();
+    const label = (growth ? `${base}（${growth[1]!.trim()}）` : base).slice(0, 40);
+    const unit = m[2] ?? "";
+    items.push({ value: m[1]!, label, ...(unit ? { unit: unit.slice(0, 8) } : {}) });
+  }
+  return items;
+}
+
+/**
+ * 布局代理失败/未交树时的确定性兜底：要点条目化进 pointList、KPI 行进 stats。
+ * 兜底保页数不断链，也保版式不退回圆点文本墙——最坏情况落地的仍是结构化条目。
+ */
 function fallbackTree(page: PageInput): LayoutTree {
   const points = Array.isArray(page.points)
-    ? page.points.filter((p): p is string => typeof p === "string" && Boolean(p.trim())).slice(0, 5)
+    ? page.points.filter((p): p is string => typeof p === "string" && Boolean(p.trim())).slice(0, 4)
     : [];
+  const statsItems = kpiStatsItems(typeof page.data === "string" ? page.data : "");
+  const pointItems = points.slice(0, 3).map((point, index) => pointListItem(point, index));
+  const children: unknown[] = [];
+  if (statsItems.length >= 2) children.push({ type: "component", name: "stats", items: statsItems });
+  if (pointItems.length >= 2) children.push({ type: "component", name: "pointList", numbered: true, items: pointItems });
+  else if (pointItems.length === 1) children.push({ type: "text", variant: "body", text: points[0]!.slice(0, 200) });
+  if (children.length === 0) children.push({ type: "text", variant: "subtitle", text: "内容生成中断，本页为兜底版式" });
+  // 两段并存走左右分栏：上下叠放时 64pt KPI 与条目列的高度加起来装不下内容区。
+  const both = children.length === 2;
   return normalizeTree({
     role: typeof page.role === "string" ? page.role : "content",
     ...(typeof page.title === "string" && page.title.trim() ? { title: page.title.slice(0, 80) } : {}),
-    direction: "column",
+    direction: both ? "row" : "column",
     gapScale: 1.5,
-    children: [
-      ...(points.length > 0
-        ? points.map((point) => ({ type: "text", variant: "body", text: point.slice(0, 200), bullet: true }))
-        : [{ type: "text", variant: "subtitle", text: "内容生成中断，本页为兜底版式" }]),
-    ],
+    ...(both ? { weights: [1, 1.4] } : {}),
+    children,
   });
+}
+
+/** 减配页输入：要点砍半（至少保 2 条）、去图表行、去备注、密度降档——布局代理未交树时的第二次机会。 */
+function trimmedPage(page: PageInput): PageInput {
+  const points = Array.isArray(page.points)
+    ? (page.points as unknown[]).filter((p): p is string => typeof p === "string" && Boolean(p.trim()))
+    : [];
+  const data = typeof page.data === "string"
+    ? page.data.split("\n").filter((line) => !/^[a-zA-Z][a-zA-Z0-9]*\s*\|/.test(line.trim())).join("\n").trim()
+    : undefined;
+  return {
+    ...(typeof page.title === "string" ? { title: page.title } : {}),
+    ...(typeof page.role === "string" ? { role: page.role } : {}),
+    density: "sparse",
+    ...(points.length > 0 ? { points: points.slice(0, Math.max(2, Math.ceil(points.length / 2))) } : {}),
+    ...(data ? { data } : {}),
+    ...(page.materials !== undefined ? { materials: page.materials } : {}),
+  };
 }
 
 const PAGE_DISPATCH_RETRY_DELAYS_MS = [2000, 6000];
@@ -323,7 +392,28 @@ export async function runLayouterTail(
         try {
           const invocation = await dispatchWithPageRetry(() =>
             deps.dispatchPage(input, deps.makeKey(args.runId, "slides-layouter", `page:${index}`, input), args.parentRunId));
-          trees[index] = treeFromInvocation(invocation, pages[index]!);
+          const placed = treeFromInvocation(invocation, pages[index]!);
+          if (!placed.fellBack) {
+            trees[index] = placed;
+          } else {
+            // 布局代理未交树（失败/超时/坏树）：减配重试一次——砍半要点、去图表行、
+            // 去备注、密度降档；仍不收敛才落兜底。dispatch 被拒（并发限额）不算未交树，走 catch 退避。
+            const trimmed = trimmedPage(pages[index]!);
+            const retryInput = layouterInputFor(base, trimmed, index);
+            try {
+              const retry = await dispatchWithPageRetry(() =>
+                deps.dispatchPage(retryInput, deps.makeKey(args.runId, "slides-layouter", `page:${index}:trimmed`, retryInput), args.parentRunId));
+              const retryPlaced = treeFromInvocation(retry, pages[index]!);
+              if (retryPlaced.fellBack) {
+                trees[index] = placed;
+              } else {
+                trees[index] = retryPlaced;
+                warnings.push(`第 ${index + 1} 页布局代理减配重试后收敛`);
+              }
+            } catch {
+              trees[index] = placed;
+            }
+          }
         } catch {
           trees[index] = { tree: fallbackTree(pages[index]!), fellBack: true };
         }

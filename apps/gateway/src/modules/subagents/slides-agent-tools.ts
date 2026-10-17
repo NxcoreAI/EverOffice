@@ -1,4 +1,5 @@
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
+import type { SubagentResultValidator } from "./runtime-manager.js";
 
 import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
 import { getDeckLayoutContext } from "../slides-layout/deck-contract-context.js";
@@ -122,6 +123,26 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
 /** slides-layouter 的工具面：只有布局树校验（技能读取与结果提交由运行时自带）。 */
 export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
   return [LAYOUTER_VALIDATE_TOOL];
+}
+
+/**
+ * slides 布局树类子代理（layouter/reviewer）的提交期校验：树必须过归一，否则拒收。
+ * 真机 2026-10-17 深圳 deck 第 6 页：validate 三轮通过的是好树，提交时模型重抄 JSON
+ * 抄丢了根节点 direction——坏树静默兜底成要点竖排。在 submit 处拒收（classifyFailure
+ * 给一次可恢复重试），模型手里还是刚校验过的那棵树，重交即中。
+ */
+export function createSlidesTreeResultValidator(): SubagentResultValidator {
+  return (_invocationInput, result) => {
+    const tree = result !== null && typeof result === "object" && !Array.isArray(result)
+      ? (result as Record<string, unknown>).tree
+      : undefined;
+    if (tree === undefined || tree === null) return;
+    try {
+      normalizeTree(tree);
+    } catch (error) {
+      throw new Error(`subagent_result_tree_invalid: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 }
 
 /** slides-reviewer 的审页说明书：决定修改时按需取该页内容与当前树（含校验用 deckToken）。 */

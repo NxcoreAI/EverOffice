@@ -317,7 +317,7 @@ function layouterTreeFor(pageIndex: number): Record<string, unknown> {
           { type: 'text', variant: 'heading', text: `标题${pageIndex}` },
           { type: 'text', variant: 'body', text: `要点${pageIndex}`, bullet: true },
         ]
-      : [{ type: 'card', title: `卡${pageIndex}` }],
+      : [{ type: 'text', variant: 'heading', text: `标题${pageIndex}` }],
   }
 }
 
@@ -2336,3 +2336,15 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     expect(session?.generation).toBe(2)
   })
 })
+
+describe("createSlidesTreeResultValidator", () => {
+  it("合法树放行；根节点缺 direction 的坏树在提交处拒收并带归一报错", async () => {
+    const { createSlidesTreeResultValidator } = await import("../src/modules/subagents/slides-agent-tools.js");
+    const validator = createSlidesTreeResultValidator();
+    expect(() => validator({}, { status: "done", tree: { role: "content", direction: "column", children: [{ type: "divider" }] } })).not.toThrow();
+    // 2026-10-17 深圳 deck 第 6 页实测形态：提交时根节点只剩 children
+    expect(() => validator({}, { status: "done", tree: { children: [{ children: [{ type: "divider" }] }] } })).toThrow(/subagent_result_tree_invalid.*direction/);
+    // 无树提交（非树类结果）不拦
+    expect(() => validator({}, { status: "done" })).not.toThrow();
+  });
+});

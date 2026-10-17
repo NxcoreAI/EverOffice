@@ -1,6 +1,6 @@
 ---
 name: layout-tree-skill
-description: 布局树语法与硬约束——容器/叶子/25 组件词汇表、比例/缝隙/justify 打包、整页背景图与 overlay 叠层、容器面板、data 行内格式翻译、多样性与收敛规则
+description: 布局树语法与硬约束——容器/叶子/27 组件词汇表、比例/缝隙/justify 打包、整页背景图与 overlay 叠层、容器面板、data 行内格式翻译、多样性与收敛规则
 ---
 
 # 布局树（LayoutTree）
@@ -74,11 +74,11 @@ overlay 容器不带 weights/gapScale/justify；每个直接子节点必须带 `
 
 ### 组件（参数化积木）
 
-组件是参数化的复合叶子：只给文案与条目，内部结构与配色由引擎确定性展开；展开产物照常受 48 元素、墨迹不重叠、装不下报缺陷的约束。「约几元素」是排页时的预算参考。组件是排印系统的：无卡片无色面，靠发丝线、衬线大数字（stats/steps/agenda/时间轴年份/引文）与唯一主色刻标表达层级；stats/featureCards/comparison/prosCons/persona/calloutBox/pointList 的内容高跟内容走、整组在区域内垂直居中，过高的框只增加留白。progress 条目可选 target（0~100）画目标刻度。
+组件是参数化的复合叶子：只给文案与条目，内部结构与配色由引擎确定性展开；展开产物照常受 48 元素、墨迹不重叠、装不下报缺陷的约束。「约几元素」是排页时的预算参考。组件是排印系统的：无卡片无色面，靠发丝线、衬线大数字（stats/steps/agenda/时间轴年份/引文）与唯一主色刻标表达层级；stats/featureCards/comparison/prosCons/persona/calloutBox/pointList 的内容高跟内容走、整组在区域内垂直居中，过高的框只增加留白。progress 条目可选 target（0~100）画目标刻度。同排并列栏共用 indexHeader 做栏头（衬线序号+标题+贴底发丝线，等高即对齐）；年代/进程序列用 eraRail（脊线压顶、年代一行、短注一行），页脚节奏带优先于零散 caption。
 
 | 组件 | 形态与语义 | 参数 | 条目/取值 | 约几元素 |
 |---|---|---|---|---|
-| `timeline` | 轴线串节点，上标签下说明——进程与先后 | `direction?`（h/v）、`items: [{ label, text }]` | 3~6 条 | 10~19 |
+| `timeline` | 轴线串节点，上标签下说明——进程与先后 | `direction?`（h/v）、`items: [{ label, text }]` | 3~6 条；label 一行（超宽自动降档至 16pt，仍超报错） | 10~19 |
 | `steps` | 大编号+标题+说明横排——有序步骤 | `items: [{ title, text? }]` | 3~5 步 | 6~15 |
 | `stats` | 大数字+标签的指标卡横排——量化基本面 | `items: [{ value, unit?, label }]` | 2~4 项 | 6~12 |
 | `featureCards` | 图标或图片+标题+正文的卡片行——并列卖点 | `items: [{ title, body?, icon?, image? }]` | 2~4 张；条目给 `image`（http(s) 直链）时顶部画圆角图块、icon 不画 | 4~16 |
@@ -103,6 +103,8 @@ overlay 容器不带 weights/gapScale/justify；每个直接子节点必须带 `
 | `pricingTiers` | 套餐定价卡，featured 档垫板描边上浮+实心按钮 | `tiers: [{ name, price, unit?, features, cta? }]`、`featured`（恰一个） | 2~4 档；每档 2~4 特性行 | ~7×档数+3 |
 | `logoWall` | 灰度图标/文字字标网格——客户墙 | `logos: [{ image?, text? }]`（二选一；图自动灰度 contain） | 4~8 个 | ≤8 |
 | `pointList` | 刻度要点纵列：可选衬线序号+粗标签+静音正文，条目间发丝线——分类词条、要点清单 | `items: [{ label, body }]`、`numbered?: true`（衬线序号 01/02/…） | 2~5 条；标签 ≤12 字、正文 ≤140 字 | 5~17 |
+| `indexHeader` | 衬线序号（主色）+标题+右侧小注，发丝线贴区域下缘——并列栏统一栏头 | `num`（1~2 字：壹/儒/01）、`title`、`note?` | title ≤12 字、note ≤12 字 | 3~4 |
+| `eraRail` | 脊线压区域顶，刻度下挂衬线年代+静音短注，highlight 条目主色——年代轴、节奏带 | `items: [{ era, note }]`、`highlight?`（重点条下标） | 3~6 条；era ≤8 字、note ≤12 字，各限一行 | 1+3×条数 |
 
 ```json
 { "type": "component", "name": "timeline",

@@ -58,7 +58,10 @@ function makeHarness(
       if (persistentlyFailingPages.has(pageIndex)) throw new Error("subagent_concurrency_limit");
       const entry = treesPerDispatch[dispatchCursor++] ?? treesPerDispatch[treesPerDispatch.length - 1];
       dispatchCursor = Math.min(dispatchCursor, treesPerDispatch.length - 1);
-      if (entry === "FAIL") throw new Error("layouter_failed");
+      if (entry === "FAIL") throw new Error("subagent_concurrency_limit");
+      if (entry === "RUN_FAIL") {
+        return { status: "failed", result: null, error_code: "runtime_error" } as unknown as SubagentInvocation;
+      }
       return invocationWithTree(entry);
     },
   };
@@ -218,7 +221,65 @@ describe("runLayouterTail", () => {
     const result = await runLayouterTail(harness.deps, tailArgs(planOf([CONTENT_TREE]), harness));
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("failed");
-    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(0);
     expect(harness.trashed).toEqual([]);
+  });
+
+  it("布局代理未交树先减配重试：砍半要点/去图表行/降密度，重试树被采用", async () => {
+    const harness = makeHarness(["RUN_FAIL", CHART_TREE, CONTENT_TREE]);
+    const plan = {
+      title: "测试演示",
+      pages: [
+        { title: "密集数据页", role: "data", density: "dense",
+          points: ["要点一", "要点二", "要点三", "要点四"],
+          data: "bar | categories: 甲, 乙 | 系列: 1, 2\n入境过夜游客: 1308.20 万人次（+34.0%）",
+          notes: "环形图表现构成" },
+        { title: "正常页", role: "content", density: "standard", points: ["要点一", "要点二"] },
+      ],
+    };
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
+    const payload = JSON.parse(result.content);
+    expect(payload.status).toBe("completed");
+    expect(payload.warnings.some((w: string) => /第 1 页布局代理减配重试后收敛/.test(w))).toBe(true);
+    expect(payload.warnings.some((w: string) => /未收敛/.test(w))).toBe(false);
+    const trimmed = harness.dispatches.find((d) => d.key.includes(":trimmed"));
+    expect(trimmed).toBeDefined();
+    expect(trimmed!.input.density).toBe("sparse");
+    expect(trimmed!.input.points).toEqual(["要点一", "要点二"]);
+    expect(String(trimmed!.input.data)).toBe("入境过夜游客: 1308.20 万人次（+34.0%）");
+    expect(String(trimmed!.input.data)).not.toContain("categories");
+    expect(trimmed!.input.notes).toBeUndefined();
+    const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
+    expect(appliedIndexes).toEqual([0, 1]);
+  });
+
+  it("减配重试仍不收敛才落结构化兜底：pointList 条目 + stats KPI，不再是圆点文本墙", async () => {
+    const harness = makeHarness(["RUN_FAIL"]);
+    const plan = {
+      title: "测试演示",
+      pages: [
+        { title: "入境游客数据页", role: "data", density: "dense",
+          points: [
+            "地标：平安金融中心 592.5 米，为深圳第一高楼。",
+            "山海：梧桐山 943.7 米为深圳第一高峰。",
+            "人文：世界之窗汇聚 130 余个微缩景观。",
+            "湾区：湾区之光摩天轮位于宝安欢乐港湾。",
+          ],
+          data: "入境过夜游客: 1308.20 万人次（+34.0%）\n旅游外汇收入: 110.67 亿美元（+51.2%）\ndoughnut | categories: 甲, 乙 | 系列: 1, 2" },
+      ],
+    };
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
+    const payload = JSON.parse(result.content);
+    expect(payload.status).toBe("completed");
+    expect(payload.warnings.some((w: string) => /第 1 页布局代理未收敛，已用兜底版式/.test(w))).toBe(true);
+    expect(harness.dispatches.some((d) => d.key.includes(":trimmed"))).toBe(true);
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
+    const specJson = String((harness.bridge.fillPage.mock.calls[0]![0] as { specJson: string }).specJson);
+    expect(specJson).toContain("地标");
+    expect(specJson).toContain("人文");
+    expect(specJson).toContain("1308.20");
+    expect(specJson).toContain("入境过夜游客（+34.0%）");
+    // 不再产出圆点 bullet 文本墙
+    expect(specJson).not.toContain('"bullet":true');
   });
 });

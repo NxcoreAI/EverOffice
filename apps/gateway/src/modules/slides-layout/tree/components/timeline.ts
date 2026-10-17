@@ -6,7 +6,7 @@
 import { splitColumns, splitRows, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
 import { bodyRuns, numeralFont, textElement, type SpecElement } from "../../elements.js";
-import { textBoxHeight } from "../../text-metrics.js";
+import { estimateTextWidth, singleLineBoxHeight, textBoxHeight } from "../../text-metrics.js";
 
 export interface TimelineItem {
   label: string;
@@ -33,6 +33,13 @@ export function expandTimeline(
     runs: [{ text: t, sizePt: size, bold, color, ...(labelFont ? { font: labelFont } : {}) }],
     align: "center" as const,
   });
+  // 年代一行：宽了先降档（至 16pt），仍超宽报错——混排折行会打乱整排基线
+  const fitLabel = (label: string, cellW: number): { size: number; h: number } => {
+    for (let size = labelSize; size >= 16; size -= 2) {
+      if (estimateTextWidth(label, size) <= cellW - 8) return { size, h: singleLineBoxHeight(size) };
+    }
+    bad(`${what}「${label}」年代超宽（可用 ${cellW}px）——统一短年代格式（如「2026」「唐代」「1610 年」）`);
+  };
 
   if (direction === "h") {
     const cells = splitColumns(frame, items.length, gutter * 1.5);
@@ -48,7 +55,7 @@ export function expandTimeline(
     });
     cells.forEach((cell, i) => {
       const item = items[i]!;
-      const labelH = textBoxHeight(item.label, labelSize, cell.w);
+      const { size: labelSize, h: labelH } = fitLabel(item.label, cell.w);
       const textH = textBoxHeight(item.text, textSize, cell.w);
       const need = labelH + 34 + textH;
       if (need > cell.h) {
@@ -94,7 +101,7 @@ export function expandTimeline(
   const textW = frame.w - 32;
   rows.forEach((row, i) => {
     const item = items[i]!;
-    const labelH = textBoxHeight(item.label, labelSize, textW);
+    const { size: labelSize, h: labelH } = fitLabel(item.label, textW);
     const textH = textBoxHeight(item.text, textSize, textW);
     const need = labelH + 6 + textH + 10;
     if (need > row.h) {

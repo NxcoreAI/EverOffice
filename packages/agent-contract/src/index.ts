@@ -767,11 +767,30 @@ export interface StartAgentRunInput {
   };
 }
 
-export type MigrationProvider = "notion" | "openclaw" | "codex" | "claude";
+export type MigrationProvider = "notion" | "openclaw" | "codex" | "claude" | "cherry" | "hermes";
 export type MigrationTransport = "oauth" | "zip" | "local-sqlite" | "local-jsonl" | "archive" | "directory";
 export type MigrationSourceStatus = "ready" | "importing" | "completed" | "error" | "unavailable" | "deleting";
 export type MigrationRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MigrationRunPhase = "discovering" | "reading" | "normalizing" | "saving" | "memory" | "finalizing" | "completed";
+
+export type MigrationCapabilityState = "not_available" | "available" | "active" | "error" | "paused";
+
+export interface MigrationSourceCapabilities {
+  importState: MigrationCapabilityState;
+  syncState: MigrationCapabilityState;
+  onDemandState: MigrationCapabilityState;
+  writeBackState: MigrationCapabilityState;
+  nativeRestoreState: MigrationCapabilityState;
+  syncDetail: Record<string, unknown>;
+}
+
+export interface ThreadAttachmentRef {
+  sourceKey: string;
+  name: string;
+  mimeType?: string;
+  fileId?: string;
+  missing?: boolean;
+}
 
 export interface MigrationSource {
   id: string;
@@ -783,6 +802,7 @@ export interface MigrationSource {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  capabilities?: MigrationSourceCapabilities;
 }
 
 export interface MigrationRun {
