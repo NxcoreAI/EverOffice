@@ -74,6 +74,13 @@ export class DocumentListSyncWorker {
           );
         }
       }
+    } catch (error) {
+      // 顶部缓存 SELECT 等在逐行 catch 之外；tick 由 void 调用，漏接即未处理
+      // 拒绝、直接杀死网关进程（2026-10-17 排障）。记日志照常进入下一轮。
+      this.logger.info(
+        { error: error instanceof Error ? error.message : String(error) },
+        "document list sync round failed",
+      );
     } finally {
       this.ticking = false;
     }

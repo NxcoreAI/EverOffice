@@ -59,7 +59,12 @@ export class DocumentOutboxWorker {
 
   async drain(): Promise<void> {
     if (this.drainPromise) return this.drainPromise;
-    this.drainPromise = this.drainPending().finally(() => {
+    // drain 由 void 调用（1s 一跳），整链漏接即未处理拒绝、直接杀死网关进程
+    // （2026-10-17 排障：线上频繁死亡根因）。整轮兜底记日志；单任务的失败
+    // 仍由 process 内部的重试账本负责。
+    this.drainPromise = this.drainPending().catch((error: unknown) => {
+      this.logger.warn({ err: error }, "document outbox drain failed");
+    }).finally(() => {
       this.drainPromise = null;
     });
     return this.drainPromise;

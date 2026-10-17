@@ -597,27 +597,37 @@ export class PerceptionService {
   }
 
   private async tick(): Promise<void> {
-    if (!this.vlm || !this.ensureSettings().onlineVlmEnabled) return;
-    const available = 2 - this.running.size;
-    if (available <= 0) return;
-    const now = new Date();
-    const due = this.db.select().from(visualProcessingJobs).where(and(
-      eq(visualProcessingJobs.status, "pending"), lte(visualProcessingJobs.nextAttemptAt, now),
-    )).orderBy(asc(visualProcessingJobs.nextAttemptAt)).limit(available).all();
-    for (const job of due) {
-      const claimed = this.db.update(visualProcessingJobs).set({
-        status: "running", leaseOwner: this.instanceId,
-        leaseExpiresAt: new Date(now.getTime() + LEASE_MS), updatedAt: now,
-      }).where(and(eq(visualProcessingJobs.id, job.id), eq(visualProcessingJobs.status, "pending"))).run();
-      if (claimed.changes !== 1) continue;
-      const controller = new AbortController();
-      this.abortControllers.set(job.id, controller);
-      const processing = this.process(job.id, controller.signal).finally(() => {
-        this.running.delete(job.id);
-        this.abortControllers.delete(job.id);
-        void this.tick();
-      });
-      this.running.set(job.id, processing);
+    // 顶层兜底：tick 由 void 调用（2s 一跳），漏接即未处理拒绝、直接杀死网关
+    // 进程（2026-10-17 排障：线上频繁死亡根因）。
+    try {
+      if (!this.vlm || !this.ensureSettings().onlineVlmEnabled) return;
+      const available = 2 - this.running.size;
+      if (available <= 0) return;
+      const now = new Date();
+      const due = this.db.select().from(visualProcessingJobs).where(and(
+        eq(visualProcessingJobs.status, "pending"), lte(visualProcessingJobs.nextAttemptAt, now),
+      )).orderBy(asc(visualProcessingJobs.nextAttemptAt)).limit(available).all();
+      for (const job of due) {
+        const claimed = this.db.update(visualProcessingJobs).set({
+          status: "running", leaseOwner: this.instanceId,
+          leaseExpiresAt: new Date(now.getTime() + LEASE_MS), updatedAt: now,
+        }).where(and(eq(visualProcessingJobs.id, job.id), eq(visualProcessingJobs.status, "pending"))).run();
+        if (claimed.changes !== 1) continue;
+        const controller = new AbortController();
+        this.abortControllers.set(job.id, controller);
+        // process() 的 prologue（按 id 回读行）在其内部 try 之外，可能 reject；
+        // 存进 this.running 后无人 await，漏接同样杀进程——这里显式接住。
+        const processing = this.process(job.id, controller.signal).catch((error: unknown) => {
+          this.logger.warn({ jobId: job.id, err: error instanceof Error ? error.message : String(error) }, "visual job processing failed");
+        }).finally(() => {
+          this.running.delete(job.id);
+          this.abortControllers.delete(job.id);
+          void this.tick();
+        });
+        this.running.set(job.id, processing);
+      }
+    } catch (error) {
+      this.logger.warn({ err: error instanceof Error ? error.message : String(error) }, "perception tick failed");
     }
   }
 

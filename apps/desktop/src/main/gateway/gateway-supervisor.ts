@@ -32,6 +32,11 @@ const SHUTDOWN_TIMEOUT_MS = 5_000
 // A dev hot reload may spend five seconds terminating the previous tsx process
 // before the replacement can publish its runtime manifest.
 const CONNECTION_RECOVERY_TIMEOUT_MS = 15_000
+// 意外退出后的自动重启退避序列：连续失败逐级放慢（封顶 60s）；进程稳定运行
+// 满 5 分钟后重置回 1s。定时器触发的 start() 与渲染层 gateway:recover 触发的
+// start() 共用 startup 在途去重，并发安全；确定性的迁移失败（exit 78）不重试。
+const RESPAWN_BACKOFF_MS = [1_000, 5_000, 15_000, 60_000]
+const RESPAWN_STABLE_RESET_MS = 5 * 60_000
 // ingest 扇出期间 gateway 事件循环会被同步 sqlite 写入卡 >1s，1s 超时会把
 // 忙碌误判成宕机；这是状态轮询不是时延探测，放宽到 10s。
 const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 10_000 }, { quiet: true })
@@ -117,6 +122,10 @@ export class GatewaySupervisor {
   private startup: Promise<GatewayConnection> | null = null
   private stopping = false
   private lastError: string | null = null
+  /** 意外退出自动重启：退避定时器、当前档位与稳定计时起点。 */
+  private respawnTimer: NodeJS.Timeout | null = null
+  private respawnAttempt = 0
+  private lastStableAt = 0
 
   constructor(
     private readonly dataDirectory: string,
@@ -253,6 +262,7 @@ export class GatewaySupervisor {
       if (!this.stopping) {
         this.lastError = `${this.serviceLabel()} 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
+        this.scheduleRespawn()
       }
     })
 
@@ -265,6 +275,10 @@ export class GatewaySupervisor {
         token,
         version: manifest.version,
       }
+      // 就绪即重置退避：本次拉起成功，下一轮意外退出重新从 1s 起步；
+      // lastStableAt 同时是「稳定满 5 分钟重置档位」的计时起点。
+      this.respawnAttempt = 0
+      this.lastStableAt = Date.now()
       this.notifyConnectionChanged(previous, this.connection)
       return this.connection
     } catch (error) {
@@ -358,8 +372,37 @@ export class GatewaySupervisor {
     }
   }
 
+  /** 意外退出后的自动重启（带退避）：渲染层 gateway:recover 只在有界面流量时
+   * 才拉起网关，后台任务自崩时没有流量，网关会一直躺着。这里补上主动拉起：
+   * 连续失败逐级放慢（1s/5s/15s/60s 封顶），稳定满 5 分钟重置；确定性的迁移
+   * 失败（exit 78，已回滚到备份）不重试——重试无意义，保留 lastError 供展示。 */
+  private scheduleRespawn(): void {
+    if (this.stopping) return
+    const now = Date.now()
+    if (this.lastStableAt > 0 && now - this.lastStableAt >= RESPAWN_STABLE_RESET_MS) {
+      this.respawnAttempt = 0
+    }
+    const delay = RESPAWN_BACKOFF_MS[Math.min(this.respawnAttempt, RESPAWN_BACKOFF_MS.length - 1)]!
+    this.respawnAttempt += 1
+    console.warn(`[${this.options.logLabel ?? 'gateway'}-supervisor] ${delay}ms 后自动重启（第 ${this.respawnAttempt} 次）`)
+    this.respawnTimer = setTimeout(() => {
+      this.respawnTimer = null
+      if (this.stopping || this.connection || this.child) return
+      this.start().catch((error: unknown) => {
+        console.error(`[${this.options.logLabel ?? 'gateway'}-supervisor] 自动重启失败：`, error)
+        // 启动失败的确定性场景（迁移失败）不无限重试；其余继续退避重试。
+        if (error instanceof Error && error.message.includes('数据迁移失败')) return
+        this.scheduleRespawn()
+      })
+    }, delay)
+  }
+
   async shutdown(): Promise<void> {
     this.stopping = true
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer)
+      this.respawnTimer = null
+    }
     const child = this.child
     this.connection = null
     if (!child) return

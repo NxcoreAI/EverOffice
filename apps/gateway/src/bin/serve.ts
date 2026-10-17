@@ -36,6 +36,19 @@ await writeRuntimeManifest(config.runtimeManifestPath, {
 
 app.log.info({ address, manifestPath: config.runtimeManifestPath }, "gateway ready");
 
+// 进程级兜底：本地桌面服务宁可带病运行，也不因单个未处理异常整进程死亡
+// （2026-10-17 排障：线上网关频繁死亡 + 渲染层反复爆红的根因）。后台任务
+// 的异常已在各自 worker 层收口；这里只拦漏网之鱼，记日志（stderr 会经
+// 桌面端转发进 Sentry）后继续服务，不做自杀式退出。
+const toError = (value: unknown): Error =>
+  value instanceof Error ? value : new Error(String(value));
+process.on("unhandledRejection", (reason) => {
+  app.log.error({ err: toError(reason) }, "unhandled rejection kept alive");
+});
+process.on("uncaughtException", (error) => {
+  app.log.error({ err: toError(error) }, "uncaught exception kept alive");
+});
+
 process.once("exit", () => removeRuntimeManifestSync(config.runtimeManifestPath));
 
 let shuttingDown = false;

@@ -423,6 +423,11 @@ export class DiaryService {
           this.drainAgain = false;
           await this.drainInternal();
         } while (this.drainAgain);
+      } catch (error) {
+        // 单次运行 process() 已有逐 run 的 catch 与重试账本；这里兜 drainInternal
+        // 的巡检段（recoverLeases/scheduleDueRuns/markChangedDaysStale 全量采集）。
+        // drain 由 void 调用，漏接即未处理拒绝、杀进程（2026-10-17 排障）。
+        this.logger?.error({ event: "diary.drain.failed", error: error instanceof Error ? error.message : String(error) }, "diary drain failed");
       } finally {
         this.drainPromise = null;
       }
@@ -651,18 +656,24 @@ export class DiaryService {
       if (now.getTime() - (this.staleCheckAt.get(day.date) ?? 0) < this.options.staleCheckIntervalMs) continue;
       const version = this.db.select().from(diaryVersions).where(eq(diaryVersions.id, day.currentVersionId)).get();
       if (!version) continue;
-      const collectionState = { memoryFailed: false };
-      const collectionEnd = day.date === today && now > version.windowEnd ? now : version.windowEnd;
-      const current = await this.sourceCollector.collect(version.windowStart, collectionEnd, collectionState);
-      if (collectionState.memoryFailed) continue;
-      this.staleCheckAt.set(day.date, now.getTime());
-      const fingerprint = hash(current.map((source) => [source.sourceId, source.fingerprint]));
-      if (fingerprint !== day.sourceFingerprint) {
-        const result = this.db.update(diaryDays).set({ status: "stale", updatedAt: this.now() }).where(and(eq(diaryDays.date, day.date), eq(diaryDays.status, "ready"))).run();
-        if (result.changes > 0) {
-          this.logger?.info({ event: "diary.day.marked_stale", date: day.date, reason: "source_fingerprint", sourceCount: current.length }, "diary day marked stale");
-          this.queueAutoRefresh(day.date);
+      // 单日采集失败（yjs 历史损坏、connector 全表扫抛错等）只跳过该日，
+      // 不中断本轮其他日子，也不让异常漏出 drain（杀进程）。
+      try {
+        const collectionState = { memoryFailed: false };
+        const collectionEnd = day.date === today && now > version.windowEnd ? now : version.windowEnd;
+        const current = await this.sourceCollector.collect(version.windowStart, collectionEnd, collectionState);
+        if (collectionState.memoryFailed) continue;
+        this.staleCheckAt.set(day.date, now.getTime());
+        const fingerprint = hash(current.map((source) => [source.sourceId, source.fingerprint]));
+        if (fingerprint !== day.sourceFingerprint) {
+          const result = this.db.update(diaryDays).set({ status: "stale", updatedAt: this.now() }).where(and(eq(diaryDays.date, day.date), eq(diaryDays.status, "ready"))).run();
+          if (result.changes > 0) {
+            this.logger?.info({ event: "diary.day.marked_stale", date: day.date, reason: "source_fingerprint", sourceCount: current.length }, "diary day marked stale");
+            this.queueAutoRefresh(day.date);
+          }
         }
+      } catch (error) {
+        this.logger?.warn({ event: "diary.day.stale_check_failed", date: day.date, error: error instanceof Error ? error.message : String(error) }, "diary stale check skipped for day");
       }
     }
   }

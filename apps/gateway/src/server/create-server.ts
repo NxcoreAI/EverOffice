@@ -1380,7 +1380,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   async function hotReloadAgentRuntimes(): Promise<void> {
     try {
       const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
-      void agentService.replaceRuntime(primary.current);
+      // await 进本函数的 catch：replaceRuntime 的 dispose 链可能 reject，
+      // void 调用漏接即未处理拒绝、直接杀死网关进程（2026-10-17 排障）。
+      await agentService.replaceRuntime(primary.current);
       // 档位 runtime 热替换：main-direct 恒重载（占位/真身都由工厂决定）；
       // main-lite 仅在仍配置时重载（工厂返回 null 会炸 trackedRuntime），
       // 配置被移除时注册残留但 tier resolver 拦截，会话回落 primary。
@@ -1391,7 +1393,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         await lite.previous?.dispose();
       }
       const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
-      void transcriptionSummaryService.replaceRuntime(background.current);
+      await transcriptionSummaryService.replaceRuntime(background.current);
       for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
         if (!agentResolver.has(agentId)) continue;
         const { previous } = agentResolver.reload(agentId);
@@ -1563,7 +1565,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     runtimeConfigManager.onChange(() => {
       if (!agentResolver.has(BUILTIN_AGENT_IDS.diary)) return;
       const { current } = agentResolver.reload(BUILTIN_AGENT_IDS.diary);
-      void diaryGenerator.replaceRuntime(current);
+      // replaceRuntime 的 dispose 链可能 reject；onChange 回调是 fire-and-forget，
+      // 漏接即未处理拒绝、直接杀死网关进程（2026-10-17 排障）。
+      diaryGenerator.replaceRuntime(current).catch((error: unknown) => {
+        app.log.error({ error: error instanceof Error ? error.message : String(error) }, "diary generator runtime replace failed");
+      });
     });
   }
   const agentSchedulerService = new AgentSchedulerService(db, diaryService, agentService);

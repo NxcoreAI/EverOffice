@@ -310,6 +310,10 @@ export function createLocalAgentDispatchTools(deps: LocalAgentDispatchToolsDeps)
             timedOut = true;
             try { await runtime.cancel(subRunId); } catch { /* 取消失败也按超时落库 */ }
           }
+          // 超时分支后 consume 可能仍在跑并在之后 reject（事件负载畸形等）；
+          // race 只接住 then 派生 promise，consume 本体的拒绝无人处理即未处理
+          // 拒绝、杀进程（2026-10-17 排障）。这里挂旁路 catch 消音，不改变 race 语义。
+          consume.catch(() => undefined);
           if (timedOut) {
             store.fail(dispatch.id, "timed_out", "local_agent_dispatch_timeout");
             throw new Error("local_agent_dispatch_timeout");

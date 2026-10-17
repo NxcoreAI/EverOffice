@@ -1769,10 +1769,17 @@ export class AgentService {
         await this.appendEvent(sessionId, runId, this.attachRoomSelectionIntent(sessionId, runId, event));
       }
     } catch (error) {
-      await this.appendEvent(sessionId, runId, {
-        type: "run.failed",
-        payload: { message: error instanceof Error ? error.message : "Runtime failed" },
-      });
+      // 失败落账本身再抛（DB 抖动）会让 consumer promise 变成无人 await 的
+      // 拒绝——runtimeEventConsumers 只在热重载/dispose 时才被 allSettled，
+      // 漏接即未处理拒绝、杀进程（2026-10-17 排障）。
+      try {
+        await this.appendEvent(sessionId, runId, {
+          type: "run.failed",
+          payload: { message: error instanceof Error ? error.message : "Runtime failed" },
+        });
+      } catch (appendError) {
+        this.logger.info({ sessionId, runId, err: appendError }, "failed to append run.failed event");
+      }
     }
   }
 
