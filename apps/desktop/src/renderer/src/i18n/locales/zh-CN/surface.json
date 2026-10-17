@@ -203,6 +203,8 @@
   "sources.conversationsAndMessages": "会话 · {count} 条消息",
   "sources.migrationCompleted": "已迁移 {count} 条 OpenClaw 消息",
   "sources.migrationFailed": "迁移失败",
+  "sources.cherryImported": "已迁移 {count} 条 Cherry Studio 消息，自动同步已开启",
+  "sources.cherryUnsupported": "当前 Cherry Studio 版本的数据格式暂不支持，请升级 Cherry Studio 后重试",
   "agentComposer.filesServiceUnavailable": "文件服务不可用，请稍后重试。",
   "agentComposer.someFilesFailedToImport": "部分文件上传或解析失败，请检查文件格式后重试。",
   "agentComposer.analyzeUploadedFiles": "请分析我上传的文件。",

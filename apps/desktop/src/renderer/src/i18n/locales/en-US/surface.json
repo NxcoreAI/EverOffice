@@ -203,6 +203,8 @@
   "sources.conversationsAndMessages": "conversations · {count} messages",
   "sources.migrationCompleted": "Migrated {count} OpenClaw messages",
   "sources.migrationFailed": "Migration failed",
+  "sources.cherryImported": "Migrated {count} Cherry Studio messages; auto-sync enabled",
+  "sources.cherryUnsupported": "The installed Cherry Studio data format is not supported yet. Upgrade Cherry Studio and retry",
   "agentComposer.filesServiceUnavailable": "The file service is unavailable. Please try again later.",
   "agentComposer.someFilesFailedToImport": "Some files failed to upload or parse. Check the file formats and try again.",
   "agentComposer.analyzeUploadedFiles": "Please analyze the files I uploaded.",

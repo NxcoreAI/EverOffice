@@ -630,7 +630,7 @@ export const dataMigrationSources = sqliteTable(
   "data_migration_sources",
   {
     id: text("id").primaryKey(),
-    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude"] }).notNull(),
+    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude", "cherry", "hermes"] }).notNull(),
     transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
     stableSourceKey: text("stable_source_key").notNull(),
     displayName: text("display_name").notNull(),
@@ -648,7 +648,7 @@ export const dataMigrationRuns = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceId: text("source_id").notNull().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude"] }).notNull(),
+    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude", "cherry", "hermes"] }).notNull(),
     transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
     status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] }).notNull().default("queued"),
     phase: text("phase", { enum: ["discovering", "reading", "normalizing", "saving", "memory", "finalizing", "completed"] }).notNull().default("discovering"),
@@ -693,7 +693,7 @@ export const externalAgentThreads = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceId: text("source_id").notNull().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["openclaw", "codex", "claude"] }).notNull(),
+    provider: text("provider", { enum: ["openclaw", "codex", "claude", "cherry", "hermes"] }).notNull(),
     stableKey: text("stable_key").notNull(),
     agentId: text("agent_id"),
     externalSessionId: text("external_session_id").notNull(),
@@ -701,6 +701,8 @@ export const externalAgentThreads = sqliteTable(
     importVersion: integer("import_version").notNull().default(1),
     memorySessionId: text("memory_session_id").notNull(),
     memoryStatus: text("memory_status", { enum: ["pending", "indexed", "error"] }).notNull().default("pending"),
+    contentHash: text("content_hash"),
+    memoryRuleVersion: integer("memory_rule_version").notNull().default(1),
     available: integer("available", { mode: "boolean" }).notNull().default(true),
     messageCount: integer("message_count").notNull().default(0),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
@@ -725,6 +727,7 @@ export const externalAgentMessages = sqliteTable(
     role: text("role", { enum: ["user", "assistant"] }).notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
+    attachments: text("attachments").notNull().default("[]"),
     ordinal: integer("ordinal").notNull(),
     occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
@@ -734,6 +737,20 @@ export const externalAgentMessages = sqliteTable(
     uniqueIndex("external_agent_messages_thread_key_idx").on(table.threadId, table.stableKey),
     index("external_agent_messages_thread_order_idx").on(table.threadId, table.ordinal),
   ],
+);
+
+export const migrationSourceCapabilities = sqliteTable(
+  "migration_source_capabilities",
+  {
+    sourceId: text("source_id").primaryKey().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
+    importState: text("import_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    syncState: text("sync_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    onDemandState: text("on_demand_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    writeBackState: text("write_back_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    nativeRestoreState: text("native_restore_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    syncDetail: text("sync_detail").notNull().default("{}"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
 );
 
 export const agentSessionExternalThreads = sqliteTable(

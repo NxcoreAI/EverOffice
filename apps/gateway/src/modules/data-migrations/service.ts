@@ -8,6 +8,7 @@ import type {
   MigrationRun,
   MigrationRunPhase,
   MigrationSource,
+  MigrationSourceCapabilities,
   MigrationTransport,
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
@@ -22,6 +23,31 @@ const MEMORY_HIT_LIMIT = 6;
 const MEMORY_CHARACTER_LIMIT = 12_000;
 const TOTAL_CHARACTER_LIMIT = 44_000;
 const NATIVE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u;
+/** 记忆提炼规则版本：升级此值会强制所有已导入线程重炼一次（零增量判定包含它）。 */
+export const MEMORY_RULE_VERSION = 1;
+
+export interface ThreadAttachment {
+  sourceKey: string;
+  name: string;
+  mimeType?: string;
+  fileId?: string;
+  missing?: boolean;
+}
+
+export interface ThreadAttachment {
+  sourceKey: string;
+  name: string;
+  mimeType?: string;
+  fileId?: string;
+  missing?: boolean;
+}
+
+export type MigrationCapabilityStates = MigrationSourceCapabilities;
+
+const CAPABILITY_DEFAULTS: Partial<Record<MigrationProvider, MigrationCapabilityStates>> = {
+  cherry: { importState: "available", syncState: "available", onDemandState: "not_available", writeBackState: "not_available", nativeRestoreState: "available", syncDetail: {} },
+  hermes: { importState: "available", syncState: "available", onDemandState: "not_available", writeBackState: "not_available", nativeRestoreState: "not_available", syncDetail: {} },
+};
 
 type JobType = "memory_index" | "source_gc";
 
@@ -43,7 +69,19 @@ export interface NormalizedExternalThread {
     role: "user" | "assistant";
     content: string;
     occurredAt: string;
+    attachments?: ThreadAttachment[];
   }>;
+}
+
+function threadContentHash(thread: NormalizedExternalThread): string {
+  const parts = [thread.title.trim(), String(MEMORY_RULE_VERSION)];
+  for (const message of thread.messages) {
+    parts.push(message.stableKey, message.role, digest(message.content));
+    if (message.attachments?.length) {
+      parts.push(message.attachments.map((item) => `${item.sourceKey}:${item.name}:${item.missing ? 1 : 0}`).join("|"));
+    }
+  }
+  return digest(parts.join("\u0000"));
 }
 
 interface SourceRow {
@@ -63,6 +101,11 @@ interface ThreadRow {
   id: string; source_id: string; provider: MigrationProvider; title: string; agent_id: string | null;
   external_session_id: string; import_version: number; memory_session_id: string; available: number;
   message_count: number; last_message_at: number | null; last_message_excerpt: string;
+}
+
+interface CapabilityRow {
+  source_id: string; import_state: string; sync_state: string; on_demand_state: string;
+  write_back_state: string; native_restore_state: string; sync_detail: string; updated_at: number;
 }
 
 const iso = (value: number | null): string | null => value === null ? null : new Date(value).toISOString();
@@ -91,6 +134,26 @@ function toSummary(row: ThreadRow): ExternalConversationSummary {
     lastMessageExcerpt: row.last_message_excerpt, available: Boolean(row.available) };
 }
 
+function toCapabilityStates(row: CapabilityRow): MigrationCapabilityStates {
+  return {
+    importState: row.import_state as MigrationCapabilityStates["importState"],
+    syncState: row.sync_state as MigrationCapabilityStates["syncState"],
+    onDemandState: row.on_demand_state as MigrationCapabilityStates["onDemandState"],
+    writeBackState: row.write_back_state as MigrationCapabilityStates["writeBackState"],
+    nativeRestoreState: row.native_restore_state as MigrationCapabilityStates["nativeRestoreState"],
+    syncDetail: safeParseDetail(row.sync_detail),
+  };
+}
+
+function safeParseDetail(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 function takeLatestWithinBudget<T extends { content: string }>(items: T[], count: number, budget: number): T[] {
   const selected: T[] = [];
   let used = 0;
@@ -115,7 +178,14 @@ export class DataMigrationService {
   setFilesService(files: FilesService): void { this.files = files; }
 
   listSources(): MigrationSource[] {
-    return (this.sqlite.prepare("SELECT * FROM data_migration_sources ORDER BY updated_at DESC").all() as SourceRow[]).map(toSource);
+    const rows = this.sqlite.prepare("SELECT * FROM data_migration_sources ORDER BY updated_at DESC").all() as SourceRow[];
+    const capabilityRows = this.sqlite.prepare("SELECT * FROM migration_source_capabilities").all() as CapabilityRow[];
+    const capabilities = new Map(capabilityRows.map((row) => [row.source_id, toCapabilityStates(row)]));
+    return rows.map((row) => {
+      const source = toSource(row);
+      const capability = capabilities.get(row.id);
+      return capability ? { ...source, capabilities: capability } : source;
+    });
   }
 
   listRuns(sourceId?: string): MigrationRun[] {
@@ -137,6 +207,13 @@ export class DataMigrationService {
     const runId = randomUUID();
     this.sqlite.prepare("INSERT INTO data_migration_runs(id,source_id,provider,transport,status,phase,started_at) VALUES(?,?,?,?,'running','reading',?)")
       .run(runId, sourceId, input.provider, input.transport, now);
+    const defaults = CAPABILITY_DEFAULTS[input.provider];
+    if (defaults) {
+      this.sqlite.prepare(`INSERT INTO migration_source_capabilities(source_id,import_state,sync_state,on_demand_state,write_back_state,native_restore_state,sync_detail,updated_at)
+        VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(source_id) DO UPDATE SET import_state='active',updated_at=excluded.updated_at`)
+        .run(sourceId, defaults.importState, defaults.syncState, defaults.onDemandState, defaults.writeBackState, defaults.nativeRestoreState, JSON.stringify(defaults.syncDetail), now);
+    }
     return { source: this.getSource(sourceId), run: this.getRun(runId) };
   }
 
@@ -168,6 +245,7 @@ export class DataMigrationService {
     if (run.provider === "notion") throw new Error("migration_provider_mismatch");
     const now = Date.now();
     let importedMessages = 0;
+    let unchangedThreads = 0;
     const enqueue = this.sqlite.prepare("INSERT INTO migration_jobs(id,run_id,source_id,type,payload,status,attempts,max_attempts,run_at,created_at,updated_at) VALUES(?,?,?,?,?,'pending',0,3,?,?,?)");
     const transaction = this.sqlite.transaction(() => {
       for (const input of threads) {
@@ -175,16 +253,25 @@ export class DataMigrationService {
         const externalSessionId = input.externalSessionId.trim();
         if (!stableKey || !externalSessionId) throw new Error("migration_thread_identity_missing");
         const threadId = stableId("ext", `${run.sourceId}:${stableKey}`);
-        const existing = this.sqlite.prepare("SELECT import_version FROM external_agent_threads WHERE id=?").get(threadId) as { import_version: number } | undefined;
+        const existing = this.sqlite.prepare("SELECT import_version,content_hash,memory_status,memory_rule_version FROM external_agent_threads WHERE id=?")
+          .get(threadId) as { import_version: number; content_hash: string | null; memory_status: string; memory_rule_version: number } | undefined;
         const messages = input.messages.filter((message) => message.content.trim() && (message.role === "user" || message.role === "assistant"));
+        const nextContentHash = threadContentHash({ ...input, messages });
+        if (existing && existing.content_hash === nextContentHash
+          && existing.memory_status === "indexed" && existing.memory_rule_version >= MEMORY_RULE_VERSION) {
+          // 内容、附件与规则版本均未变化且上轮提炼已成功：不重置状态、不重炼、零任务。
+          this.sqlite.prepare("UPDATE external_agent_threads SET available=1,last_seen_run_id=?,updated_at=? WHERE id=?").run(runId, now, threadId);
+          unchangedThreads += 1;
+          continue;
+        }
         const firstAt = messages[0] ? Date.parse(messages[0].occurredAt) : now;
         const lastAt = messages.at(-1) ? Date.parse(messages.at(-1)!.occurredAt) : firstAt;
         const excerpt = messages.at(-1)?.content.replace(/\s+/gu, " ").trim().slice(0, 240) ?? "";
-        this.sqlite.prepare(`INSERT INTO external_agent_threads(id,source_id,provider,stable_key,agent_id,external_session_id,title,import_version,memory_session_id,memory_status,available,message_count,started_at,last_message_at,last_message_excerpt,last_seen_run_id,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,'pending',1,?,?,?,?,?,?,?)
-          ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,agent_id=COALESCE(excluded.agent_id,external_agent_threads.agent_id),external_session_id=excluded.external_session_id,title=excluded.title,import_version=external_agent_threads.import_version+1,memory_status='pending',available=1,message_count=excluded.message_count,started_at=excluded.started_at,last_message_at=excluded.last_message_at,last_message_excerpt=excluded.last_message_excerpt,last_seen_run_id=excluded.last_seen_run_id,updated_at=excluded.updated_at`)
+        this.sqlite.prepare(`INSERT INTO external_agent_threads(id,source_id,provider,stable_key,agent_id,external_session_id,title,import_version,memory_session_id,memory_status,content_hash,memory_rule_version,available,message_count,started_at,last_message_at,last_message_excerpt,last_seen_run_id,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?,1,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,agent_id=COALESCE(excluded.agent_id,external_agent_threads.agent_id),external_session_id=excluded.external_session_id,title=excluded.title,import_version=external_agent_threads.import_version+1,memory_status='pending',content_hash=excluded.content_hash,memory_rule_version=excluded.memory_rule_version,available=1,message_count=excluded.message_count,started_at=excluded.started_at,last_message_at=excluded.last_message_at,last_message_excerpt=excluded.last_message_excerpt,last_seen_run_id=excluded.last_seen_run_id,updated_at=excluded.updated_at`)
           .run(threadId, run.sourceId, run.provider, stableKey, input.agentId ?? null, externalSessionId, input.title.trim() || "Untitled conversation", existing?.import_version ?? 1,
-            `external:${run.provider}:${digest(`${run.sourceId}:${stableKey}`).slice(0, 48)}`, messages.length, Number.isFinite(firstAt) ? firstAt : now, Number.isFinite(lastAt) ? lastAt : now, excerpt, runId, now, now);
+            `external:${run.provider}:${digest(`${run.sourceId}:${stableKey}`).slice(0, 48)}`, nextContentHash, MEMORY_RULE_VERSION, messages.length, Number.isFinite(firstAt) ? firstAt : now, Number.isFinite(lastAt) ? lastAt : now, excerpt, runId, now, now);
         const occurrence = new Map<string, number>();
         messages.forEach((message, ordinal) => {
           const occurredAt = Date.parse(message.occurredAt);
@@ -193,9 +280,10 @@ export class DataMigrationService {
           occurrence.set(base, count + 1);
           const messageKey = count ? `${base}:${count}` : base;
           const contentHash = digest(message.content);
-          this.sqlite.prepare(`INSERT INTO external_agent_messages(id,thread_id,stable_key,role,content,content_hash,ordinal,occurred_at,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id,stable_key) DO UPDATE SET role=excluded.role,content=excluded.content,content_hash=excluded.content_hash,ordinal=excluded.ordinal,occurred_at=excluded.occurred_at,updated_at=CASE WHEN external_agent_messages.content_hash<>excluded.content_hash THEN excluded.updated_at ELSE external_agent_messages.updated_at END`)
-            .run(stableId("msg", `${threadId}:${messageKey}`), threadId, messageKey, message.role, message.content, contentHash, ordinal, Number.isFinite(occurredAt) ? occurredAt : now, now, now);
+          const attachments = JSON.stringify(message.attachments?.length ? message.attachments : []);
+          this.sqlite.prepare(`INSERT INTO external_agent_messages(id,thread_id,stable_key,role,content,content_hash,attachments,ordinal,occurred_at,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id,stable_key) DO UPDATE SET role=excluded.role,content=excluded.content,content_hash=excluded.content_hash,attachments=excluded.attachments,ordinal=excluded.ordinal,occurred_at=excluded.occurred_at,updated_at=CASE WHEN external_agent_messages.content_hash<>excluded.content_hash THEN excluded.updated_at ELSE external_agent_messages.updated_at END`)
+            .run(stableId("msg", `${threadId}:${messageKey}`), threadId, messageKey, message.role, message.content, contentHash, attachments, ordinal, Number.isFinite(occurredAt) ? occurredAt : now, now, now);
           importedMessages += 1;
         });
         this.refreshFts(threadId);
@@ -206,6 +294,7 @@ export class DataMigrationService {
     });
     transaction();
     this.kick();
+    if (unchangedThreads) this.updateSyncDetail(run.sourceId, (detail) => ({ ...detail, lastUnchangedThreads: unchangedThreads }));
     return this.getRun(runId);
   }
 
@@ -225,13 +314,63 @@ export class DataMigrationService {
     const now = Date.now();
     this.sqlite.prepare("UPDATE data_migration_runs SET status='completed',phase='completed',completed_at=? WHERE id=? AND status='running'").run(now, runId);
     this.sqlite.prepare("UPDATE data_migration_sources SET status='completed',last_synced_at=?,error=NULL,updated_at=? WHERE id=(SELECT source_id FROM data_migration_runs WHERE id=?)").run(now, now, runId);
+    const source = this.sqlite.prepare("SELECT data_migration_sources.id AS source_id, data_migration_sources.provider AS provider FROM data_migration_runs JOIN data_migration_sources ON data_migration_sources.id=data_migration_runs.source_id WHERE data_migration_runs.id=?").get(runId) as { source_id: string; provider: MigrationProvider } | undefined;
+    if (source && CAPABILITY_DEFAULTS[source.provider]) {
+      this.sqlite.prepare(`UPDATE migration_source_capabilities SET import_state='active',
+        sync_state=CASE WHEN sync_state IN ('available','error') THEN 'active' ELSE sync_state END,
+        sync_detail=json_set(sync_detail,'$.lastCompletedRunAt',json(?)),updated_at=? WHERE source_id=?`)
+        .run(now, now, source.source_id);
+    }
   }
 
   fail(runId: string, error: string): MigrationRun {
     const run = this.getRun(runId); const now = Date.now();
     this.sqlite.prepare("UPDATE data_migration_runs SET status='failed',error=?,completed_at=? WHERE id=?").run(error.slice(0, 2000), now, runId);
     this.sqlite.prepare("UPDATE data_migration_sources SET status='error',error=?,updated_at=? WHERE id=?").run(error.slice(0, 2000), now, run.sourceId);
+    this.sqlite.prepare(`UPDATE migration_source_capabilities SET sync_state='error',sync_detail=json_set(sync_detail,'$.lastError',json(?)),updated_at=? WHERE source_id=?`)
+      .run(error.slice(0, 500), now, run.sourceId);
     return this.getRun(runId);
+  }
+
+  getCapabilities(sourceId: string): MigrationCapabilityStates | null {
+    const row = this.sqlite.prepare("SELECT * FROM migration_source_capabilities WHERE source_id=?").get(sourceId) as CapabilityRow | undefined;
+    return row ? toCapabilityStates(row) : null;
+  }
+
+  setCapability(sourceId: string, input: { syncState?: "active" | "paused" | "error" }): MigrationCapabilityStates {
+    const row = this.sqlite.prepare("SELECT * FROM migration_source_capabilities WHERE source_id=?").get(sourceId) as CapabilityRow | undefined;
+    if (!row) throw new Error("migration_capabilities_not_found");
+    if (input.syncState && row.sync_state !== "not_available") {
+      this.sqlite.prepare("UPDATE migration_source_capabilities SET sync_state=?,updated_at=? WHERE source_id=?").run(input.syncState, Date.now(), sourceId);
+    }
+    const updated = this.sqlite.prepare("SELECT * FROM migration_source_capabilities WHERE source_id=?").get(sourceId) as CapabilityRow;
+    return toCapabilityStates(updated);
+  }
+
+  private updateSyncDetail(sourceId: string, merge: (detail: Record<string, unknown>) => Record<string, unknown>): void {
+    const row = this.sqlite.prepare("SELECT sync_detail FROM migration_source_capabilities WHERE source_id=?").get(sourceId) as { sync_detail: string } | undefined;
+    if (!row) return;
+    this.sqlite.prepare("UPDATE migration_source_capabilities SET sync_detail=?,updated_at=? WHERE source_id=?")
+      .run(JSON.stringify(merge(safeParseDetail(row.sync_detail))), Date.now(), sourceId);
+  }
+
+  exportSourceThreads(sourceId: string): Array<{ stableKey: string; externalSessionId: string; title: string; messages: Array<{ role: "user" | "assistant"; content: string; occurredAt: string; attachments?: ThreadAttachment[] }> }> {
+    const threads = this.sqlite.prepare("SELECT stable_key,external_session_id,title FROM external_agent_threads WHERE source_id=? AND available=1 ORDER BY started_at ASC").all(sourceId) as Array<{ stable_key: string; external_session_id: string; title: string }>;
+    return threads.map((thread) => {
+      const messages = this.sqlite.prepare("SELECT role,content,occurred_at,attachments FROM external_agent_messages WHERE thread_id=(SELECT id FROM external_agent_threads WHERE source_id=? AND stable_key=?) ORDER BY ordinal ASC")
+        .all(sourceId, thread.stable_key) as Array<{ role: "user" | "assistant"; content: string; occurred_at: number; attachments: string }>;
+      return {
+        stableKey: thread.stable_key,
+        externalSessionId: thread.external_session_id,
+        title: thread.title,
+        messages: messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+          occurredAt: new Date(message.occurred_at).toISOString(),
+          ...(message.attachments && message.attachments !== "[]" ? { attachments: safeParseDetail(message.attachments) as unknown as ThreadAttachment[] } : {}),
+        })),
+      };
+    });
   }
 
   cancel(runId: string): MigrationRun {
@@ -417,6 +556,10 @@ export class DataMigrationService {
   private async drain(): Promise<void> {
     if (this.draining) return;
     this.draining = true;
+    // claimJob/afterJob 在任务级 catch 之外；kick() 是 void 调用，漏接即未处理
+    // 拒绝、直接杀死网关进程（2026-10-17 排障）。异常轮次延迟 1s 再续跑，
+    // 避免确定性失败（如盘满）在本轮 finally 里原地打转。
+    let drainBroken = false;
     try {
       for (;;) {
         const job = this.claimJob();
@@ -430,11 +573,16 @@ export class DataMigrationService {
         }
         this.afterJob(job);
       }
+    } catch (error) {
+      drainBroken = true;
+      console.error("[data-migrations] drain failed:", error);
     } finally {
       this.draining = false;
       if (this.closed) return;
       const pending = this.sqlite.prepare("SELECT 1 FROM migration_jobs WHERE status='pending' AND run_at<=? LIMIT 1").get(Date.now());
-      if (pending) void this.drain();
+      if (!pending) return;
+      if (drainBroken) setTimeout(() => { if (!this.closed) void this.drain(); }, 1_000);
+      else void this.drain();
     }
   }
 

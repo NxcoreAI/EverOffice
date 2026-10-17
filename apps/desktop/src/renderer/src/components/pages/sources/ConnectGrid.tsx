@@ -50,6 +50,7 @@ export function ConnectGrid({
   onGoogleDocs,
   onNotion,
   onOpenClaw,
+  onCherry,
   onLocalAgentHistory,
   connectorsEnabled,
   onConnectorProvider,
@@ -69,6 +70,7 @@ export function ConnectGrid({
   onGoogleDocs: () => void
   onNotion: () => void
   onOpenClaw: () => void
+  onCherry: () => void
   onLocalAgentHistory: (provider: 'codex' | 'claude') => void
   connectorsEnabled?: boolean
   onConnectorProvider?: (provider: ConnectorProviderId) => void
@@ -145,6 +147,7 @@ export function ConnectGrid({
     { key: 'claude', icon: 'claude', label: 'Claude Code', group: 'import', onSelect: () => onLocalAgentHistory('claude') },
     { key: 'codex', icon: 'codex', label: 'Codex', group: 'import', onSelect: () => onLocalAgentHistory('codex') },
     { key: 'openclaw', icon: 'openclaw', label: 'OpenClaw', group: 'import', onSelect: onOpenClaw },
+    { key: 'cherry', icon: 'cherry', glyph: true, label: 'Cherry Studio', group: 'import', onSelect: onCherry },
   ]
 
   if (limit !== undefined) {

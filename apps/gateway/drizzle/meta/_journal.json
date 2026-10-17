@@ -554,6 +554,13 @@
       "when": 1791980400000,
       "tag": "0080_thesis_format_cards_multi",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "6",
+      "when": 1792066800000,
+      "tag": "0081_cherry_hermes_provider",
+      "breakpoints": true
     }
   ]
 }

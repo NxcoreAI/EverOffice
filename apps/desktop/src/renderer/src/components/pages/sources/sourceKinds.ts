@@ -46,6 +46,8 @@ const PROVIDER_ICON_KINDS: Record<string, SourceIconKind> = {
   claude: 'claude',
   codex: 'codex',
   openclaw: 'openclaw',
+  cherry: 'cherry',
+  hermes: 'hermes',
   icscalendar: 'ics-calendar',
 }
 function normalizeProvider(provider: string): string {
@@ -64,6 +66,11 @@ export function providerLabel(provider: string): string {
     case 'googledrive': return 'Google Drive'
     case 'notion': return 'Notion'
     case 'feishu': return 'Feishu'
+    case 'claude': return 'Claude Code'
+    case 'codex': return 'Codex'
+    case 'openclaw': return 'OpenClaw'
+    case 'cherry': return 'Cherry Studio'
+    case 'hermes': return 'Hermes'
     default: return provider
   }
 }
