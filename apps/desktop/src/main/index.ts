@@ -38,6 +38,9 @@ import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
 import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
+import { AgentAccessSettingsStore, isValidFixedPort } from './agent-access/settings-store'
+import { AgentAccessInstaller } from './agent-access/installer'
+import { AgentAccessGatewayBridge } from './gateway/agent-access-gateway-bridge'
 import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
 import { startDesktopUpdater } from './updater'
 import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
@@ -732,6 +735,25 @@ const AGENT_SCHEDULER_CHANNELS = {
   runNow: 'agent-scheduler:run-now',
 } as const
 
+// 外部 Agent 访问（PRD 第 7 章）：连接管理/自检/示例查询/安装代写/调试数据 +
+// 桌面侧固定端口设置与网关重启（安装到外部工具的配置依赖稳定地址）。
+const AGENT_ACCESS_CHANNELS = {
+  listConnections: 'agent-access:list-connections',
+  createConnection: 'agent-access:create-connection',
+  updateConnection: 'agent-access:update-connection',
+  revokeConnection: 'agent-access:revoke-connection',
+  rotateToken: 'agent-access:rotate-token',
+  submissions: 'agent-access:submissions',
+  events: 'agent-access:events',
+  selftest: 'agent-access:selftest',
+  exampleQuery: 'agent-access:example-query',
+  install: 'agent-access:install',
+  uninstall: 'agent-access:uninstall',
+  settingsGet: 'agent-access:settings-get',
+  settingsSetFixedPort: 'agent-access:settings-set-fixed-port',
+  restartGateway: 'agent-access:restart-gateway',
+} as const
+
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
 // IpcHandler 的 never 参数让任意签名的处理器都可直接注册。
 type IpcHandler = (event: Electron.IpcMainInvokeEvent, ...args: never[]) => unknown
@@ -795,6 +817,7 @@ function installIpcRouters(): void {
     PERCEPTION_CHANNELS,
     DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
+    AGENT_ACCESS_CHANNELS,
     WRITING_STYLE_CHANNELS,
     SLIDES_CHANNELS,
     THESIS_FORMAT_CHANNELS,
@@ -843,6 +866,7 @@ function registerBrowserExtensionHandlers(service: BrowserExtensionService): voi
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
+let agentAccessSettingsStore: AgentAccessSettingsStore | null = null
 /** 系统代理探测结果（app 启动时求值一次，supervisor getter 每次 respawn 读取）。 */
 let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
@@ -879,6 +903,8 @@ let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
 let diaryGatewayBridge: DiaryGatewayBridge | null = null
 let writingStyleGatewayBridge: WritingStyleGatewayBridge | null = null
 let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
+let agentAccessGatewayBridge: AgentAccessGatewayBridge | null = null
+let agentAccessInstaller: AgentAccessInstaller | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
 let recordingStore: RecordingStore | null = null
@@ -3764,6 +3790,82 @@ function registerPerceptionAndDiaryHandlers(): void {
   })
 }
 
+function registerAgentAccessHandlers(): void {
+  const requireBridge = (): AgentAccessGatewayBridge => {
+    if (!agentAccessGatewayBridge) throw new Error('Agent 连接服务尚未就绪。')
+    return agentAccessGatewayBridge
+  }
+  const requireString = (value: unknown, label: string): string => {
+    if (typeof value !== 'string' || !value.trim()) throw new Error(`${label}无效。`)
+    return value
+  }
+  handle(AGENT_ACCESS_CHANNELS.listConnections, () => requireBridge().listConnections())
+  handle(AGENT_ACCESS_CHANNELS.createConnection, (_event, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('Agent 连接参数无效。')
+    return requireBridge().createConnection(input as never)
+  })
+  handle(AGENT_ACCESS_CHANNELS.updateConnection, (_event, id: unknown, input: unknown) => {
+    if (typeof id !== 'string' || !input || typeof input !== 'object') throw new Error('Agent 连接参数无效。')
+    return requireBridge().updateConnection(id, input as never)
+  })
+  handle(AGENT_ACCESS_CHANNELS.revokeConnection, (_event, id: unknown) =>
+    requireBridge().revokeConnection(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.rotateToken, (_event, id: unknown) =>
+    requireBridge().rotateToken(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.submissions, (_event, id: unknown) =>
+    requireBridge().submissions(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.events, (_event, id: unknown) =>
+    requireBridge().events(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.selftest, (_event, id: unknown) =>
+    requireBridge().selftest(requireString(id, '连接 ID')))
+  handle(AGENT_ACCESS_CHANNELS.exampleQuery, (_event, id: unknown, query: unknown) => {
+    if (typeof query !== 'string' && query !== undefined) throw new Error('查询参数无效。')
+    return requireBridge().exampleQuery(requireString(id, '连接 ID'), query)
+  })
+  handle(AGENT_ACCESS_CHANNELS.install, async (_event, connectionId: unknown, target: unknown, token: unknown) => {
+    const plan = await requireBridge().install(
+      requireString(connectionId, '连接 ID'),
+      requireString(target, '目标工具'),
+      requireString(token, '连接 token'),
+    )
+    if (!agentAccessInstaller) throw new Error('安装服务尚未就绪。')
+    const outcome = agentAccessInstaller.apply(plan.install)
+    return { plan: plan.install, outcome }
+  })
+  handle(AGENT_ACCESS_CHANNELS.uninstall, (_event, target: unknown) => {
+    if (!agentAccessInstaller) throw new Error('安装服务尚未就绪。')
+    return agentAccessInstaller.uninstall(requireString(target, '目标工具'))
+  })
+  handle(AGENT_ACCESS_CHANNELS.settingsGet, () => {
+    if (!agentAccessSettingsStore || !gatewaySupervisor) throw new Error('Agent 连接服务尚未就绪。')
+    return {
+      fixedPort: agentAccessSettingsStore.read().fixedPort,
+      currentPort: agentAccessSettingsStore.currentGatewayPort(gatewaySupervisor),
+    }
+  })
+  handle(AGENT_ACCESS_CHANNELS.settingsSetFixedPort, async (_event, port: unknown) => {
+    if (!agentAccessSettingsStore) throw new Error('Agent 连接服务尚未就绪。')
+    if (port === null) {
+      agentAccessSettingsStore.write({ fixedPort: null })
+      return { fixedPort: null as number | null, needsRestart: true }
+    }
+    if (typeof port !== 'number' || !isValidFixedPort(port)) {
+      throw new Error('端口必须是 1024–65535 的整数。')
+    }
+    if (!(await AgentAccessSettingsStore.isPortFree(port))) {
+      throw new Error(`端口 ${port} 已被占用，请换一个。`)
+    }
+    agentAccessSettingsStore.write({ fixedPort: port })
+    return { fixedPort: port, needsRestart: true }
+  })
+  handle(AGENT_ACCESS_CHANNELS.restartGateway, async () => {
+    if (!gatewaySupervisor) throw new Error('网关尚未就绪。')
+    await gatewaySupervisor.shutdown()
+    const connection = await gatewaySupervisor.start()
+    return { baseUrl: connection.baseUrl }
+  })
+}
+
 function isAppWindowNavigationAllowed(url: string): boolean {
   try {
     if (process.env.ELECTRON_RENDERER_URL) {
@@ -4161,6 +4263,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       officeBridgeServer = null
       return null
     })
+    agentAccessSettingsStore = new AgentAccessSettingsStore(dataDirectory)
     gatewaySupervisor = new GatewaySupervisor(
       dataDirectory,
       () => ({
@@ -4207,6 +4310,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           : {}),
       }),
       {
+        // 外部 Agent 访问（PRD 第 7 章）固定端口：连接页可设置；设置后安装到
+        // 外部工具的 MCP 配置在网关重启后仍有效（随机端口会失效）。
+        portProvider: () => agentAccessSettingsStore?.portProvider() ?? null,
         // gateway 连接变化（dev 热重载换端口/token）时，MemoryCore/KS 等子进程
         // 指向 /ai-relay 的稳定 token 随之失效——联动补一次 env 同步。
         onConnectionChanged: () => {
@@ -4216,6 +4322,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         },
       },
     )
+    // agent-access 桥只包 supervisor（ensureConnection 惰性等待网关就绪），处理器
+    // 提前到 start() 前注册：否则早期 IPC 会排队等 servicesReady（全量服务初始化），
+    // 冷启动即开连接页时列表加载会超时失败（需点「应用」触发二次加载才成功）。
+    agentAccessGatewayBridge = new AgentAccessGatewayBridge(gatewaySupervisor)
+    agentAccessInstaller = new AgentAccessInstaller()
+    registerAgentAccessHandlers()
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     void screenshotOutbox.flush()

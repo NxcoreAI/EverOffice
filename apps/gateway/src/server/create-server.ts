@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { LogController } from "fastify";
@@ -24,6 +25,11 @@ import {
   channelToolsFromRuntimeTools,
 } from "../modules/agent/channel-mcp-host.js";
 import { channelMcpRoutes } from "../modules/agent/channel-mcp-routes.js";
+import { AgentAccessMcpHost } from "../modules/agent-access/mcp-host.js";
+import { agentAccessMcpRoutes } from "../modules/agent-access/mcp-routes.js";
+import { agentAccessRoutes } from "../modules/agent-access/routes.js";
+import { AgentAccessService } from "../modules/agent-access/service.js";
+import { createAgentAccessTools } from "../modules/agent-access/tools.js";
 import { AgentService } from "../modules/agent/service.js";
 import { DocumentEventBroker } from "../modules/documents/event-broker.js";
 import { DocumentMcpHost } from "../modules/documents/mcp-host.js";
@@ -523,8 +529,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
   // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
   // "[REDACTED]" 当 key 起服务并静默 401。其余响应一律按键名/注册密钥脱敏。
+  // agent-access 的连接签发/轮换/安装代写同为有意出站的密钥面（连接 token
+  // 仅创建时返回一次；三端点都走全局 bearer，install 另需 token 匹配）。
   app.addHook("preSerialization", async (request, _reply, payload) => {
     if (request.routeOptions.url === "/v1/runtime-config/secrets") return payload;
+    if (request.routeOptions.url === "/v1/agent-access/connections"
+      || request.routeOptions.url === "/v1/agent-access/connections/:id/token"
+      || request.routeOptions.url === "/v1/agent-access/connections/:id/install/:target") {
+      return payload;
+    }
     return redactSecrets(payload);
   });
 
@@ -1659,6 +1672,54 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(channelMcpRoutes(channelMcpHost));
+  // 外部 Agent 访问（PRD 0.2.0 第 7 章 L2.5）：持久连接 token + 范围过滤的对外
+  // MCP 端点。REST（/v1/agent-access/*，连接页）走全局 bearer；MCP 端点
+  // /v1/mcp/agents 以连接 token 自鉴权（auth 插件已豁免全局 bearer）。
+  // 产物入库走 files 管线（sourceKind=agent-generated，CAS sha256 去重），
+  // 与渠道 MCP 互不影响：渠道面向 EverRoom 自己拉起的 CLI，这里面向用户
+  // 自行安装的外部工具。
+  const agentAccessImportArtifact = async (input: {
+    filename: string;
+    buffer: Buffer;
+    roomId: string | null;
+    sourceKey: string;
+  }) => {
+    const result = await filesService.importFileStream({
+      sourceKind: "agent-generated",
+      sourceKey: input.sourceKey,
+      originalName: input.filename,
+      stream: Readable.from(input.buffer),
+      ...(input.roomId ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: false } } : {}),
+    });
+    return {
+      fileEntryId: result.fileEntryId,
+      contentHash: result.contentHash,
+      filename: input.filename,
+    };
+  };
+  const agentAccessService = new AgentAccessService(db, {
+    importArtifact: agentAccessImportArtifact,
+    log: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  const agentAccessMcpHost = new AgentAccessMcpHost(
+    agentAccessService,
+    (connection) => createAgentAccessTools(
+      {
+        db,
+        search: searchService,
+        memory: memoryService,
+        documents: documentService,
+        files: filesService,
+        agent: agentService,
+      },
+      connection,
+      agentAccessService,
+      agentAccessImportArtifact,
+    ),
+    (level, event, fields) => app.log[level](fields ?? {}, event),
+  );
+  await app.register(agentAccessRoutes(agentAccessService, agentAccessMcpHost, channelMcpBaseUrl));
+  await app.register(agentAccessMcpRoutes(agentAccessMcpHost));
   await app.register(notificationMcpRoutes(notificationMcpHost));
   // 版本概览 worker：保存（document.changed）后异步判定重要性。重要变更
   // （标题变更/小节增删/变更块 ≥3/首版）直接生成 AI 概览；不重要变更先把
