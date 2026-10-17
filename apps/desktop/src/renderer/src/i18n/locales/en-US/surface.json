@@ -1850,5 +1850,6 @@
   "screenPermission.devRestartHint": "Dev build: restart the app from your terminal",
   "screenPermission.close": "Close",
   "files.categoryImage": "Images",
+  "files.previewImage": "Preview image",
   "topBar.openSearch": "Search (⌘K)"
 }

@@ -608,15 +608,16 @@ const base = {
   files: {
     list: async (limit = 200, offset = 0) => {
       const items = [
-        { id: 'f-cat-1', originalName: 'overview.md', displayName: '产品概览', sharedTitle: '产品概览', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'docs/overview.md', provider: null, bytes: 2048, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h1', currentVersionId: 'v1', parsed: true, updatedAt: '2026-09-05T02:00:00.000Z' },
-        { id: 'f-cat-2', originalName: 'spec.pdf', displayName: '接口规格.pdf', sharedTitle: '接口规格.pdf', sourceKind: 'local-folder', sourceLabel: '产品笔记', relativePath: 'docs/spec.pdf', provider: null, bytes: 8192, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h2', currentVersionId: 'v2', parsed: true, updatedAt: '2026-09-06T02:00:00.000Z' },
+        { id: 'f-img-1', originalName: '007 一杯咖啡与一本书的相遇 — 副本.jpeg', displayName: null, sharedTitle: '007 一杯咖啡与一本书的相遇 — 副本.jpeg', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 430842, dataType: 'image', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'a1'.repeat(32), currentVersionId: 'v1', parsed: true, updatedAt: '2026-10-17T09:24:00.000Z' },
+        { id: 'f-img-2', originalName: '20251017_114812.jpg', displayName: null, sharedTitle: '20251017_114812.jpg', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 512000, dataType: 'image', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'b2'.repeat(32), currentVersionId: 'v2', parsed: true, updatedAt: '2026-10-17T09:20:00.000Z' },
+        { id: 'f-heic-1', originalName: '现场实拍原片.heic', displayName: null, sharedTitle: '现场实拍原片.heic', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 3800000, dataType: 'image', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'c3'.repeat(32), currentVersionId: 'v3', parsed: true, updatedAt: '2026-10-17T09:10:00.000Z' },
+        { id: 'f-doc-1', originalName: '微信公众号《构建复杂系统认知框架》文章片段 — 4.1.1 关于控制论与复杂性的边界讨论.pdf', displayName: null, sharedTitle: '微信公众号《构建复杂系统认知框架》文章片段 — 4.1.1 关于控制论与复杂性的边界讨论.pdf', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 5120, dataType: 'document', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'd4'.repeat(32), currentVersionId: 'v4', parsed: true, updatedAt: '2026-10-17T09:00:00.000Z' },
+        { id: 'f-cat-1', originalName: 'overview.md', displayName: '产品概览', sharedTitle: '产品概览', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'docs/overview.md', provider: null, bytes: 2048, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h1', currentVersionId: 'v5', parsed: true, updatedAt: '2026-09-05T02:00:00.000Z' },
       ]
       return { items: items.slice(offset, offset + limit), total: items.length }
     },
-    catalogEntry: async (fileId) => [
-      { id: 'f-cat-1', originalName: 'overview.md', displayName: '产品概览', sharedTitle: '产品概览', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: 'docs/overview.md', provider: null, bytes: 2048, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h1', currentVersionId: 'v1', parsed: true, updatedAt: '2026-09-05T02:00:00.000Z' },
-      { id: 'f-cat-2', originalName: 'spec.pdf', displayName: '接口规格.pdf', sharedTitle: '接口规格.pdf', sourceKind: 'local-folder', sourceLabel: '产品笔记', relativePath: 'docs/spec.pdf', provider: null, bytes: 8192, dataType: null, agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'h2', currentVersionId: 'v2', parsed: true, updatedAt: '2026-09-06T02:00:00.000Z' },
-    ].find((item) => item.id === fileId) ?? null,
+    onImportProgress: () => () => {},
+    catalogEntry: async (fileId) => null,
   },
   documents: { list: async () => [], listTrash: async () => [] },
   // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。

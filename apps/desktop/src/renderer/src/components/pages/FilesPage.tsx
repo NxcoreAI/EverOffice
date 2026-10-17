@@ -157,6 +157,8 @@ export function FilesPage({
   const [searchQuery, setSearchQuery] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [clipperPreview, setClipperPreview] = useState<{ capture: BrowserExtensionClipperCapture; markdown: string } | null>(null)
+  const [imagePreview, setImagePreview] = useState<FileCatalogDto | null>(null)
+  const [imagePreviewFailed, setImagePreviewFailed] = useState(false)
   const [focusedFileId, setFocusedFileId] = useState<string | null>(null)
   const handledFocusRequestIdRef = useRef(-1)
   const dragDepth = useRef(0)
@@ -274,6 +276,18 @@ export function FilesPage({
       window.setTimeout(() => setFocusedFileId((current) => (current === file.id ? null : current)), 3_000)
     }).catch(() => undefined)
   }, [focusRequest, loadFiles])
+
+  const openImagePreview = useCallback((file: FileCatalogDto) => {
+    setImagePreviewFailed(false)
+    setImagePreview(file)
+  }, [])
+
+  useEffect(() => {
+    if (!imagePreview) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setImagePreview(null) }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [imagePreview])
 
   const classifiedFilesByCategory = useMemo(() => groupCatalogFiles(files), [files])
 
@@ -615,15 +629,19 @@ export function FilesPage({
                 items={selectedCategory.files.map(({ file }) => file.id)}
                 renderItem={(fileId) => {
                   const file = selectedCategory.files.find(({ file: item }) => item.id === fileId)!.file
-                  return <article key={file.id} className={`file-document-card file-document-${selectedCategory.tone}`} data-file-id={file.id} data-focused={String(focusedFileId === file.id)}>
-                    <button type="button" className="file-document-main" title={file.sourceKind === 'web-clipper' ? t('surface:files.openClipperPreview') : t('surface:files.openOriginal')} disabled={busyId === file.id} onClick={() => openFile(file)}>
-                      <span className="file-document-icon"><FileTypeIcon file={file} /></span>
-                      <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>
-                    </button>
-                    <div className="file-document-preview" aria-hidden="true"><span /><span /><span /></div>
-                    <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
-                    <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busyId === file.id} onClick={() => revealOriginal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busyId === file.id} onClick={() => deleteFile(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
-                  </article>
+                  return (
+                    <FileDocumentCard
+                      key={file.id}
+                      file={file}
+                      tone={selectedCategory.tone}
+                      focused={focusedFileId === file.id}
+                      busy={busyId === file.id}
+                      onPreviewImage={openImagePreview}
+                      onOpenFile={openFile}
+                      onReveal={revealOriginal}
+                      onDelete={deleteFile}
+                    />
+                  )
                 }}
               />
             </div>
@@ -698,11 +716,49 @@ export function FilesPage({
         </div>
       ) : null}
 
+      {imagePreview ? (
+        <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setImagePreview(null)
+        }}>
+          <section className="evidence-dialog image-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="image-preview-title">
+            <header className="evidence-dialog-head">
+              <div>
+                <span>{t('surface:files.categoryImage')}</span>
+                <h2 id="image-preview-title">{imagePreview.originalName}</h2>
+                <small>{formatBytes(imagePreview.bytes)} · {formatDate(imagePreview.updatedAt, locale, t)}</small>
+              </div>
+              <button type="button" className="icon-button" title={t('surface:files.close')} aria-label={t('surface:files.close')} onClick={() => setImagePreview(null)}><X aria-hidden="true" /></button>
+            </header>
+            <div className="evidence-dialog-body image-preview-body">
+              {imagePreviewFailed ? (
+                <div className="evidence-viewer-state"><ImageIcon aria-hidden="true" />{t('surface:files.unableToOpenOriginal')}</div>
+              ) : (
+                <img
+                  className="image-preview-figure"
+                  src={`everroom-material://${imagePreview.contentHash}`}
+                  alt={imagePreview.sharedTitle}
+                  onError={() => setImagePreviewFailed(true)}
+                />
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
     </div>
   )
 }
 
 const IMAGE_ICON_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic'])
+
+/** Chromium 可渲染且素材协议按字节嗅探能出图的扩展名（heic 排除：嗅探不出 image/* 必 404）。 */
+const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'])
+const CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/
+
+function isPreviewableImage(file: FileCatalogDto): boolean {
+  const extension = file.originalName.split('.').pop()?.toLowerCase()
+  return PREVIEWABLE_IMAGE_EXTENSIONS.has(extension ?? '') && CONTENT_HASH_PATTERN.test(file.contentHash)
+}
 
 function FileTypeIcon({ file }: { file: FileCatalogDto }) {
   const extension = file.originalName.split('.').pop()?.toLowerCase()
@@ -714,6 +770,48 @@ function FileTypeIcon({ file }: { file: FileCatalogDto }) {
         ? FileType2
         : FileTextIcon
   return <Icon className="file-type-icon" aria-hidden="true" strokeWidth={1.8} />
+}
+
+/** 分类详情卡：图片文件以素材协议封面替代图标，封面加载失败回退图标布局。 */
+function FileDocumentCard({ file, tone, focused, busy, onPreviewImage, onOpenFile, onReveal, onDelete }: {
+  file: FileCatalogDto
+  tone: FileCategoryDefinition['tone']
+  focused: boolean
+  busy: boolean
+  onPreviewImage: (file: FileCatalogDto) => void
+  onOpenFile: (file: FileCatalogDto) => void
+  onReveal: (file: FileCatalogDto) => void
+  onDelete: (file: FileCatalogDto) => void
+}) {
+  const { locale, t } = useLocale()
+  const [coverFailed, setCoverFailed] = useState(false)
+  const showCover = isPreviewableImage(file) && !coverFailed
+  return (
+    <article className={`file-document-card file-document-${tone}`} data-file-id={file.id} data-focused={String(focused)}>
+      <button
+        type="button"
+        className={showCover ? 'file-document-main has-cover' : 'file-document-main'}
+        title={showCover ? t('surface:files.previewImage') : file.sourceKind === 'web-clipper' ? t('surface:files.openClipperPreview') : t('surface:files.openOriginal')}
+        disabled={busy}
+        onClick={() => (showCover ? onPreviewImage(file) : onOpenFile(file))}
+      >
+        {showCover ? (
+          <img
+            className="file-document-cover"
+            src={`everroom-material://${file.contentHash}`}
+            alt={file.sharedTitle}
+            loading="lazy"
+            onError={() => setCoverFailed(true)}
+          />
+        ) : (
+          <span className="file-document-icon"><FileTypeIcon file={file} /></span>
+        )}
+        <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>
+      </button>
+      <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
+      <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busy} onClick={() => onReveal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busy} onClick={() => onDelete(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
+    </article>
+  )
 }
 
 function describeMemory(memory: FileImportOutcome['memoryResult'], t: Translate): string {

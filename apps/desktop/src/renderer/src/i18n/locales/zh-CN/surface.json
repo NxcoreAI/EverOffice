@@ -1850,5 +1850,6 @@
   "screenPermission.devRestartHint": "开发模式：请在终端手动重启应用",
   "screenPermission.close": "关闭",
   "files.categoryImage": "图片",
+  "files.previewImage": "预览图片",
   "topBar.openSearch": "搜索（⌘K）"
 }
