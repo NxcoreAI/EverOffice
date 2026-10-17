@@ -1,6 +1,6 @@
 import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { basename, extname, join, parse, resolve } from 'node:path'
+import { basename, dirname, extname, join, parse, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, Notification, protocol, screen, session, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -120,6 +120,7 @@ import {
 } from './screen-memory/screen-memory-controller'
 import { VisionOcrClient } from './vision-ocr/vision-ocr-client'
 import { ScreenMemoryGatewayBridge } from './screen-memory/screen-memory-gateway-bridge'
+import { getScreenCapturePermission } from './screen-memory/capture-current-screen'
 import { getScreenMemoryDirectory } from './screen-memory/screen-memory-settings'
 import { runScreenMemoryBackfill } from './screen-memory/screen-memory-backfill'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
@@ -679,6 +680,10 @@ const SCREEN_CAPTURE_CHANNELS = {
   updateInterval: 'screen-capture:update-interval',
   stop: 'screen-capture:stop',
   status: 'screen-capture:status',
+  appInfo: 'screen-capture:app-info',
+  openPermissionSettings: 'screen-capture:open-permission-settings',
+  startAppDrag: 'screen-capture:start-app-drag',
+  relaunchApp: 'screen-capture:relaunch-app',
 } as const
 
 const PERCEPTION_CHANNELS = {
@@ -926,6 +931,8 @@ const officePreviewRegistry = new OfficePreviewRegistry(
   // everroom-material:// 素材回源：文件桥惰性取（网关启动后才赋值），每次调用现建（闭包零成本）。
   () => createEverroomMaterialResolver(() => officeFilesBridge),
 )
+/** 论文格式网关桥：网关就绪后赋值；pick 直传共用同一实例。 */
+let thesisFormatBridgeRef: ThesisFormatGatewayBridge | null = null
 
 /** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
 function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
@@ -2804,11 +2811,26 @@ async function hashFileBytes(path: string): Promise<string> {
   return hash.digest('hex')
 }
 
-function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge): void {
+/** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
+async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> {
+  const thesisBridgeForPick = thesisFormatBridgeRef
+  if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '' }
+  const picked = await dialog.showOpenDialog({
+    title: '选择论文格式模版',
+    properties: ['openFile'],
+    filters: [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
+  })
+  const filePath = picked.filePaths[0]
+  if (!filePath) return { canceled: true, cardId: '', sourceName: '' }
+  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
+}
+
+function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registry: OfficePreviewRegistry): void {
   const cardChanged = () => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(THESIS_FORMAT_CHANNELS.cardChanged)
     }
+    registry.notifyThesisCardsChanged()
   }
   handle(THESIS_FORMAT_CHANNELS.listCards, (_event, roomId: string) => bridge.listCards(roomId))
   handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, roomId: string, fileEntryId: string) => {
@@ -2816,18 +2838,10 @@ function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge): void {
     cardChanged()
     return meta
   })
-  // 磁盘选择直传（zip/docx/doc/pdf）：zip 不进文件库。用户取消返回 canceled:true。
   handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string) => {
-    const picked = await dialog.showOpenDialog({
-      title: '选择论文格式模版',
-      properties: ['openFile'],
-      filters: [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
-    })
-    const filePath = picked.filePaths[0]
-    if (!filePath) return { canceled: true, cardId: '', sourceName: '' }
-    const meta = await bridge.parseFromDisk(roomId, filePath)
-    cardChanged()
-    return { canceled: false, ...meta }
+    const meta = await pickThesisTemplateFromDisk(roomId)
+    if (!meta.canceled) cardChanged()
+    return meta
   })
   handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, roomId: string, cardId: string) => {
     await bridge.removeCard(roomId, cardId)
@@ -3363,16 +3377,98 @@ function registerPrivateTranscriptionHandlers(
     rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
 }
 
+let screenPermissionCardWindow: BrowserWindow | null = null
+
+// 拖拽授权悬浮卡：系统设置打开时置顶悬浮在屏幕下半部，用户从卡上把应用
+// 图标拖进「屏幕录制」列表；权限到手后自动收卡。
+// 卡片必须不可聚焦且用 showInactive：show/focus 会激活 EverRoom 应用，
+// macOS 会连带把主窗口顶到系统设置之上，遮住设置页。
+function showScreenPermissionCard(): void {
+  if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
+    screenPermissionCardWindow.showInactive()
+    return
+  }
+  const cardWidth = 420
+  const cardHeight = 150
+  const workArea = screen.getPrimaryDisplay().workArea
+  const card = new BrowserWindow({
+    width: cardWidth,
+    height: cardHeight,
+    x: Math.round(workArea.x + (workArea.width - cardWidth) / 2),
+    y: Math.round(workArea.y + workArea.height - cardHeight - 96),
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    transparent: true,
+    show: false,
+    alwaysOnTop: true,
+    focusable: false,
+    title: 'EverRoom',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  screenPermissionCardWindow = card
+  card.setAlwaysOnTop(true, 'screen-saver')
+  card.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const permissionWatcher = setInterval(() => {
+    if (card.isDestroyed()) {
+      clearInterval(permissionWatcher)
+      return
+    }
+    if (getScreenCapturePermission() === 'granted') card.close()
+  }, 2000)
+  card.on('closed', () => {
+    clearInterval(permissionWatcher)
+    if (screenPermissionCardWindow === card) screenPermissionCardWindow = null
+  })
+  card.once('ready-to-show', () => card.showInactive())
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void card.loadURL(`${process.env.ELECTRON_RENDERER_URL}/permission-card.html`)
+  } else {
+    void card.loadFile(join(__dirname, '../renderer/permission-card.html'))
+  }
+}
+
 function registerScreenCaptureHandlers(): void {
-  const isAuthorized = (event: Electron.IpcMainInvokeEvent): boolean => {
-    const window = BrowserWindow.getAllWindows()[0]
+  const isAuthorized = (event: { sender: Electron.WebContents }): boolean => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => candidate !== screenPermissionCardWindow)
     return Boolean(
-      window &&
-      !window.isDestroyed() &&
-      !window.webContents.isDestroyed() &&
-      event.sender === window.webContents,
+      ((window && !window.isDestroyed() && !window.webContents.isDestroyed() && event.sender === window.webContents)
+        || (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()
+          && event.sender === screenPermissionCardWindow.webContents)),
     )
   }
+
+  let cachedAppInfo: { appPath: string; appName: string; iconDataUrl: string; dragIcon: Electron.NativeImage } | null = null
+  const getScreenCaptureAppInfo = async () => {
+    if (cachedAppInfo) return cachedAppInfo
+    const appPath = dirname(dirname(dirname(process.execPath)))
+    const icon = await app.getFileIcon(appPath, { size: 'normal' }).catch(() => null)
+    const dragIcon = icon && !icon.isEmpty() ? icon : nativeImage.createEmpty()
+    const info = {
+      appPath,
+      appName: basename(appPath).replace(/\.app$/i, ''),
+      iconDataUrl: dragIcon.isEmpty() ? '' : dragIcon.toDataURL(),
+      dragIcon,
+    }
+    cachedAppInfo = info
+    return info
+  }
+
+  ipcMain.on(SCREEN_CAPTURE_CHANNELS.startAppDrag, (event) => {
+    if (!isAuthorized(event)) return
+    void getScreenCaptureAppInfo().then((info) => {
+      if (info.dragIcon.isEmpty()) return
+      event.sender.startDrag({ file: info.appPath, icon: info.dragIcon })
+    })
+  })
 
   handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
     if (!isAuthorized(event)) {
@@ -3401,6 +3497,36 @@ function registerScreenCaptureHandlers(): void {
   handle(SCREEN_CAPTURE_CHANNELS.status, (event) => {
     if (!isAuthorized(event)) return screenshotScheduler.getStatus()
     return screenshotScheduler.getStatus()
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.appInfo, async (event) => {
+    if (!isAuthorized(event)) return null
+    const { appPath, appName, iconDataUrl } = await getScreenCaptureAppInfo()
+    return { appPath, appName, iconDataUrl, devMode: !app.isPackaged }
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.openPermissionSettings, (event) => {
+    if (!isAuthorized(event)) return
+    showScreenPermissionCard()
+    const opened = shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+    // 系统设置启动会抢走层级，延迟两次把卡片顶回去（保持卡片第一、系统设置第二）。
+    for (const delay of [600, 1600]) {
+      setTimeout(() => {
+        if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
+          screenPermissionCardWindow.setAlwaysOnTop(true, 'screen-saver')
+          screenPermissionCardWindow.moveTop()
+        }
+      }, delay)
+    }
+    return opened
+  })
+  handle(SCREEN_CAPTURE_CHANNELS.relaunchApp, (event) => {
+    if (!isAuthorized(event)) return
+    // dev 下 relaunch 会丢 electron-vite 注入的环境，重启出裸 Electron 窗口。
+    if (!app.isPackaged) {
+      app.quit()
+      return
+    }
+    app.relaunch()
+    app.quit()
   })
 }
 
@@ -3458,9 +3584,6 @@ function registerScreenMemoryHandlers(): void {
   })
   handle(SCREEN_MEMORY_CHANNELS.frontmost, async () => {
     return visionOcrClient.frontmost()
-  })
-  handle(SCREEN_MEMORY_CHANNELS.openPermissionSettings, () => {
-    return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
   })
   handle(SCREEN_MEMORY_CHANNELS.registerMaterial, (_event, id: string) => {
     if (typeof id !== 'string' || id.length < 8) throw new Error('无效的区间 id。')
@@ -4323,7 +4446,16 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       retry: (captureId) => filesGatewayBridge.retryClipCapture(captureId),
     })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
-    registerThesisFormatHandlers(new ThesisFormatGatewayBridge(gatewaySupervisor))
+    const thesisFormatBridge = new ThesisFormatGatewayBridge(gatewaySupervisor)
+    thesisFormatBridgeRef = thesisFormatBridge
+    registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry)
+    // AI 页签（docs 视图内）论文排版桥：复用同一网关实现，pick 走磁盘选择直传。
+    officePreviewRegistry.setThesisPanelBridge({
+      listCards: (roomId) => thesisFormatBridge.listCards(roomId),
+      pickAndSet: (roomId) => pickThesisTemplateFromDisk(roomId),
+      removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
+      reformat: (roomId, fileEntryId, cardId) => thesisFormatBridge.reformat(roomId, fileEntryId, cardId),
+    })
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()

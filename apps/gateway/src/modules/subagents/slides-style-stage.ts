@@ -19,7 +19,6 @@ import {
   type OverviewExtraction,
 } from "../slides-style/compose.js";
 import { assignPaletteRoles, extractColorClusters } from "../slides-style/extract.js";
-import { LAYOUT_PRESET_IDS } from "../slides-style/layout-presets.js";
 import {
   appendCompositionEffectLine,
   COMPOSITION_FILL_ORDER,
@@ -360,7 +359,7 @@ async function runStyleSelect(
   }
 
   // 3. styler settle（输入=聚类+属性+词表+版式预设清单+草稿页角色；失败退基线）。
-  //    layoutPresetIds 是网关镜像的技能词表；outlineRoles 从草稿推（读不到就整个省略，
+  //    outlineRoles 从草稿推（读不到就整个省略，
   //    两字段在 styler input schema 里均非必填）。
   const outlineRoles = (() => {
     const draftId = session.draftDocumentId;
@@ -386,7 +385,6 @@ async function runStyleSelect(
         fontTemperament: extraction.font,
         decorationReading: extraction.decoration,
         fontOptions: [...STYLE_FONT_OPTIONS],
-        layoutPresetIds: LAYOUT_PRESET_IDS,
         ...(outlineRoles ? { outlineRoles } : {}),
       },
       idempotencyKey: `${input.run.runId}:styler:settle:${candidate.contentHash}`,

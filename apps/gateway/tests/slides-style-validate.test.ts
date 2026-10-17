@@ -41,7 +41,6 @@ const validParams = {
   spacing: { margin: 60, gutter: 20, cardPadding: 16, cornerRadius: 12 },
   decoration: { cardStroke: "#e5e0d5", cardStrokeWidthPt: 0.75, cardShadow: "soft", divider: "line", imageFit: "cover" },
   motif: { kind: "ghost-number", spec: { alphaPercent: 15 } },
-  layoutHints: { cover: "P1a", content: "T3" },
   darkCover: true,
   effectLines: ["主色 深藏青 #1E3A5F", "标题 40pt 加粗", "  ", "卡片小圆角、轻投影"],
 };
@@ -51,7 +50,6 @@ describe("normalizeStyleParams", () => {
     const params = normalizeStyleParams(validParams);
     expect(params.palette.background).toBe("#f5f2ec");
     expect(params.effectLines).toEqual(["主色 深藏青 #1E3A5F", "标题 40pt 加粗", "卡片小圆角、轻投影"]);
-    expect(params.layoutHints.cover).toBe("P1a");
   });
 
   it("derives chart series from primary/accent/background when absent", () => {
@@ -90,10 +88,7 @@ describe("normalizeStyleParams", () => {
   it("rejects invalid layout hint ids", () => {
     const params = normalizeStyleParams({
       ...validParams,
-      layoutHints: { cover: "Z99", content: "P1a" },
     });
-    expect(params.layoutHints.cover).toBeUndefined();
-    expect(params.layoutHints.content).toBe("P1a");
   });
 });
 

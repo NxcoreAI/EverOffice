@@ -1,11 +1,10 @@
 import * as Popover from '@radix-ui/react-popover';
 import { FileText, FileSpreadsheet, FileUp, FolderOpen, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
-import { getEmbeddedOffice } from '../../embeddedOffice';
 import { showToast } from '@/state/toast';
 import type {
   ContextRoomCloudDocResource,
@@ -17,7 +16,6 @@ import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/m
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
 import { FilterSelect } from '../shared';
-import { ThesisReformatControl } from './ThesisReformatControl';
 
 type ArtifactFilter = 'all' | 'clouddoc' | 'office';
 type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
@@ -83,10 +81,6 @@ export function ArtifactLibraryPane({
   const [deletingArtifact, setDeletingArtifact] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // 论文排版：docx 产物行的「排版」打开格式卡选择面板（有卡选卡、无卡引导上传）；
-  // reformattingFileId 为全局装订锁（同屏同时只跑一个装订任务）。
-  const [reformattingFileId, setReformattingFileId] = useState<string | null>(null);
-
   const confirmArtifactDelete = async () => {
     if (!pendingDelete) return;
     setDeleteError(null);
@@ -123,19 +117,8 @@ export function ArtifactLibraryPane({
     return counts;
   }, [room, backendDocuments, trashedDocuments]);
 
-  // Office 预览是主进程 WebContentsView（原生层，叠在窗口上），HTML 弹层
-  // 永远画不过它：新建弹框打开期间隐藏全部 office 视图，关闭时恢复当前
-  // 登记的实例；期间被生成流程新激活的实例以恢复时刻的仲裁为准。
-  useEffect(() => {
-    if (!createPopoverOpen) return
-    const office = window.nxcore?.office
-    if (!office) return
-    void office.setActiveInstance(null)
-    return () => {
-      const active = getEmbeddedOffice()
-      if (active) void office.setActiveInstance(active.instanceId)
-    }
-  }, [createPopoverOpen])
+  // Office 预览是原生层，HTML 弹层画不过它：新建弹框期间的显隐不再单独
+  // 处理，由 officeViewport 的遮挡扫描按几何关系统一裁决。
 
   const visibleArtifacts: Array<{ key: string; resource: ContextRoomResource; isOffice: boolean }> =
     filter === 'clouddoc'
@@ -369,15 +352,6 @@ export function ArtifactLibraryPane({
               </button>
               {office || backendDocument ? (
                 <span className="context-room-artifact-acts">
-                  {office && /\.docx$/i.test(office.originalName) ? (
-                    <ThesisReformatControl
-                      room={room}
-                      fileId={office.fileId}
-                      fileName={office.originalName}
-                      busy={reformattingFileId !== null}
-                      onBusyChange={(isBusy) => setReformattingFileId(isBusy ? office.fileId : null)}
-                    />
-                  ) : null}
                   {office ? (
                     <button
                       type="button"

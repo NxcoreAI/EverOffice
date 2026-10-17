@@ -35,7 +35,6 @@ const params: StyleParams = {
   spacing: { margin: 60, gutter: 20, cardPadding: 16, cornerRadius: 8 },
   decoration: { cardStroke: "#e5e5e5", cardStrokeWidthPt: 0.75, cardShadow: "soft", divider: "line", imageFit: "cover" },
   motif: { kind: "ghost-number", spec: { alphaPercent: 15 } },
-  layoutHints: { cover: "P1a" },
   darkCover: true,
   effectLines: ["主色 深藏青 #1E3A5F", "标题加粗黑体系"],
 };
@@ -67,7 +66,6 @@ describe("SlidesStyleSessionStore", () => {
     const active = store.findActive("room-1");
     expect(active?.id).toBe(second.id);
     expect(active?.styleParams?.palette.primary).toBe("#1e3a5f");
-    expect(active?.styleParams?.layoutHints.cover).toBe("P1a");
   });
 
   it("keeps rooms isolated", async () => {
