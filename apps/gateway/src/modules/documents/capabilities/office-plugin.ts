@@ -3,8 +3,6 @@ import { createHash } from "node:crypto";
 import { annotations, manifest } from "./shared.js";
 import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageProgressReporter } from "./types.js";
 import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge-client.js";
-import { expandPresetPage } from "../../slides-layout/expand.js";
-import { getActiveDeckStyle, setActiveDeckStyle } from "../../slides-layout/style-context.js";
 import {
   SlidesVisualReviewer,
   visualReviewToolPayload,
@@ -31,7 +29,7 @@ import {
 
 const MAX_HTML_LENGTH = 400_000;
 const MAX_SLIDES_PAGES = 24;
-const MAX_PAGE_SPEC_LENGTH = 80_000;
+export const MAX_PAGE_SPEC_LENGTH = 80_000;
 const MAX_SHEETS = 20;
 const MAX_ROWS = 5000;
 const MAX_COLS = 50;
@@ -51,27 +49,8 @@ const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签：
   + "代码示例用 pre，引用用 blockquote；长内容用 h2/h3 分节组织。"
   + "不要包含 html/body 标签、markdown 代码围栏或任何解释性文字。";
 
-const PRESET_GUIDE = "每页优先用 preset 形态：{\"id\":\"预设id\", …内容字段}——坐标/框高/间距/配色/字号由网关按风格卡确定性展开，"
-  + "模型不做任何几何计算（不估算字宽/折行/等分）。字段明细见布局技能 layouts/*.md，速览："
-  + "封面 P1a{eyebrow?,title,subtitle?,ghostText?}｜P1b{eyebrow?,title,subtitle?,band:\"right|bottom\"}｜P1c{eyebrow?,title,subtitle?}；"
-  + "大图压字 P2{image:{url,fit?},claim,sub?}；深色章节 P3{sectionNo?,title,subtitle?}；目录 P4{heading?,tagline?,items:[4~6]}；"
-  + "引用 P5{quote,author?,role?}；半图半卡 P6{image,ratio?,imageSide?,cards:[{icon?,title,body}×3]}；"
-  + "双栏图文 P7{image,ratio?,imageSide?,heading,body?,bullets?}；履历 P8{entries:[{period?,title,body?}×3~4],highlight:{title,body?}}；"
-  + "封底 P9{logoText?,slogan,contacts?,image?}。"
-  + "表格 T1/T2/T3/T5/T6{title,table:{rows,colWidths?,fontSize?,emphasisColumn?}}（T1 行线｜T2 深表头｜T3 斑马｜T5 评分矩阵 ✓✗★ 自动居中｜T6 财务——数字列自动右对齐、合计行自动强调）；"
-  + "卡片行 T4{title,cards:[{icon?,title,body}×2~5]}；VS 对照 T7{left:{name,points},right:{name,points},winner?,ratio?}。"
-  + "数字 D1{title,stats:[{value,label,unit?}×2~6],chart?,focusFirst?}；D2{title,banner:{text,value?},stats}；全宽图 D3{title,chart}；"
-  + "散点 D4{title,chart,cards:[×2~3],ratio?}；图+侧栏 D5{title,chart,cards,ratio?}。"
-  + "流程 F1{title,banner?,steps:[{name,desc?}×3~4]}；横幅卡阵 F2{title,banner:{text,value?},cards:[×3|4|6]}；"
-  + "时间轴 F3{title,milestones:[{time,event,done?}×4~6],direction?}；路线条 F4{title,stages:[{name,deliverables,status}×3~4]}；"
-  + "分层 F5{title,layers:[{name,modules}×3~5]}；竖里程碑 F6{title,milestones:[×4~6],side?}。"
-  + "有机 R1{title?,center,satellites:[{name,desc?,highlight?}×6|4]}；环 R2{title?,nodes:[×5|4],ghostWord?或kpiValue?,kpiLabel?}；"
-  + "错落卡 R3{title?,skeleton:\"A|B\",focusPct?,focus:{image|value+label|title+body},cards}；斜切 R4{claim,variant?,mode?,left/right 或 points}。"
-  + "chart={chart:\"bar|barStacked|line|pie|doughnut|scatter|comboBarLine\",categories:[…],series:[{name,values:[数字…]}]}。"
-  + "preset 报错（PRESET_INVALID）按提示修正——通常是精简文字、换预设或拆两页；预设确实覆盖不了的版式才降级用 spec 手写形态。";
-
-const PAGESPEC_GUIDE = PRESET_GUIDE
-  + "spec 手写兜底形态：每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
+const PAGESPEC_GUIDE = "每页是一个 JSON 对象（PageSpec）"
+  +   + "spec 手写兜底形态：每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
   + '{"background":"#RRGGBB"(可选),"elements":[…按绘制顺序排列…]}。'
   + "元素按数组顺序绘制：背景/装饰形状在前、图片其次、文本最后（文本绝不能被形状盖住）。"
   + "元素七种："
@@ -136,7 +115,7 @@ function normalizeOutline(outline: unknown): string[] {
 }
 
 /** 骨架页：中性占位版式（演示标题 + 首页标题），set_page slideIndex=0 时整页替换。 */
-function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
+export function skeletonPageSpec(deckTitle: string, pageTitle: string, index: number, total: number): string {
   return JSON.stringify({
     background: "#F5F6F8",
     elements: [
@@ -313,14 +292,14 @@ export function officePlugin(
   const slidesSetPage: DocumentCapabilityTool = {
     name: "context_room_slides_set_page",
     title: "逐页生成 PPT",
-    description: "生成已打开 PPT 的一页（preset 预设形态优先，spec 手写形态兜底）：slideIndex 小于当前页数时原地替换该页（旧内容整体丢弃）；"
+    description: "生成已打开 PPT 的一页（spec 形态：整页 PageSpec 直填）：slideIndex 小于当前页数时原地替换该页（旧内容整体丢弃）；"
       + "slideIndex 等于当前页数时在末尾追加新页（页数 +1）。"
       + "这是 PPT 生成的第二步：context_room_slides_create 建好文件（1 页骨架）后，用本工具一页一页生成——"
       + "从 slideIndex=0 起按 0、1、2… 顺序推进，每页等成功结果（用户实时看到该页成形）再继续下一页；"
       + "某页失败只需重试该页，不影响已完成的页；生成到第几页，文件就有几页。"
       + `${PAGESPEC_GUIDE}`
       + "落页成功后系统会把该页渲染成图并做视觉复检（配置视觉模型时启用），结果在返回值 visualReview 字段："
-      + "不通过（status=fail）时按 issues 指出的位置修正该页（换预设或改内容）后重新 set_page 同一页，retriesExhausted=true 时停止重试继续下一页。"
+      + "不通过（status=fail）时按 issues 指出的位置修正该页后重新 set_page 同一页，retriesExhausted=true 时停止重试继续下一页。"
       + "刚创建的文件会自动打开，fileId 用 create 返回的 fileEntryId 或 \"active\"。",
     inputSchema: {
       type: "object",
@@ -328,11 +307,9 @@ export function officePlugin(
       properties: {
         fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；\"active\" = 当前打开的那个 PPT" },
         slideIndex: { type: "integer", minimum: 0, maximum: MAX_SLIDES_PAGES - 1, description: "页序号，从 0 开始（第 1 页 = 0）；等于当前页数时表示追加新页" },
-        preset: { type: "object", additionalProperties: true, description: "预设形态（优先）：{id: 预设id, …内容字段}——坐标/字号/配色由网关确定性展开，字段见工具描述与 layouts/*.md" },
-        styleParams: { type: "object", additionalProperties: true, description: "可选：本 deck 的风格卡参数（palette/typography/spacing，结构同 slides-styler 输出）。首次落页时随任一 set_page 附带一次即可，此后该 Room 全部落页共用；输入已带 styleParams 时无需传" },
-        spec: { type: "object", additionalProperties: true, description: "手写兜底形态：该页完整的 PageSpec 对象（整页替换；elements 按绘制顺序排列）——仅在预设覆盖不了时使用" },
+        spec: { type: "object", additionalProperties: true, description: "该页完整的 PageSpec 对象（整页替换；elements 按绘制顺序排列）" },
       },
-      required: ["fileId", "slideIndex"],
+      required: ["fileId", "slideIndex", "spec"],
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
@@ -342,26 +319,11 @@ export function officePlugin(
       if (typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0) {
         throw new Error("INVALID_REQUEST: slideIndex 必须是非负整数（0 = 第 1 页）");
       }
-      const hasPreset = args.preset !== undefined;
-      const hasSpec = args.spec !== undefined;
-      if (hasPreset === hasSpec) {
-        throw new Error("INVALID_REQUEST: preset 与 spec 必须二选一（优先 preset——不要自己算几何）");
+      const spec = args.spec;
+      if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+        throw new Error("INVALID_REQUEST: spec 必须是该页完整的 PageSpec 对象");
       }
-      let specJson: string;
-      if (hasPreset) {
-        if (args.styleParams !== undefined) {
-          setActiveDeckStyle(context.roomId, args.styleParams);
-        }
-        const styleParams = getActiveDeckStyle(context.roomId);
-        const spec = expandPresetPage(args.preset, styleParams);
-        specJson = JSON.stringify(spec);
-      } else {
-        const spec = args.spec;
-        if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-          throw new Error("INVALID_REQUEST: spec 必须是该页完整的 PageSpec 对象");
-        }
-        specJson = JSON.stringify(spec);
-      }
+      const specJson = JSON.stringify(spec);
       if (specJson.length > MAX_PAGE_SPEC_LENGTH) {
         throw new Error(`INVALID_REQUEST: 单页 PageSpec 超过长度上限（${MAX_PAGE_SPEC_LENGTH} 字符），请精简该页`);
       }
@@ -372,10 +334,10 @@ export function officePlugin(
       if (result.applied === true) {
         slidesProgress?.notify(context.runId, slideIndex);
       }
-      // 视觉复检（preset 形态）：落页成功后截图 → VLM 封闭清单判定；结果进
+      // 视觉复检：落页成功后截图 → VLM 封闭清单判定；结果进
       // 工具返回，模型按 SYSTEM.md 纪律修正重落（同页最多一次，超限放行）。
       let visualReview: VisualReviewOutcome | null = null;
-      if (result.applied === true && visualReviewer && hasPreset) {
+      if (result.applied === true && visualReviewer) {
         visualReview = await visualReviewer.reviewPage({
           fileId,
           slideIndex,

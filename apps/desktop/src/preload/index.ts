@@ -4,6 +4,16 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
+  AgentAccessCreateInput,
+  AgentAccessExampleQueryDto,
+  AgentAccessInstallOutcomeDto,
+  AgentAccessSelftestDto,
+  AgentAccessSettingsDto,
+  AgentAccessUninstallOutcomeDto,
+  AgentAccessUpdateInput,
+  AgentConnectionDto,
+} from '../shared/agent-access'
+import type {
   CreateContextRoomInput,
   RoomDuplicateCheckInput,
   RoomDuplicateCandidateStatus,
@@ -409,6 +419,10 @@ const api: NxcoreDesktopApi = {
     updateInterval: (intervalMs: number) => invoke('screen-capture:update-interval', intervalMs),
     stop: () => invoke('screen-capture:stop'),
     status: () => invoke('screen-capture:status'),
+    appInfo: () => invoke('screen-capture:app-info'),
+    openPermissionSettings: () => invoke('screen-capture:open-permission-settings'),
+    startAppDrag: () => ipcRenderer.send('screen-capture:start-app-drag'),
+    relaunchApp: () => invoke('screen-capture:relaunch-app'),
     perceptionSettings: () => invoke('perception:settings'),
     updateOnlineVlm: (enabled, configVersion) => invoke('perception:update-online-vlm', enabled, configVersion),
     listPerceptionNodes: (query) => invokeQuietly('perception:nodes', query),
@@ -427,7 +441,6 @@ const api: NxcoreDesktopApi = {
     correctInterval: (input) => invoke('screen-memory:correct', input),
     storage: () => invokeQuietly('screen-memory:storage'),
     frontmost: () => invoke('screen-memory:frontmost'),
-    openPermissionSettings: () => invoke('screen-memory:open-permission-settings'),
     registerMaterial: (intervalId) => invoke('screen-memory:register-material', intervalId),
     backfillEstimate: (input) => invoke('screen-memory:backfill-estimate', input),
     backfillRun: (input) => invoke('screen-memory:backfill-run', input),
@@ -463,6 +476,34 @@ const api: NxcoreDesktopApi = {
     update: (id, input) => invoke('agent-scheduler:update', id, input),
     remove: (id) => invoke('agent-scheduler:remove', id),
     runNow: (id) => invoke('agent-scheduler:run-now', id),
+  },
+  agentAccess: {
+    listConnections: () => invokeQuietly<{ connections: AgentConnectionDto[] }>('agent-access:list-connections'),
+    createConnection: (input: AgentAccessCreateInput) =>
+      invoke<{ connection: AgentConnectionDto; token: string }>('agent-access:create-connection', input),
+    updateConnection: (id: string, input: AgentAccessUpdateInput) =>
+      invoke<{ connection: AgentConnectionDto }>('agent-access:update-connection', id, input),
+    revokeConnection: (id: string) => invoke<{ connection: AgentConnectionDto }>('agent-access:revoke-connection', id),
+    rotateToken: (id: string) => invoke<{ connection: AgentConnectionDto; token: string }>('agent-access:rotate-token', id),
+    submissions: (id: string) =>
+      invokeQuietly<{ submissions: Array<Record<string, unknown>> }>('agent-access:submissions', id),
+    events: (id: string) =>
+      invokeQuietly<{ events: Array<Record<string, unknown>> }>('agent-access:events', id),
+    selftest: (id: string) => invoke<AgentAccessSelftestDto>('agent-access:selftest', id),
+    exampleQuery: (id: string, query?: string) =>
+      invoke<AgentAccessExampleQueryDto>('agent-access:example-query', id, query),
+    install: (connectionId: string, target: string, token: string) =>
+      invoke<{ outcome: AgentAccessInstallOutcomeDto; plan: { url: string; notes: string[] } }>(
+        'agent-access:install',
+        connectionId,
+        target,
+        token,
+      ),
+    uninstall: (target: string) => invoke<AgentAccessUninstallOutcomeDto>('agent-access:uninstall', target),
+    settingsGet: () => invoke<AgentAccessSettingsDto>('agent-access:settings-get'),
+    setFixedPort: (port: number | null) =>
+      invoke<{ fixedPort: number | null; needsRestart: boolean }>('agent-access:settings-set-fixed-port', port),
+    restartGateway: () => invoke<{ baseUrl: string }>('agent-access:restart-gateway'),
   },
   slides: {
     /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */

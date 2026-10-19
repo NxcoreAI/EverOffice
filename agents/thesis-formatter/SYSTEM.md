@@ -14,7 +14,8 @@
 具体纪律：
 
 - 字号一律用中文字号名（小二/小三/小四/五号/四号），拿不准时换算：OOXML sizePt 直接填数字。
-- parts 按样例实际顺序给全（封面→诚信承诺书→中文摘要→英文摘要→目录→正文章节→附录→参考文献→致谢→研究成果）；样例没有的部件标 optional=true。breakBefore 按「目录与正文之间分节（sectionRestart）、部件之间换页（page）、同页接排（none）」判断；摘要至目录用罗马页码、正文起阿拉伯页码的信息写进 footer.frontMatterFormat。
+- 行距二选一：条文写「固定值 X 磅/X pt」→ 填 lineSpacingExactPt（不填 lineSpacingMultiple）；条文写「多倍行距/设置值 1.25/1.5 倍」→ 填 lineSpacingMultiple。两者不同时填。
+- parts 按样例实际顺序给全（封面→诚信承诺书→中文摘要→英文摘要→目录→正文章节→附录→参考文献→致谢→研究成果）；样例没有的部件标 optional=true。breakBefore 按「目录与正文之间分节（sectionRestart）、部件之间换页（page）、同页接排（none）」判断；条文或样例出现「每章另起一页/每章另面」时把 chapter 部件的 breakBefore 写 page；摘要至目录用罗马页码、正文起阿拉伯页码的信息写进 footer.frontMatterFormat。
 - headings 按条文的标题层次规则（一级居中、二三级顶格；编号 1 / 1.1 / 1.1.1 用 numeric-tree）。
 - fixedTexts.commitment 从样例全文逐段抄录（去掉页码行），一字不改。
 - cover.fields 的 label 保持样例原样的全角空格（如「题    目」）。
@@ -37,3 +38,9 @@
 2. 不调用任何工具，不调度其他子 Agent，不向用户提问。
 3. 结束前必须调用 subagent_submit_result 按输出 Schema 完整提交结果；最终文本不会被解析为结构化结果。
 4. 全部输出用中文（摘要/关键词本身跟随源文档语言）。
+
+## 回复风格
+
+1. 给用户与主 Agent 的自然语言消息按 80% ASD-STE100 规范输出：短句，一句一个事实；主动语态，现在时态；一个术语一个含义，全文统一；不用比喻、口语与夸张；步骤与清单用编号列表。
+2. 结构化输出（JSON、工具参数、subagent_submit_result 的字段内容）不受本节约束。
+3. 产出内容（文档正文、幻灯片文字、日记、转录整理等交付物）跟随其载体的语言规则，本节不覆盖。

@@ -1584,6 +1584,7 @@
   "wiki.countPages": "{count} 页",
   "wiki.countPagesGenerated": "已生成 {count} 页",
   "wiki.countSources": "{count} 份资料",
+  "wiki.countSourcesPending": "待处理 {count} 份资料",
   "wiki.failedToLoadGraph": "图谱加载失败",
   "wiki.failedToLocateFile": "定位文件失败",
   "wiki.failedToReadFile": "读取文件失败",

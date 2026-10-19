@@ -1,9 +1,8 @@
 /**
- * 风格卡版式缩略图：layout 技能具名预设（P1a/F2/D3…）→ 调色 SVG。
+ * 风格卡版式缩略图：按构图家族出通用分块线框（封面/内容/数据三张）→ 调色 SVG。
  *
- * 坐标照抄版式技能二级文件（M=60/G=20 示例，按 styleParams 联动边距与圆角）；
- * 文字一律用假字条表达，不渲染真文案。每个构图家族出封面/内容/数据三张
- * 代表预设（选型对齐 SKILL.md「构图家族×版式权重」表的倾向列）。
+ * 预设库已删（布局树链路）：这里只表达家族的骨架气质——网格/不对称/大字/满版；
+ * 坐标示例 M=60/G=20，按 styleParams 联动边距与圆角；文字一律假字条，不渲染真文案。
  */
 
 import type { StyleParams } from "./types.js";
@@ -12,9 +11,7 @@ export type ThumbnailRole = "cover" | "content" | "data";
 
 export interface PresetThumbnail {
   role: ThumbnailRole;
-  /** layout 技能预设 id（真实版式编号，风格卡小字展示）。 */
-  presetId: string;
-  /** 用户可读标签，如「封面 P1a」。 */
+  /** 用户可读标签，如「封面 · 瑞士网格」。 */
   label: string;
   svg: string;
 }
@@ -348,26 +345,33 @@ function d4(ctx: RecipeContext): ThumbEl[] {
 
 type Composition = NonNullable<StyleParams["composition"]>;
 
-function coverRecipe(composition: Composition, darkCover: boolean): { id: string; draw: (ctx: RecipeContext) => ThumbEl[] } {
-  if (composition === "editorial") return { id: "P1c", draw: p1c };
-  if (composition === "poster") return { id: "P1b", draw: p1b };
-  if (composition === "immersive") return { id: "P2", draw: p2 };
-  return darkCover ? { id: "P1a", draw: p1a } : { id: "P1c", draw: p1c };
+function coverRecipe(composition: Composition, darkCover: boolean): { draw: (ctx: RecipeContext) => ThumbEl[] } {
+  if (composition === "editorial") return { draw: p1c };
+  if (composition === "poster") return { draw: p1b };
+  if (composition === "immersive") return { draw: p2 };
+  return { draw: darkCover ? p1a : p1c };
 }
 
-function contentRecipe(composition: Composition): { id: string; draw: (ctx: RecipeContext) => ThumbEl[] } {
-  if (composition === "editorial") return { id: "P7", draw: p7 };
-  if (composition === "poster") return { id: "D2", draw: d2 };
-  if (composition === "immersive") return { id: "P6", draw: p6 };
-  return { id: "F2", draw: f2 };
+function contentRecipe(composition: Composition): { draw: (ctx: RecipeContext) => ThumbEl[] } {
+  if (composition === "editorial") return { draw: p7 };
+  if (composition === "poster") return { draw: d2 };
+  if (composition === "immersive") return { draw: p6 };
+  return { draw: f2 };
 }
 
-function dataRecipe(composition: Composition): { id: string; draw: (ctx: RecipeContext) => ThumbEl[] } {
-  if (composition === "editorial") return { id: "D5", draw: d5 };
-  if (composition === "poster") return { id: "D1", draw: d1 };
-  if (composition === "immersive") return { id: "D4", draw: d4 };
-  return { id: "D3", draw: d3 };
+function dataRecipe(composition: Composition): { draw: (ctx: RecipeContext) => ThumbEl[] } {
+  if (composition === "editorial") return { draw: d5 };
+  if (composition === "poster") return { draw: d1 };
+  if (composition === "immersive") return { draw: d4 };
+  return { draw: d3 };
 }
+
+const COMPOSITION_LABELS: Record<Composition, string> = {
+  swiss: "瑞士网格",
+  editorial: "编辑杂志",
+  poster: "海报大字",
+  immersive: "沉浸大图",
+};
 
 const ROLE_LABELS: Record<ThumbnailRole, string> = {
   cover: "封面",
@@ -398,12 +402,11 @@ const FALLBACK_PARAMS: StyleParams = {
   spacing: { margin: 60, gutter: 20, cardPadding: 16, cornerRadius: 8 },
   decoration: { cardStroke: null, cardStrokeWidthPt: 0.75, cardShadow: "none", divider: "line", imageFit: "cover" },
   motif: { kind: "none", spec: {} },
-  layoutHints: {},
   darkCover: true,
   effectLines: [],
 };
 
-/** 三个页型各出一张当前构图家族的代表预设缩略图。 */
+/** 三个页型各出一张当前构图家族的通用线框缩略图。 */
 export function presetThumbnails(params: StyleParams | null): PresetThumbnail[] {
   const merged = params ?? FALLBACK_PARAMS;
   const composition = merged.composition ?? "swiss";
@@ -415,16 +418,15 @@ export function presetThumbnails(params: StyleParams | null): PresetThumbnail[] 
     palette: merged.palette,
     darkCover: merged.darkCover,
   };
-  const picks: Array<{ role: ThumbnailRole; recipe: { id: string; draw: (ctx: RecipeContext) => ThumbEl[] } }> = [
-    { role: "cover", recipe: coverRecipe(composition, ctx.darkCover) },
-    { role: "content", recipe: contentRecipe(composition) },
-    { role: "data", recipe: dataRecipe(composition) },
+  const picks: Array<{ role: ThumbnailRole; draw: (ctx: RecipeContext) => ThumbEl[] }> = [
+    { role: "cover", draw: coverRecipe(composition, ctx.darkCover).draw },
+    { role: "content", draw: contentRecipe(composition).draw },
+    { role: "data", draw: dataRecipe(composition).draw },
   ];
-  return picks.map(({ role, recipe }) => ({
+  return picks.map(({ role, draw }) => ({
     role,
-    presetId: recipe.id,
-    label: `${ROLE_LABELS[role]} ${recipe.id}`,
-    svg: renderSvg(recipe.draw(ctx)),
+    label: `${ROLE_LABELS[role]} · ${COMPOSITION_LABELS[composition]}`,
+    svg: renderSvg(draw(ctx)),
   }));
 }
 
