@@ -61,9 +61,11 @@
   letter-spacing: 0;
 }
 
-/* Keep inactive controls white even without the source app's Tailwind preflight. */
+/* Keep inactive controls white even without the source app's Tailwind preflight.
+   主行动按钮（.primary-button 等带强调底色的全局控件）除外——否则会被此条
+   同权覆盖成白底白字，直到 hover 才露出底色。 */
 .context-room-app :where(button, [role='button'], [role='tab']),
-.context-room-dialog-content :where(button, [role='button'], [role='tab']),
+.context-room-dialog-content :where(button:not(.primary-button), [role='button'], [role='tab']),
 .context-room-card-menu :where(button, [role='menuitem']),
 .context-room-tab-menu :where(button, [role='menuitem'], [role='menuitemcheckbox']),
 .context-room-schedule-popover :where(button, [role='button']) {
