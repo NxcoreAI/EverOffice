@@ -24,6 +24,7 @@ import type {
 } from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
+import { isArtifactImportFileName } from '../../shared/sources'
 import {
   HIGH_RISK_FILE_BATCH_THRESHOLD,
   isIgnoredLocalDirectory,
@@ -798,7 +799,7 @@ export class FilesGatewayBridge {
 
   private async importPath(input: {
     filePath: string
-    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated'
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated' | 'artifact-imported'
     sourceKey: string
     originalName: string
     localSourceId?: string
@@ -875,6 +876,44 @@ export class FilesGatewayBridge {
         : {}),
       ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     })
+  }
+
+  /**
+   * 产物库「导入本地 Office 文件」（渲染端经 webUtils 取路径后调用）：
+   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room+memory 管线，
+   * 与 Agent 产物同组——Room Agent 可引用，不进 wiki）。单文件、用户显式
+   * 意图，不走统一导入的高风险审查队列。同路径重复导入命中同一 entry 走版本链。
+   * 逐文件互不影响，仅回报成功项（fileId 供渲染端选中打开）。
+   */
+  async importArtifactFiles(selectedPaths: string[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>> {
+    if (!roomId || typeof roomId !== 'string') throw new Error('缺少目标 Room。')
+    const imported: Array<{ fileId: string; originalName: string }> = []
+    for (const filePath of selectedPaths) {
+      if (typeof filePath !== 'string' || !filePath) continue
+      const filename = basename(filePath)
+      if (!isArtifactImportFileName(filename)) {
+        console.warn('[files] artifact import skipped (unsupported format)', { filename })
+        continue
+      }
+      try {
+        const uploaded = await this.importPath({
+          filePath,
+          sourceKind: 'artifact-imported',
+          // 确定性 key（同路径重导入命中同一 entry，内容变化走版本链）。
+          sourceKey: `artifact:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
+          originalName: filename,
+          roomId,
+          pipelines: { room: true, wiki: false, memory: true },
+        })
+        imported.push({ fileId: uploaded.fileEntryId, originalName: filename })
+      } catch (error) {
+        console.warn('[files] artifact import failed', {
+          filename,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return imported
   }
 
   private async waitForMarkdown(fileId: string): Promise<void> {

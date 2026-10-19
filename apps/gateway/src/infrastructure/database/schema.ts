@@ -2060,7 +2060,7 @@ export const fileEntries = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceKind: text("source_kind", {
-      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload", "agent-generated"],
+      enum: ["manual-upload", "local-folder", "connector", "migration", "web-clipper", "legacy-upload", "agent-generated", "artifact-imported"],
     }).notNull(),
     sourceKey: text("source_key").notNull(),
     originalName: text("original_name").notNull(),

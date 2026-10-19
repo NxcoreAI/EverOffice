@@ -13,6 +13,7 @@ import type {
   ContextRoomResource,
 } from '../../types';
 import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
+import { ARTIFACT_IMPORT_EXTENSIONS, isArtifactImportFileName } from '../../../../../../../shared/sources';
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
 import { FilterSelect } from '../shared';
@@ -22,15 +23,16 @@ type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
 
 /**
  * 产物库：Room 内创作成果的平铺清单（原型 room-launch 产物板块）。
- * 筛选只区分「云文档（轻文档）」与「Office 产物（Agent 生成）」；
+ * 筛选只区分「云文档（轻文档）」与「Office 产物（Agent 生成 + 导入）」；
  * 不设草稿/回收站状态视图。新建支持轻文档（md）与 Word/PPT/Excel——
- * Office 走 Room 内 Agent 生成通道（context_room_*_create）。
+ * Office 双路径任选：导入本地文件（artifact-imported 直达本栏）或
+ * Room 内 Agent 生成通道（context_room_*_create）。
  */
 export function ArtifactLibraryPane({
   room,
   backendDocuments,
   trashedDocuments,
-  agentFiles = [],
+  artifactFiles = [],
   selectedId,
   onSelect,
   onCreateDocument,
@@ -39,8 +41,8 @@ export function ArtifactLibraryPane({
   room: ContextRoomRecord;
   backendDocuments: RoomDocument[];
   trashedDocuments: RoomDocument[];
-  /** Agent 生成的 Office 产物（Room 文件清单按 sourceKind 过滤）。 */
-  agentFiles: KnowledgeFileDto[];
+  /** Room 产物文件（Agent 生成 + 导入的 Office，清单按 sourceKind 过滤）。 */
+  artifactFiles: KnowledgeFileDto[];
   selectedId: string | null;
   onSelect: (resource: ContextRoomResource) => void;
   onCreateDocument: (title: string, contentJson?: TiptapJsonContent) => Promise<void>;
@@ -55,11 +57,11 @@ export function ArtifactLibraryPane({
     () => createContextRoomResourceLibrary(room, backendDocuments, trashedDocuments, [], locale),
     [backendDocuments, locale, room, trashedDocuments],
   );
-  // Agent Office 产物：复用 knowledge-file 资源映射（点击 → 内嵌 Office 预览）。
+  // Office 产物（Agent 生成 + 导入）：复用 knowledge-file 资源映射（点击 → 内嵌 Office 预览）。
   const officeArtifacts = useMemo(
-    () => createContextRoomResourceLibrary(room, [], [], agentFiles, locale)
+    () => createContextRoomResourceLibrary(room, [], [], artifactFiles, locale)
       .resources.filter((resource): resource is ContextRoomKnowledgeFileResource => resource.kind === 'knowledge-file'),
-    [agentFiles, locale, room],
+    [artifactFiles, locale, room],
   );
   const isCloudDoc = (resource: ContextRoomResource): resource is ContextRoomCloudDocResource =>
     resource.kind === 'cloud-doc';
@@ -72,6 +74,7 @@ export function ArtifactLibraryPane({
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const markdownInputRef = useRef<HTMLInputElement>(null);
+  const officeImportInputRef = useRef<HTMLInputElement>(null);
   // 行内删除：office 产物为硬删除（级联清理），云文档进回收站（可恢复）。
   const [pendingDelete, setPendingDelete] = useState<
     | { key: string; kind: 'file'; fileId: string; name: string }
@@ -162,6 +165,53 @@ export function ArtifactLibraryPane({
       setCreateType(null);
     } catch (error: unknown) {
       setCreateError(error instanceof Error ? error.message : t('contextRoom:resource.failedToImportMarkdownDocument'));
+    } finally {
+      setCreatingDocument(false);
+    }
+  };
+
+  /**
+   * 导入本地 Office 文件为产物（AI 生成的任选替代路径）：主进程按
+   * sourceKind=artifact-imported 入库并归属 Room，成功后广播清单刷新并
+   * 原位打开首个产物（openResource 对未刷新清单回退资源自带 sourceKind）。
+   */
+  const importOfficeFiles = async (files: File[]) => {
+    const officeFiles = files.filter((file) => isArtifactImportFileName(file.name));
+    if (officeFiles.length === 0) {
+      setCreateError(t('contextRoom:artifactLibrary.chooseOfficeFile'));
+      return;
+    }
+    setCreateError(null);
+    setCreatingDocument(true);
+    try {
+      const imported = await window.nxcore?.files?.importArtifacts(officeFiles, room.id) ?? [];
+      if (imported.length === 0) {
+        setCreateError(t('contextRoom:artifactLibrary.importFailed'));
+        return;
+      }
+      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+      showToast({ title: t('contextRoom:artifactLibrary.importSuccess', { count: imported.length }) });
+      setCreatePopoverOpen(false);
+      setNewDocumentTitle('');
+      setCreateType(null);
+      const first = imported[0]!;
+      onSelect({
+        id: `${room.id}:kfile:${first.fileId}`,
+        roomId: room.id,
+        folderId: null,
+        name: first.originalName,
+        updatedAt: new Date().toISOString(),
+        kind: 'knowledge-file',
+        fileId: first.fileId,
+        originalName: first.originalName,
+        bytes: officeFiles.find((file) => file.name === first.originalName)?.size ?? 0,
+        uploadedAt: new Date().toISOString(),
+        sourceKind: 'artifact-imported',
+        statusLabel: '',
+        sizeLabel: '',
+      });
+    } catch (error: unknown) {
+      setCreateError(error instanceof Error ? error.message : t('contextRoom:artifactLibrary.importFailed'));
     } finally {
       setCreatingDocument(false);
     }
@@ -308,6 +358,29 @@ export function ArtifactLibraryPane({
                     placeholder={t('contextRoom:resource.untitledDocument')}
                     onChange={(event) => setNewDocumentTitle(event.target.value)}
                   />
+                  <input
+                    ref={officeImportInputRef}
+                    className="context-room-document-import-input"
+                    type="file"
+                    accept={ARTIFACT_IMPORT_EXTENSIONS.join(',')}
+                    multiple
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    onChange={(event) => {
+                      const files = Array.from(event.currentTarget.files ?? []);
+                      event.currentTarget.value = '';
+                      if (files.length > 0) void importOfficeFiles(files);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="context-room-document-import"
+                    disabled={creatingDocument}
+                    onClick={() => officeImportInputRef.current?.click()}
+                  >
+                    <FileUp aria-hidden="true" />
+                    {t(creatingDocument ? 'contextRoom:resource.processing' : 'contextRoom:artifactLibrary.importOffice')}
+                  </button>
                   {createError ? <small role="alert">{createError}</small> : null}
                   <small className="context-room-document-create-hint">{t('contextRoom:artifactLibrary.officeCreateHint')}</small>
                   <footer>
@@ -344,7 +417,11 @@ export function ArtifactLibraryPane({
                 </span>
                 <span className="context-room-artifact-meta">
                   {office ? (
-                    <span className="context-room-artifact-tag is-draft">{t('contextRoom:artifactLibrary.agentGenerated')}</span>
+                    <span className="context-room-artifact-tag is-draft">
+                      {t(office.sourceKind === 'artifact-imported'
+                        ? 'contextRoom:artifactLibrary.importedTag'
+                        : 'contextRoom:artifactLibrary.agentGenerated')}
+                    </span>
                   ) : citations > 0 ? (
                     <span className="context-room-artifact-tag">{t('contextRoom:artifactLibrary.citationCount', { count: citations })}</span>
                   ) : null}
