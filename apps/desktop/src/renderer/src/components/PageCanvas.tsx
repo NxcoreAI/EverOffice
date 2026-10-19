@@ -40,6 +40,7 @@ export function PageCanvas({
   onNavigate,
   onFocusAgent,
   onOpenDocument,
+  onOpenRoom,
   onOpenOfficePreview,
   memoryFocusId,
   agentFileFocus,
@@ -61,6 +62,7 @@ export function PageCanvas({
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
   onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
+  onOpenRoom: (roomId: string) => void
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
   memoryFocusId?: string | null
   agentFileFocus?: { fileId: string; requestId: number } | null
@@ -68,7 +70,7 @@ export function PageCanvas({
 }) {
   const { t } = useLocale()
   let content = null
-  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
+  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} onOpenRoom={onOpenRoom} />
   if (page === 'office') content = <AgentStatusPage />
   if (page === 'office-document') {
     content = (
@@ -103,7 +105,7 @@ export function PageCanvas({
       </Suspense>
     )
   }
-  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} onOpenOfficePreview={onOpenOfficePreview} />
+  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} onOpenOfficePreview={onOpenOfficePreview} onOpenRoom={onOpenRoom} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} focusRequest={agentFileFocus} />
   if (page === 'inspiration') content = <InspirationPage />

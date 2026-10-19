@@ -1,10 +1,11 @@
 import * as Popover from '@radix-ui/react-popover';
 import { FileText, FileSpreadsheet, FileUp, FolderOpen, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
+import { consumeArtifactCreateIntent } from '../../../artifactCreateIntent';
 import { showToast } from '@/state/toast';
 import type {
   ContextRoomCloudDocResource,
@@ -83,6 +84,18 @@ export function ArtifactLibraryPane({
   >(null);
   const [deletingArtifact, setDeletingArtifact] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // 文稿页「+新建文档」进入本 Room 的一次性意图：自动展开「+新建产物」面板，
+  // 直接停在创建类型选择界面（轻文档 / Word / PPT / Excel）。
+  // 同步置位、不安排 rAF：StrictMode 会「effect → cleanup → effect」双跑，若把
+  // 打开动作放进可被 cleanup 取消的异步回调（或依赖二次 effect），意图已被消费
+  // 而首次回调被取消，浮层就永远打不开。触发按钮与浮层同批挂载，直接置位即可。
+  useEffect(() => {
+    if (!consumeArtifactCreateIntent(room.id)) return;
+    setCreateType(null);
+    setCreateError(null);
+    setCreatePopoverOpen(true);
+  }, [room.id]);
 
   const confirmArtifactDelete = async () => {
     if (!pendingDelete) return;
