@@ -3679,48 +3679,56 @@
   fill: #ffffff;
 }
 
+/* 新建产物浮层：与文稿页「+新建文档」选 Room 弹窗同一视觉档——呼吸感内边距、
+   16px 大圆角、柔和双层阴影、40px 高圆角输入框。Portal 挂 body，故自带 --cr-* 变量。 */
 .context-room-document-create-popover {
   --cr-surface: #ffffff;
+  --cr-surface-secondary: #f7f8fa;
   --cr-surface-hover: #f1f2f3;
   --cr-text: #1f1f1f;
   --cr-muted: #6b7280;
   --cr-border: #e5e7eb;
   --cr-blue: #408cf0;
+  --cr-blue-soft: rgba(64, 140, 240, 0.14);
   z-index: 1050;
-  width: min(224px, calc(100vw - 24px));
-  padding: 10px;
+  width: min(320px, calc(100vw - 24px));
+  padding: 20px;
   border: 1px solid var(--cr-border);
-  border-radius: 7px;
+  border-radius: 16px;
   background: var(--cr-surface);
-  box-shadow: 0 8px 24px rgba(31, 31, 31, 0.14);
+  box-shadow:
+    0 24px 70px rgba(21, 26, 34, 0.24),
+    0 2px 8px rgba(21, 26, 34, 0.06);
   color: var(--cr-text);
   font-family: 'Context Room Inter', 'HarmonyOS Sans SC', 'PingFang SC', sans-serif;
 }
 
 .context-room-document-create-popover label {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 7px;
   color: var(--cr-muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .context-room-document-create-popover input {
   width: 100%;
-  height: 30px;
-  padding: 0 8px;
+  height: 40px;
+  padding: 0 12px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: 10px;
   outline: none;
-  background: var(--cr-surface);
+  background: var(--cr-surface-secondary);
   color: var(--cr-text);
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .context-room-document-create-popover input:focus {
   border-color: var(--cr-blue);
-  box-shadow: 0 0 0 2px rgba(64, 140, 240, 0.12);
+  background: var(--cr-surface);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
 }
 
 .context-room-document-create-popover .context-room-document-import-input {
@@ -3730,22 +3738,24 @@
 .context-room-document-create-popover .context-room-document-import {
   display: flex;
   width: 100%;
-  height: 30px;
+  height: 40px;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 7px;
+  margin-top: 12px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: 10px;
   background: var(--cr-surface);
   color: var(--cr-blue);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 550;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .context-room-document-create-popover .context-room-document-import:hover:not(:disabled) {
   border-color: rgba(64, 140, 240, 0.45);
-  background: rgba(64, 140, 240, 0.08);
+  background: var(--cr-blue-soft);
 }
 
 .context-room-document-create-popover .context-room-document-import:disabled {
@@ -3754,35 +3764,39 @@
 }
 
 .context-room-document-create-popover .context-room-document-import svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
-.context-room-document-create-popover small {
+/* 仅错误提示走警示红：原 `small` 通配选择器（0-1-1）会盖过文件后方的
+   .context-room-document-create-hint（0-1-0），把说明文字也染成红色。 */
+.context-room-document-create-popover small[role='alert'] {
   display: block;
-  margin-top: 6px;
+  margin-top: 8px;
   color: #b54732;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .context-room-document-create-popover footer {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
-  margin-top: 9px;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .context-room-document-create-popover footer button {
-  min-width: 48px;
-  height: 26px;
-  padding: 0 9px;
+  min-width: 64px;
+  height: 34px;
+  padding: 0 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: 9px;
   background: var(--cr-surface);
   color: var(--cr-muted);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 550;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .context-room-document-create-popover footer button:hover:not(:disabled) {
@@ -15323,37 +15337,43 @@ button.eg-walk.is-next:hover {
 
 /* 新建产物：类型选择网格（轻文档 / Word / PPT / Excel）。 */
 .context-room-document-create-popover.is-chooser {
-  width: min(360px, calc(100vw - 24px));
+  width: min(400px, calc(100vw - 24px));
 }
 
 .context-room-document-create-types {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
 }
 
 .context-room-document-create-type {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 12px 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--cr-surface);
   color: var(--cr-text);
   cursor: pointer;
   text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .context-room-document-create-type:hover {
-  border-color: var(--cr-blue);
-  background: color-mix(in srgb, var(--cr-blue) 6%, var(--cr-surface));
+  border-color: rgba(64, 140, 240, 0.45);
+  background: var(--cr-surface-hover);
+}
+
+.context-room-document-create-type:focus-visible {
+  outline: 2px solid var(--cr-blue);
+  outline-offset: 2px;
 }
 
 .context-room-document-create-type > svg {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex: none;
   color: var(--cr-blue);
 }
@@ -15362,27 +15382,29 @@ button.eg-walk.is-next:hover {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .context-room-document-create-type-body b {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .context-room-document-create-type-body small {
+  margin: 0;
   overflow: hidden;
   color: var(--cr-muted);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.context-room-document-create-hint {
+.context-room-document-create-popover .context-room-document-create-hint {
   display: block;
+  margin-top: 10px;
   color: var(--cr-muted);
-  font-size: 10px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 /* 论文模版：资料行尾「设为论文模版」钮（与纠正菜单同视觉档，悬停浮现）。 */
