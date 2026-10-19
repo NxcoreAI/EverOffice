@@ -1119,8 +1119,6 @@
   "overviewDashboard.day": "Day",
   "overviewDashboard.detectedPeopleProjectsAndTopicsAppearHere": "Detected people, projects, and topics appear here.",
   "overviewDashboard.document": "Document",
-  "overviewDashboard.expand": "Expand",
-  "overviewDashboard.collapse": "Collapse",
   "overviewDashboard.entityChipMeta": "{type} · {ratio}% related · {count} mentions",
   "overviewDashboard.documentsEmailsAndMeetingsCollectedByTheRoom": "Documents, emails, and meetings collected by the Room appear here.",
   "overviewDashboard.editCitationComment": "Edit citation comment",

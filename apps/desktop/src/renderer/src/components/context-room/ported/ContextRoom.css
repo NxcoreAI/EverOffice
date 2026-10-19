@@ -5047,28 +5047,7 @@
   line-height: 1.65;
 }
 
-/* 概览/状态长文折叠（行数由组件经 --clamp-lines 注入）。 */
-.context-room-dashboard-grid article > p[data-clamp] {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: var(--clamp-lines, 4);
-  overflow: hidden;
-}
-
-.context-room-dashboard-clamp-toggle {
-  display: inline-block;
-  margin: -4px 14px 8px;
-  padding: 2px 8px;
-  border: 0;
-  background: none;
-  color: var(--cr-blue);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.context-room-dashboard-clamp-toggle:hover {
-  text-decoration: underline;
-}
+/* 概览/状态长文不再折叠：简介与状态直接全文展示（原 data-clamp 行数截断已移除）。 */
 
 .context-room-dashboard-grid article > small {
   display: block;
