@@ -46,7 +46,7 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated" | "artifact-imported";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
@@ -538,7 +538,7 @@ export class FilesService {
       displayName: entry.displayName,
       sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
       sourceKind: entry.sourceKind,
-      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : "历史上传"),
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : entry.sourceKind === "artifact-imported" ? "产物导入" : "历史上传"),
       relativePath: entry.relativePath,
       provider: entry.provider,
       bytes: blob?.byteSize ?? 0,

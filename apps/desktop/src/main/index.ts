@@ -644,6 +644,7 @@ const FILES_CHANNELS = {
   pickAndImport: 'files:pick-and-import',
   pickPaths: 'files:pick-paths',
   importPathsOnce: 'files:import-paths-once',
+  importArtifacts: 'files:import-artifacts',
   importAgentAttachments: 'files:import-agent-attachments',
   importProgress: 'files:import-progress',
   listHighRiskReviews: 'files:high-risk-reviews:list',
@@ -2915,6 +2916,17 @@ function registerFilesHandlers(
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
+  )
+  handle(
+    FILES_CHANNELS.importArtifacts,
+    (_event, paths: string[], roomId: string) => {
+      if (typeof roomId !== 'string' || !roomId) throw new Error('缺少目标 Room。')
+      if (!Array.isArray(paths)) throw new Error('无效的导入请求。')
+      return bridge.importArtifactFiles(
+        paths.filter((path: unknown): path is string => typeof path === 'string'),
+        roomId,
+      )
+    },
   )
   handle(
     FILES_CHANNELS.importAgentAttachments,

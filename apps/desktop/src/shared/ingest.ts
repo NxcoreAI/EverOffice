@@ -28,7 +28,7 @@ export interface FileCatalogDto {
   originalName: string
   displayName: string | null
   sharedTitle: string
-  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload' | 'agent-generated'
+  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload' | 'agent-generated' | 'artifact-imported'
   sourceLabel: string
   relativePath: string | null
   provider: string | null

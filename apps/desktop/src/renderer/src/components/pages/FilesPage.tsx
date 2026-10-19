@@ -11,7 +11,7 @@ import type {
   IngestPipelines,
 } from '../../../../shared/ingest'
 import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-extension'
-import type { OfficePreviewTab } from '../../../../shared/sources'
+import { isRoomArtifactSourceKind, type OfficePreviewTab } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
 import type { PageId } from '@/data/navigation'
@@ -436,8 +436,8 @@ export function FilesPage({
 
   const openOriginal = (file: FileCatalogDto) => {
     if (!filesApi) return
-    // Agent 产物在所属 Room 的产物库编辑预览；文件页不再重复开只读标签。
-    if (file.sourceKind === 'agent-generated') {
+    // Room 产物（Agent 生成 + 导入）在所属 Room 的产物库编辑预览；文件页不再重复开只读标签。
+    if (isRoomArtifactSourceKind(file.sourceKind)) {
       setMessage(t('surface:files.agentGeneratedOpenInRoom'))
       return
     }
