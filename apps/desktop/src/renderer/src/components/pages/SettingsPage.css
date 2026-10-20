@@ -1827,6 +1827,74 @@
   background: var(--surface-alt);
 }
 
+/* 转写语言：多选。分段控件是单选语义，两个都能同时点亮时用户分不清含义，
+   改成彼此分开、带勾选框的芯片——靠形状和勾选状态说明“可多选”，不加任何小字。 */
+.settings-page .language-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-page .language-toggle {
+  display: inline-flex;
+  min-height: var(--settings-control-height);
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--settings-control-radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.settings-page .language-toggle:hover {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
+.settings-page .language-toggle[data-active='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.settings-page .language-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.settings-page .language-toggle-box {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  place-items: center;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.settings-page .language-toggle[data-active='true'] .language-toggle-box {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.settings-page .language-toggle-box svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 3.2;
+}
+
 /* 卡片：16px 圆角 + 柔和阴影 + 更松的行内边距，撑出呼吸感。
    注意只描真实卡片（section / .reality-settings-section）：models 与 token-usage
    两组只是透明栅格容器，给它们加阴影会凭空多出一个矩形。 */
