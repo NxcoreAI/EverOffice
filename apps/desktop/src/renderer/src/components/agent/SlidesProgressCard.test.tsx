@@ -500,4 +500,33 @@ describe('SlidesProgressCard', () => {
     expect(message).toContain('slidesStyleConfirmMessage?')
     expect(message).toContain('sessionId=style-9')
   })
+
+  it('三层结构：内容区单独滚动，操作按钮固定在底栏、不随内容滚走', () => {
+    const renderer = TestRenderer.create(
+      <SlidesProgressCard
+        state={{
+          stage: 'style_card_ready',
+          title: '季度汇报',
+          styleSessionId: 'style-9',
+          narrative: '一段说明文字',
+          styleCard: {
+            swatches: [{ hex: '#f5f2ec', label: '底色' }],
+            typography: [{ label: '正文', value: '14pt' }],
+            wireframes: [],
+            demoImageUrl: null,
+            effectLines: ['主色 #1E3A5F'],
+          },
+        }}
+        toolRunning={false}
+      />,
+    )
+    const body = renderer.root.findAll((node) => node.props?.className === 'agent-slides-progress-body')
+    expect(body).toHaveLength(1)
+    // 正文（可滚）里不再混入操作按钮。
+    expect(body[0]!.findAllByType('button')).toHaveLength(0)
+    // 确认按钮在底栏，底栏是卡片里紧随正文的独立一层。
+    const footer = renderer.root.findAll((node) => node.props?.className === 'agent-slides-confirm')
+    expect(footer).toHaveLength(1)
+    expect(footer[0]!.findByProps({ className: 'agent-slides-style-confirm' })).toBeTruthy()
+  })
 })

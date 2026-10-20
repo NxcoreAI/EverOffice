@@ -194,8 +194,13 @@ export function SlidesProgressCard({
     </span>
   )
 
+
+  const styleCard = state.styleCard
+  // 底部操作区只在展开且未确认时出现：固定吸底，不随内容滚动。
+  const showFooter = bodyOpen && !confirmed
+
   return (
-    <section className="agent-slides-progress" aria-label={state.title ?? undefined}>
+    <section className="agent-slides-progress" aria-label={state.title ?? undefined} data-stage={state.stage}>
       {confirmed ? (
         <button
           type="button"
@@ -216,71 +221,231 @@ export function SlidesProgressCard({
         </header>
       )}
 
-      {bodyOpen && state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
+      {bodyOpen ? (
+        <div className="agent-slides-progress-body">
+          {state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
 
-      {bodyOpen && isStyleImages && !confirmed && state.styleCandidates?.length ? (
-        <div className="agent-slides-style-candidates">
-          {state.styleCandidates.map((candidate, index) => (
-            <button
-              key={`${candidate.url}-${String(index)}`}
-              type="button"
-              className="agent-slides-style-candidate"
-              aria-label={t('surface:agentChat.slidesStyleUse', { index: index + 1 })}
-              disabled={busy}
-              onClick={() => {
-                setConfirmed(true)
-                setBodyOpen(false)
-                onGenerate?.(t('surface:agentChat.slidesStylePickMessage', {
-                  index: index + 1,
-                  sessionId: state.styleSessionId ?? '',
-                }))
-              }}
-            >
-              <img src={candidate.url} alt="" loading="lazy" />
-              {candidate.label ? <span className="agent-slides-style-candidate-label">{candidate.label}</span> : null}
-            </button>
-          ))}
+          {isStyleImages && !confirmed && state.styleCandidates?.length ? (
+            <div className="agent-slides-style-candidates">
+              {state.styleCandidates.map((candidate, index) => (
+                <button
+                  key={`${candidate.url}-${String(index)}`}
+                  type="button"
+                  className="agent-slides-style-candidate"
+                  aria-label={t('surface:agentChat.slidesStyleUse', { index: index + 1 })}
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmed(true)
+                    setBodyOpen(false)
+                    onGenerate?.(t('surface:agentChat.slidesStylePickMessage', {
+                      index: index + 1,
+                      sessionId: state.styleSessionId ?? '',
+                    }))
+                  }}
+                >
+                  <img src={candidate.url} alt="" loading="lazy" />
+                  {candidate.label ? <span className="agent-slides-style-candidate-label">{candidate.label}</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {isStyleCard && !confirmed && styleCard ? (
+            <div className="agent-slides-style-card">
+              {styleCard.swatches.length ? (
+                <div className="agent-slides-style-swatches">
+                  {styleCard.swatches.map((swatch) => (
+                    <span key={swatch.label} className="agent-slides-style-swatch">
+                      <i style={{ background: swatch.hex }} />
+                      <b>{swatch.label}</b>
+                      <small>{swatch.hex.toUpperCase()}</small>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {styleCard.typography.length ? (
+                <dl className="agent-slides-style-typography">
+                  {styleCard.typography.map((row) => (
+                    <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
+                  ))}
+                </dl>
+              ) : null}
+              {styleCard.wireframes.length ? (
+                <div className="agent-slides-style-wireframes">
+                  {styleCard.wireframes.map((frame) => (
+                    <figure key={frame.role} className="agent-slides-style-wireframe">
+                      <div dangerouslySetInnerHTML={{ __html: frame.svg }} />
+                      <figcaption>{frame.label}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              ) : null}
+              {styleCard.demoImageUrl ? (
+                <img className="agent-slides-style-demo" src={styleCard.demoImageUrl} alt="" loading="lazy" />
+              ) : null}
+              {styleCard.effectLines.length ? (
+                <ul className="agent-slides-style-lines">
+                  {styleCard.effectLines.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          {isPageImagesReview && !confirmed ? (
+            <div className="agent-slides-page-review-list">
+              {pages.map((page, index) => {
+                if (!page.url) {
+                  // 后台生成中/失败的页：标题行占位，失败的页可手动重生成。
+                  return (
+                    <div key={index} className={`agent-slides-page-review is-pending${page.failed ? ' is-failed' : ''}`}>
+                      <div className="agent-slides-page-review-title">
+                        <span className="agent-slides-page-index">{index + 1}</span>
+                        <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
+                        <small>{page.failed
+                          ? t('surface:agentChat.slidesPageImagesFailed')
+                          : t('surface:agentChat.slidesPageImagesPending')}</small>
+                      </div>
+                      {page.failed ? (
+                        <button
+                          type="button"
+                          className="agent-slides-page-regenerate"
+                          disabled={busy}
+                          onClick={() => {
+                            setConfirmed(true)
+                            setBodyOpen(false)
+                            onGenerate?.(t('surface:agentChat.slidesPageImagesRegenerateMessage', {
+                              index: index + 1,
+                              documentId: state.documentId ?? '',
+                            }))
+                          }}
+                        >
+                          <RefreshCw aria-hidden="true" />
+                          {t('surface:agentChat.slidesPageImagesRegenerate')}
+                        </button>
+                      ) : null}
+                    </div>
+                  )
+                }
+                return (
+                <div key={index} className={`agent-slides-page-review${page.rejected ? ' is-rejected' : ''}`}>
+                  <img src={page.url} alt={page.imagePrompt ?? ''} title={page.imagePrompt ?? undefined} loading="lazy" />
+                  <div className="agent-slides-page-review-actions">
+                    <button
+                      type="button"
+                      className="agent-slides-page-regenerate"
+                      disabled={busy}
+                      onClick={() => {
+                        setConfirmed(true)
+                        setBodyOpen(false)
+                        onGenerate?.(t('surface:agentChat.slidesPageImagesRegenerateMessage', {
+                          index: index + 1,
+                          documentId: state.documentId ?? '',
+                        }))
+                      }}
+                    >
+                      <RefreshCw aria-hidden="true" />
+                      {t('surface:agentChat.slidesPageImagesRegenerate')}
+                    </button>
+                    {page.rejected ? (
+                      <button
+                        type="button"
+                        className="agent-slides-page-restore"
+                        disabled={busy}
+                        onClick={() => {
+                          onGenerate?.(t('surface:agentChat.slidesPageImagesRestoreMessage', {
+                            index: index + 1,
+                            documentId: state.documentId ?? '',
+                          }))
+                        }}
+                      >
+                        {t('surface:agentChat.slidesPageImagesRestore')}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="agent-slides-page-reject"
+                        disabled={busy}
+                        onClick={() => {
+                          onGenerate?.(t('surface:agentChat.slidesPageImagesRejectMessage', {
+                            index: index + 1,
+                            documentId: state.documentId ?? '',
+                          }))
+                        }}
+                      >
+                        {t('surface:agentChat.slidesPageImagesReject')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                )
+              })}
+            </div>
+          ) : null}
+
+          {pages.length > 0 && !isPageImagesReview ? (
+            <ol className="agent-slides-progress-pages">
+              {pages.map((page, index) => {
+                const status = statusOf(index)
+                const hasDetail = Boolean(page.points?.length || page.data || page.materialHints || page.notes || page.materials?.length || page.imagePrompt)
+                const open = hasDetail && expanded.has(index)
+                return (
+                  <li key={index} className={`agent-slides-page${status === 'running' ? ' is-running' : ''}${open ? ' is-open' : ''}`}>
+                    <button
+                      type="button"
+                      className="agent-slides-page-head"
+                      aria-expanded={open}
+                      aria-label={page.title ?? undefined}
+                      onClick={() => hasDetail && toggleExpanded(index)}
+                    >
+                      <span className="agent-slides-page-index">{index + 1}</span>
+                      <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
+                      {status !== 'pending' ? (
+                        <span className={`agent-slides-page-status is-${status}`}>
+                          {status === 'done' ? <Check aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
+                        </span>
+                      ) : null}
+                      {hasDetail ? <ChevronDown className="agent-slides-page-chevron" aria-hidden="true" /> : null}
+                    </button>
+                    {open ? (
+                      <div className="agent-slides-page-detail">
+                        {page.points?.length ? (
+                          <ul className="agent-slides-page-points">
+                            {page.points.map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}
+                          </ul>
+                        ) : null}
+                        {page.data ? <div className="agent-slides-page-data">{page.data}</div> : null}
+                        {page.materialHints ? <div className="agent-slides-page-notes">{page.materialHints}</div> : null}
+                        {page.notes ? <div className="agent-slides-page-notes">{page.notes}</div> : null}
+                        {page.imagePrompt ? <div className="agent-slides-page-notes">{page.imagePrompt}</div> : null}
+                        {page.materials?.length ? (
+                          <div className="agent-slides-page-media">
+                            {page.materials.map((material, materialIndex) => (
+                              <img
+                                key={materialIndex}
+                                src={material.url}
+                                alt={material.desc ?? ''}
+                                title={material.desc ?? undefined}
+                                loading="lazy"
+                              />
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ol>
+          ) : null}
+
+          {state.warnings?.length ? (
+            <div className="agent-slides-stopped">{state.warnings.join('；')}</div>
+          ) : null}
         </div>
       ) : null}
 
-      {bodyOpen && isStyleCard && !confirmed && state.styleCard ? (
-        <div className="agent-slides-style-card">
-          {state.styleCard.swatches.length ? (
-            <div className="agent-slides-style-swatches">
-              {state.styleCard.swatches.map((swatch) => (
-                <span key={swatch.label} className="agent-slides-style-swatch">
-                  <i style={{ background: swatch.hex }} />
-                  <b>{swatch.label}</b>
-                  <small>{swatch.hex.toUpperCase()}</small>
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {state.styleCard.typography.length ? (
-            <dl className="agent-slides-style-typography">
-              {state.styleCard.typography.map((row) => (
-                <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
-              ))}
-            </dl>
-          ) : null}
-          {state.styleCard.wireframes.length ? (
-            <div className="agent-slides-style-wireframes">
-              {state.styleCard.wireframes.map((frame) => (
-                <figure key={frame.role} className="agent-slides-style-wireframe">
-                  <div dangerouslySetInnerHTML={{ __html: frame.svg }} />
-                  <figcaption>{frame.label}</figcaption>
-                </figure>
-              ))}
-            </div>
-          ) : null}
-          {state.styleCard.demoImageUrl ? (
-            <img className="agent-slides-style-demo" src={state.styleCard.demoImageUrl} alt="" loading="lazy" />
-          ) : null}
-          {state.styleCard.effectLines.length ? (
-            <ul className="agent-slides-style-lines">
-              {state.styleCard.effectLines.map((line) => <li key={line}>{line}</li>)}
-            </ul>
-          ) : null}
+      {showFooter && isStyleCard && styleCard ? (
+        <div className="agent-slides-confirm">
           <button
             type="button"
             className="agent-slides-style-confirm"
@@ -299,7 +464,7 @@ export function SlidesProgressCard({
         </div>
       ) : null}
 
-      {bodyOpen && isPageImagesConfirm && !confirmed ? (
+      {showFooter && isPageImagesConfirm ? (
         <div className="agent-slides-confirm">
           <button
             type="button"
@@ -332,175 +497,25 @@ export function SlidesProgressCard({
         </div>
       ) : null}
 
-      {bodyOpen && isPageImagesReview && !confirmed ? (
-        <>
-          <div className="agent-slides-page-review-list">
-            {pages.map((page, index) => {
-              if (!page.url) {
-                // 后台生成中/失败的页：标题行占位，失败的页可手动重生成。
-                return (
-                  <div key={index} className={`agent-slides-page-review is-pending${page.failed ? ' is-failed' : ''}`}>
-                    <div className="agent-slides-page-review-title">
-                      <span className="agent-slides-page-index">{index + 1}</span>
-                      <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
-                      <small>{page.failed
-                        ? t('surface:agentChat.slidesPageImagesFailed')
-                        : t('surface:agentChat.slidesPageImagesPending')}</small>
-                    </div>
-                    {page.failed ? (
-                      <button
-                        type="button"
-                        className="agent-slides-page-regenerate"
-                        disabled={busy}
-                        onClick={() => {
-                          setConfirmed(true)
-                          setBodyOpen(false)
-                          onGenerate?.(t('surface:agentChat.slidesPageImagesRegenerateMessage', {
-                            index: index + 1,
-                            documentId: state.documentId ?? '',
-                          }))
-                        }}
-                      >
-                        <RefreshCw aria-hidden="true" />
-                        {t('surface:agentChat.slidesPageImagesRegenerate')}
-                      </button>
-                    ) : null}
-                  </div>
-                )
-              }
-              return (
-              <div key={index} className={`agent-slides-page-review${page.rejected ? ' is-rejected' : ''}`}>
-                <img src={page.url} alt={page.imagePrompt ?? ''} title={page.imagePrompt ?? undefined} loading="lazy" />
-                <div className="agent-slides-page-review-actions">
-                  <button
-                    type="button"
-                    className="agent-slides-page-regenerate"
-                    disabled={busy}
-                    onClick={() => {
-                      setConfirmed(true)
-                      setBodyOpen(false)
-                      onGenerate?.(t('surface:agentChat.slidesPageImagesRegenerateMessage', {
-                        index: index + 1,
-                        documentId: state.documentId ?? '',
-                      }))
-                    }}
-                  >
-                    <RefreshCw aria-hidden="true" />
-                    {t('surface:agentChat.slidesPageImagesRegenerate')}
-                  </button>
-                  {page.rejected ? (
-                    <button
-                      type="button"
-                      className="agent-slides-page-restore"
-                      disabled={busy}
-                      onClick={() => {
-                        onGenerate?.(t('surface:agentChat.slidesPageImagesRestoreMessage', {
-                          index: index + 1,
-                          documentId: state.documentId ?? '',
-                        }))
-                      }}
-                    >
-                      {t('surface:agentChat.slidesPageImagesRestore')}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="agent-slides-page-reject"
-                      disabled={busy}
-                      onClick={() => {
-                        onGenerate?.(t('surface:agentChat.slidesPageImagesRejectMessage', {
-                          index: index + 1,
-                          documentId: state.documentId ?? '',
-                        }))
-                      }}
-                    >
-                      {t('surface:agentChat.slidesPageImagesReject')}
-                    </button>
-                  )}
-                </div>
-              </div>
-              )
-            })}
-          </div>
-          <div className="agent-slides-confirm">
-            <button
-              type="button"
-              className="agent-slides-style-confirm"
-              disabled={busy}
-              onClick={() => {
-                setConfirmed(true)
-                setBodyOpen(false)
-                onGenerate?.(t('surface:agentChat.slidesPageImagesAcceptMessage', { documentId: state.documentId ?? '' }))
-              }}
-            >
-              {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
-              {t('surface:agentChat.slidesPageImagesAccept')}
-            </button>
-          </div>
-        </>
+      {showFooter && isPageImagesReview ? (
+        <div className="agent-slides-confirm">
+          <button
+            type="button"
+            className="agent-slides-style-confirm"
+            disabled={busy}
+            onClick={() => {
+              setConfirmed(true)
+              setBodyOpen(false)
+              onGenerate?.(t('surface:agentChat.slidesPageImagesAcceptMessage', { documentId: state.documentId ?? '' }))
+            }}
+          >
+            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
+            {t('surface:agentChat.slidesPageImagesAccept')}
+          </button>
+        </div>
       ) : null}
 
-      {bodyOpen && pages.length > 0 && !isPageImagesReview ? (
-        <ol className="agent-slides-progress-pages">
-          {pages.map((page, index) => {
-            const status = statusOf(index)
-            const hasDetail = Boolean(page.points?.length || page.data || page.materialHints || page.notes || page.materials?.length || page.imagePrompt)
-            const open = hasDetail && expanded.has(index)
-            return (
-              <li key={index} className={`agent-slides-page${status === 'running' ? ' is-running' : ''}${open ? ' is-open' : ''}`}>
-                <button
-                  type="button"
-                  className="agent-slides-page-head"
-                  aria-expanded={open}
-                  aria-label={page.title ?? undefined}
-                  onClick={() => hasDetail && toggleExpanded(index)}
-                >
-                  <span className="agent-slides-page-index">{index + 1}</span>
-                  <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
-                  {status !== 'pending' ? (
-                    <span className={`agent-slides-page-status is-${status}`}>
-                      {status === 'done' ? <Check aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
-                    </span>
-                  ) : null}
-                  {hasDetail ? <ChevronDown className="agent-slides-page-chevron" aria-hidden="true" /> : null}
-                </button>
-                {open ? (
-                  <div className="agent-slides-page-detail">
-                    {page.points?.length ? (
-                      <ul className="agent-slides-page-points">
-                        {page.points.map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}
-                      </ul>
-                    ) : null}
-                    {page.data ? <div className="agent-slides-page-data">{page.data}</div> : null}
-                    {page.materialHints ? <div className="agent-slides-page-notes">{page.materialHints}</div> : null}
-                    {page.notes ? <div className="agent-slides-page-notes">{page.notes}</div> : null}
-                    {page.imagePrompt ? <div className="agent-slides-page-notes">{page.imagePrompt}</div> : null}
-                    {page.materials?.length ? (
-                      <div className="agent-slides-page-media">
-                        {page.materials.map((material, materialIndex) => (
-                          <img
-                            key={materialIndex}
-                            src={material.url}
-                            alt={material.desc ?? ''}
-                            title={material.desc ?? undefined}
-                            loading="lazy"
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </li>
-            )
-          })}
-        </ol>
-      ) : null}
-
-      {state.warnings?.length ? (
-        <div className="agent-slides-stopped">{state.warnings.join('；')}</div>
-      ) : null}
-
-      {isDraft && !confirmed ? (
+      {showFooter && isDraft ? (
         <div className="agent-slides-confirm">
           <button
             type="button"
