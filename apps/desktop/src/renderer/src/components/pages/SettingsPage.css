@@ -1683,3 +1683,166 @@
   .screen-permission-card { flex-direction: column; align-items: stretch; }
   .screen-permission-card > button { width: 100%; }
 }
+
+/* —— 控制件规范：与「+新建文档」弹窗（.room-picker-*）保持一致 ——
+   参考值：40px 控件高度、10px 控件圆角、24px 级内边距、柔和阴影、浅蓝强调。
+   全部规则限定在 .settings-page 内，避免波及应用其它页面。 */
+.settings-page {
+  --settings-control-height: 40px;
+  --settings-control-radius: 10px;
+  --settings-card-radius: 16px;
+  --settings-soft-shadow: 0 1px 2px rgba(21, 26, 34, 0.05), 0 12px 32px rgba(21, 26, 34, 0.05);
+}
+
+/* 主/次按钮：统一 40px 高、10px 圆角、13px 字，图标与文字垂直居中。 */
+.settings-page .primary-button,
+.settings-page .secondary-button {
+  min-height: var(--settings-control-height);
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: var(--settings-control-radius);
+  font-size: 13px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+
+.settings-page .primary-button svg,
+.settings-page .secondary-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 文本类控件：同高同圆角，聚焦给和搜索框一致的柔和外圈。 */
+.settings-page input[type='text'],
+.settings-page input[type='search'],
+.settings-page input[type='password'],
+.settings-page input[type='number'],
+.settings-page input[type='time'],
+.settings-page input[type='url'],
+.settings-page input[type='email'],
+.settings-page select {
+  min-height: var(--settings-control-height);
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--surface-alt);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.settings-page input[type='text']:focus-visible,
+.settings-page input[type='search']:focus-visible,
+.settings-page input[type='password']:focus-visible,
+.settings-page input[type='number']:focus-visible,
+.settings-page input[type='time']:focus-visible,
+.settings-page input[type='url']:focus-visible,
+.settings-page input[type='email']:focus-visible,
+.settings-page select:focus-visible,
+.settings-page textarea:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 按钮聚焦圈：与弹窗输入框同款，键盘操作时可见。 */
+.settings-page button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 分段控件：外壳 12px、内部 9px，跟弹窗里 10px 的控件圆角同一档。 */
+.settings-page .segmented-control {
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.settings-page .segmented-control button {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+/* 左侧导航：行高对齐弹窗列表行（实际 46px）、10px 圆角；选中态改浅蓝底 + 蓝字。 */
+.settings-navigation {
+  gap: 4px;
+  padding: 0;
+}
+
+.settings-navigation-item {
+  min-height: var(--settings-control-height);
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--settings-control-radius);
+}
+
+.settings-navigation-item strong {
+  font-size: 12.5px;
+}
+
+.settings-navigation-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.settings-navigation-item[data-active='true'] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  box-shadow: none;
+  color: var(--accent-strong);
+}
+
+.settings-navigation-item[data-active='true'] .settings-navigation-icon {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--accent-strong);
+}
+
+/* 连接模式选项：本质是可点列表行，对齐弹窗里 46px / 10px 的列表行规格。 */
+.settings-page .connector-mode-option {
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: var(--settings-control-radius);
+}
+
+.settings-page .connector-mode-option-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+/* 卡片：16px 圆角 + 柔和阴影 + 更松的行内边距，撑出呼吸感。
+   注意只描真实卡片（section / .reality-settings-section）：models 与 token-usage
+   两组只是透明栅格容器，给它们加阴影会凭空多出一个矩形。 */
+.settings-content > section,
+.settings-page .reality-settings-section,
+.settings-page .cloud-account-section {
+  border-radius: var(--settings-card-radius);
+  box-shadow: var(--settings-soft-shadow);
+}
+
+/* 卡片头部：图标 32px、标题撑开；后续操作按钮另占一列。 */
+.settings-page .reality-settings-section > header {
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  padding: 15px 20px;
+}
+
+.settings-page .reality-settings-section > header > span {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.settings-page .reality-settings-section h2 {
+  font-size: 14.5px;
+}
+
+.settings-page .reality-setting-row {
+  min-height: 58px;
+  gap: 16px;
+  padding: 14px 20px;
+}
