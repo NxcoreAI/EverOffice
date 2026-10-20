@@ -1824,17 +1824,63 @@
   box-shadow: var(--settings-soft-shadow);
 }
 
-/* 卡片头部：图标 32px、标题撑开；后续操作按钮另占一列。 */
+/* 卡片头部：左侧图标 + 标题撑开、右侧操作靠右。原来 30px + 1fr 的两列栅格
+   会把第三个子元素（操作按钮）挤到第二行第一列的 30px 里，文字只能逐字竖排。 */
 .settings-page .reality-settings-section > header {
-  grid-template-columns: 32px minmax(0, 1fr);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 12px;
   padding: 15px 20px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .settings-page .reality-settings-section > header > span {
   width: 32px;
   height: 32px;
+  flex: 0 0 32px;
   border-radius: 9px;
+}
+
+.settings-page .reality-settings-section > header > div:not(.rc-header-actions) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-page .reality-settings-section > header h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-page .reality-settings-section > header > .rc-header-actions {
+  flex: 0 0 auto;
+}
+
+/* 头部任何按钮都不许被挤窄；纯图标按钮（刷新/测试）保持原有方形尺寸。 */
+.settings-page .reality-settings-section > header > button {
+  flex: 0 0 auto;
+}
+
+/* 带文字的操作按钮：轻量次级样式——浅灰底、极细描边、32px 高，
+   宽度随文字、绝不折行。 */
+.settings-page .reality-settings-section > header > button:not(.cloud-account-refresh):not(.rc-icon-button) {
+  width: auto;
+  min-height: 32px;
+  padding: 0 12px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: var(--settings-control-radius);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-page .reality-settings-section > header > button:not(.cloud-account-refresh):not(.rc-icon-button):hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--hover);
 }
 
 .settings-page .reality-settings-section h2 {
