@@ -1752,9 +1752,10 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* 分段控件：外壳 12px、内部 9px，跟弹窗里 10px 的控件圆角同一档。 */
+/* 分段控件：外壳 12px、内部 9px，跟弹窗里 10px 的控件圆角同一档；
+   3px 内衬 + 32px 按钮 + 1px 边框 = 整条 40px，与 h-10 控件高度对齐。 */
 .settings-page .segmented-control {
-  padding: 4px;
+  padding: 3px;
   border-radius: 12px;
 }
 
@@ -1812,6 +1813,18 @@
   width: 28px;
   height: 28px;
   border-radius: 8px;
+}
+
+/* 「用量与预算」：胶囊 Tab 与下方内容卡片是两个独立模块，中间留 16px，
+   否则两个圆角块会直接贴合、视觉上糊成一团。 */
+.settings-page .settings-content[data-active-setting='settings-token-usage'] > #settings-token-usage {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-page .usage-budget-switcher {
+  margin: 0;
+  background: var(--surface-alt);
 }
 
 /* 卡片：16px 圆角 + 柔和阴影 + 更松的行内边距，撑出呼吸感。
