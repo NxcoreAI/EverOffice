@@ -64,6 +64,8 @@
 }
 
 .agent-conversation > * {
+  min-width: 0;
+  max-width: 100%;
   flex: 0 0 auto;
 }
 
@@ -80,6 +82,7 @@
 
 /* 脱离底部时的「回到最新」悬浮按钮（#297）。 */
 .agent-chat-jump-latest {
+  max-width: calc(100% - 24px);
   position: absolute;
   bottom: calc(var(--agent-composer-height) + 14px);
   left: 50%;
@@ -1513,21 +1516,34 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   background: #303741;
 }
 
+/* —— PPT 进度卡：头部固定 / 内容区内部滚动 / 底部操作吸底 ——
+   卡片落在 360px 级的窄气泡里：所有网格都要能缩到容器宽度以内，
+   长文本一律可折行，图片与线框 SVG 按容器宽度等比缩放，不留横向溢出。 */
 .agent-slides-progress {
-  display: grid;
-  width: 100%;
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  max-height: min(560px, 62vh);
+  flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid #d8e0ea;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fdfefe;
   box-shadow: 0 8px 22px rgba(24, 44, 74, 0.06);
+  overflow: hidden;
   animation: agent-content-enter 220ms cubic-bezier(.22, 1, .36, 1);
 }
 
+.agent-slides-progress > * {
+  min-width: 0;
+}
+
+/* 头部：固定高度，不参与滚动、不被压缩。 */
 .agent-slides-progress-header {
   display: flex;
   min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
   gap: 9px;
 }
@@ -1584,18 +1600,53 @@ button.agent-slides-progress-header {
 }
 
 .agent-slides-progress-title small {
+  overflow: hidden;
   color: #7c8695;
   font-size: 10px;
   line-height: 14px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 内容区：卡片内唯一的滚动层；超出高度在这里滚，绝不撑破卡片。 */
+.agent-slides-progress-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.26) transparent;
+}
+
+.agent-slides-progress-body > * {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.agent-slides-progress img {
+  max-width: 100%;
+}
+
+/* 底部操作区：吸底按钮，不随内容滚动。 */
+.agent-slides-confirm {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #e8edf4;
 }
 
 .agent-slides-progress-pages {
   display: grid;
-  max-height: 208px;
+  min-width: 0;
   margin: 0;
   gap: 2px;
-  overflow: auto;
   padding: 0;
   list-style: none;
 }
@@ -1657,12 +1708,14 @@ button.agent-slides-progress-header {
 
 .agent-slides-page-detail {
   display: grid;
+  min-width: 0;
   gap: 4px;
   padding: 2px 0 8px 18px;
 }
 
 .agent-slides-page-points {
   display: grid;
+  min-width: 0;
   gap: 2px;
   margin: 0;
   padding: 0;
@@ -1675,6 +1728,7 @@ button.agent-slides-progress-header {
   color: #5a6472;
   font-size: 11px;
   line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .agent-slides-page-points li::before {
@@ -1692,6 +1746,7 @@ button.agent-slides-progress-header {
   color: #4a586b;
   font-size: 11px;
   line-height: 16px;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -1699,10 +1754,12 @@ button.agent-slides-progress-header {
   color: #8a94a3;
   font-size: 11px;
   line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .agent-slides-page-media {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -1715,10 +1772,11 @@ button.agent-slides-progress-header {
 }
 
 .agent-slides-narrative {
-  margin: 6px 0 0;
+  margin: 0;
   color: #5a6472;
   font-size: 11px;
   line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .agent-slides-page-status {
@@ -1747,19 +1805,22 @@ button.agent-slides-progress-header {
   color: #7c8695;
   font-size: 11px;
   line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 /* —— 风格阶段：挑图与风格卡 —— */
 
 .agent-slides-style-candidates {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   gap: 8px;
 }
 
 /* 图即按钮：点图挑选，悬停描边示意可选；图下方向短名是真实数据小字。 */
 button.agent-slides-style-candidate {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   padding: 0;
   border: 2px solid transparent;
@@ -1780,7 +1841,9 @@ button.agent-slides-style-candidate:disabled {
 }
 
 .agent-slides-style-candidate img {
+  display: block;
   width: 100%;
+  max-width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
 }
@@ -1798,48 +1861,64 @@ button.agent-slides-style-candidate:disabled {
 
 .agent-slides-style-card {
   display: grid;
-  gap: 10px;
+  min-width: 0;
+  gap: 12px;
+}
+
+.agent-slides-style-card > * {
+  min-width: 0;
 }
 
 .agent-slides-style-swatches {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 74px), 1fr));
   gap: 8px;
 }
 
 .agent-slides-style-swatch {
   display: grid;
-  gap: 3px;
-  width: 84px;
+  min-width: 0;
+  gap: 4px;
   font-size: 10px;
   line-height: 12px;
 }
 
 .agent-slides-style-swatch i {
-  height: 28px;
+  height: 30px;
   border: 1px solid #e3e9f1;
-  border-radius: 5px;
+  border-radius: 6px;
 }
 
 .agent-slides-style-swatch b {
+  overflow: hidden;
   color: #3c4654;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-slides-style-swatch small {
+  overflow: hidden;
   color: #7c8695;
   font-family: ui-monospace, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* 色块组与文字参数之间留一条浅分割线，避免两段参数糊在一起。 */
 .agent-slides-style-typography {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
   gap: 6px;
   margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f7;
   font-size: 11px;
 }
 
 .agent-slides-style-typography div {
   display: flex;
+  min-width: 0;
   justify-content: space-between;
   gap: 6px;
   border-bottom: 1px dashed #e8edf4;
@@ -1847,53 +1926,83 @@ button.agent-slides-style-candidate:disabled {
 }
 
 .agent-slides-style-typography dt {
+  min-width: 0;
+  overflow: hidden;
   color: #5a6472;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-slides-style-typography dd {
+  min-width: 0;
   margin: 0;
   color: #2b3442;
   font-weight: 650;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .agent-slides-style-wireframes {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 186px), 1fr));
   gap: 8px;
 }
 
 .agent-slides-style-wireframe {
+  min-width: 0;
   margin: 0;
   border: 1px solid #e3e9f1;
   border-radius: 6px;
+  background: #fff;
   overflow: hidden;
+}
+
+.agent-slides-style-wireframe > div {
   line-height: 0;
 }
 
+/* 网关给的线框 SVG 常带固定宽高：按容器等比缩放，不许撑破卡片。 */
+.agent-slides-style-wireframe svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
 .agent-slides-style-wireframe figcaption {
-  line-height: 1;
+  display: -webkit-box;
+  overflow: hidden;
   padding: 5px 8px 6px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: 11px;
+  line-height: 1.35;
   color: #7c8794;
   background: #fbfcfe;
   border-top: 1px solid #eef2f7;
 }
 
 .agent-slides-style-demo {
+  display: block;
   width: 100%;
+  max-width: 100%;
+  height: auto;
   border: 1px solid #e3e9f1;
   border-radius: 6px;
 }
 
 .agent-slides-style-lines {
   display: grid;
-  gap: 3px;
+  min-width: 0;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
   color: #3c4654;
   font-size: 11px;
   line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .agent-slides-style-confirm {
@@ -1919,13 +2028,6 @@ button.agent-slides-style-candidate:disabled {
 .agent-slides-style-confirm svg {
   width: 13px;
   height: 13px;
-}
-
-.agent-slides-confirm {
-  display: grid;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #e8edf4;
 }
 
 .agent-slides-confirm button {
@@ -3096,16 +3198,21 @@ button.agent-slides-style-candidate:disabled {
 /* 配图过目卡：逐张图 + 单张重生成。 */
 .agent-slides-page-review-list {
   display: grid;
-  gap: 8px;
+  min-width: 0;
+  gap: 10px;
 }
 
 .agent-slides-page-review {
   display: grid;
-  gap: 4px;
+  min-width: 0;
+  gap: 6px;
 }
 
 .agent-slides-page-review img {
+  display: block;
   width: 100%;
+  max-width: 100%;
+  height: auto;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 8px;
@@ -3150,7 +3257,8 @@ button.agent-slides-style-candidate:disabled {
 }
 
 .agent-slides-page-review-actions {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -3192,6 +3300,7 @@ button.agent-slides-style-candidate:disabled {
 
 .agent-slides-page-review.is-pending .agent-slides-page-review-title {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   min-height: 22px;
