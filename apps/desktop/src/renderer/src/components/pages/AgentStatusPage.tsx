@@ -141,6 +141,20 @@ function orbPoint(t: number) {
   return { x: 50 + t * 1340, y: 210 - Math.sin(t * Math.PI) * 160 }
 }
 
+const FAILED_RUN_STATUSES = new Set<AgentWorkspaceRunStatus>(['failed', 'interrupted', 'timed_out'])
+
+/**
+ * 「最近活动」的圆点跟着那一次运行的结果走。
+ * 办公室的实时状态一次运行结束就回海（恢复初始状态），失败的痕迹只留在这条记录里，
+ * 所以这里不能再读 agent.state（那会把刚失败的记录显示成绿灯）。
+ */
+function runMarkState(agent: AgentWorkspaceStatus): AgentWorkspaceState {
+  const status = agent.lastRun?.status
+  if (!status) return 'idle'
+  if (FAILED_RUN_STATUSES.has(status)) return 'error'
+  return status === 'accepted' || status === 'running' ? 'running' : 'idle'
+}
+
 function StateMark({ state }: { state: AgentWorkspaceState }) {
   if (state === 'running') return <LoaderCircle aria-hidden="true" />
   if (state === 'error') return <CircleAlert aria-hidden="true" />
@@ -170,7 +184,7 @@ function CoastRider({
 }) {
   const { x: slotX, depth, scale, mode } = slot
   const color = SPRITE_COLORS[seed % SPRITE_COLORS.length]!
-  const buttonRef = useRef<HTMLButtonElement>(null!)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
   const rideX = useRef(slotX)
   const transiting = useRef(false)
   const lastTime = useRef<number | null>(null)
@@ -186,6 +200,8 @@ function CoastRider({
       rideX.current += (target - rideX.current) * Math.min(1, k * dt)
 
       const button = buttonRef.current
+      // 卸载后仍可能收到最后一帧（rAF 与 React 提交交错）：引用已置空，跳过这一帧。
+      if (!button) return
       const parent = button.parentElement
       if (parent) {
         const dx = ((rideX.current - slotX) / 100) * parent.clientWidth
@@ -547,7 +563,7 @@ export function AgentStatusPage() {
         <div>
           {recentRuns.map((agent) => (
             <button type="button" key={agent.agentId} onClick={() => setSelectedAgentId(agent.agentId)}>
-              <i data-state={agent.state}><StateMark state={agent.state} /></i>
+              <i data-state={runMarkState(agent)}><StateMark state={runMarkState(agent)} /></i>
               <span><strong>{agent.lastRun?.task}</strong><small>{agent.name} · {agent.workspace.id}</small></span>
               <em>{agent.lastRun ? runStatusLabel(agent.lastRun.status, t) : ''}</em>
               <time><Clock3 aria-hidden="true" />{elapsedLabel(agent.updatedAt, t)}</time>
