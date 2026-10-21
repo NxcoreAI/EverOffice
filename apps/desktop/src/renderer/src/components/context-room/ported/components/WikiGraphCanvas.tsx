@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
 
 import type { KnowledgeWikiGraphDto } from '../../../../../../shared/knowledge'
 import {
@@ -61,12 +61,28 @@ function initialPositions(count: number, width: number, height: number) {
   return positions
 }
 
-/** Wiki 内链图谱：Worker 计算 d3-force，画布只读取 SharedArrayBuffer 坐标。 */
-export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
+export interface WikiGraphCanvasHandle {
+  fitView(): void
+}
+
+interface WikiGraphCanvasProps {
   graph: KnowledgeWikiGraphDto
   selectedPath: string | null
   onSelectPage: (path: string) => void
-}) {
+  /**
+   * 是否在画布右上角挂内置的自适应浮层。宿主自己有图谱工具栏时关掉，
+   * 改成在工具栏里放一颗，避免和工具栏的按钮叠在一起。
+   */
+  showFitButton?: boolean
+}
+
+/** Wiki 内链图谱：Worker 计算 d3-force，画布只读取 SharedArrayBuffer 坐标。 */
+function WikiGraphCanvasComponent({
+  graph,
+  selectedPath,
+  onSelectPage,
+  showFitButton = true,
+}: WikiGraphCanvasProps, ref: React.ForwardedRef<WikiGraphCanvasHandle>) {
   const { t } = useLocale()
   const canvasRef = useRef<PixiForceGraphCanvasHandle>(null)
   const nodeIndex = useMemo(
@@ -121,6 +137,11 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
   const selectedId = selectedPath
     ? graph.nodes.find((node) => node.path === selectedPath)?.id ?? null
     : null
+  useImperativeHandle(ref, () => ({
+    fitView() {
+      canvasRef.current?.fitView()
+    },
+  }), [])
 
   return (
     <div className="context-room-graph-shell context-room-wiki-graph nx-graph-shell">
@@ -145,7 +166,9 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
           if (path) onSelectPage(path)
         }}
       />
-      {graph.nodes.length > 0 ? <GraphFitButton onFit={() => canvasRef.current?.fitView()} /> : null}
+      {showFitButton && graph.nodes.length > 0
+        ? <GraphFitButton onFit={() => canvasRef.current?.fitView()} />
+        : null}
       <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.wikiNodes')}>
         {graph.nodes.map((node) => (
           <button
@@ -162,3 +185,5 @@ export function WikiGraphCanvas({ graph, selectedPath, onSelectPage }: {
     </div>
   )
 }
+
+export const WikiGraphCanvas = forwardRef(WikiGraphCanvasComponent)

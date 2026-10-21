@@ -1156,6 +1156,8 @@
   "wiki.graphSearchPlaceholder": "搜索节点…",
   "wiki.graphShowAll": "显示全部",
   "wiki.graphCoreOnly": "只看核心",
+  "wiki.graphFitHint": "自适应图谱：缩放并居中",
+  "wiki.graphFitToCanvas": "适应画布",
   "wiki.graphNoMatches": "没有匹配的节点",
   "wiki.graphLegend": "图例",
   "wiki.selectWiki": "选择 wiki",

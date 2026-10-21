@@ -1154,6 +1154,8 @@
   "wiki.graphSearchPlaceholder": "Search nodes…",
   "wiki.graphShowAll": "Show all",
   "wiki.graphCoreOnly": "Core only",
+  "wiki.graphFitHint": "Fit graph: zoom and center",
+  "wiki.graphFitToCanvas": "Fit to canvas",
   "wiki.graphNoMatches": "No matching nodes",
   "wiki.graphLegend": "Legend",
   "wiki.selectWiki": "Select a wiki",
