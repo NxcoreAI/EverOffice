@@ -543,4 +543,17 @@ describe('SlidesProgressCard 风格大图选择器（P1-3）', () => {
     act(() => buttonWithText(renderer.root, `${KEY}SLIDES_STYLE_CONFIRM`).props.onClick())
     expect(onAction.mock.calls[0]![0]).toBe(`${KEY}SLIDES_STYLE_CONFIRM_PROMPT?sessionId=style-9`)
   })
+
+  it('三层结构：head / body / actions 分层，长页列表在卡片内单独滚动', () => {
+    // 卡片落在 360px 级气泡里：页列表必须自带滚动容器，不能靠卡片被撑高来容纳内容。
+    const renderer = TestRenderer.create(<SlidesProgressCard state={draftState} toolRunning={false} />)
+    expect(renderer.root.findAll((node) => node.props?.className === 'agent-slides-card-head')).toHaveLength(1)
+    const body = renderer.root.findAll((node) => node.props?.className === 'agent-slides-card-body')
+    expect(body).toHaveLength(1)
+    // 页列表是卡内独立滚动层（CSS max-height + overflow:auto），多页不会把卡片拉长。
+    expect(body[0]!.findAllByProps({ className: 'agent-slides-progress-pages' })).toHaveLength(1)
+    // 操作区是卡片里紧随正文的独立一层，不在可滚区域内。
+    const actions = renderer.root.findAll((node) => node.props?.className === 'agent-slides-actions')
+    expect(actions).toHaveLength(1)
+  })
 })

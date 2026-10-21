@@ -406,6 +406,16 @@ export function PortedContextRoom({
       : current
   })
 
+  // 首页/搜索等入口直接以 activeRoomId 标记目标 Room；本地快照缺失时（合并/删除残留）
+  // 补一次 knowledge 后端合并并直进详情，避免落入 Context Room 列表首页。
+  const openRoomRef = useRef(openRoom)
+  openRoomRef.current = openRoom
+  useEffect(() => {
+    if (!activeRoomId) return
+    if (roomsRef.current.some((room) => room.id === activeRoomId)) return
+    openRoomRef.current(activeRoomId)
+  }, [activeRoomId])
+
   if (activeRoom) {
     return (
       <PortedDetail

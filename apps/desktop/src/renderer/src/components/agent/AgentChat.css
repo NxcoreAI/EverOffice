@@ -64,6 +64,8 @@
 }
 
 .agent-conversation > * {
+  min-width: 0;
+  max-width: 100%;
   flex: 0 0 auto;
 }
 
@@ -80,6 +82,7 @@
 
 /* 脱离底部时的「回到最新」悬浮按钮（#297）。 */
 .agent-chat-jump-latest {
+  max-width: calc(100% - 24px);
   position: absolute;
   bottom: calc(var(--agent-composer-height) + 14px);
   left: 50%;

@@ -573,6 +573,19 @@ export function App() {
   useEffect(() => onDocumentBlockNavigation(openDocumentTarget), [openDocumentTarget])
   useEffect(() => onDocumentOperationNavigation(openDocumentTarget), [openDocumentTarget])
 
+  // 首页「最近访问」Room 行点击：直达该 Room 内部（详情页），而非停在 Context Room 列表。
+  const openContextRoomById = useCallback((roomId: string) => {
+    if (manualMemoryOnboardingRef.current) return
+    const room = contextRoomState.rooms.find((item) => item.id === roomId)
+    if (room) openContextRoomTab({ id: room.id, title: room.title })
+    else {
+      // 目标 Room 快照缺失：先落到 rooms 页并用 activeRoomId 标记目标，
+      // PortedContextRoom 挂载时会从 knowledge 后端补合并并直进详情（自愈）。
+      setActivePage('rooms')
+      setActiveContextRoomId(roomId)
+    }
+  }, [contextRoomState.rooms, openContextRoomTab])
+
   const activateContextRoomTab = useCallback((roomId: string) => {
     setActivePage('rooms')
     setActiveContextRoomId(roomId)
@@ -1089,6 +1102,7 @@ export function App() {
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenDocument={openDocumentTarget}
+          onOpenRoom={openContextRoomById}
           onOpenOfficePreview={openOfficeTab}
           onStartFullOnboarding={() => {
             logOnboarding('manual-full-onboarding-start', { destination: 'folder' })
