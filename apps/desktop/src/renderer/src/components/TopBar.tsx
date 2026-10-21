@@ -101,8 +101,8 @@ export function TopBar({
         {officeTabs.map((tab) => {
           const isActive = activeOfficeId === tab.id
           const OfficeIcon = officeTabIcons[tab.kind]
-          // 内嵌 Office 预览一律只读，标签名带上 [只读] 前缀。
-          const readOnlyTitle = t('surface:topBar.officeReadOnly', { title: tab.title })
+          // 标签只报文件名：editable 取决于打开来源（Room 产物可编辑、文件页只读），
+          // OfficePreviewTab 未携带该字段，宁可不标也不标错。
           return (
             <div
               key={tab.id}
@@ -110,12 +110,12 @@ export function TopBar({
               data-active={String(isActive)}
               data-office-id={tab.id}
               role="tab"
-              aria-label={readOnlyTitle}
+              aria-label={tab.title}
               aria-selected={isActive}
             >
               <button type="button" onClick={() => onActivateOfficeTab(tab.id)}>
                 <OfficeIcon aria-hidden="true" strokeWidth={1.8} />
-                <span>{readOnlyTitle}</span>
+                <span>{tab.title}</span>
               </button>
               <button
                 type="button"

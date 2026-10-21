@@ -34,6 +34,21 @@ export interface OfficeGenerateRequest {
   roomId: string | null
   fileName: string | null
   idempotencyKey: string
+  /** pptx：true = 骨架入库阶段不广播 done，等全部页落定后由 /v1/office-complete 补发。 */
+  deferDone?: boolean
+}
+
+/** 逐页落定后的真完成通知（gateway slides-layout-tail → /v1/office-complete）。 */
+export interface OfficeCompleteRequest {
+  fileId: string
+  title: string
+  originalName?: string
+  roomId?: string | null
+  completed: boolean
+  appliedPages: number
+  totalPages: number
+  /** 失败/退化页 0 起页码。 */
+  failedPages?: number[]
 }
 
 /** Agent 编辑已打开 slides 产物的请求（gateway 工具 → /v1/office-edit）。 */
@@ -131,6 +146,26 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
   return (input.roomId == null || typeof input.roomId === 'string')
     && (input.fileName == null || typeof input.fileName === 'string')
     && typeof input.idempotencyKey === 'string' && input.idempotencyKey.length >= 8
+    && (input.deferDone === undefined || typeof input.deferDone === 'boolean')
+}
+
+function validCompleteBody(value: unknown): value is OfficeCompleteRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeCompleteRequest>
+  if (!(typeof input.fileId === 'string' && input.fileId.trim().length > 0)) return false
+  if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
+  if (input.originalName !== undefined && typeof input.originalName !== 'string') return false
+  if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
+  if (typeof input.completed !== 'boolean') return false
+  const appliedPages = input.appliedPages
+  if (typeof appliedPages !== 'number' || !Number.isInteger(appliedPages) || appliedPages < 0) return false
+  const totalPages = input.totalPages
+  if (typeof totalPages !== 'number' || !Number.isInteger(totalPages) || totalPages < 1) return false
+  if (input.failedPages !== undefined) {
+    if (!Array.isArray(input.failedPages)) return false
+    if (!input.failedPages.every((page) => Number.isInteger(page) && page >= 0)) return false
+  }
+  return true
 }
 
 function validEditBody(value: unknown): value is OfficeEditRequest {
@@ -204,6 +239,7 @@ export class OfficeBridgeServer {
   private async handle(request: IncomingMessage): Promise<{ status: number; body: Record<string, unknown> }> {
     if (request.method !== 'POST') return { status: 404, body: { message: 'Not found' } }
     const known = request.url === '/v1/office-generate'
+      || request.url === '/v1/office-complete'
       || request.url === '/v1/office-edit'
       || request.url === '/v1/office-render'
       || request.url === '/v1/office-render-page'
@@ -214,6 +250,10 @@ export class OfficeBridgeServer {
     if (!authorized(request, this.token)) return { status: 401, body: { message: 'Unauthorized' } }
     const read = await this.readJsonBody(request, request.url === '/v1/office-reformat' ? 60 * 1024 * 1024 : undefined)
     if ('error' in read) return read.error
+    if (request.url === '/v1/office-complete') {
+      if (!validCompleteBody(read.parsed)) return { status: 422, body: { message: 'Invalid office complete request' } }
+      return this.complete(read.parsed)
+    }
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
       return this.edit(read.parsed)
@@ -342,12 +382,31 @@ export class OfficeBridgeServer {
       outcome = await slidesEdit(req.fileId, artifactReq)
       // 重启后产物未打开：显式 fileEntryId 先请渲染端以可编辑方式打开再重试
       //（每次调用自带 8s 等待窗口，外层再兜到 30s 覆盖 genoffice 冷启动 + 大文件解包）。
-      if (!outcome.ok && outcome.reason === 'not_open' && req.fileId !== 'active'
-        && await this.requestRendererOpen(req.fileId)) {
-        const deadline = Date.now() + 30_000
-        do {
-          outcome = await slidesEdit(req.fileId, artifactReq)
-        } while (!outcome.ok && outcome.reason === 'not_open' && Date.now() < deadline)
+      if (!outcome.ok && outcome.reason === 'not_open' && req.fileId !== 'active') {
+        console.info('office-bridge: office-edit 命中 not_open，尝试请渲染端自动打开', { fileId: req.fileId })
+        const opened = await this.requestRendererOpen(req.fileId)
+        if (!opened) {
+          // requestRendererOpen 内部已带具体跳过原因，这里补一条调用方视角的结论日志。
+          console.warn('office-bridge: office-edit 自动打开未生效（requestRendererOpen 返回 false），保持 not_open 报错', {
+            fileId: req.fileId,
+          })
+        } else {
+          const startedAt = Date.now()
+          const deadline = startedAt + 30_000
+          let attempts = 0
+          do {
+            outcome = await slidesEdit(req.fileId, artifactReq)
+            attempts += 1
+          } while (!outcome.ok && outcome.reason === 'not_open' && Date.now() < deadline)
+          console.warn('office-bridge: office-edit 自动打开重试结束', {
+            fileId: req.fileId,
+            ok: outcome.ok,
+            elapsedMs: Date.now() - startedAt,
+            attempts,
+            lastReason: outcome.ok ? null : outcome.reason,
+            openCount: outcome.ok ? 0 : outcome.open?.length ?? 0,
+          })
+        }
       }
     } catch (error) {
       return { status: 502, body: { message: error instanceof Error ? error.message : 'Office edit failed' } }
@@ -372,22 +431,59 @@ export class OfficeBridgeServer {
    */
   private async requestRendererOpen(fileId: string): Promise<boolean> {
     const files = this.filesBridge()
-    if (!files) return false
+    if (!files) {
+      console.warn('office-bridge: open-edit 跳过（files bridge 未就绪）', { fileId })
+      return false
+    }
     try {
-      const entry = await files.get(fileId)
-      const kind = officePreviewKindForFileName(entry.originalName)
+      let entry: Awaited<ReturnType<FilesGatewayBridge['get']>>
+      try {
+        entry = await files.get(fileId)
+      } catch (error) {
+        console.warn('office-bridge: open-edit 跳过（fileId 读取失败）', {
+          fileId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return false
+      }
+      if (!entry) {
+        console.warn('office-bridge: open-edit 跳过（fileId 读取为空）', { fileId })
+        return false
+      }
+      // 防御：条目缺 originalName 时，直接传给 officePreviewKindForFileName 会抛
+      // TypeError 并被下面的 catch 吞成「未打开」；displayName 作为兜底文件名。
+      const rawEntry = entry as { originalName?: unknown; displayName?: unknown }
+      const originalName =
+        typeof rawEntry.originalName === 'string' && rawEntry.originalName.trim().length > 0
+          ? rawEntry.originalName
+          : typeof rawEntry.displayName === 'string' && rawEntry.displayName.trim().length > 0
+            ? rawEntry.displayName
+            : ''
+      if (!originalName) {
+        console.warn('office-bridge: open-edit 跳过（产物条目缺少 originalName/displayName）', { fileId })
+        return false
+      }
+      const kind = officePreviewKindForFileName(originalName)
       const format: OfficeAgentFileFormat | null =
         kind === 'slides' ? 'pptx' : kind === 'spreadsheet' ? 'xlsx' : kind === 'docx' ? 'docx' : null
-      if (!format) return false
+      if (!format) {
+        console.warn(`office-bridge: open-edit 跳过（不是 Office 产物：${originalName}）`, { fileId, kind })
+        return false
+      }
       this.broadcast({
         type: 'open-edit',
-        title: entry.originalName,
+        title: originalName,
         format,
         fileId,
-        originalName: entry.originalName,
+        originalName,
       })
+      console.info('office-bridge: open-edit 已广播', { fileId, originalName, format, kind })
       return true
-    } catch {
+    } catch (error) {
+      console.warn('office-bridge: open-edit 跳过（未预期异常）', {
+        fileId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       return false
     }
   }
@@ -417,12 +513,31 @@ export class OfficeBridgeServer {
     }
   }
 
+  /** /v1/office-complete：全部页落定后补发 done（真完成时机；deferDone 生成期不广播）。 */
+  private async complete(req: OfficeCompleteRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    this.broadcast({
+      type: 'done',
+      title: req.title,
+      format: 'pptx',
+      fileId: req.fileId,
+      ...(req.originalName ? { originalName: req.originalName } : {}),
+      roomId: req.roomId ?? null,
+      partial: !req.completed,
+      appliedPages: req.appliedPages,
+      totalPages: req.totalPages,
+      ...(req.failedPages && req.failedPages.length > 0 ? { failedPages: req.failedPages } : {}),
+    })
+    return { status: 200, body: { data: { ok: true } } }
+  }
+
   private async generate(parsed: OfficeGenerateRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const files = this.filesBridge()
     if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
 
     try {
       const format: OfficeGenerateFormat = parsed.format ?? 'docx'
+      // pptx 骨架入库不等于完成：逐页落页由 gateway 收尾，done 后移到 /v1/office-complete。
+      const deferDone = parsed.deferDone === true && format === 'pptx'
       const broadcastPhase = (phase: DocxGenerationPhase) => {
         this.broadcast({ type: 'phase', title: parsed.title, phase, format })
       }
@@ -453,14 +568,16 @@ export class OfficeBridgeServer {
         )
       }
       await rm(generated.filePath, { force: true }).catch(() => undefined)
-      this.broadcast({
-        type: 'done',
-        title: parsed.title,
-        format,
-        fileId: accepted.fileEntryId,
-        originalName,
-        roomId: parsed.roomId,
-      })
+      if (!deferDone) {
+        this.broadcast({
+          type: 'done',
+          title: parsed.title,
+          format,
+          fileId: accepted.fileEntryId,
+          originalName,
+          roomId: parsed.roomId,
+        })
+      }
       return {
         status: 200,
         body: {

@@ -154,10 +154,79 @@ describe('OfficeBridgeServer 多格式分发', () => {
     expect(generatePptxFromPageSpecs).toHaveBeenCalledWith(
       { title: '季度汇报', pages: ['{"elements":[]}', '{"elements":[]}'] },
       expect.any(Function),
+      expect.any(Object),
     )
     expect(imports[0]).toMatchObject({ sourceKey: 'agent:pptx:agent-slides:abc12345', originalName: '季度汇报.pptx', roomId: 'room-9' })
     expect(events.filter((event) => event.type === 'phase').map((event) => event.phase)).toEqual(['rendering', 'saved', 'importing'])
     expect(events.at(-1)).toMatchObject({ type: 'done', format: 'pptx', fileId: 'fe-1' })
+  })
+
+  it('pptx deferDone：骨架入库不广播 done，全部页落定后 /v1/office-complete 补发真完成', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'office-bridge-pptx-defer-'))
+    temporaryDirectories.push(dir)
+    const filePath = join(dir, 'deck.pptx')
+    await writeFile(filePath, Buffer.from('PK-fake'))
+    vi.mocked(generatePptxFromPageSpecs).mockResolvedValue({
+      filePath,
+      bytes: Buffer.from('PK-fake'),
+      title: '季度汇报',
+      warnings: [],
+    })
+
+    const { baseUrl, token } = await startServer()
+    const response = await fetch(`${baseUrl}/v1/office-generate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: '季度汇报',
+        format: 'pptx',
+        pages: ['{"elements":[]}'],
+        roomId: 'room-9',
+        fileName: null,
+        idempotencyKey: 'agent-slides:defer01',
+        deferDone: true,
+      }),
+    })
+    expect(response.status).toBe(200)
+    // 骨架阶段不能宣布「已生成」。
+    expect(events.some((event) => event.type === 'done')).toBe(false)
+
+    const complete = await fetch(`${baseUrl}/v1/office-complete`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileId: 'fe-1',
+        title: '季度汇报',
+        originalName: '季度汇报.pptx',
+        roomId: 'room-9',
+        completed: false,
+        appliedPages: 7,
+        totalPages: 10,
+        failedPages: [2, 5],
+      }),
+    })
+    expect(complete.status).toBe(200)
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      format: 'pptx',
+      fileId: 'fe-1',
+      roomId: 'room-9',
+      partial: true,
+      appliedPages: 7,
+      totalPages: 10,
+      failedPages: [2, 5],
+    })
+  })
+
+  it('office-complete：载荷非法 → 422，不广播 done', async () => {
+    const { baseUrl, token } = await startServer()
+    const response = await fetch(`${baseUrl}/v1/office-complete`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileId: 'fe-1', title: '季度汇报', completed: true }),
+    })
+    expect(response.status).toBe(422)
+    expect(events.some((event) => event.type === 'done')).toBe(false)
   })
 
   it('xlsx：缺 sheets 载荷 → 422；合法载荷走 xlsx 生成器', async () => {

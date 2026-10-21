@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react'
+import { FilePenLine } from 'lucide-react'
 
 import type { OfficePreviewTab } from '../../../shared/sources'
 import type { PageId } from '@/data/navigation'
@@ -70,9 +71,19 @@ export function PageCanvas({
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} />
   if (page === 'office') content = <AgentStatusPage />
   if (page === 'office-document') {
+    // 页体不承载内容：Office 文档由主进程 WebContentsView 叠在 workspace-main 上显示
+    //（App 依 activeOfficeInstanceId 挂载）；PageCanvas 拿不到实例状态，所以只留兜底空态，
+    // 不硬编码「正在加载」假装进度。原生视图未就绪时给一条回文稿页重开的出口。
     content = (
       <div className="page">
-        <div className="evidence-viewer-state">{'正在加载 Office 文档…'}</div>
+        <div className="doc-empty">
+          <FilePenLine aria-hidden="true" strokeWidth={1.6} />
+          <strong>{t('surface:pageCanvas.officePreviewTitle')}</strong>
+          <small>{t('surface:pageCanvas.officePreviewHint')}</small>
+          <button type="button" className="primary-button" onClick={() => onNavigate('docs')}>
+            {t('surface:pageCanvas.reopenFromDocuments')}
+          </button>
+        </div>
       </div>
     )
   }

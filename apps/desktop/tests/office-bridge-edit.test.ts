@@ -125,7 +125,7 @@ describe('OfficeBridgeServer /v1/office-edit', () => {
 
     expect(status).toBe(422)
     expect(json.code).toBe('not_open')
-    expect(String(json.message)).toContain('未在 Room 中打开')
+    expect(String(json.message)).toContain('请核对 fileEntryId 后重试')
     expect(String(json.message)).toContain('本周工作总结.pptx')
     expect(String(json.message)).toContain('当前焦点')
     expect(String(json.message)).toContain('笔记.docx')
