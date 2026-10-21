@@ -1803,4 +1803,37 @@ describe("doc-writer 引用透传（doc-writer-subagent-plan M3/V2）", () => {
       target: { blockId: expect.any(String), edge: "after" },
     });
   });
+
+  it("context_room_document_read 按 offset/limit 分页，默认单次 40k 字符", async () => {
+    const { documents, registry } = await createReviewHarness("document-read-budget");
+    const document = await documents.import({
+      id: "doc-read-budget",
+      roomId: "room-1",
+      title: "长文",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "长".repeat(50_000) }] }],
+      },
+    });
+    const context = { agentSessionId: "session-read-budget", runId: "run-read-budget", roomId: "room-1" };
+
+    const first = await registry.execute("context_room_document_read", { documentId: document.id }, context);
+    const firstContent = first.structuredContent as Record<string, unknown>;
+    const total = Number(firstContent.markdownTotalCharacters);
+    expect(total).toBeGreaterThan(40_000);
+    expect(String(firstContent.markdown)).toHaveLength(40_000);
+    expect(firstContent.markdownTruncated).toBe(true);
+    expect(firstContent.markdownOffset).toBe(0);
+    const nextOffset = Number(firstContent.nextOffset);
+    expect(nextOffset).toBe(40_000);
+
+    const second = await registry.execute(
+      "context_room_document_read",
+      { documentId: document.id, offset: nextOffset, limit: 20_000 },
+      context,
+    );
+    const secondContent = second.structuredContent as Record<string, unknown>;
+    expect(secondContent.markdownOffset).toBe(nextOffset);
+    expect(String(secondContent.markdown)).toHaveLength(Math.min(20_000, total - nextOffset));
+  });
 });

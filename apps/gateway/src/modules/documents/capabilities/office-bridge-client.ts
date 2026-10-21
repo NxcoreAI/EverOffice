@@ -20,6 +20,21 @@ export interface OfficeGenerateInput {
   roomId: string | null;
   fileName: string | null;
   idempotencyKey: string;
+  /** pptx：true = 不广播 done（骨架入库阶段），由网关全部落页后经 completeDeck 补发真完成。 */
+  deferDone?: boolean;
+}
+
+/** /v1/office-complete：逐页落定后的真完成广播（done 后移到全部页完成）。 */
+export interface OfficeCompleteInput {
+  fileId: string;
+  title: string;
+  originalName?: string;
+  roomId?: string | null;
+  completed: boolean;
+  appliedPages: number;
+  totalPages: number;
+  /** 失败/退化页 0 起页码。 */
+  failedPages?: number[];
 }
 
 /** 桌面 office-bridge /v1/office-generate 的返回（见 office-bridge.ts）。 */
@@ -96,6 +111,26 @@ export class OfficeBridgeClient {
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
     };
+  }
+
+  /** /v1/office-complete：全部页落定后补发 done（真完成时机），渲染层据此 toast/打开成品。 */
+  async completeDeck(input: OfficeCompleteInput): Promise<{ ok: boolean }> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-complete`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // 纯广播通知，无渲染链路。
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = await response.json().catch(() => ({})) as { message?: unknown };
+    if (!response.ok) {
+      throw new Error(typeof body.message === "string" ? body.message : `Office complete failed (${response.status})`);
+    }
+    return { ok: true };
   }
 
   /** /v1/office-render：PageSpec → pptx 字节，不入库不广播（风格演示页自校专用）。 */

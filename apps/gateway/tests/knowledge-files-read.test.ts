@@ -100,6 +100,9 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
       status: "auto",
       decidedBy: "llm",
     });
+    // legacy 通道无版本链：不伪造 v1，更新时间回落文件元数据时间
+    expect(files[0]!.versionNo).toBeNull();
+    expect(files[0]!.updatedAt).toBeInstanceOf(Date);
     test.sqlite.close();
   });
 
@@ -159,7 +162,10 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
       originalName: "编程学习文档.docx",
       bytes: Buffer.byteLength("docx 字节"),
       sourceKind: "manual-upload",
+      // 目录侧首版 = v1；updatedAt 取最新版本时间
+      versionNo: 1,
     });
+    expect(files[0]!.updatedAt).toBeInstanceOf(Date);
 
     // 模拟解析完成：parsed 产物挂上版本后 markdown 与本体路径走 catalog 分支
     const parsedId = test.files.ensureParsed(imported.contentHash, "# 编程学习文档");
@@ -170,6 +176,27 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
     expect(test.service.readFileMarkdown(imported.fileEntryId)).toBe("# 编程学习文档");
     await expect(readFile(test.service.fileStoragePath(imported.fileEntryId)!, "utf8"))
       .resolves.toBe("docx 字节");
+
+    // 同名再导入（内容变化）= 版本 +1：清单必须报最新版本号与最新版本时间
+    const second = await test.files.importFile({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:catalog-1",
+      originalName: "编程学习文档.docx",
+      buffer: Buffer.from("docx 字节 v2", "utf8"),
+    });
+    expect(second.fileEntryId).toBe(imported.fileEntryId);
+    // 固定时间戳，避免同毫秒导入导致断言抖动
+    test.sqlite.prepare("UPDATE file_entries SET created_at = 1700000000000 WHERE id = ?")
+      .run(imported.fileEntryId);
+    test.sqlite.prepare("UPDATE file_versions SET created_at = 1700000000000 WHERE file_entry_id = ? AND version_no = 1")
+      .run(imported.fileEntryId);
+    test.sqlite.prepare("UPDATE file_versions SET created_at = 1700000005000 WHERE file_entry_id = ? AND version_no = 2")
+      .run(imported.fileEntryId);
+    const bumped = test.service.listRoomFiles("room-cat")[0]!;
+    expect(bumped.versionNo).toBe(2);
+    expect(bumped.updatedAt.getTime()).toBe(1700000005000);
+    // 上传时间仍是首次导入，不被版本更新污染
+    expect(bumped.uploadedAt.getTime()).toBe(1700000000000);
 
     // 软删除的目录文件不再进清单
     test.sqlite.prepare("UPDATE file_entries SET deleted_at = 1 WHERE id = ?").run(imported.fileEntryId);
@@ -194,6 +221,7 @@ describe("文件读取面与归属清单（资料模型修订）", () => {
       id: imported.fileEntryId,
       originalName: "本周工作总结.docx",
       sourceKind: "agent-generated",
+      versionNo: 1,
     });
     test.sqlite.close();
   });
