@@ -9,6 +9,7 @@ systemPrompt: ./SYSTEM.md
 
 skills:
   - ./skills/layout-tree-skill
+  - ./skills/layout-tree-v2-skill
 
 mcp: []
 
@@ -19,5 +20,6 @@ policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 8
   # 读技能 2~3 次 + validate ≤4 次（3 轮自纠 + 1 次确认）+ 提交 1 次。
-  maxToolCalls: 16
+  # 24 覆盖「v1+v2 都读、同一批缺陷多试一轮」的实际用量（实测 17 轮 validate 打穿过 16）。
+  maxToolCalls: 24
   timeoutSeconds: 480

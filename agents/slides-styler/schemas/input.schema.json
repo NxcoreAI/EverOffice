@@ -159,6 +159,11 @@
       },
       "maxItems": 24,
       "description": "Page roles of the confirmed outline, for motif and type-ladder decisions."
+    },
+    "referenceStyle": {
+      "type": "object",
+      "description": "reference-style/v1; authoritative palette/density when present.",
+      "additionalProperties": true
     }
   },
   "required": [

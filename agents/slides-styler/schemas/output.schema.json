@@ -171,6 +171,63 @@
             },
             "headingBold": {
               "type": "boolean"
+            },
+            "typeScale": {
+              "type": "object",
+              "description": "Optional v2 type token sizes (pt); omitted tokens derive from sizes.",
+              "properties": {
+                "display": {
+                  "type": "number",
+                  "minimum": 40,
+                  "maximum": 110
+                },
+                "hero": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 96
+                },
+                "h1": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 60
+                },
+                "h2": {
+                  "type": "number",
+                  "minimum": 20,
+                  "maximum": 48
+                },
+                "h3": {
+                  "type": "number",
+                  "minimum": 18,
+                  "maximum": 40
+                },
+                "lead": {
+                  "type": "number",
+                  "minimum": 14,
+                  "maximum": 28
+                },
+                "body": {
+                  "type": "number",
+                  "minimum": 12,
+                  "maximum": 24
+                },
+                "label": {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 18
+                },
+                "kicker": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 16
+                },
+                "caption": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 16
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [

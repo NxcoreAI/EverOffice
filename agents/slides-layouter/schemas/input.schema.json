@@ -1,38 +1,278 @@
 {
   "type": "object",
   "properties": {
-    "task": { "type": "string", "enum": ["layout"] },
-    "deckToken": { "type": "string", "minLength": 8, "maxLength": 80, "description": "Deck contract token; pass verbatim to slides_layout_validate." },
-    "pageIndex": { "type": "integer", "minimum": 0, "maximum": 23 },
-    "totalPages": { "type": "integer", "minimum": 1, "maximum": 24 },
-    "role": { "type": "string", "enum": ["cover", "toc", "section", "content", "data", "table", "flow", "quote", "closing"] },
-    "density": { "type": "string", "enum": ["sparse", "standard", "dense"] },
-    "title": { "type": "string", "maxLength": 80 },
-    "points": { "type": "array", "items": { "type": "string", "maxLength": 400 }, "maxItems": 8 },
-    "data": { "type": "string", "maxLength": 2000, "description": "Inline data convention from planner (chart/table source)." },
+    "task": {
+      "type": "string",
+      "enum": [
+        "layout"
+      ]
+    },
+    "deckToken": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 80,
+      "description": "Deck contract token; pass verbatim to slides_layout_validate."
+    },
+    "pageIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23
+    },
+    "totalPages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 24
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "cover",
+        "toc",
+        "section",
+        "content",
+        "data",
+        "table",
+        "flow",
+        "quote",
+        "closing"
+      ]
+    },
+    "density": {
+      "type": "string",
+      "enum": [
+        "sparse",
+        "standard",
+        "dense"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "maxItems": 8
+    },
+    "data": {
+      "description": "v1 inline data string, or v2 structured data (chart/stats).",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 2000
+        },
+        {
+          "type": "object"
+        }
+      ]
+    },
     "materials": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "url": { "type": "string", "maxLength": 500 },
-          "desc": { "type": "string", "maxLength": 200 },
-          "aspectRatio": { "type": "number", "description": "Width/height when known; keep the image leaf frame ratio close." }
+          "url": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "desc": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "aspectRatio": {
+            "type": "number",
+            "description": "Width/height when known; keep the image leaf frame ratio close."
+          }
         },
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "additionalProperties": false
       },
       "maxItems": 4
     },
-    "notes": { "type": "string", "maxLength": 1000 },
-    "styleBrief": { "type": "string", "maxLength": 400, "description": "Natural-language deck style tendency (e.g. strong grid, restrained whitespace)." },
+    "notes": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "styleBrief": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Natural-language deck style tendency (e.g. strong grid, restrained whitespace)."
+    },
     "neighborSignatures": {
       "type": "array",
-      "items": { "type": "string", "maxLength": 200 },
+      "items": {
+        "type": "string",
+        "maxLength": 200
+      },
       "maxItems": 4,
       "description": "Adjacent-page structure signatures (re-roll tasks only); your tree must differ structurally."
+    },
+    "layoutVersion": {
+      "type": "integer",
+      "enum": [
+        2
+      ],
+      "description": "2 = design a v2 page (version/composition/slot nodes). Omit for v1 tree."
+    },
+    "composition": {
+      "type": "string",
+      "enum": [
+        "immersive",
+        "hero-data",
+        "editorial",
+        "swiss",
+        "poster",
+        "chapter"
+      ],
+      "description": "v2 only: composition recipe from storyboard."
+    },
+    "emphasis": {
+      "type": "string",
+      "enum": [
+        "title",
+        "number",
+        "image",
+        "quote",
+        "chart",
+        "table"
+      ],
+      "description": "v2 only: the page's single visual anchor."
+    },
+    "intent": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "v2 only: what this page should change in the audience's mind."
+    },
+    "takeaway": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "v2 only: one line the audience should remember."
+    },
+    "copy": {
+      "type": "object",
+      "description": "v2 only: condensed page copy from slides-editor. text sources only; do not rewrite.",
+      "properties": {
+        "kicker": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "supporting": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "maxItems": 2
+        },
+        "facts": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "quote": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "attribution": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "speakerNotes": {
+          "type": "string",
+          "maxLength": 400
+        }
+      },
+      "additionalProperties": false
+    },
+    "neighbors": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "properties": {
+          "pageIndex": {
+            "type": "integer"
+          },
+          "composition": {
+            "type": "string"
+          },
+          "takeaway": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "prose": {
+          "type": "number"
+        },
+        "copy": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "styleTokens": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Deterministic deck style token snapshot resolved from the style card: composition/darkCover/motif/palette/typeScale/fonts/spacing/decoration/componentDefaults. Treat it as the design-system truth; component `style` only picks semantic enums (never raw hex/pt/px)."
+    },
+    "revisionFeedback": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "v2 only: gateway visual-richness gate feedback; add icons/path/table/chart/component or decorative shapes before resubmitting."
     }
   },
-  "required": ["task", "deckToken", "pageIndex", "totalPages", "role", "density"],
+  "required": [
+    "task",
+    "deckToken",
+    "pageIndex",
+    "totalPages",
+    "role",
+    "density"
+  ],
   "additionalProperties": false
 }

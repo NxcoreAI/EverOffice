@@ -1,0 +1,419 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "storyboard/v2"
+    },
+    "deck": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "occasion": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "durationMin": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 180
+        },
+        "spine": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "visualThesis": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "title",
+        "spine"
+      ],
+      "additionalProperties": false
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "cover",
+              "section",
+              "content",
+              "data",
+              "table",
+              "flow",
+              "quote",
+              "closing"
+            ]
+          },
+          "density": {
+            "type": "string",
+            "enum": [
+              "sparse",
+              "standard",
+              "dense"
+            ]
+          },
+          "composition": {
+            "type": "string",
+            "enum": [
+              "immersive",
+              "hero-data",
+              "editorial",
+              "swiss",
+              "poster",
+              "chapter"
+            ]
+          },
+          "emphasis": {
+            "type": "string",
+            "enum": [
+              "title",
+              "number",
+              "image",
+              "quote",
+              "chart",
+              "table"
+            ]
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 60
+          },
+          "takeaway": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 22
+          },
+          "copy": {
+            "type": "object",
+            "properties": {
+              "kicker": {
+                "type": "string",
+                "maxLength": 12
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 24
+              },
+              "supporting": {
+                "type": "array",
+                "maxItems": 1,
+                "items": {
+                  "type": "string",
+                  "maxLength": 32
+                }
+              },
+              "facts": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "maxLength": 10
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 14
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 14
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 20
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "quote": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "attribution": {
+                    "type": "string",
+                    "maxLength": 40
+                  }
+                },
+                "additionalProperties": false
+              },
+              "source": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "speakerNotes": {
+                "type": "string",
+                "minLength": 60,
+                "maxLength": 260
+              }
+            },
+            "required": [
+              "message",
+              "speakerNotes"
+            ],
+            "additionalProperties": false
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "chart": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "categories": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 24
+                  },
+                  "series": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 6
+                  }
+                },
+                "required": [
+                  "kind",
+                  "categories",
+                  "series"
+                ],
+                "additionalProperties": false
+              },
+              "stats": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "maxLength": 14
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8
+                    },
+                    "label": {
+                      "type": "string",
+                      "maxLength": 20
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "table": {
+                "type": "object",
+                "description": "表格页：把 BP 原表压缩到 3~8 行，保留列结构与关键行；不要让 facts 承担整张表。",
+                "properties": {
+                  "columns": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8
+                  },
+                  "rows": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 8
+                    }
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                },
+                "required": [
+                  "columns",
+                  "rows"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "visual": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "material",
+                  "generated"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "materialHash": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "imagePrompt": {
+                "type": "string",
+                "maxLength": 400
+              },
+              "treatment": {
+                "type": "string",
+                "enum": [
+                  "inline",
+                  "sideBleed",
+                  "fullBleed"
+                ]
+              },
+              "focus": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  }
+                },
+                "additionalProperties": false
+              },
+              "scrim": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "bottom",
+                  "top",
+                  "vignette"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "dropped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "reason": {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                "movedToNotes": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "from",
+                "text",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "density",
+          "composition",
+          "emphasis",
+          "intent",
+          "takeaway",
+          "copy",
+          "dropped"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "deck",
+    "pages"
+  ],
+  "additionalProperties": false
+}
