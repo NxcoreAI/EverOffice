@@ -6,6 +6,7 @@
 
 import { ICON_NAMES } from "./icons.js";
 import { normalizeComponentLeaf, type ComponentLeaf } from "./components/index.js";
+import { normalizeV2Page, type V2Page } from "./v2/schema.js";
 
 export type Direction = "row" | "column" | "overlay";
 export type MainJustify = "start" | "center" | "end";
@@ -143,6 +144,10 @@ export interface ContainerNode {
 /** 页根节点：内容区容器 + 页元数据。 */
 export interface LayoutTree {
   role: string;
+  /** 2 = v2 slot 语法；此时 children 为空，真实页面在 v2。 */
+  version?: 2;
+  /** v2 页面载荷（normalizeV2Page 产物）。 */
+  v2?: V2Page;
   /** 页标题（进固定标题带）；封面/章节等整页构图可省略，标题作为 display 文字叶子排进版面。 */
   title?: string;
   /** 深色页（封面/章节）：背景用 darkBackground，文字自动换 onDarkText。 */
@@ -279,7 +284,10 @@ function asLeaf(node: Record<string, unknown>, path: string): LeafNode {
       if (node.grayscale === true) leaf.grayscale = true;
       else if (node.grayscale !== undefined) bad(`${path}.grayscale 只接受 true（灰度化）`);
       if (leaf.grayscale && leaf.duotone) bad(`${path}.grayscale 与 duotone 二选一`);
-      if (node.caption !== undefined) leaf.caption = optionalText(node.caption, 40);
+      if (node.caption !== undefined) {
+        const caption = optionalText(node.caption, 40);
+        if (caption) leaf.caption = caption;
+      }
       return leaf;
     }
     case "card": {
@@ -342,7 +350,8 @@ function asLeaf(node: Record<string, unknown>, path: string): LeafNode {
         if (kind === "pie" || kind === "doughnut" || kind === "waterfall") {
           bad(`${path}.delta 不支持 ${kind}`);
         }
-        leaf.delta = optionalText(node.delta, 12);
+        const delta = optionalText(node.delta, 12);
+        if (delta) leaf.delta = delta;
       }
       return leaf;
     }
@@ -507,6 +516,18 @@ export function normalizeTree(raw: unknown): LayoutTree {
   nodeBudget = 0;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) bad("树根必须是对象");
   const root = raw as Record<string, unknown>;
+  if (root.version === 2) {
+    const v2 = normalizeV2Page(root);
+    return {
+      role: v2.role,
+      ...(v2.title ? { title: v2.title } : {}),
+      ...(v2.dark ? { dark: true } : {}),
+      direction: "column",
+      children: [],
+      version: 2,
+      v2,
+    };
+  }
   const role = typeof root.role === "string" && root.role.trim() ? root.role.trim().slice(0, 24) : "content";
   const title = optionalText(root.title, 80);
   const bg = normalizeBg(root.bg);

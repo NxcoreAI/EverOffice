@@ -1,18 +1,17 @@
 /**
- * comparison 组件（editorial）：2~4 方对照。中央竖发丝线分栏，非重点列静音灰；
- * featured 列（可省）：tint 垫板 + 3px 主色顶条 + 「推荐」圆角签，墨色正字。
- * 要点支持三态标记：{ text, mark: "yes"|"mid"|"no" } → 钩/横/叉图标打头。
+ * comparison：多方对照。每方一张卡（风格卡卡面），featured 用浅色底 + 强调描边 +
+ * 顶部色条 + 徽章；标题/要点字号按 frame 推导，卡片填满高度。
  */
 
 import { splitColumns, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
 import { mixHex } from "../../theme.js";
-import { bodyRuns, headingRuns, textElement, type SpecElement } from "../../elements.js";
-import { estimateLineHeight, estimateLines } from "../../text-metrics.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
+import { estimateLineHeight, estimateLines, estimateTextWidth } from "../../text-metrics.js";
 
 export interface ComparisonPoint {
   text: string;
-  /** 三态标记：yes=主色钩、mid=静音横、no=浅灰叉；缺省无图标（— 项目符）。 */
   mark?: "yes" | "mid" | "no";
 }
 
@@ -38,119 +37,100 @@ export function expandComparison(
   frame: Frame,
   theme: ResolvedTheme,
   what: string,
+  skin: ComponentSkin,
 ): SpecElement[] {
+  void theme;
+  const m = skin.metrics(frame);
+  const cells = splitColumns(frame, sides.length, m.gap);
   const elements: SpecElement[] = [];
-  const gutter = theme.spacing.gutter * 2;
-  const cols = splitColumns(frame, sides.length, gutter);
-  const titleSize = Math.min(22, Math.max(17, theme.sizes.subtitle - 1));
-  const pointSize = Math.min(16, Math.max(13, theme.sizes.body + 1));
-  const iconSize = 15;
+  const titleSize = Math.round(m.title * 0.86);
+  const pointSize = m.body;
+  const iconSize = Math.max(16, Math.round(pointSize * 0.95));
   const hasFeatured = featured !== undefined;
-  // 逐列测高：featured 列的 tint 垫板全高；内容 = 刻标(有 tag 时) + 标题 + 要点。
   const rendered = sides.map((side, i) => {
+    const cell = cells[i]!;
     const isFeatured = featured === i;
-    const col = cols[i]!;
-    // featured 列的 tag 转为徽章文案，不占内容高。
-    const tagH = side.tag && !isFeatured ? estimateLineHeight(pointSize) + 6 : 0;
-    const titleH = Math.max(1, estimateLines(side.title, titleSize, col.w)) * estimateLineHeight(titleSize) + 6;
-    const pointH = side.points.map((p) => {
-      const text = typeof p === "string" ? p : p.text;
-      const prefix = typeof p === "string" ? "—　" : "　　";
-      return estimateLines(`${prefix}${text}`, pointSize, col.w - (typeof p === "string" ? 0 : iconSize + 6)) * estimateLineHeight(pointSize) + 10;
+    const box = skin.contentBox(cell);
+    const titleH = estimateLines(side.title, titleSize, box.w) * estimateLineHeight(titleSize, 108) + 4;
+    const pointsH = side.points.map((point) => {
+      const text = typeof point === "string" ? point : point.text;
+      return estimateLines(text, pointSize, box.w - iconSize - 10) * estimateLineHeight(pointSize, 122) + Math.round(m.tightGap * 1.1);
     });
-    const contentH = tagH + titleH + 14 + pointH.reduce((a, b) => a + b, 0);
-    if (contentH > col.h) {
-      bad(`${what} 第 ${i + 1} 列「${side.title}」内容高约 ${Math.round(contentH)}px 超过区域 ${Math.round(col.h)}px——精简要点或减少列`);
-    }
-    return { side, isFeatured, col, tagH, titleH, pointH, contentH };
+    return { side, cell, isFeatured, box, titleH, pointsH };
   });
-  const contentH = Math.max(...rendered.map((r) => r.contentH));
-  const top = frame.y + Math.max(0, (frame.h - contentH) / 2);
-  // 非重点列之间的竖发丝线
-  rendered.forEach(({ col }, i) => {
-    if (i === 0 || (hasFeatured && (i === featured! || i - 1 === featured!))) return;
-    elements.push({
-      type: "shape",
-      shape: "rect",
-      fill: theme.colors.divider,
-      x: Math.round(col.x - gutter / 2),
-      y: Math.round(top),
-      w: 1,
-      h: Math.round(contentH),
-    });
-  });
-  rendered.forEach(({ side, isFeatured, col, tagH, titleH, pointH }, i) => {
-    const ink = isFeatured || !hasFeatured ? theme.colors.text : theme.colors.textMuted;
-    let y = top;
+  rendered.forEach(({ side, cell, isFeatured, box, titleH, pointsH }) => {
     if (isFeatured) {
-      // tint 垫板全列高 + 3px 主色顶条 + 「推荐」圆角签
+      const radius = Math.min(50000, Math.round((skin.radius / Math.max(1, Math.min(cell.w, cell.h))) * 100000));
       elements.push({
-        type: "shape",
-        shape: "roundRect",
-        fill: mixHex(theme.colors.primary, theme.colors.background, 0.93),
-        x: Math.round(col.x - 12),
-        y: Math.round(top - 14),
-        w: Math.round(col.w + 24),
-        h: Math.round(Math.min(frame.h, contentH + 28)),
-        adj: Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.max(1, col.w + 24)) * 100000)),
+        type: "shape", shape: "roundRect", fill: skin.colors.tint,
+        stroke: { color: skin.colors.emphasis, widthPt: 1.5 },
+        x: Math.round(cell.x), y: Math.round(cell.y), w: Math.round(cell.w), h: Math.round(cell.h),
+        ...(radius ? { adj: radius } : {}),
       });
-      elements.push({ type: "shape", shape: "rect", fill: theme.colors.primary, x: Math.round(col.x - 12), y: Math.round(top - 14), w: Math.round(col.w + 24), h: 3 });
-      const badgeText = side.tag || "推荐";
-      const badgeW = Math.max(52, Math.round(badgeText.length * (pointSize - 2) * 1.05 + 20));
       elements.push({
-        type: "shape",
-        shape: "roundRect",
-        fill: theme.colors.primary,
-        x: Math.round(col.x - 12 + (col.w + 24 - badgeW) / 2),
-        y: Math.round(top - 26),
-        w: badgeW,
-        h: 24,
-        adj: 50000,
-        paragraphs: [{ runs: [{ text: badgeText, sizePt: 10, bold: true, color: theme.colors.onDarkText }] }],
+        type: "shape", shape: "rect", fill: skin.colors.emphasis,
+        x: Math.round(box.x), y: Math.round(cell.y), w: Math.round(box.w), h: 4,
+      });
+      const badgeText = side.tag ?? "推荐";
+      const badgeW = Math.max(58, Math.round(estimateTextWidth(badgeText, 10) + 26));
+      elements.push({
+        type: "shape", shape: "roundRect", fill: skin.colors.emphasis,
+        x: Math.round(box.x + box.w - badgeW), y: Math.round(box.y),
+        w: badgeW, h: 26, adj: 50000,
+        paragraphs: [{ runs: [{ text: badgeText, sizePt: 10, bold: true, color: skin.colors.inverse }], align: "center" }],
         valign: "middle",
       });
-    } else if (side.tag) {
-      // 非重点列的 tag：主色小字刻标
+    } else {
+      elements.push(...skin.paint(cell));
+    }
+    if (side.tag && !isFeatured) {
       elements.push(
-        textElement({ x: col.x, y, w: col.w, h: tagH }, [
-          { runs: [{ text: side.tag, sizePt: pointSize - 2, bold: true, color: theme.colors.primary }] },
+        textElement({ x: box.x, y: box.y, w: box.w, h: 22 }, [
+          { runs: [skin.micro(side.tag, skin.colors.emphasis)] },
         ]),
       );
-      y += tagH;
     }
+    const titleY = box.y + (isFeatured ? 40 : side.tag ? 36 : 12);
     elements.push(
-      textElement({ x: col.x, y: y + (isFeatured ? 14 : 0), w: col.w, h: titleH }, [
-        { runs: headingRuns(side.title, titleSize, ink, theme) },
+      textElement({ x: box.x, y: titleY, w: box.w, h: titleH }, [
+        { runs: skin.heading(side.title, titleSize, skin.colors.text) },
       ]),
     );
-    y += (isFeatured ? 14 : 0) + titleH + 14;
+    const ruleY = titleY + titleH + Math.round(m.tightGap * 0.8);
+    const rule = skin.dividerH(box, ruleY);
+    if (rule) elements.push(rule);
+    const pointsTop = ruleY + Math.round(m.gap * 0.7);
+    const sum = pointsH.reduce((a, b) => a + b, 0);
+    const gap = Math.max(Math.round(m.tightGap * 0.9), Math.min(48, Math.round((box.y + box.h - pointsTop - sum) / Math.max(1, pointsH.length))));
+    if (pointsTop + sum + gap * Math.max(0, pointsH.length - 1) > box.y + box.h + 2) {
+      bad(`${what}「${side.title}」内容高约 ${Math.round(pointsTop + sum - box.y)}px 超过区域 ${Math.round(box.h)}px——精简要点或减少列`);
+    }
+    let y = pointsTop;
     side.points.forEach((point, j) => {
-      const h = pointH[j]!;
+      const h = pointsH[j]!;
       if (typeof point === "string") {
         elements.push(
-          textElement({ x: col.x, y, w: col.w, h }, [
-            { runs: bodyRuns(`—　${point}`, pointSize, ink, theme) },
+          textElement({ x: box.x, y, w: box.w, h }, [
+            { runs: skin.body(`—　${point}`, pointSize, skin.colors.muted) },
           ]),
         );
       } else {
-        const markColor =
-          point.mark === "yes" ? theme.colors.primary : point.mark === "mid" ? theme.colors.textMuted : mixHex(theme.colors.text, theme.colors.background, 0.68);
+        const markColor = point.mark === "yes"
+          ? skin.colors.emphasis
+          : point.mark === "no"
+            ? mixHex(skin.colors.text, skin.colors.background, 0.55)
+            : skin.colors.muted;
         elements.push({
-          type: "icon",
-          icon: MARK_ICONS[point.mark ?? "mid"],
-          color: markColor,
-          x: Math.round(col.x + (isFeatured ? 14 : 0)),
-          y: Math.round(y + 2),
-          w: iconSize,
-          h: iconSize,
+          type: "icon", icon: MARK_ICONS[point.mark ?? "mid"], color: markColor,
+          x: Math.round(box.x), y: Math.round(y + 3), w: iconSize, h: iconSize,
         });
         elements.push(
-          textElement({ x: col.x + (isFeatured ? 14 : 0) + iconSize + 6, y, w: col.w - iconSize - 6, h }, [
-            { runs: bodyRuns(point.text, pointSize, ink, theme) },
+          textElement({ x: box.x + iconSize + 10, y, w: box.w - iconSize - 10, h }, [
+            { runs: skin.body(point.text, pointSize, skin.colors.text) },
           ]),
         );
       }
-      y += h;
+      y += h + gap;
     });
   });
   return elements;

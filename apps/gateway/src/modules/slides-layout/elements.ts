@@ -87,6 +87,17 @@ export interface ChartElement extends SpecBase {
   legend?: boolean;
   dataLabels?: boolean;
   gridlines?: boolean;
+  /** Chart theme tokens: axis/legend/data-label colors and sizes. */
+  axis?: {
+    labelColor?: string;
+    labelSizePt?: number;
+    lineColor?: string;
+    gridColor?: string;
+    legendColor?: string;
+    legendSizePt?: number;
+    dataLabelColor?: string;
+    dataLabelSizePt?: number;
+  };
 }
 
 export interface IconElement extends SpecBase {
@@ -129,6 +140,8 @@ export type SpecElement =
 
 export interface PageSpec {
   background?: string;
+  /** Speaker notes (PPTX notesSlide body); omitted = no notes. */
+  notes?: string;
   elements: SpecElement[];
 }
 

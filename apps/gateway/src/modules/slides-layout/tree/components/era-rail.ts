@@ -1,12 +1,16 @@
 /**
- * eraRail 组件（editorial，fork xEraRail 转正）。脊线压区域顶，刻度下挂衬线年代
- * 与静音短注；年代限 8 字、短注限 12 字且各限一行，混排折行与基线错乱在归一层拦下。
- * highlight 条目刻度与年代换主色。
+ * eraRail 组件（editorial）：年代脊线。
+ *
+ * 无底面语义：默认平铺。整条脊线（2px）+ 每列刻度 + 衬线年代（28–32pt，高亮条
+ * 取强调色）+ 静音短注，作为一条水平「时代带」在区域内垂直居中——上下留白对称，
+ * 不与页面上其它内容抢位；列间短竖线把带分成均匀列。
+ * 脊线走 dividerH（separator 非 line 时脊线与刻度一起收掉），年代字体走 numeral 语义。
  */
 
-import { bodyRuns, numeralFont, textElement, type SpecElement } from "../../elements.js";
+import { textElement, type SpecElement } from "../../elements.js";
 import type { Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
+import type { ComponentSkin } from "./kit.js";
 import { estimateTextWidth, singleLineBoxHeight, textBoxHeight } from "../../text-metrics.js";
 
 export interface EraRailItem {
@@ -18,17 +22,14 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-/** 年代字号：16~20pt 自适应。 */
-function eraSizeFor(theme: ResolvedTheme): number {
-  return Math.min(20, Math.max(16, Math.round(theme.sizes.subtitle)));
-}
-
-/** 年代一行：宽了先降档（至 14pt），仍超宽报错——折行会打乱整排基线。 */
-function fitEraSize(era: string, cellW: number, theme: ResolvedTheme): number {
-  for (let size = eraSizeFor(theme); size >= 14; size -= 2) {
-    if (estimateTextWidth(era, size) <= cellW - 20) return size;
+/** 年代字号：按列宽与可用高度自适应，28–32pt 为主体，最紧可降到 18pt。 */
+function fitEraSize(era: string, cellW: number, roomH: number, base: number): number {
+  for (let size = base; size >= 18; size -= 2) {
+    const fitsW = estimateTextWidth(era, size) <= cellW - 24;
+    const fitsH = singleLineBoxHeight(size) <= roomH;
+    if (fitsW && fitsH) return size;
   }
-  bad(`「${era}」年代超宽（每格可用 ${cellW}px）——统一短年代格式（如「2026」「唐代」「1610 年」）`);
+  bad(`「${era}」年代放不下（每格可用 ${cellW}px）——统一短年代格式（如「2026」「唐代」「1610 年」）`);
 }
 
 export function expandEraRail(
@@ -36,62 +37,83 @@ export function expandEraRail(
   frame: Frame,
   theme: ResolvedTheme,
   what: string,
+  skin: ComponentSkin,
   highlight?: number,
 ): SpecElement[] {
-  const noteSize = theme.sizes.caption;
-  const eraFont = numeralFont(theme);
-  const railY = frame.y;
-  const cellW = frame.w / items.length;
-  const noteW = cellW - 16;
+  void theme; // 组件只读 skin
+  const elements: SpecElement[] = skin.surfaceExplicit
+    ? [...skin.paint(frame), ...skin.motifDecor(frame, "top")]
+    : [];
+  const box = skin.surfaceExplicit ? skin.contentBox(frame) : frame;
+  const m = skin.metrics(box);
+  const align = skin.alignExplicit ? skin.paragraphAlign : "left";
+  const railH = Math.max(2, Math.round(m.label * 0.16));
+  const tickW = Math.max(3, Math.round(m.label * 0.24));
+  const tickH = Math.max(14, Math.round(m.body * 0.95));
+  const hotTickH = Math.round(tickH * 1.35);
+  const noteSize = Math.max(14, Math.round(m.caption + 2));
+  const cellW = box.w / items.length;
+  const insetX = Math.round(m.tightGap * 0.8);
+  const noteW = Math.max(48, cellW - insetX * 2);
   const noteHs = items.map((item) => textBoxHeight(item.note, noteSize, noteW));
-  const eraSizes = items.map((item) => fitEraSize(item.era, cellW, theme));
+  const maxNoteH = Math.max(...noteHs);
+  const railIsLine = skin.dividerH(box, Math.round(box.y)) !== null;
+  const baseSize = Math.max(18, Math.min(32, Math.round(m.title * 1.02)));
+  const eraGap = Math.round(m.tightGap * 1.9);
+  const noteGap = Math.round(m.tightGap * 0.55);
+  const tickRoom = Math.max(hotTickH, tickH);
+  const roomH = box.h - railH - tickRoom - noteGap - maxNoteH - eraGap;
+  const eraSizes = items.map((item) => fitEraSize(item.era, cellW, roomH, baseSize));
   const eraH = singleLineBoxHeight(Math.max(...eraSizes));
-  const need = 12 + eraH + 5 + Math.max(...noteHs);
-  if (need > frame.h + 2) {
-    bad(`${what} 内容高约 ${Math.round(need)}px 超过区域 ${frame.h}px——精简短注或加大该子树权重`);
+  const blockH = railH + tickRoom + eraGap + eraH + noteGap + maxNoteH;
+  if (blockH > box.h + 2) {
+    bad(`${what} 内容高约 ${Math.round(blockH)}px 超过区域 ${Math.round(box.h)}px——精简短注或加大该子树权重`);
   }
-  const elements: SpecElement[] = [];
-  elements.push({
-    type: "shape",
-    shape: "rect",
-    fill: theme.colors.divider,
-    x: Math.round(frame.x),
-    y: Math.round(railY),
-    w: Math.round(frame.w),
-    h: 1,
-  });
-  items.forEach((item, i) => {
-    const cx = frame.x + cellW * i;
-    const eraSize = eraSizes[i]!;
-    const eraH = singleLineBoxHeight(eraSize);
-    const hot = highlight === i;
+  const bandTop = box.y + Math.max(0, Math.round((box.h - blockH) / 2));
+  const railY = bandTop + Math.max(0, Math.round((tickRoom - railH) / 2));
+  const eraTop = bandTop + tickRoom + eraGap;
+  const noteTop = eraTop + eraH + noteGap;
+
+  // 脊线：2px 墨线横贯（separator 非 line 时不画，刻度也随之收掉）。
+  if (railIsLine) {
     elements.push({
       type: "shape",
       shape: "rect",
-      fill: hot ? theme.colors.primary : theme.colors.divider,
-      x: Math.round(cx),
-      y: Math.round(railY),
-      w: hot ? 4 : 3,
-      h: hot ? 18 : 14,
+      fill: skin.colors.text,
+      x: Math.round(box.x),
+      y: railY,
+      w: Math.round(box.w),
+      h: railH,
     });
+  }
+
+  items.forEach((item, i) => {
+    const cellX = Math.round(box.x + cellW * i);
+    const hot = highlight === i;
+    const eraSize = eraSizes[i]!;
+    const eraBoxH = singleLineBoxHeight(eraSize);
+    const noteH = noteHs[i]!;
+    if (railIsLine) {
+      elements.push({
+        type: "shape",
+        shape: "rect",
+        fill: hot ? skin.colors.emphasis : skin.colors.text,
+        x: cellX + insetX,
+        y: railY,
+        w: hot ? tickW + 3 : tickW,
+        h: hot ? hotTickH : tickH,
+      });
+    }
+    const eraColor = hot ? skin.colors.emphasis : skin.colors.text;
+    const eraRuns = skin.numeralRun(item.era, eraSize, eraColor) ?? skin.heading(item.era, eraSize, eraColor);
     elements.push(
-      textElement({ x: cx + 12, y: railY + 12, w: cellW - 16, h: eraH }, [
-        {
-          runs: [
-            {
-              text: item.era,
-              sizePt: eraSize,
-              bold: true,
-              color: hot ? theme.colors.primary : theme.colors.text,
-              ...(eraFont ? { font: eraFont } : {}),
-            },
-          ],
-        },
+      textElement({ x: cellX + insetX, y: Math.round(eraTop), w: Math.round(cellW - insetX * 2), h: eraBoxH }, [
+        { runs: eraRuns, ...(align === "center" ? { align } : {}) },
       ]),
     );
     elements.push(
-      textElement({ x: cx + 12, y: railY + 12 + eraH + 5, w: noteW, h: noteHs[i]! }, [
-        { runs: bodyRuns(item.note, noteSize, theme.colors.textMuted, theme) },
+      textElement({ x: cellX + insetX, y: Math.round(noteTop), w: noteW, h: noteH }, [
+        { runs: skin.body(item.note, noteSize, skin.colors.muted), ...(align === "center" ? { align } : {}) },
       ]),
     );
   });

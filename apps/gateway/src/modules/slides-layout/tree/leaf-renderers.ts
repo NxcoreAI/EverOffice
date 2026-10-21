@@ -226,6 +226,16 @@ export function renderChartLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTh
       ...(pointColors ? { pointColors } : {}),
       ...(points <= 8 && leaf.kind !== "scatter" ? { dataLabels: true } : {}),
       ...(leaf.legend ? { legend: true } : {}),
+      axis: {
+        labelColor: theme.colors.textMuted,
+        labelSizePt: Math.max(9, theme.sizes.caption),
+        lineColor: theme.colors.divider,
+        gridColor: theme.colors.divider,
+        legendColor: theme.colors.textMuted,
+        legendSizePt: Math.max(9, theme.sizes.caption),
+        dataLabelColor: theme.colors.text,
+        dataLabelSizePt: Math.max(9, theme.sizes.caption),
+      },
     },
   ];
   // 涨跌徽章：图表右上角主色圆角签（白字），宽随文字。

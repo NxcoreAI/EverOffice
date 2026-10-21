@@ -1,19 +1,18 @@
 /**
- * progress 组件（editorial）。细直角轨 + 墨色填充 + 主色百分比，可选目标刻度
- * （target 0~100，轨上 2px 竖刻）。
+ * progress：进度条。标签 + 大数值 + 粗轨道 + 目标刻度；行均分填满高度。
  */
 
 import { splitRows, type Frame } from "../../grid.js";
-import { mixHex, type ResolvedTheme } from "../../theme.js";
-import { bodyRuns, textElement, type SpecElement } from "../../elements.js";
+import type { ResolvedTheme, ResolvedTheme as Theme } from "../../theme.js";
+import type { ComponentSkin } from "./kit.js";
+import { mixHex } from "../../theme.js";
+import { textElement, type SpecElement } from "../../elements.js";
 import { singleLineBoxHeight } from "../../text-metrics.js";
 
 export interface ProgressItem {
   label: string;
-  /** 0~100。 */
   value: number;
   unit?: string;
-  /** 目标位（0~100），轨上刻度。 */
   target?: number;
 }
 
@@ -21,61 +20,61 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-export function expandProgress(items: ProgressItem[], frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
-  const elements: SpecElement[] = [];
-  const rows = splitRows(frame, items.length, Math.max(16, theme.spacing.gutter));
-  const labelSize = Math.min(16, Math.max(13, theme.sizes.body + 1));
-  const valueSize = theme.sizes.caption;
+export function expandProgress(
+  items: ProgressItem[],
+  frame: Frame,
+  theme: Theme,
+  what: string,
+  skin: ComponentSkin,
+  fill: "ink" | "primary" = "ink",
+): SpecElement[] {
+  void theme;
+  const elements: SpecElement[] = skin.surfaceExplicit
+    ? [...skin.paint(frame), ...skin.motifDecor(frame, "top")]
+    : [];
+  const box = skin.surfaceExplicit ? skin.contentBox(frame) : frame;
+  const m = skin.metrics(box);
+  const labelSize = Math.round(m.title * 0.72);
+  const valueSize = Math.round(m.title * 0.8);
   const labelH = singleLineBoxHeight(labelSize);
+  const valueH = singleLineBoxHeight(valueSize);
+  const trackH = Math.max(10, Math.round(m.body * 0.8));
+  const rows = splitRows(box, items.length, Math.round(m.gap * 0.9));
+  const fillColor = fill === "primary" ? skin.colors.emphasis : skin.colors.text;
+  const trackColor = mixHex(skin.colors.text, skin.colors.background, 0.88);
   rows.forEach((row, i) => {
     const item = items[i]!;
-    const barH = Math.min(8, Math.max(5, Math.round(row.h - labelH - 10)));
-    if (row.h < labelH + barH + 10) {
+    const blockH = labelH + Math.round(m.tightGap * 0.8) + trackH;
+    if (blockH > row.h) {
       bad(`${what} 第 ${i + 1} 项「${item.label}」行高不足（${Math.round(row.h)}px）——加大权重或减少条目`);
     }
+    const top = row.y + Math.max(0, (row.h - blockH) / 2);
+    elements.push(
+      textElement({ x: row.x, y: top, w: row.w * 0.7, h: labelH }, [
+        { runs: skin.body(item.label, labelSize, skin.colors.text, true) },
+      ]),
+    );
     const valueText = `${Math.round(item.value)}${item.unit ?? "%"}`;
-    const targetText = item.target !== undefined ? ` / 目标 ${Math.round(item.target)}${item.unit ?? "%"}` : "";
-    const y = row.y + Math.max(0, (row.h - labelH - barH - 8) / 2);
+    const targetText = item.target !== undefined ? ` / ${Math.round(item.target)}${item.unit ?? "%"}` : "";
     elements.push(
-      textElement({ x: row.x, y, w: row.w * 0.72, h: labelH }, [
-        { runs: bodyRuns(item.label, labelSize, theme.colors.text, theme, true) },
+      textElement({ x: row.x + row.w * 0.7, y: top + Math.round((labelH - valueH) / 2), w: row.w * 0.3, h: valueH }, [
+        {
+          runs: [
+            { text: valueText, sizePt: valueSize, bold: true, color: skin.colors.emphasis, ...(skin.fonts.heading ? { font: skin.fonts.heading } : {}) },
+            ...(targetText ? [{ text: targetText, sizePt: Math.round(valueSize * 0.58), color: skin.colors.muted }] : []),
+          ],
+          align: "right",
+        },
       ]),
     );
-    elements.push(
-      textElement({ x: row.x + row.w * 0.72, y: y + 2, w: row.w * 0.28, h: labelH }, [
-        { runs: bodyRuns(`${valueText}${targetText}`, valueSize, theme.colors.primary, theme, true), align: "right" },
-      ]),
-    );
-    const barY = Math.round(y + labelH + 8);
-    // 轨：贴页底的低对比灰；填充：墨色直角
-    elements.push({
-      type: "shape",
-      shape: "rect",
-      fill: mixHex(theme.colors.text, theme.colors.background, 0.92),
-      x: Math.round(row.x),
-      y: barY,
-      w: Math.round(row.w),
-      h: barH,
-    });
-    const fgW = Math.max(3, Math.round((row.w * item.value) / 100));
-    elements.push({
-      type: "shape",
-      shape: "rect",
-      fill: theme.colors.text,
-      x: Math.round(row.x),
-      y: barY,
-      w: fgW,
-      h: barH,
-    });
+    const barY = Math.round(top + labelH + Math.round(m.tightGap * 0.8));
+    elements.push({ type: "shape", shape: "roundRect", fill: trackColor, x: Math.round(row.x), y: barY, w: Math.round(row.w), h: trackH, adj: 50000 });
+    const fgW = Math.max(6, Math.round((row.w * item.value) / 100));
+    elements.push({ type: "shape", shape: "roundRect", fill: fillColor, x: Math.round(row.x), y: barY, w: fgW, h: trackH, adj: 50000 });
     if (item.target !== undefined && item.target > 0 && item.target <= 100) {
       elements.push({
-        type: "shape",
-        shape: "rect",
-        fill: theme.colors.primary,
-        x: Math.round(row.x + (row.w * item.target) / 100) - 1,
-        y: barY - 5,
-        w: 2,
-        h: barH + 10,
+        type: "shape", shape: "rect", fill: skin.colors.emphasis,
+        x: Math.round(row.x + (row.w * item.target) / 100) - 1, y: barY - 6, w: 2, h: trackH + 12,
       });
     }
   });

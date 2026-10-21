@@ -1,12 +1,13 @@
 /**
- * timeline 组件（editorial）。发丝线脊柱 + 方头刻度 + 衬线年份 + 静音说明；
- * h＝横轴（年份在上、说明在下），v＝竖轴（左轴右文）。
+ * timeline：时间轴。衬线大年份 + 轴线/节点 + 说明；横向（年份上）与纵向（左轴右文）。
  */
 
 import { splitColumns, splitRows, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
-import { bodyRuns, numeralFont, textElement, type SpecElement } from "../../elements.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
 import { estimateTextWidth, singleLineBoxHeight, textBoxHeight } from "../../text-metrics.js";
+import { mixHex } from "../../theme.js";
 
 export interface TimelineItem {
   label: string;
@@ -23,107 +24,89 @@ export function expandTimeline(
   frame: Frame,
   theme: ResolvedTheme,
   what: string,
+  skin: ComponentSkin,
+  axis: "line" | "dots" | "none" = "line",
 ): SpecElement[] {
-  const elements: SpecElement[] = [];
-  const labelSize = Math.min(26, Math.max(20, Math.round(theme.sizes.subtitle * 1.3)));
-  const labelFont = numeralFont(theme);
-  const textSize = theme.sizes.caption;
-  const gutter = theme.spacing.gutter;
-  const yearRun = (t: string, size: number, color: string, bold = true) => ({
-    runs: [{ text: t, sizePt: size, bold, color, ...(labelFont ? { font: labelFont } : {}) }],
-    align: "center" as const,
-  });
-  // 年代一行：宽了先降档（至 16pt），仍超宽报错——混排折行会打乱整排基线
-  const fitLabel = (label: string, cellW: number): { size: number; h: number } => {
-    for (let size = labelSize; size >= 16; size -= 2) {
-      if (estimateTextWidth(label, size) <= cellW - 8) return { size, h: singleLineBoxHeight(size) };
+  void theme;
+  const elements: SpecElement[] = skin.surfaceExplicit
+    ? [...skin.paint(frame), ...skin.motifDecor(frame, "top")]
+    : [];
+  const box = skin.surfaceExplicit ? skin.contentBox(frame) : frame;
+  const m = skin.metrics(box);
+  const labelSize = Math.min(Math.round(m.serial * 1.18), 56);
+  const textSize = Math.round(m.body * 1.05);
+  const nodeD = Math.max(12, Math.round(m.body * 0.72));
+  const axisColor = mixHex(skin.colors.text, skin.colors.background, 0.25);
+  const labelFont = skin.fonts.numeral;
+  const fitLabel = (label: string, cellW: number): number => {
+    let size = labelSize;
+    while (size > 20 && estimateTextWidth(label, size) > cellW - 12) size -= 2;
+    if (estimateTextWidth(label, size) > cellW - 12) {
+      bad(`${what}「${label}」年代超宽（可用 ${cellW}px）——统一短年代格式（如「2026」）`);
     }
-    bad(`${what}「${label}」年代超宽（可用 ${cellW}px）——统一短年代格式（如「2026」「唐代」「1610 年」）`);
+    return size;
   };
-
   if (direction === "h") {
-    const cells = splitColumns(frame, items.length, gutter * 1.5);
-    const axisY = Math.round(frame.y + frame.h / 2);
-    elements.push({
-      type: "shape",
-      shape: "rect",
-      fill: theme.colors.divider,
-      x: Math.round(frame.x),
-      y: axisY,
-      w: Math.round(frame.w),
-      h: 1,
-    });
+    const cells = splitColumns(box, items.length, m.gap);
+    const axisY = Math.round(box.y + box.h * 0.56);
+    if (axis === "line") {
+      elements.push({ type: "shape", shape: "rect", fill: axisColor, x: Math.round(box.x), y: axisY, w: Math.round(box.w), h: 2 });
+      // 两端刻线，轴线像一条真正的时间刻度尺。
+      elements.push({ type: "shape", shape: "rect", fill: axisColor, x: Math.round(box.x), y: axisY - 7, w: 2, h: 16 });
+      elements.push({ type: "shape", shape: "rect", fill: axisColor, x: Math.round(box.x + box.w - 2), y: axisY - 7, w: 2, h: 16 });
+    }
     cells.forEach((cell, i) => {
       const item = items[i]!;
-      const { size: labelSize, h: labelH } = fitLabel(item.label, cell.w);
+      const size = fitLabel(item.label, cell.w);
+      const labelH = singleLineBoxHeight(size);
       const textH = textBoxHeight(item.text, textSize, cell.w);
-      const need = labelH + 34 + textH;
-      if (need > cell.h) {
-        bad(`${what} 第 ${i + 1} 条「${item.label}」内容高约 ${Math.round(need)}px 超过区域 ${Math.round(cell.h)}px——精简条目文字或减少条目`);
-      }
       const cx = cell.x + cell.w / 2;
-      // 方头刻度（组件无"当前"语义，一律静音刻度）
-      elements.push({
-        type: "shape",
-        shape: "rect",
-        fill: theme.colors.divider,
-        x: Math.round(cx - 2),
-        y: axisY - 8,
-        w: 4,
-        h: 16,
-      });
+      elements.push({ type: "shape", shape: "ellipse", fill: skin.colors.emphasis, x: Math.round(cx - nodeD / 2), y: axisY - Math.round(nodeD / 2), w: nodeD, h: nodeD });
       elements.push(
-        textElement({ x: cell.x, y: axisY - 14 - labelH, w: cell.w, h: labelH }, [
-          yearRun(item.label, labelSize, theme.colors.text),
+        textElement({ x: cell.x, y: axisY - 20 - labelH, w: cell.w, h: labelH }, [
+          { runs: [{ text: item.label, sizePt: size, bold: true, color: skin.colors.text, ...(labelFont ? { font: labelFont } : {}) }], align: "center" },
         ]),
       );
       elements.push(
-        textElement({ x: cell.x, y: axisY + 18, w: cell.w, h: textH }, [
-          { runs: bodyRuns(item.text, textSize, theme.colors.textMuted, theme), align: "center" },
+        textElement({ x: cell.x, y: axisY + 22, w: cell.w, h: textH }, [
+          { runs: skin.body(item.text, textSize, skin.colors.muted), align: "center" },
         ]),
       );
+      if (i > 0 && axis === "dots") {
+        elements.push({ type: "shape", shape: "ellipse", fill: skin.colors.divider, x: Math.round(cell.x - m.gap / 2 - 2), y: axisY - 2, w: 4, h: 4 });
+      }
     });
     return elements;
   }
-
-  const rows = splitRows(frame, items.length, gutter);
-  const axisX = Math.round(frame.x + 2);
-  elements.push({
-    type: "shape",
-    shape: "rect",
-    fill: theme.colors.divider,
-    x: axisX,
-    y: Math.round(frame.y),
-    w: 1,
-    h: Math.round(frame.h),
-  });
-  const textX = frame.x + 32;
-  const textW = frame.w - 32;
+  const rows = splitRows(box, items.length, Math.round(m.gap * 0.8));
+  const axisX = Math.round(box.x + 5);
+  elements.push({ type: "shape", shape: "rect", fill: axisColor, x: axisX, y: Math.round(box.y), w: 2, h: Math.round(box.h) });
+  // 纵向：年份在左、说明在右，同一行垂直居中——比上下堆叠更省高度，也更像时间轴。
+  const yearX = box.x + 24;
+  const yearSize = Math.min(Math.round(m.serial * 1.05), 46);
+  const yearW = Math.max(96, Math.round(estimateTextWidth("0000 年", yearSize)));
+  const textX = yearX + yearW + Math.round(m.gap * 0.8);
+  const textW = box.w - (textX - box.x);
   rows.forEach((row, i) => {
     const item = items[i]!;
-    const { size: labelSize, h: labelH } = fitLabel(item.label, textW);
+    let labelPt = yearSize;
+    while (labelPt > 20 && singleLineBoxHeight(labelPt) > row.h - 8) labelPt -= 2;
+    const labelH = singleLineBoxHeight(labelPt);
     const textH = textBoxHeight(item.text, textSize, textW);
-    const need = labelH + 6 + textH + 10;
-    if (need > row.h) {
-      bad(`${what} 第 ${i + 1} 条「${item.label}」内容高约 ${Math.round(need)}px 超过 ${Math.round(row.h)}px——精简条目文字或减少条目`);
+    const total = Math.max(labelH, textH);
+    if (total > row.h + 2) {
+      bad(`${what} 第 ${i + 1} 条「${item.label}」内容高约 ${Math.round(total)}px 超过 ${Math.round(row.h)}px——精简条目文字或减少条目`);
     }
-    elements.push({
-      type: "shape",
-      shape: "rect",
-      fill: theme.colors.divider,
-      x: axisX - 1,
-      y: Math.round(row.y + 4),
-      w: 3,
-      h: 14,
-    });
+    const top = row.y + Math.max(0, (row.h - total) / 2);
+    elements.push({ type: "shape", shape: "ellipse", fill: skin.colors.emphasis, x: axisX - Math.round(nodeD / 2) + 1, y: Math.round(top + (Math.min(labelH, total) - nodeD) / 2), w: nodeD, h: nodeD });
     elements.push(
-      textElement({ x: textX, y: row.y, w: textW, h: labelH }, [
-        { runs: [{ text: item.label, sizePt: labelSize, bold: true, color: theme.colors.text, ...(labelFont ? { font: labelFont } : {}) }] },
+      textElement({ x: yearX, y: top + Math.round((total - labelH) / 2), w: yearW, h: labelH }, [
+        { runs: [{ text: item.label, sizePt: labelPt, bold: true, color: skin.colors.text, ...(labelFont ? { font: labelFont } : {}) }] },
       ]),
     );
     elements.push(
-      textElement({ x: textX, y: row.y + labelH + 6, w: textW, h: textH }, [
-        { runs: bodyRuns(item.text, textSize, theme.colors.textMuted, theme) },
+      textElement({ x: textX, y: top + Math.round((total - textH) / 2), w: textW, h: textH }, [
+        { runs: skin.body(item.text, textSize, skin.colors.muted) },
       ]),
     );
   });

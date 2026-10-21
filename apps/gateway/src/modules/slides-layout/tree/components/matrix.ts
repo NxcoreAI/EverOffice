@@ -1,11 +1,11 @@
 /**
- * matrix2x2 组件（editorial）。无卡片——网格中央十字发丝线切四象限，
- * 象限内容顶左锚定；四边轴标静音。
+ * matrix2x2：四象限。四张卡 + 轴标；象限标题更大，要点按可用高度分布。
  */
 
 import { splitColumns, splitRows, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
-import { bodyRuns, headingRuns, textElement, type SpecElement } from "../../elements.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
 import { estimateLineHeight, estimateLines } from "../../text-metrics.js";
 
 export interface Quadrant {
@@ -24,7 +24,7 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-const AXIS_MAX = 120;
+const AXIS_MAX = 96;
 
 export function expandMatrix2x2(
   quadrants: Quadrant[],
@@ -32,99 +32,66 @@ export function expandMatrix2x2(
   frame: Frame,
   theme: ResolvedTheme,
   what: string,
+  skin: ComponentSkin,
 ): SpecElement[] {
+  void theme;
   const elements: SpecElement[] = [];
-  const axisSize = theme.sizes.caption;
-  const axisH = 40; // 轴标墨迹估高约 29px，留足与象限标题的间隙
+  const m = skin.metrics(frame);
+  const axisH = 44;
   const topAxis = axes.top ? axisH : 0;
   const bottomAxis = axes.bottom ? axisH : 0;
   const leftAxis = axes.left ? AXIS_MAX : 0;
   const rightAxis = axes.right ? AXIS_MAX : 0;
-
   const grid: Frame = {
-    x: frame.x + (leftAxis ? leftAxis : 0),
+    x: frame.x + leftAxis,
     y: frame.y + topAxis,
     w: frame.w - leftAxis - rightAxis,
     h: frame.h - topAxis - bottomAxis,
   };
-  if (grid.w < 200 || grid.h < 160) {
+  if (grid.w < 240 || grid.h < 180) {
     bad(`${what} 区域过小（${Math.round(grid.w)}×${Math.round(grid.h)}px）——加大该子树权重`);
   }
-
-  const axisLabel = (
-    text: string,
-    f: Frame,
-    align: "left" | "center" | "right",
-    valign: "top" | "middle" = "top",
-  ): void => {
-    elements.push(
-      textElement(f, [{ runs: bodyRuns(text, axisSize, theme.colors.textMuted, theme), align }], valign),
-    );
+  const axisLabel = (text: string, f: Frame, align: "left" | "center" | "right", valign: "top" | "middle" = "top") => {
+    elements.push(textElement(f, [{ runs: [skin.micro(text, skin.colors.muted, m.label + 1)], align }], valign));
   };
-  if (axes.top) {
-    axisLabel(axes.top, { x: grid.x, y: frame.y, w: grid.w, h: axisH - 4 }, "center");
-  }
-  if (axes.bottom) {
-    axisLabel(axes.bottom, { x: grid.x, y: grid.y + grid.h + 4, w: grid.w, h: axisH - 4 }, "center");
-  }
-  if (axes.left) {
-    axisLabel(axes.left, { x: frame.x, y: grid.y, w: leftAxis - 8, h: grid.h }, "right", "middle");
-  }
-  if (axes.right) {
-    axisLabel(axes.right, { x: grid.x + grid.w + 8, y: grid.y, w: rightAxis - 8, h: grid.h }, "left", "middle");
-  }
+  if (axes.top) axisLabel(axes.top, { x: grid.x, y: frame.y, w: grid.w, h: axisH - 6 }, "center");
+  if (axes.bottom) axisLabel(axes.bottom, { x: grid.x, y: grid.y + grid.h + 6, w: grid.w, h: axisH - 6 }, "center");
+  if (axes.left) axisLabel(axes.left, { x: frame.x, y: grid.y, w: leftAxis - 10, h: grid.h }, "right", "middle");
+  if (axes.right) axisLabel(axes.right, { x: grid.x + grid.w + 10, y: grid.y, w: rightAxis - 10, h: grid.h }, "left", "middle");
 
-  // 十字发丝线（贯穿网格中央）
-  elements.push({
-    type: "shape",
-    shape: "rect",
-    fill: theme.colors.divider,
-    x: Math.round(grid.x + grid.w / 2),
-    y: Math.round(grid.y),
-    w: 1,
-    h: Math.round(grid.h),
-  });
-  elements.push({
-    type: "shape",
-    shape: "rect",
-    fill: theme.colors.divider,
-    x: Math.round(grid.x),
-    y: Math.round(grid.y + grid.h / 2),
-    w: Math.round(grid.w),
-    h: 1,
-  });
-
-  const cols = splitColumns(grid, 2, theme.spacing.gutter * 1.5);
-  const rows = splitRows(grid, 2, theme.spacing.gutter * 1.5);
-  const titleSize = Math.min(19, Math.max(15, theme.sizes.body + 3));
-  const pointSize = theme.sizes.caption;
-  const pad = theme.spacing.cardPadding;
+  const cols = splitColumns(grid, 2, m.gap);
+  const rows = splitRows(grid, 2, m.gap);
+  const titleSize = Math.round(m.title * 0.8);
+  const pointSize = m.body;
   quadrants.forEach((quadrant, i) => {
-    const col = cols[i % 2]!;
-    const row = rows[Math.floor(i / 2)]!;
-    const cell: Frame = { x: col.x, y: row.y, w: col.w, h: row.h };
-    const innerW = cell.w - pad;
-    const titleH = estimateLines(quadrant.title, titleSize, innerW) * estimateLineHeight(titleSize) + 4;
-    const pointH = (quadrant.points ?? []).map((p) => estimateLines(`—　${p}`, pointSize, innerW - 12) * estimateLineHeight(pointSize) + 6);
-    const pointsH = pointH.reduce((a, b) => a + b, 0);
-    const need = titleH + 8 + pointsH;
-    if (need > cell.h) {
-      bad(`${what} 第 ${i + 1} 象限「${quadrant.title}」内容高约 ${Math.round(need)}px 超过 ${Math.round(cell.h)}px——精简要点`);
+    const cell: Frame = { x: cols[i % 2]!.x, y: rows[Math.floor(i / 2)]!.y, w: cols[i % 2]!.w, h: rows[Math.floor(i / 2)]!.h };
+    elements.push(...skin.paint(cell));
+    const box = skin.contentBox(cell);
+    const titleH = estimateLines(quadrant.title, titleSize, box.w) * estimateLineHeight(titleSize, 108) + 4;
+    const pointHs = (quadrant.points ?? []).map((p) => estimateLines(p, pointSize, box.w - 18) * estimateLineHeight(pointSize, 122) + Math.round(m.tightGap * 0.8));
+    const pointsSum = pointHs.reduce((a, b) => a + b, 0);
+    const head = titleH + Math.round(m.tightGap * 0.9);
+    if (head + pointsSum > box.h + 2) {
+      bad(`${what} 第 ${i + 1} 象限「${quadrant.title}」内容高约 ${Math.round(head + pointsSum)}px 超过 ${Math.round(box.h)}px——精简要点`);
     }
+    const contentTop = box.y + Math.max(0, Math.round((box.h - head - pointsSum) / 2));
     elements.push(
-      textElement({ x: cell.x, y: cell.y, w: innerW, h: titleH }, [
-        { runs: headingRuns(quadrant.title, titleSize, theme.colors.text, theme) },
+      textElement({ x: box.x, y: contentTop, w: box.w - 30, h: titleH }, [
+        { runs: skin.heading(quadrant.title, titleSize, skin.colors.text) },
       ]),
     );
-    let y = cell.y + titleH + 8;
+    const rule = skin.dividerH(box, contentTop + head - Math.round(m.tightGap * 0.5));
+    if (rule) elements.push(rule);
+    const extra = Math.max(0, Math.round((box.h - head - pointsSum) / Math.max(1, (quadrant.points ?? []).length)));
+    let y = contentTop + head;
     (quadrant.points ?? []).forEach((point, j) => {
-      const h = pointH[j]!;
+      const h = pointHs[j]!;
       elements.push(
-        textElement({ x: cell.x, y, w: innerW, h }, [
-          { runs: bodyRuns(`—　${point}`, pointSize, theme.colors.textMuted, theme) },
+        textElement({ x: box.x, y, w: box.w, h }, [
+          { runs: skin.body(`—　${point}`, pointSize, skin.colors.muted) },
         ]),
       );
-      y += h;
+      y += h + Math.min(extra, Math.round(m.tightGap * 1.2));
     });
   });
   return elements;

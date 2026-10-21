@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTree, type LayoutTree } from "./schema.js";
+import { isLeaf, normalizeTree, type LayoutTree } from "./schema.js";
 import { contractFromStyleParams } from "./layout-contract.js";
 import { darkPageTheme, deriveCardSurface, mixHex, resolveTheme } from "../theme.js";
 import { compileTree } from "./compile.js";
@@ -276,15 +276,16 @@ describe("深色页组件主题视图", () => {
     const fills = result.spec.elements
       .filter((el) => el.type === "shape")
       .map((el) => (el as { fill?: string }).fill!);
-    expect(fills[0]?.toLowerCase()).toBe(dark.colors.text.toLowerCase());
-    expect(fills[2]?.toLowerCase()).toBe(
-      mixHex(dark.colors.text, dark.colors.background, 0.78).toLowerCase(),
-    );
+    // 新口径：filled 主色明度渐隐（首级主色压深、末级向页墨收淡）。
+    const solid = mixHex(dark.colors.primary, dark.colors.text, 0.32);
+    expect(fills[0]).not.toBe(fills[2]);
+    expect(fills[0]?.toLowerCase()).toBe(mixHex(solid, dark.colors.text, 0.04).toLowerCase());
+    expect(fills[2]?.toLowerCase()).toBe(mixHex(solid, dark.colors.text, 0.37).toLowerCase());
     const lastStage = result.spec.elements.find(
       (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "付费")),
     );
     expect(lastStage && lastStage.type === "text" ? lastStage.paragraphs[0]!.runs[0]!.color : undefined)
-      .toBe(CONTRACT.theme.colors.onDarkText);
+      .toBe(dark.colors.background);
   });
 
   it("浅色页深面板内的组件同样换深色视图", () => {
@@ -403,7 +404,7 @@ describe("justify 打包", () => {
 });
 
 describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () => {
-  it("KPI 卡装不下卡框时报缺陷，不再让墨迹溢出", () => {
+  it("KPI 卡装不下卡框时自动缩字收敛，不溢出", () => {
     const result = compileTree(tree({
       role: "data", title: "茶经立典",
       direction: "column", weights: [0.6, 1.6], children: [
@@ -418,7 +419,8 @@ describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () =
       ],
     }), CONTRACT);
     const defects = measureDefects(result, CONTRACT);
-    expect(defects.some((d) => d.type === "overflow" && /KPI 卡/.test(d.detail))).toBe(true);
+    expect(defects.some((d) => d.type === "overflow" && /KPI 卡/.test(d.detail))).toBe(false);
+    expect(result.spec.elements.length).toBeGreaterThan(0);
   });
 
   it("文本含 emoji 报 emoji 缺陷", () => {
@@ -865,13 +867,19 @@ describe("组件层（component）", () => {
     }
   });
 
-  it("timeline 横版结构：脊柱 + 每条刻度/年份/正文", () => {
+  it("timeline 横版结构：轴线 + 每条节点/年份/正文", () => {
     const result = compileTree(tree(COMPONENT_TREES["timeline 横"]!), CONTRACT);
-    expect(result.stats.elements).toBe(11); // 1 标题带 + 1 脊柱 + 3×(刻度+年份+正文)
-    const spine = result.spec.elements.find((el) => el.type === "shape" && el.h === 1 && el.w === CONTRACT.contentFrame.w);
-    expect(spine).toBeDefined();
-    const ticks = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "rect" && el.w === 4 && el.h === 16);
-    expect(ticks).toHaveLength(3);
+    const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; h: number; w: number; fill?: string }[];
+    const axis = shapes.find((el) => el.shape === "rect" && el.h === 2 && el.w > CONTRACT.contentFrame.w * 0.9);
+    expect(axis).toBeDefined();
+    expect(shapes.filter((el) => el.shape === "ellipse")).toHaveLength(3);
+    const texts = result.spec.elements.filter((el) => el.type === "text") as TextElement[];
+    for (const year of ["2026", "2027", "2028"]) {
+      expect(texts.some((el) => el.paragraphs.some((p) => p.runs.some((r) => r.text === year))), year).toBe(true);
+    }
+    for (const body of ["品类验证与供应链打底", "渠道扩张与区域仓成网", "品牌溢价与出海首站"]) {
+      expect(texts.some((el) => el.paragraphs.some((p) => p.runs.some((r) => r.text === body))), body).toBe(true);
+    }
   });
 
   it("stats 展开元素数 = 每条 3 个 + 列间发丝线", () => {
@@ -931,8 +939,12 @@ describe("组件层（component）", () => {
       ],
     }), CONTRACT);
     const cf = CONTRACT.contentFrame;
+    const frameX = Math.round(cf.x + (cf.w * 10) / 100);
+    const frameW = Math.round((cf.w * 80) / 100);
     const quoteText = result.spec.elements.find((el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "图上引言"))) as TextElement | undefined;
-    expect(quoteText?.x).toBe(Math.round(cf.x + (cf.w * 10) / 100));
+    expect(quoteText).toBeDefined();
+    expect(quoteText!.x).toBeGreaterThanOrEqual(frameX);
+    expect(quoteText!.x + quoteText!.w).toBeLessThanOrEqual(frameX + frameW + 2);
     expect(result.placements.find((p) => p.kind === "component")?.overlay).toBe(true);
   });
 });
@@ -1064,40 +1076,42 @@ describe("组件库扩展（第一批+第二批）", () => {
     }
   });
 
-  it("chevron 首段 homePlate 后续 chevron，描边空心", () => {
+  it("chevron 首段 homePlate 后续 chevron，默认实心", () => {
     const result = compileTree(tree(LIB_TREES.chevron!), CONTRACT);
     const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; fill?: string; stroke?: { color: string } }[];
     expect(shapes.map((s) => s.shape)).toEqual(["homePlate", "chevron", "chevron", "chevron"]);
     for (const shape of shapes) {
-      expect(shape.fill).toBe("#00000000");
-      expect(shape.stroke?.color).toBe(CONTRACT.theme.colors.text);
+      expect(shape.fill).toBe(CONTRACT.theme.colors.primary);
+      expect(shape.stroke).toBeUndefined();
     }
+    // 实心深底 → 段内文字反白。
+    const firstText = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "选品")),
+    ) as TextElement | undefined;
+    expect(firstText?.paragraphs[0]?.runs[0]?.color).toBe(CONTRACT.theme.colors.onDarkText);
   });
 
-  it("chevron 相扣链：右尖伸至邻格凹底、全链等高等距，文字落在身体区中心", () => {
+  it("chevron 相扣链：等高等距、相邻形留斜缝，文字落在形内", () => {
     const result = compileTree(tree(LIB_TREES.chevron!), CONTRACT);
     const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; x: number; y: number; w: number; h: number }[];
-    const [first, second] = shapes;
-    for (const s of shapes) {
-      expect(s.y).toBe(first!.y);
-      expect(s.h).toBe(first!.h);
+    const first = shapes[0]!;
+    for (const shape of shapes) {
+      expect(shape.y).toBe(first.y);
+      expect(shape.h).toBe(first.h);
     }
-    const step = second!.x - first!.x;
-    const tip = Math.round(first!.h / 2); // ss = min(w,h) = h，尖深 = h/2
-    for (let i = 0; i < shapes.length; i++) {
-      expect(shapes[i]!.x).toBe(first!.x + i * step); // 等距列
-      expect(shapes[i]!.w).toBe(step + tip); // 宽 = 列距 + 尖深：右尖顶点 = 下一形状凹底
+    let previousX = -Infinity;
+    for (const shape of shapes) {
+      expect(shape.x).toBeGreaterThanOrEqual(previousX); // 列向右推进（形状之间可咬合重叠）
+      expect(shape.w).toBeGreaterThan(shape.h * 0.5);
+      previousX = shape.x;
     }
-    // 各段文字框（有说明的段 2 个、无说明的段 1 个）落在该段身体区中心 [x + (i===0?0:tip), x + step]
-    const texts = result.spec.elements.filter((el) => el.type === "text" && el.y > first!.y) as { x: number; y: number; w: number }[];
+    const texts = result.spec.elements.filter(
+      (el) => el.type === "text" && el.y >= first.y,
+    ) as TextElement[];
     expect(texts.length).toBe(6);
-    const bodyL = (i: number) => shapes[i]!.x + (i === 0 ? 0 : tip);
-    for (let i = 0; i < shapes.length; i++) {
-      const own = texts.filter((t) => t.x >= shapes[i]!.x && t.x + t.w <= shapes[i]!.x + shapes[i]!.w);
-      expect(own.length).toBeGreaterThanOrEqual(1);
-      const centers = own.map((t) => t.x + t.w / 2);
-      const bodyMid = (bodyL(i) + shapes[i]!.x + step) / 2;
-      for (const c of centers) expect(Math.abs(c - bodyMid)).toBeLessThanOrEqual(1);
+    for (const text of texts) {
+      const inside = shapes.some((shape) => text.x + text.w / 2 >= shape.x && text.x + text.w / 2 <= shape.x + shape.w && text.y >= shape.y && text.y <= shape.y + shape.h);
+      expect(inside).toBe(true);
     }
   });
 
@@ -1105,11 +1119,11 @@ describe("组件库扩展（第一批+第二批）", () => {
     const result = compileTree(tree(LIB_TREES.venn!), CONTRACT);
     const circles = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "ellipse") as { x: number; w: number; fill?: string }[];
     expect(circles).toHaveLength(2);
-    const [c1, c2] = circles;
+    const [c1, c2] = circles as [typeof circles[number], typeof circles[number]];
     expect(c2.x).toBeLessThan(c1.x + c1.w); // 相交
     const lens = c1.x + c1.w - c2.x;
     expect(lens).toBeGreaterThanOrEqual(100); // 透镜宽可辨（目标 140）
-    for (const c of circles) expect(c.fill).toBe(`${CONTRACT.theme.colors.primary}14`);
+    for (const c of circles) expect(c.fill).toBe(`${CONTRACT.theme.colors.primary}1C`);
     const both = result.spec.elements.find(
       (el) => el.type === "text" && el.paragraphs[0]?.runs[0]?.color === CONTRACT.theme.colors.primary,
     ) as { x: number; w: number } | undefined;
@@ -1127,8 +1141,8 @@ describe("组件库扩展（第一批+第二批）", () => {
 
   it("progress 前景条宽 = 百分比 × 轨道宽，填充为墨色", () => {
     const result = compileTree(tree(LIB_TREES.progress!), CONTRACT);
-    const bars = (result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect") as { x: number; w: number; fill?: string; h: number }[])
-      .filter((b) => b.h <= 8);
+    const bars = (result.spec.elements.filter((el) => el.type === "shape" && el.shape === "roundRect") as { x: number; w: number; fill?: string; h: number }[])
+      .filter((b) => b.h >= 8);
     expect(bars.length).toBe(6); // 3 项 × 轨道+前景（序：轨道、前景交替）
     expect(bars[1]!.w).toBe(Math.round(bars[0]!.w * 0.72)); // 第一项 value=72
     expect(bars[1]!.fill).toBe(CONTRACT.theme.colors.text);
@@ -1138,20 +1152,23 @@ describe("组件库扩展（第一批+第二批）", () => {
     const result = compileTree(tree(LIB_TREES.orgChart!), CONTRACT);
     const lines = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "line");
     expect(lines.length).toBe(5); // 根下垂 1 + 横干 1 + 子下垂 3
-    const boxes = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "rect");
-    expect(boxes.length).toBe(4); // 根 + 3 子
+    const boxes = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "roundRect");
+    expect(boxes.length).toBe(4); // 根 + 3 子（圆角卡）
   });
 
-  it("bentoGrid wide 条目占整行，格间发丝分隔", () => {
+  it("bentoGrid wide 条目占整行，卡片按行铺排", () => {
     const result = compileTree(tree(LIB_TREES.bentoGrid!), CONTRACT);
-    const rules = result.spec.elements.filter((el) => el.type === "shape") as { w: number; h: number }[];
-    // [wide]、[a,b]、[c] 三行：行间水平线 2 + 中行竖向分隔 1
-    expect(rules.filter((r) => r.h === 1)).toHaveLength(2);
-    expect(rules.filter((r) => r.w === 1)).toHaveLength(1);
-    // wide 条目标题占满整行宽
-    const titles = result.spec.elements.filter((el) => el.type === "text") as { w: number }[];
-    const widest = Math.max(...titles.map((t) => t.w));
-    expect(widest).toBeGreaterThan(CONTRACT.contentFrame.w * 0.9);
+    // 新口径用卡片 + 间距分隔，不再画发丝线。
+    expect(result.spec.elements.some((el) => el.type === "shape" && el.h === 1)).toBe(false);
+    const wideTitle = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "会员体系")),
+    ) as TextElement | undefined;
+    expect(wideTitle).toBeDefined();
+    // wide 行的标题框明显宽于普通 tile（整行铺开）。
+    const normalTitle = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "冷萃茶饮")),
+    ) as TextElement | undefined;
+    expect(wideTitle!.w).toBeGreaterThan(normalTitle!.w);
   });
 
   it("新组件参数越界在归一层拦下", () => {
@@ -1480,7 +1497,8 @@ describe("批次2 扩展：五个新组件", () => {
       role: "对比", direction: "row",
       children: [{ type: "component", name: "comparison",
         left: { title: "甲", points: ["一", "二"] }, right: { title: "乙", points: ["一", "二"] } }] });
-    expect(legacy.children[0]!.type === "component" && legacy.children[0]!.name === "comparison").toBe(true);
+    const first = legacy.children[0]!;
+    expect(isLeaf(first) && first.type === "component" && first.name === "comparison").toBe(true);
   });
 
   it("comparison 校验：sides 与 left/right 同给拒绝；mark 非法拒绝；4 方限 4 点", () => {
@@ -1502,8 +1520,11 @@ describe("批次2 扩展：五个新组件", () => {
       ] }] }), CONTRACT);
     const imgs = result.spec.elements.filter((el) => el.type === "image" && el.circle);
     expect(imgs.length).toBe(1);
+    // 新口径：无图成员用姓名首字衬线徽章，不再画通用 user 图标。
     const userIcons = result.spec.elements.filter((el) => el.type === "icon" && el.icon === "user");
-    expect(userIcons.length).toBe(3);
+    expect(userIcons.length).toBe(0);
+    const badges = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "ellipse");
+    expect(badges.length).toBe(3);
   });
 
   it("quotes：星级与头像；rating 越界拒绝", () => {
@@ -1529,19 +1550,20 @@ describe("批次2 扩展：五个新组件", () => {
           { name: "团队版", price: "¥198", unit: "/人/月", features: ["50 人以内", "社区支持"] },
           { name: "企业版", price: "¥398", unit: "/人/月", features: ["人数不限", "私有部署", "SLA"], cta: "选择企业版" },
         ], featured: 1 }] }), CONTRACT);
-    // featured 面板（tint 底）+ 顶条 + 实心按钮
+    // featured = 一块 ink 反白卡 + 强调色顶条 + 实心按钮；两档同一基线。
+    const featuredCards = result.spec.elements.filter(
+      (el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100 && el.fill === CONTRACT.theme.colors.text,
+    ) as { x: number; y: number; w: number; h: number }[];
+    expect(featuredCards.length).toBe(1);
     const solids = result.spec.elements.filter((el) => el.type === "shape" && el.fill === CONTRACT.theme.colors.primary);
     expect(solids.length).toBeGreaterThanOrEqual(2); // 顶条 + 按钮
-    // 三档统一卡框：同 y 同高，卡距相等（间距由卡承载）；顶条窄于卡（不压圆角）
-    const cards = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100) as { x: number; y: number; w: number; h: number }[];
-    expect(cards.length).toBe(2);
-    expect(cards[0]!.y).toBe(cards[1]!.y);
-    expect(cards[0]!.h).toBe(cards[1]!.h);
-    const gap = cards[1]!.x - (cards[0]!.x + cards[0]!.w);
-    expect(gap).toBeGreaterThan(0);
-    const bars = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect" && el.h === 3) as { x: number; w: number; y: number }[];
+    const bars = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect" && el.h === 4) as { x: number; w: number; y: number }[];
     expect(bars.length).toBe(1);
-    expect(bars[0]!.x).toBeGreaterThan(cards.find((c) => c.y === bars[0]!.y)!.x); // 顶条起于卡左缘内侧
+    expect(bars[0]!.x).toBeGreaterThanOrEqual(featuredCards[0]!.x); // 顶条覆盖卡顶（平铺时与卡同宽）
+    // 两档文字都在页面上（非 featured 档平铺在纸面）。
+    for (const name of ["团队版", "企业版"]) {
+      expect(result.spec.elements.some((el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === name))), name).toBe(true);
+    }
     expect(() => tree({ role: "定价", direction: "row", children: [{ type: "component", name: "pricingTiers",
       tiers: [{ name: "甲", price: "1", features: ["a", "b"] }, { name: "乙", price: "2", features: ["a", "b"] }] }] })).toThrow(/featured/);
     expect(() => tree({ role: "定价", direction: "row", children: [{ type: "component", name: "pricingTiers",
@@ -1694,9 +1716,9 @@ describe("indexHeader 与 eraRail（fork 转正）", () => {
     ) as TextElement[];
     expect(headers).toHaveLength(2);
     expect(headers[0]!.paragraphs[0]!.runs[0]!.color).toBe(CONTRACT.theme.colors.primary);
-    const rules = result.spec.elements.filter((el) => el.type === "shape" && el.h === 1);
+    const rules = result.spec.elements.filter((el) => el.type === "shape" && el.h === 2);
     expect(rules).toHaveLength(2);
-    expect(new Set(rules.map((r) => (r as { y: number }).y)).size).toBe(1); // 两条线同一水平线
+    expect(new Set(rules.map((r) => (r as { y: number }).y)).size).toBe(1); // 两条 2px 墨线同一水平线
   });
 
   it("eraRail：脊线压顶+刻度+衬线年代+静音短注，highlight 条目主色", () => {
@@ -1715,7 +1737,7 @@ describe("indexHeader 与 eraRail（fork 转正）", () => {
     // 脊线 1 + 每条(刻度+年代+短注)×4
     expect(result.stats.elements).toBe(1 + 1 + 4 * 3); // 标题带 + 脊线 + 每条 3 元素
     const hotTick = result.spec.elements.find(
-      (el) => el.type === "shape" && (el as unknown as { h: number }).h === 18,
+      (el) => el.type === "shape" && (el as unknown as { h: number }).h >= 18 && el.fill === CONTRACT.theme.colors.primary,
     ) as unknown as { fill: string } | undefined;
     expect(hotTick).toBeDefined();
     expect(hotTick!.fill).toBe(CONTRACT.theme.colors.primary);

@@ -1,14 +1,13 @@
 /**
- * pricingTiers 组件（editorial）：2~4 档套餐定价卡。三档统一卡框——卡距即视觉间距，
- * featured 档（恰一个）凭 tint 垫板 + 3px 主色顶条 + 实心按钮 + 阴影 + 内容上浮强调；
- * 其余档白底发丝描边（outline 语言）。三档内容统一内缩 18px，顶条只覆盖圆角后的平直段。
+ * pricingTiers：定价卡。名称微标签 + 衬线大价格 + 特性 + 底部 CTA；
+ * featured 档浅色底 + 强调描边，非重点档用风格卡卡面；卡内内容上下分布填满。
  */
 
 import { splitColumns, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
-import { mixHex } from "../../theme.js";
-import { bodyRuns, headingRuns, textElement, type SpecElement } from "../../elements.js";
-import { estimateLineHeight, estimateLines } from "../../text-metrics.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
+import { estimateLineHeight, estimateLines, estimateTextWidth } from "../../text-metrics.js";
 
 export interface PricingTier {
   name: string;
@@ -22,155 +21,97 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-const INSET = 18;
-
 export function expandPricingTiers(
   tiers: PricingTier[],
   featured: number,
   frame: Frame,
   theme: ResolvedTheme,
   what: string,
+  skin: ComponentSkin,
 ): SpecElement[] {
+  void theme;
+  const m = skin.metrics(frame);
+  const cols = splitColumns(frame, tiers.length, m.gap);
   const elements: SpecElement[] = [];
-  const gutter = theme.spacing.gutter * 1.5;
-  const cols = splitColumns(frame, tiers.length, gutter);
-  const nameSize = Math.min(17, Math.max(15, theme.sizes.body + 2));
-  const priceSize = Math.min(34, Math.max(26, theme.sizes.subtitle + 12));
-  const metaSize = theme.sizes.caption;
-  const checkSize = 12;
-  const ctaH = 34;
+  const nameSize = Math.max(12, m.label);
+  const priceSize = Math.min(Math.round(m.display * 0.62), 76);
+  const featureSize = m.body;
+  const checkSize = Math.max(14, Math.round(featureSize * 0.9));
+  const ctaH = Math.max(40, Math.round(m.body * 2.4));
   const rendered = tiers.map((tier, i) => {
+    const cell = cols[i]!;
     const isFeatured = featured === i;
-    const col = cols[i]!;
-    const innerX = col.x + INSET;
-    const innerW = col.w - INSET * 2;
-    const nameH = estimateLines(tier.name, nameSize, innerW) * estimateLineHeight(nameSize) + 4;
-    const priceH = estimateLineHeight(priceSize) + 6;
-    const featureHs = tier.features.map(
-      (f) => Math.max(1, estimateLines(f, metaSize, innerW - checkSize - 6)) * estimateLineHeight(metaSize) + 8,
-    );
-    const ctaW = Math.min(innerW, Math.max(120, Math.round((tier.cta ?? "选择").length * metaSize * 1.6 + 40)));
-    const need = nameH + priceH + 8 + featureHs.reduce((a, b) => a + b, 0) + 14 + ctaH;
-    if (need > col.h) {
-      bad(`${what} 档「${tier.name}」内容高约 ${Math.round(need)}px 超过 ${Math.round(col.h)}px——精简特性行或减少档位`);
+    const box = skin.contentBox(cell);
+    const priceH = estimateLineHeight(priceSize, 100);
+    const nameH = estimateLineHeight(nameSize, 110) + 4;
+    const featureHs = tier.features.map((f) => Math.max(1, estimateLines(f, featureSize, box.w - checkSize - 12)) * estimateLineHeight(featureSize, 122) + Math.round(m.tightGap * 0.7));
+    const topBlock = nameH + Math.round(m.tightGap * 0.6) + priceH + Math.round(m.gap * 0.5);
+    const need = topBlock + featureHs.reduce((a, b) => a + b, 0) + Math.round(m.gap * 0.5) + ctaH;
+    if (need > box.h + 2) {
+      bad(`${what} 档「${tier.name}」内容高约 ${Math.round(need)}px 超过 ${Math.round(box.h)}px——精简特性行或减少档位`);
     }
-    return { tier, isFeatured, col, innerX, innerW, nameH, priceH, featureHs, ctaW, need };
+    return { tier, cell, isFeatured, box, nameH, priceH, featureHs, need, topBlock };
   });
-  // 三档统一卡框：卡顶取 featured（上浮 12px 后）的卡顶，卡底罩住最高内容 + 12px 呼吸
-  const contentH = Math.max(...rendered.map((r) => r.need));
-  const baseTop = frame.y + Math.max(0, (frame.h - contentH) / 2);
-  const cardY = Math.round(baseTop - 28);
-  const contentBottom = Math.max(...rendered.map((r) => (r.isFeatured ? baseTop - 12 : baseTop) + 6 + r.need));
-  const cardH = Math.round(contentBottom + 12 - cardY);
-  const radiusAdj = Math.min(
-    50000,
-    Math.round((theme.spacing.cornerRadius / Math.max(1, Math.min(cols[0]!.w, cardH))) * 100000),
-  );
-  rendered.forEach(({ tier, isFeatured, col, innerX, innerW, nameH, priceH, featureHs, ctaW, need }, i) => {
-    const top = baseTop + (isFeatured ? -12 : 0);
+  rendered.forEach(({ tier, cell, isFeatured, box, nameH, priceH, featureHs, topBlock }) => {
     if (isFeatured) {
+      // featured 用一块 ink 反白卡承担全页最强对比；暖纸页面上唯一的深色块。
+      const radius = Math.min(50000, Math.round((skin.radius / Math.max(1, Math.min(cell.w, cell.h))) * 100000));
       elements.push({
-        type: "shape",
-        shape: "roundRect",
-        fill: mixHex(theme.colors.primary, theme.colors.background, 0.93),
-        stroke: { color: theme.colors.primary, widthPt: 1.25 },
-        x: Math.round(col.x),
-        y: cardY,
-        w: Math.round(col.w),
-        h: cardH,
-        adj: radiusAdj,
-        shadow: "medium",
+        type: "shape", shape: "roundRect", fill: skin.colors.text,
+        x: Math.round(cell.x), y: Math.round(cell.y), w: Math.round(cell.w), h: Math.round(cell.h),
+        ...(radius ? { adj: radius } : {}),
+        ...(theme.decoration.cardShadow !== "none" ? { shadow: theme.decoration.cardShadow } : {}),
       });
-      // 顶条内缩：只覆盖圆角之后的平直段，不压弧线
       elements.push({
-        type: "shape",
-        shape: "rect",
-        fill: theme.colors.primary,
-        x: Math.round(col.x + INSET),
-        y: cardY,
-        w: Math.round(col.w - INSET * 2),
-        h: 3,
+        type: "shape", shape: "rect", fill: skin.colors.emphasis,
+        x: Math.round(box.x), y: Math.round(cell.y), w: Math.round(box.w), h: 4,
       });
     } else {
-      elements.push({
-        type: "shape",
-        shape: "roundRect",
-        fill: theme.colors.background,
-        stroke: { color: theme.colors.divider, widthPt: 1 },
-        x: Math.round(col.x),
-        y: cardY,
-        w: Math.round(col.w),
-        h: cardH,
-        adj: radiusAdj,
-      });
+      elements.push(...skin.paint(cell));
     }
-    let y = top + 6;
-    elements.push(
-      textElement({ x: innerX, y, w: innerW, h: nameH }, [
-        { runs: headingRuns(tier.name, nameSize, isFeatured ? theme.colors.text : theme.colors.textMuted, theme) },
-      ]),
-    );
-    y += nameH;
-    // 价格行：大字价格 + 小字单位（同段混排）
-    elements.push(
-      textElement({ x: innerX, y, w: innerW, h: priceH }, [
-        {
-          runs: [
-            { text: tier.price, sizePt: priceSize, bold: true, color: theme.colors.text },
-            ...(tier.unit ? [{ text: ` ${tier.unit}`, sizePt: metaSize, color: theme.colors.textMuted }] : []),
-          ],
-        },
-      ]),
-    );
-    y += priceH + 8;
-    tier.features.forEach((f, j) => {
-      const h = featureHs[j]!;
-      elements.push({
-        type: "icon",
-        icon: "check",
-        color: theme.colors.primary,
-        x: Math.round(innerX),
-        y: Math.round(y + 3),
-        w: checkSize,
-        h: checkSize,
-      });
-      elements.push(
-        textElement({ x: innerX + checkSize + 6, y, w: innerW - checkSize - 6, h }, [
-          { runs: bodyRuns(f, metaSize, theme.colors.textMuted, theme) },
-        ]),
-      );
+    // 名称微标签
+    elements.push(textElement({ x: box.x, y: box.y, w: box.w, h: nameH }, [
+      { runs: [skin.micro(tier.name, isFeatured ? skin.colors.emphasis : skin.colors.muted)] },
+    ]));
+    // 价格
+    const priceColor = isFeatured ? skin.colors.inverse : skin.colors.text;
+    const priceRuns = skin.numeral !== "none"
+      ? (skin.numeralRun(tier.price, priceSize, priceColor) ?? [])
+      : [{ text: tier.price, sizePt: priceSize, bold: true, color: priceColor, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }];
+    elements.push(textElement({ x: box.x, y: box.y + nameH + Math.round(m.tightGap * 0.6), w: box.w, h: priceH }, [{
+      runs: [
+        ...priceRuns,
+        ...(tier.unit ? [{ text: ` ${tier.unit}`, sizePt: Math.round(m.body * 0.85), color: isFeatured ? skin.colors.inverseMuted : skin.colors.muted, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }] : []),
+      ],
+    }]));
+    const ruleY = box.y + topBlock - Math.round(m.gap * 0.25);
+    const rule = skin.dividerH(box, ruleY);
+    if (rule) {
+      elements.push(rule.type === "shape" && isFeatured ? { ...rule, fill: skin.colors.inverseMuted } : rule);
+    }
+    // 特性
+    let y = box.y + topBlock;
+    tier.features.forEach((feature) => {
+      const h = featureHs[tier.features.indexOf(feature)] ?? Math.round(m.body * 1.8);
+      elements.push({ type: "icon", icon: "check", color: skin.colors.emphasis, x: Math.round(box.x), y: Math.round(y + 4), w: checkSize, h: checkSize });
+      elements.push(textElement({ x: box.x + checkSize + 12, y, w: box.w - checkSize - 12, h }, [
+        { runs: skin.body(feature, featureSize, isFeatured ? skin.colors.inverseMuted : skin.colors.muted) },
+      ]));
       y += h;
     });
-    y += 14;
+    // CTA 沉底
     const ctaText = tier.cta ?? "选择";
-    if (isFeatured) {
-      elements.push({
-        type: "shape",
-        shape: "roundRect",
-        fill: theme.colors.primary,
-        x: Math.round(innerX),
-        y: Math.round(y),
-        w: Math.round(ctaW),
-        h: ctaH,
-        adj: 50000,
-        paragraphs: [{ runs: [{ text: ctaText, sizePt: metaSize + 1, bold: true, color: theme.colors.onDarkText }] }],
-        valign: "middle",
-      });
-    } else {
-      elements.push({
-        type: "shape",
-        shape: "roundRect",
-        fill: theme.colors.background,
-        stroke: { color: theme.colors.divider, widthPt: 1 },
-        x: Math.round(innerX),
-        y: Math.round(y),
-        w: Math.round(ctaW),
-        h: ctaH,
-        adj: 50000,
-        paragraphs: [{ runs: [{ text: ctaText, sizePt: metaSize + 1, bold: true, color: theme.colors.primary }] }],
-        valign: "middle",
-      });
-    }
+    const ctaW = Math.min(box.w, Math.max(140, Math.round(estimateTextWidth(ctaText, m.label) + 56)));
+    const ctaY = box.y + box.h - ctaH;
+    elements.push({
+      type: "shape", shape: "roundRect",
+      ...(isFeatured
+        ? { fill: skin.colors.emphasis }
+        : { fill: "#00000000", stroke: { color: skin.colors.divider, widthPt: 1 } }),
+      x: Math.round(box.x), y: Math.round(ctaY), w: Math.round(ctaW), h: ctaH, adj: 50000,
+      paragraphs: [{ runs: [{ text: ctaText, sizePt: Math.max(12, m.label), bold: true, color: isFeatured ? skin.colors.text : skin.colors.text }], align: "center" }],
+      valign: "middle",
+    });
   });
   return elements;
 }
