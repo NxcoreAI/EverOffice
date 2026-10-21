@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
+import type { MoveRoomDocumentInput } from "@nxcore/agent-contract";
 import { Type } from "@sinclair/typebox";
 import { agentDocumentMarkdown } from "./agent-markdown.js";
 import { documentBodyContent } from "./content-model.js";
@@ -6,6 +7,10 @@ import { DocumentServiceError, type DocumentService } from "./service.js";
 import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
 import type { TaskFolderService } from "./task-folders.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
+const MoveRoomBody = Type.Object({
+  fromRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+  roomId: Type.String({ minLength: 1, maxLength: 128 }),
+});
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
 const BlockReference = Type.Object({
   roomId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -301,6 +306,59 @@ export function documentRoutes(
       async (request, reply) => {
         await service.emptyTrash(request.query.roomId);
         return reply.code(204).send();
+      },
+    );
+
+    // 产物移动到其它 Room：归属切换 + 两房清单事件 + 知识侧索引/记忆投影同步。
+    app.post(
+      "/v1/documents/:id/move",
+      {
+        schema: {
+          tags: ["documents"],
+          params: IdParams,
+          body: MoveRoomBody,
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.moveToRoom(request.params.id, request.body as MoveRoomDocumentInput);
+        } catch (error) {
+          if (error instanceof DocumentServiceError) {
+            return reply.code(error.statusCode).send(errorPayload(error));
+          }
+          throw error;
+        }
+      },
+    );
+
+    // 多选批量移动：同源房的一批文档迁入同一目标 Room。
+    app.post(
+      "/v1/documents/move",
+      {
+        schema: {
+          tags: ["documents"],
+          body: Type.Object({
+            documentIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+              minItems: 1,
+              maxItems: 100,
+            }),
+            fromRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.moveManyToRoom(request.body.documentIds, {
+            fromRoomId: request.body.fromRoomId,
+            roomId: request.body.roomId,
+          });
+        } catch (error) {
+          if (error instanceof DocumentServiceError) {
+            return reply.code(error.statusCode).send(errorPayload(error));
+          }
+          throw error;
+        }
       },
     );
 

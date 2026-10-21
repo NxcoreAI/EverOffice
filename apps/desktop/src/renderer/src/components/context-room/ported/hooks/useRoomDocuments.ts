@@ -1,4 +1,4 @@
-import type { DocumentEvent, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
+import type { DocumentEvent, DocumentMovedPayload, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n/i18next'
 
@@ -36,6 +36,7 @@ const DOCUMENT_STATE_EVENT_TYPES = new Set<DocumentEvent['type']>([
   'document.changed',
   'document.operation.changed',
   'document.deleted',
+  'document.moved',
 ])
 
 export function useRoomDocuments(roomIds: string[]) {
@@ -104,6 +105,30 @@ export function useRoomDocuments(roomIds: string[]) {
     if (!documents) return
     const unsubscribeEvents = documents.onEvent(({ event }) => {
       if (!DOCUMENT_STATE_EVENT_TYPES.has(event.type)) return
+
+      // 跨 Room 移动：事件发往源房，先摘除再拉一次目标房基线（目标房另有
+      // document.changed 增量，重复合并按 id 去重，幂等）。
+      if (event.type === 'document.moved') {
+        const payload = event.payload && typeof event.payload === 'object'
+          ? event.payload as Partial<DocumentMovedPayload>
+          : null
+        setDocumentsByRoom((current) => ({
+          ...current,
+          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+        }))
+        setTrashedDocumentsByRoom((current) => ({
+          ...current,
+          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+        }))
+        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
+          ? { ...current, [event.roomId]: null }
+          : current)
+        invalidateDocumentBlockReferences({ roomId: event.roomId, documentId: event.documentId })
+        if (typeof payload?.toRoomId === 'string' && payload.toRoomId) {
+          void refreshRoom(payload.toRoomId).catch(() => undefined)
+        }
+        return
+      }
 
       const document = documentFromEvent(event)
       if (document) {
