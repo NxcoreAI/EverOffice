@@ -363,6 +363,8 @@ export function agentRoutes(
           params: SessionParams,
           body: Type.Object({
             prompt: Type.String({ maxLength: 20_000 }),
+            /** 用户可见文案（人话）：落库消息/会话标题用它，prompt 仍原样交给 runtime。 */
+            displayPrompt: Type.Optional(Type.String({ maxLength: 20_000 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             targetAgentId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
             invocationMode: Type.Optional(Type.Union([
