@@ -1,6 +1,7 @@
 /**
  * 正文配图两等待阶段的编排（镜像 slides-style-stage.ts 的三件套模式）：
- * confirm（等用户决定是否生图）→ 生成 → review（等用户过目/逐张重生成）→ 落页。
+ * confirm（等用户决定是否生图）→ 生成 → review（等用户过目/逐张重生成；accept 时
+ * 仍有图在生成则转 settling 等图就绪，超时放弃剩余）→ 落页。
  * 每个等待点 = onUpdate 广播卡片快照 + 工具返回 status/message + 会话落库可重入
  * （无参重调只重广播，不烧配图额度）。会话以 draftDocumentId 寻址，跨网关重启存续。
  */
@@ -10,6 +11,7 @@ import {
   collectPendingImagePages,
   composePageImagePrompt,
   generateSlidesPageImages,
+  imageStyleContext,
   PAGE_IMAGE_RETRY_DELAYS_MS,
 } from "./slides-page-images.js";
 import type {
@@ -18,14 +20,24 @@ import type {
   SlidesPageImagePage,
 } from "./slides-page-images-store.js";
 import type { SlidesPageImageRunner } from "./slides-page-images-runner.js";
+import type { PrewarmReconciliation } from "./slides-page-images-prewarm.js";
+import { applyPrewarmReadyToPlan } from "./slides-page-images-prewarm.js";
 
 export interface SlidesPageImagesStageDeps {
   sessions: SlidesPageImageSessionStore;
   images: Pick<SlidesStyleImageGenerator, "generateImage">;
+  /** 按内容哈希读素材字节；生成图落页前做确定性 QC。 */
+  readMaterialBytes?: (hash: string) => Promise<{ buffer: Buffer; mime: string } | null>;
+  /** 可选 VLM 切题性质检。 */
+  reviewImage?: (image: { buffer: Buffer; mime: string }, pagePrompt: string, styleContext?: string) => Promise<import("./slides-image-vlm-qc.js").SlideImageVlmVerdict>;
   /** 后台逐张生成循环；提供时 generate 决策立即返回、生成后台推进。 */
   runner?: SlidesPageImageRunner | null;
   onUpdate?: (update: { content: string; details: Record<string, unknown> }) => void;
   signal?: AbortSignal;
+  /** 编排预热对账结果（openPageImagesConfirm 专用：就绪项进会话亮图，在途项交 runner 等待）。 */
+  preseed?: PrewarmReconciliation;
+  /** 测试注入：等待在途页图的后台 settle 超时。 */
+  settlingTimeoutMs?: number;
 }
 
 export interface SlidesPageImagesStageResult {
@@ -36,7 +48,7 @@ export interface SlidesPageImagesStageResult {
 /** 阶段编排结果：waiting=返回等待用户；build=调用方带 plan 继续落页；failed=返回失败。 */
 export type PageImagesStageOutcome =
   | { kind: "waiting"; result: SlidesPageImagesStageResult }
-  | { kind: "build"; plan: Record<string, unknown>; pageImagesSessionId: string }
+  | { kind: "build"; plan: Record<string, unknown>; pageImagesSessionId: string; message?: string }
   | { kind: "failed"; result: SlidesPageImagesStageResult };
 
 type Update = { content: string; details: Record<string, unknown> };
@@ -59,7 +71,8 @@ export function pageImagesConfirmPayload(session: SlidesPageImageSessionData): R
     documentId: session.draftDocumentId,
     pageImagesSessionId: session.id,
     generation: session.generation,
-    pages: session.pages.map((page) => ({ title: page.title, imagePrompt: page.imagePrompt })),
+    pages: session.pages.map((page) => ({ pageIndex: page.pageIndex, title: page.title, imagePrompt: page.imagePrompt })),
+    updatedAt: Date.now(),
   };
 }
 
@@ -74,6 +87,7 @@ export function pageImagesReviewPayload(session: SlidesPageImageSessionData): Re
     pageImagesSessionId: session.id,
     generation: session.generation,
     pages: session.pages.map((page) => ({
+      pageIndex: page.pageIndex,
       title: page.title,
       imagePrompt: page.imagePrompt,
       ...(page.contentHash ? { url: `everroom-material://${page.contentHash}` } : {}),
@@ -110,13 +124,23 @@ export function openPageImagesConfirm(
       result: failed("slides_page_images_empty", "方案里没有待配图页，无需确认配图。"),
     };
   }
-  const pages: SlidesPageImagePage[] = pending.map((item) => ({
-    pageIndex: item.pageIndex,
-    title: item.title,
-    imagePrompt: item.imagePrompt,
-    contentHash: null,
-  }));
+  const pages: SlidesPageImagePage[] = pending.map((item) => {
+    const prewarmed = deps.preseed?.ready.get(item.pageIndex);
+    return {
+      pageIndex: item.pageIndex,
+      title: item.title,
+      imagePrompt: prewarmed ? prewarmed.imagePrompt : item.imagePrompt,
+      contentHash: prewarmed ? prewarmed.contentHash : null,
+    };
+  });
   const session = deps.sessions.upsertForDraft({ ...input, pages });
+  if (deps.preseed && deps.preseed.ready.size > 0) {
+    // 预热就绪项注入会话方案（镜像 patchPage 格式）：过目卡直接亮真图、可打回。
+    const seededPlan = structuredClone(session.plan);
+    applyPrewarmReadyToPlan(seededPlan, deps.preseed.ready);
+    deps.sessions.patch(session.id, { plan: seededPlan });
+    session.plan = seededPlan;
+  }
   if (deps.runner) {
     deps.sessions.patch(session.id, { stage: "review" });
     const live: SlidesPageImageSessionData = { ...session, stage: "review" };
@@ -188,6 +212,26 @@ export function reshowPageImages(
       })),
     };
   }
+  // 网关重启后 runner 已不在：未完成页标 failed，不然重展示仍是永远「生成中…」。
+  const runnerAlive = deps.runner?.isRunning(session.id) === true;
+  const unfinished = runnerAlive ? [] : session.pages.filter((page) => !page.contentHash && !page.failed);
+  if (unfinished.length > 0) {
+    const unfinishedIndexes = new Set(unfinished.map((page) => page.pageIndex));
+    const pages = session.pages.map((page) => unfinishedIndexes.has(page.pageIndex) ? { ...page, failed: true } : page);
+    deps.sessions.patch(session.id, { pages });
+    broadcast(deps, {
+      ...pageImagesReviewPayload({ ...session, pages }),
+      warnings: [`${String(unfinished.length)} 张配图未完成（生成已中断），已标记失败；可重新生成或直接落页`],
+    });
+    return {
+      kind: "waiting",
+      result: waitingResult(JSON.stringify({
+        status: "page_images_review",
+        documentId: session.draftDocumentId,
+        message: `配图过目卡已重新展示：${String(unfinished.length)} 张未完成已标记失败。告诉用户：可重新生成失败张，或直接确认落页（未完成页退化为图形版式）。`,
+      })),
+    };
+  }
   broadcast(deps, pageImagesReviewPayload(session));
   return {
     kind: "waiting",
@@ -227,19 +271,36 @@ export async function decidePageImages(
 
   if (input.decision === "accept") {
     if (session.stage !== "review") return { kind: "failed", result: stageConflict(session) };
-    // 确认落页：未生成的张数自动放弃（相应页退化图形版式）。
+    // 不再沉默等图（旧行为：转 settling 最多等 16 分钟）：立即按当前状态落页。
+    // 在途生成直接 abort，未完成页标 failed 后按无图版式退化——用户点完按钮马上看到结果。
     deps.runner?.abort(session.id);
+    const latest = findSession(deps, input.roomId, input.draftDocumentId) ?? session;
+    const unfinished = latest.pages.filter((page) => !page.contentHash && !page.failed);
+    const pages = unfinished.length > 0
+      ? latest.pages.map((page) => (page.contentHash || page.failed ? page : { ...page, failed: true }))
+      : latest.pages;
+    if (unfinished.length > 0) {
+      deps.sessions.patch(latest.id, { pages });
+      broadcast(deps, pageImagesReviewPayload({ ...latest, pages }));
+    }
     // 打回页剥掉注入的 AI 配图（缺口页的 materials 只会来自注入），落页即退化图形版式。
-    const plan = structuredClone(session.plan);
+    const plan = structuredClone(latest.plan);
     const planPages = Array.isArray(plan.pages) ? plan.pages : [];
-    for (const page of session.pages) {
+    for (const page of pages) {
       if (!page.rejected) continue;
       const target = planPages[page.pageIndex];
       if (target && typeof target === "object" && !Array.isArray(target)) {
         delete (target as Record<string, unknown>).materials;
       }
     }
-    return { kind: "build", plan, pageImagesSessionId: session.id };
+    return {
+      kind: "build",
+      plan,
+      pageImagesSessionId: latest.id,
+      ...(unfinished.length > 0
+        ? { message: `配图确认时仍有 ${String(unfinished.length)} 张未完成（已中止后台生成），这些页按无图版式落页；可稍后重新生成配图再补。` }
+        : {}),
+    };
   }
 
   if (session.stage !== "confirm" && session.stage !== "review") return { kind: "failed", result: stageConflict(session) };
@@ -267,6 +328,8 @@ export async function decidePageImages(
   }
   const summary = await generateSlidesPageImages(session.plan, {
     images: deps.images,
+    ...(deps.readMaterialBytes ? { readMaterialBytes: deps.readMaterialBytes } : {}),
+    ...(deps.reviewImage ? { reviewImage: deps.reviewImage } : {}),
     ...(session.stylePalette ? { stylePalette: session.stylePalette } : {}),
     ...(deps.signal ? { signal: deps.signal } : {}),
     ...(deps.onUpdate ? { onUpdate: deps.onUpdate } : {}),

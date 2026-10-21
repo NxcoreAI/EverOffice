@@ -9,7 +9,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { slidesPageImageSessions } from "../../infrastructure/database/schema.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 
-export type SlidesPageImageStage = "confirm" | "review" | "resolved";
+export type SlidesPageImageStage = "confirm" | "review" | "settling" | "resolved";
 
 export interface SlidesPageImagePage {
   pageIndex: number;

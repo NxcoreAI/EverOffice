@@ -6,11 +6,22 @@ export interface SubagentMcpBinding {
   excludeTools?: string[];
 }
 
+export interface SubagentModelPolicy {
+  /** 该子 Agent 的模型输出上限（缺省继承 background/主模型档）。 */
+  maxTokens?: number;
+  /** 该子 Agent 的上下文窗口口径（缺省继承 background/主模型档）。 */
+  contextWindow?: number;
+  /** 该子 Agent 的思考档位；审页这类「看+判」代理降到 low 可避免思考吃满输出预算。 */
+  reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+}
+
 export interface SubagentPolicy {
   allowedCallers: Array<"primary-agent" | "scheduler" | "internal-workflow">;
   maxConcurrency: number;
   timeoutMs: number;
   maxToolCalls: number;
+  /** 模型档位覆盖；缺省沿用 background/主模型档（见 runtime-manager.buildPiConfig）。 */
+  model?: SubagentModelPolicy;
 }
 
 export interface SubagentManifest {

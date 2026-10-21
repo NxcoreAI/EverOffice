@@ -1,3 +1,4 @@
+import { createCanvas } from "@napi-rs/canvas";
 import { describe, expect, it, vi } from "vitest";
 import {
   MAX_PAGE_IMAGES,
@@ -72,6 +73,25 @@ describe("generateSlidesPageImages", () => {
       { url: `everroom-material://${"b".repeat(64)}`, desc: "AI 生成配图：团队协作白板特写，暖光" },
     ]);
     expect(pages[3]?.materials).toBeUndefined();
+  });
+
+  it("生成图确定性 QC 未通过时该页不落图并计入 failed", async () => {
+    const canvas = createCanvas(800, 450);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f2f2f2";
+    ctx.fillRect(0, 0, 800, 450);
+    const buffer = canvas.toBuffer("image/png");
+    const solid = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const plan = planWith([{ title: "封面", imagePrompt: "纯色占位图" }]);
+    const summary = await generateSlidesPageImages(plan, {
+      images: fakeImages([{ ok: true, hash: "d".repeat(64) }]),
+      readMaterialBytes: async () => ({ buffer, mime: "image/png" }),
+    });
+    expect(summary.failed).toBe(1);
+    expect(summary.generated).toBe(0);
+    expect(summary.results[0]?.error).toContain("配图质检未通过");
+    expect((plan.pages as Array<Record<string, unknown>>)[0]?.materials).toBeUndefined();
+    expect(solid.byteLength).toBeGreaterThan(0);
   });
 
   it("已命中素材的页忽略 imagePrompt；无 imagePrompt 的页不动", async () => {
@@ -182,7 +202,8 @@ describe("generateSlidesPageImages", () => {
     expect(first.title).toBe("季度汇报");
     expect(first.totalPages).toBe(2);
     expect(first.doneCount).toBe(1);
-    expect(first.pages).toEqual([{ title: "封面" }, { title: "计划" }]);
+    expect(first.pages).toEqual([{ pageIndex: 0, title: "封面" }, { pageIndex: 2, title: "计划" }]);
+    expect(typeof first.updatedAt).toBe("number");
     expect(updates[1]!.details.doneCount).toBe(2);
   });
 });

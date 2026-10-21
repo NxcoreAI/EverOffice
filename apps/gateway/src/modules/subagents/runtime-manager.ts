@@ -15,6 +15,12 @@ export type SubagentResultValidator = (
   result: Record<string, unknown>,
 ) => void;
 
+/** 子 Agent 单条工具结果进入上下文的字符上限（JSON 感知截断）。 */
+const SUBAGENT_TOOL_RESULT_MAX_CHARS = 24_000;
+/** run 内轮次级裁剪的触发比例（占 contextWindow）与保留轮数。 */
+const SUBAGENT_CONTEXT_GUARD_TRIGGER_RATIO = 0.5;
+const SUBAGENT_CONTEXT_GUARD_KEEP_TURNS = 6;
+
 export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): PiAgentRuntimeTool {
   const root = `${resolve(revision.agentDirectory)}${sep}`;
   return {
@@ -242,6 +248,14 @@ export class SubagentRuntimeManager {
 
   private buildPiConfig(base: PiRuntimeConfig, revision: LoadedSubagentRevision): PiRuntimeConfig {
     const { memory: _memory, knowledge: _knowledge, mcp: _mcp, ...model } = base;
+    const overrides = revision.policy.model;
+    const contextWindow = overrides?.contextWindow ?? model.contextWindow;
+    // 子 Agent 上下文预算（2026-10 实测：planner 单条 room_context_get 171KB、
+    // builder 自身工具参数 49.6k token，均把 128k 窗口顶穿）：
+    // - 单条工具结果超 24k 字符按 JSON 感知规则截断；
+    // - run 内上下文估算过半窗口后，旧工具结果/参数替换为占位符（轮次级裁剪）。
+    // pi 的自动压缩只在整轮 run 结束后生效，子 Agent 一次 prompt 里几十个工具轮
+    // 等不到它，必须由 runtime 侧补一道。
     return {
       ...model,
       runtimeId: `pi:subagent:${revision.id}`,
@@ -251,6 +265,14 @@ export class SubagentRuntimeManager {
       builtinTools: [],
       includeBashTool: false,
       maxToolCallsPerRun: revision.policy.maxToolCalls,
+      maxToolResultChars: SUBAGENT_TOOL_RESULT_MAX_CHARS,
+      runContextGuard: {
+        triggerTokens: Math.max(8_000, Math.floor(contextWindow * SUBAGENT_CONTEXT_GUARD_TRIGGER_RATIO)),
+        keepRecentTurns: SUBAGENT_CONTEXT_GUARD_KEEP_TURNS,
+      },
+      ...(contextWindow !== model.contextWindow ? { contextWindow } : {}),
+      ...(overrides?.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
+      ...(overrides?.reasoning !== undefined ? { reasoning: overrides.reasoning } : {}),
       agentDirectory: revision.agentDirectory,
       sessionsDir: join(this.config.runtimeDir, "sessions", revision.id),
       workingDirectory: join(this.config.runtimeDir, "workspaces", revision.id),

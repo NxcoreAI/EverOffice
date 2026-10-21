@@ -2847,7 +2847,7 @@ export const slidesPageImageSessions = sqliteTable(
     roomId: text("room_id").notNull(),
     draftDocumentId: text("draft_document_id").notNull(),
     styleSessionId: text("style_session_id"),
-    stage: text("stage", { enum: ["confirm", "review", "resolved"] }).notNull(),
+    stage: text("stage", { enum: ["confirm", "review", "settling", "resolved"] }).notNull(),
     /** 第几轮重生成（单张重掷递增，前端凭它重开过目卡）。 */
     generation: integer("generation").notNull().default(1),
     /** arrange 全量落页方案（等待期间唯一事实来源，resume 不重排）。 */
@@ -2865,6 +2865,27 @@ export const slidesPageImageSessions = sqliteTable(
   },
   (table) => [
     index("slides_page_image_sessions_draft_idx").on(table.roomId, table.draftDocumentId),
+  ],
+);
+
+/** slides 编辑层 storyboard（M1 影子模式）：按草稿 + 内容 hash 存最近一次的压缩结果与验收报告。 */
+export const slidesStoryboards = sqliteTable(
+  "slides_storyboards",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id").notNull(),
+    /** 用户确认后草稿内容 hash：同一草稿再编辑即视为新版本。 */
+    draftHash: text("draft_hash").notNull(),
+    /** storyboard/v2 全量 JSON（editor 输出）。 */
+    storyboard: text("storyboard", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 网关确定性验收报告（errors/warnings/字数）。 */
+    report: text("report", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_storyboards_draft_idx").on(table.roomId, table.draftDocumentId),
   ],
 );
 

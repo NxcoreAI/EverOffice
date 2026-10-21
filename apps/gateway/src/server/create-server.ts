@@ -199,6 +199,7 @@ import { AiRelaySessionStore, relayPathPrefix } from "../modules/ai-relay/sessio
 import { SlidesStyleImageGenerator } from "../modules/slides-style/image-gen.js";
 import { SlidesStyleSessionStore } from "../modules/slides-style/style-session.js";
 import { SlidesPageImageSessionStore } from "../modules/subagents/slides-page-images-store.js";
+import { SlidesStoryboardStore } from "../modules/subagents/slides-storyboards-store.js";
 import { SlidesPageImageRunner } from "../modules/subagents/slides-page-images-runner.js";
 import { slidesPageImagesRoutes } from "../modules/slides/page-images-routes.js";
 import { ThesisFormatService } from "../modules/thesis-format/service.js";
@@ -1159,6 +1160,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             slidesProgress,
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
+            // slides 编辑层影子模式（M1）：默认开启，不改变可见产物；关闭只需在装配层不传本项。
+            slidesEditor: subagentConfig.enabled
+              ? { store: new SlidesStoryboardStore(db), active: true }
+              : null,
             // 布局树落页装配（generate 尾部）：与 office-plugin 共享同一批实例；
             // readMaterialBlob 供图片 AR 解析（everroom-material:// 按 hash 回源）。
             slidesLayoutOffice: subagentConfig.enabled

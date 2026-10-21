@@ -18,7 +18,12 @@ import {
 const temporaryDirectories: string[] = [];
 const logger = { info: () => undefined, warn: () => undefined };
 
-async function createFixture(options: { inputSchema?: boolean; outputSchema?: boolean } = {}) {
+async function createFixture(options: {
+  inputSchema?: boolean;
+  outputSchema?: boolean;
+  /** 追加到 agent.yaml 的 policy 子句（如 model 覆盖）。 */
+  policyLines?: string[];
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), "everroom-subagents-"));
   temporaryDirectories.push(root);
   const definitionsDir = join(root, "agents");
@@ -71,6 +76,7 @@ async function createFixture(options: { inputSchema?: boolean; outputSchema?: bo
     "  timeoutMs: 10000",
     "  maxConcurrency: 1",
     "  maxToolCalls: 8",
+    ...(options.policyLines ?? []),
     "",
   ].join("\n"), "utf8");
   const config: SubagentFrameworkConfig = {
@@ -131,6 +137,25 @@ describe("filesystem subagent framework", () => {
     expect(second?.revision.id).not.toBe(first?.revision.id);
     expect(fixture.database.db.select().from(subagentRevisions).all()).toHaveLength(2);
     fixture.database.sqlite.close();
+  });
+
+  it("parses policy.model overrides and rejects invalid reasoning levels", async () => {
+    const fixture = await createFixture({
+      policyLines: ["  model:", "    reasoning: low", "    contextWindow: 96000", "    maxTokens: 16384"],
+    });
+    await fixture.registry.initialize();
+    expect(fixture.registry.get("researcher")?.revision.policy.model).toEqual({
+      reasoning: "low",
+      contextWindow: 96_000,
+      maxTokens: 16_384,
+    });
+    fixture.database.sqlite.close();
+
+    const invalid = await createFixture({ policyLines: ["  model:", "    reasoning: turbo"] });
+    // 非法 bundle 在 initialize 中被拒绝并跳过（warn 记录），不会进入注册表。
+    await invalid.registry.initialize();
+    expect(invalid.registry.get("researcher")).toBeNull();
+    invalid.database.sqlite.close();
   });
 
   it("dispatches through an isolated runtime and rejects unauthorized or invalid input", async () => {
@@ -362,6 +387,11 @@ describe("filesystem subagent framework", () => {
       parentRunId: "run-room",
     });
     expect(recording.startedInputs.at(-1)?.roomId).toBe("room-9");
+    // 结构化输入同时以 runtimeMetadata 交给工具（planner 据此区分 draft/arrange）。
+    expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
+      subagentAgentId: "researcher",
+      subagentInput: { topic: "EverRoom", roomId: "room-9" },
+    });
 
     await orchestrator.dispatch({
       agentId: "researcher",

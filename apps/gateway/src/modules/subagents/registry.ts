@@ -21,6 +21,7 @@ import type {
   SubagentLogger,
   SubagentManifest,
   SubagentMcpBinding,
+  SubagentModelPolicy,
   SubagentPolicy,
 } from "./types.js";
 import { BUILTIN_AGENT_IDS } from "../agent/resolver.js";
@@ -70,6 +71,30 @@ function positiveInteger(value: unknown, fallback: number, field: string): numbe
   if (value === undefined) return fallback;
   if (!Number.isInteger(value) || Number(value) < 1) throw new Error(`${field} must be a positive integer`);
   return Number(value);
+}
+
+const REASONING_LEVELS = new Set([
+  "off", "minimal", "low", "medium", "high", "xhigh", "max",
+]);
+
+function parseModelPolicy(value: unknown): SubagentModelPolicy {
+  if (!isRecord(value)) throw new Error("policy.model must be an object");
+  const model: SubagentModelPolicy = {};
+  if (value.maxTokens !== undefined) {
+    model.maxTokens = positiveInteger(value.maxTokens, 1, "policy.model.maxTokens");
+    if (model.maxTokens > 2_000_000) throw new Error("policy.model.maxTokens is too large");
+  }
+  if (value.contextWindow !== undefined) {
+    model.contextWindow = positiveInteger(value.contextWindow, 1, "policy.model.contextWindow");
+    if (model.contextWindow > 2_000_000) throw new Error("policy.model.contextWindow is too large");
+  }
+  if (value.reasoning !== undefined) {
+    if (typeof value.reasoning !== "string" || !REASONING_LEVELS.has(value.reasoning)) {
+      throw new Error("policy.model.reasoning is invalid");
+    }
+    model.reasoning = value.reasoning as NonNullable<SubagentModelPolicy["reasoning"]>;
+  }
+  return model;
 }
 
 function resolveInside(root: string, path: string, field: string): string {
@@ -144,6 +169,7 @@ function parseManifest(raw: unknown, defaults: SubagentFrameworkConfig): Subagen
     maxConcurrency: positiveInteger(policyValue.maxConcurrency, 1, "policy.maxConcurrency"),
     timeoutMs,
     maxToolCalls: positiveInteger(policyValue.maxToolCalls, 40, "policy.maxToolCalls"),
+    ...(policyValue.model === undefined ? {} : { model: parseModelPolicy(policyValue.model) }),
   };
   return {
     schemaVersion: 1,

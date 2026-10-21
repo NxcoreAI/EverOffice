@@ -31,6 +31,8 @@ export type SlidesProgressEvent = {
   slideIndex: number;
   title: string;
   snapshot: SlidesProgressSnapshot;
+  /** 广播时刻（ms）：载荷公共字段，渲染层据此做新旧单调守卫。 */
+  updatedAt: number;
 };
 
 interface TrackerState {
@@ -70,6 +72,7 @@ export class SlidesProgressTracker {
       kind: "page_applied",
       slideIndex,
       title: state.plan.pages[slideIndex]?.title ?? "",
+      updatedAt: Date.now(),
       snapshot: {
         title: state.plan.title,
         totalPages: state.plan.pages.length,

@@ -1,3 +1,4 @@
+import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { SubagentResultValidator } from "./runtime-manager.js";
 
@@ -5,8 +6,10 @@ import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
 import { getDeckLayoutContext } from "../slides-layout/deck-contract-context.js";
 import { takeReviewManual } from "../slides-layout/review-context.js";
 import { normalizeTree } from "../slides-layout/tree/schema.js";
+import { getPagePreview, markPagePreviewed } from "../slides-layout/page-preview-context.js";
 import { compileTree } from "../slides-layout/tree/compile.js";
 import { measureDefects, type LayoutDefect } from "../slides-layout/tree/measure.js";
+import { createSlidesImagePrewarmTools } from "./slides-page-images-prewarm.js";
 
 /**
  * slides 两段式子代理的工具面：
@@ -31,13 +34,116 @@ const SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST = new Set(["web_search"]);
 
 const SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST = new Set(["material_search"]);
 
+const SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST = new Set(["slides_image_prewarm"]);
+
 const SLIDES_BUILDER_TOOL_ALLOWLIST = new Set<string>(SLIDES_TOOL_NAMES);
+
+/** planner 取数预算：draft 阶段需要背景，但单篇正文/单次 Room 投影不该整篇进上下文。 */
+const PLANNER_DOCUMENT_READ_LIMIT = 8_000;
+const PLANNER_ROOM_DOCUMENT_PREVIEW_CHARS = 600;
+const PLANNER_ROOM_MAX_DOCUMENTS = 6;
+const PLANNER_ROOM_MAX_FACTS = 60;
+const PLANNER_ROOM_MAX_ENTITIES = 30;
+const PLANNER_ROOM_MAX_CORRECTIONS = 10;
 
 function filterTools(
   tools: PiAgentRuntimeTool[],
   allowlist: Set<string>,
 ): PiAgentRuntimeTool[] {
   return tools.filter((tool) => allowlist.has(tool.name));
+}
+
+function subagentPhase(input: StartRuntimeRunInput): string | null {
+  const structured = input.runtimeMetadata?.subagentInput;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) return null;
+  const phase = (structured as Record<string, unknown>).phase;
+  return typeof phase === "string" ? phase : null;
+}
+
+/**
+ * planner 的 room_context_get：不把 Room 全量文档投影（单次可达数万 token）直接
+ * 灌给方案代理；文档只留标题+预览，正文按需用 document_read 分页取。
+ * arrange 阶段输入已带 draftPages，直接省掉文档段。
+ */
+function createPlannerRoomContextTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
+  return {
+    ...tool,
+    description: `${tool.description}（PPT 方案代理：文档只返回标题与预览，正文按需用 context_room_document_read 分页读取；编排阶段不返回文档正文。）`,
+    execute: async (input, params, signal, onUpdate) => {
+      const result = await tool.execute(input, params, signal, onUpdate);
+      let payload: unknown;
+      try {
+        payload = JSON.parse(result.content);
+      } catch {
+        return result;
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return result;
+      const value = payload as Record<string, unknown>;
+      const phase = subagentPhase(input);
+      const documents = Array.isArray(value.documents) ? value.documents : [];
+      const compactDocuments = phase === "arrange"
+        ? []
+        : documents.slice(0, PLANNER_ROOM_MAX_DOCUMENTS).map((document) => {
+            const record = document !== null && typeof document === "object"
+              ? document as Record<string, unknown>
+              : {};
+            const markdown = typeof record.markdown === "string" ? record.markdown : "";
+            return {
+              documentId: record.documentId,
+              title: record.title,
+              version: record.version,
+              updatedAt: record.updatedAt,
+              characters: markdown.length,
+              preview: markdown.slice(0, PLANNER_ROOM_DOCUMENT_PREVIEW_CHARS),
+              ...(markdown.length > PLANNER_ROOM_DOCUMENT_PREVIEW_CHARS ? { previewTruncated: true } : {}),
+            };
+          });
+      const compact = {
+        ...value,
+        ...(Array.isArray(value.facts) ? { facts: value.facts.slice(0, PLANNER_ROOM_MAX_FACTS) } : {}),
+        ...(Array.isArray(value.entities) ? { entities: value.entities.slice(0, PLANNER_ROOM_MAX_ENTITIES) } : {}),
+        ...(Array.isArray(value.appliedCorrections)
+          ? { appliedCorrections: value.appliedCorrections.slice(-PLANNER_ROOM_MAX_CORRECTIONS) }
+          : {}),
+        documents: compactDocuments,
+        ...(phase === "arrange"
+          ? { documentsOmitted: "编排阶段输入 draftPages 已含全部页内容，这里不再返回文档正文；确需原文时用 context_room_document_read 按 offset/limit 分页读取。" }
+          : {}),
+      };
+      return { content: JSON.stringify(compact), details: result.details };
+    },
+  };
+}
+
+/**
+ * planner 的 context_room_document_read：draft 阶段单次最多 8k 字符（分页用
+ * offset/limit）；arrange 阶段内容已在输入里，直接拒读，避免重复吃整篇。
+ */
+function createPlannerDocumentReadTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
+  return {
+    ...tool,
+    description: `${tool.description}（PPT 方案代理：单次最多 ${PLANNER_DOCUMENT_READ_LIMIT} 字符，超出用 offset/limit 分页；编排阶段内容已由输入给出，不需要再读。）`,
+    execute: async (input, params, signal, onUpdate) => {
+      const phase = subagentPhase(input);
+      if (phase === "arrange") {
+        return {
+          content: JSON.stringify({
+            skipped: true,
+            reason: "编排阶段的结构化输入 draftPages 已包含全部页内容，禁止重复读取文档；直接基于输入产出方案。",
+          }),
+          details: { skipped: true, phase },
+        };
+      }
+      const requestedLimit = typeof params.limit === "number" && Number.isFinite(params.limit)
+        ? Math.floor(params.limit)
+        : PLANNER_DOCUMENT_READ_LIMIT;
+      const limit = Math.max(1, Math.min(requestedLimit, PLANNER_DOCUMENT_READ_LIMIT));
+      const offset = typeof params.offset === "number" && Number.isFinite(params.offset) && params.offset >= 0
+        ? Math.floor(params.offset)
+        : 0;
+      return tool.execute(input, { ...params, offset, limit }, signal, onUpdate);
+    },
+  };
 }
 
 export function createSlidesPlannerAgentTools(deps: {
@@ -51,10 +157,14 @@ export function createSlidesPlannerAgentTools(deps: {
   materialSearchTools: PiAgentRuntimeTool[];
 }): PiAgentRuntimeTool[] {
   return [
-    ...filterTools(deps.roomTools, SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST),
-    ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST),
+    ...filterTools(deps.roomTools, SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST)
+      .map((tool) => (tool.name === "room_context_get" ? createPlannerRoomContextTool(tool) : tool)),
+    ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
+      .map((tool) => (tool.name === "context_room_document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
     ...filterTools(deps.materialSearchTools, SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST),
+    // 配图预热：编排中生图入池（模块内 token 注册表寻址，装配无额外依赖）。
+    ...filterTools(createSlidesImagePrewarmTools(), SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST),
   ];
 }
 
@@ -72,6 +182,11 @@ interface ValidateOutcome {
   defects: LayoutDefect[];
   stats: { elements: number; leaves: number; depth: number; images: number; paths: number };
 }
+
+/** 同一 run 连续校验上限：超过后网关收下当前树（落页仍会降档兜底）。 */
+const LAYOUT_VALIDATE_MAX_ROUNDS = 5;
+/** runId → 已执行的 validate 轮次（工具实例跨 run 共享，需按 run 隔离并清理）。 */
+const validateRoundByRun = new Map<string, number>();
 
 /** 归一 → 编译 → 量测（契约经 token 从进程内上下文取，模型不回传防漂移）。 */
 export function validateLayoutTree(token: unknown, rawTree: unknown): ValidateOutcome {
@@ -108,21 +223,97 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
     type: "object",
     properties: {
       token: { type: "string", description: "输入里的 deckToken，原样传入（网关据此取本 deck 的布局契约）" },
-      tree: { type: "object", description: "布局树（root：role/title?/dark?/bg?/direction(row|column|overlay)/weights?/gapScale?/pad?/children；overlay 直接子节点须带 place 百分比定位）" },
+      tree: { type: "object", description: "布局树（v1：role/title?/dark?/bg?/direction(row|column|overlay)/weights?/gapScale?/pad?/children；v2：version:2 + composition + grid? + nodes（slot/bleed/text token/runs/stats/chart/table/component；component 可带 style 语义枚举，surface/separator/align/density/numeral/accent/motif））" },
     },
     required: ["token", "tree"],
     additionalProperties: false,
   },
   executionMode: "sequential",
-  async execute(_input, params) {
+  async execute(input, params) {
+    const round = (validateRoundByRun.get(input.runId) ?? 0) + 1;
     const outcome = validateLayoutTree(params.token, params.tree);
-    return { content: JSON.stringify(outcome) };
+    if (outcome.ok) {
+      validateRoundByRun.delete(input.runId);
+      return { content: JSON.stringify(outcome) };
+    }
+    // 网关收口：同一 run 连续多轮 validate 不收敛时不再让模型空转（实测一页
+    // 连调 17 次 validate 打穿工具预算、480s 超时）。收下当前树并提示提交——
+    // 落页前 finalizeTree 仍会确定性 shrinkToFit + 引擎硬闸兜底，不会把坏树画上去。
+    if (round >= LAYOUT_VALIDATE_MAX_ROUNDS) {
+      validateRoundByRun.delete(input.runId);
+      return {
+        content: JSON.stringify({
+          ...outcome,
+          ok: true,
+          forcedSubmission: true,
+          warning: `已连续 ${round} 轮校验未完全收敛；网关收下当前树，落页时会做引擎降档兜底。请立即调用 subagent_submit_result 提交，不要再校验。`,
+        }),
+      };
+    }
+    validateRoundByRun.set(input.runId, round);
+    if (validateRoundByRun.size > 1_000) {
+      const oldest = validateRoundByRun.keys().next().value;
+      if (typeof oldest === "string") validateRoundByRun.delete(oldest);
+    }
+    return { content: JSON.stringify({ ...outcome, round }) };
   },
 };
 
-/** slides-layouter 的工具面：只有布局树校验（技能读取与结果提交由运行时自带）。 */
+/** layouter 的单页只读预览：编译 + 临时渲染 + VLM 设计审阅；不写当前 deck。 */
+const PAGE_PREVIEW_TOOL: PiAgentRuntimeTool = {
+  name: "slides_page_preview",
+  label: "单页预览审阅",
+  description:
+    "把当前页的布局树编译成临时单页渲染图，返回确定性缺陷与设计审阅（层级/底色/视觉锚点/文字墙/对齐/拥挤/空白）。"
+    + "只读，不写当前 deck；发现 major 问题时改树后最多再预览一次，再提交。",
+  parameters: {
+    type: "object",
+    properties: {
+      deckToken: { type: "string", description: "输入里的 deckToken，原样传入" },
+      pageIndex: { type: "integer", minimum: 0, maximum: 23, description: "输入里的 pageIndex（0 基），原样传入" },
+      tree: { type: "object", description: "当前页 v2 布局树" },
+    },
+    required: ["deckToken", "pageIndex", "tree"],
+    additionalProperties: false,
+  },
+  executionMode: "sequential",
+  async execute(_input, params) {
+    const token = typeof params.deckToken === "string" ? params.deckToken : "";
+    const context = getPagePreview(token);
+    if (!context) {
+      return { content: JSON.stringify({ skipped: true, reason: "预览渲染未配置；按 validate 结果直接提交" }) };
+    }
+    const pageIndex = typeof params.pageIndex === "number" ? params.pageIndex : -1;
+    if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= context.pageCount) {
+      return { content: JSON.stringify({ ok: false, error: "pageIndex 不在本 deck 范围" }) };
+    }
+    const result = await context.render(params.tree, pageIndex);
+    if (result.png) markPagePreviewed(token, pageIndex);
+    const visual = result.visual;
+    const visualIssues = visual && visual.status === "issues" ? visual.issues : [];
+    return {
+      content: JSON.stringify({
+        ok: result.defects.length === 0 && visualIssues.every((issue) => issue.severity !== "major"),
+        pageIndex,
+        defects: result.defects.slice(0, 10).map((defect) => ({
+          type: defect.type,
+          detail: defect.detail,
+          ...(defect.hint ? { hint: defect.hint } : {}),
+        })),
+        visual: visual
+          ? visual.status === "issues"
+            ? { status: "issues", issues: visualIssues.slice(0, 8) }
+            : { status: visual.status, ...(visual.status === "skipped" || visual.status === "error" ? { reason: visual.reason } : {}) }
+          : { status: "skipped", reason: "预览渲染未启用视觉审阅" },
+        ...(result.error ? { renderError: result.error } : {}),
+      }),
+    };
+  },
+};
+
+/** slides-layouter 的工具面：布局树校验 + 单页只读预览（一次 invocation 内设计+审页）。 */
 export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
-  return [LAYOUTER_VALIDATE_TOOL];
+  return [LAYOUTER_VALIDATE_TOOL, PAGE_PREVIEW_TOOL];
 }
 
 /**
