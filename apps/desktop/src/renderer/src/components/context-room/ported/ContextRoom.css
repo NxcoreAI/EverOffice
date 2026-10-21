@@ -9180,6 +9180,7 @@
 }
 
 .context-room-related-graph-canvas {
+  position: relative;
   height: auto;
   min-height: 0;
   min-width: 0;
@@ -9189,6 +9190,42 @@
     linear-gradient(#eef0f3 1px, transparent 1px),
     linear-gradient(90deg, #eef0f3 1px, transparent 1px), #fbfcfd;
   background-size: 24px 24px;
+}
+
+/* 「自适应」浮层：视口可自由缩放平移，图缩小到看不见或拖走后，
+   这颗按钮仍钉在画布右上角，一键把节点整体缩放居中回来。
+   Context Room 各力导向图谱（首页全图/Room 关系/实体事实/建联/Wiki）共用同一套样式。 */
+.context-room-graph-fit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cr-surface) 92%, transparent);
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 8%);
+  backdrop-filter: blur(4px);
+}
+
+.context-room-graph-fit:hover {
+  border-color: var(--cr-border-strong);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+}
+
+.context-room-graph-fit svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
 }
 
 .context-room-related-rooms-pane > .context-room-room-graph-inspector {

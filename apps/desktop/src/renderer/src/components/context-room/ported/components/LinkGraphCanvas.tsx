@@ -12,6 +12,7 @@ import {
   type ForceGraphEdge,
 } from '@/components/graph'
 import { useLocale } from '../../../../i18n/LocaleContext'
+import { GraphFitButton } from './GraphFitButton'
 import {
   LINK_GRAPH_ROOT_ID,
   linkGraphBlockNodeId,
@@ -353,6 +354,7 @@ export function LinkGraphCanvas({
         onReleaseNode={layout.release}
         onSelectNode={onSelect}
       />
+      {data.nodes.length > 0 ? <GraphFitButton onFit={() => canvasRef.current?.fitView()} /> : null}
       <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.linkGraphNodes')}>
         {data.nodes.map((node: LinkGraphNode) => (
           <button

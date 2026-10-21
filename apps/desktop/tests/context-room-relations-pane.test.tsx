@@ -9,9 +9,10 @@ const graphProps: Array<{
   onSelectRelation: (relationId: string | null) => void
   onSelectRoom: (roomId: string | null) => void
 }> = []
+const fitViewCalls = { count: 0 }
 
 vi.mock('../src/renderer/src/components/context-room/ported/components/RoomGraphCanvas', async () => {
-  const { forwardRef } = await import('react')
+  const { forwardRef, useImperativeHandle } = await import('react')
   return {
     RoomGraphCanvas: forwardRef(function MockRoomGraphCanvas(
       props: {
@@ -19,9 +20,14 @@ vi.mock('../src/renderer/src/components/context-room/ported/components/RoomGraph
         onSelectRelation: (relationId: string | null) => void
         onSelectRoom: (roomId: string | null) => void
       },
-      _ref,
+      ref,
     ) {
       graphProps.push(props)
+      useImperativeHandle(ref, () => ({
+        fitView: async () => {
+          fitViewCalls.count += 1
+        },
+      }), [])
       return (
         <>
           <button type="button" onClick={() => props.onSelectRoom('room-b')}>select room-b</button>
@@ -192,5 +198,88 @@ describe('RelationsPane graph selection', () => {
     expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-scroll' })).toBeTruthy()
     expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-footer' })).toBeTruthy()
     expect(renderer!.root.findByProps({ 'data-relation-type': 'supports' }).props.className).toBe('context-room-room-graph-inspector')
+  })
+})
+
+describe('RelationsPane graph fit control', () => {
+  const edge = {
+    id: 'relation-a-b',
+    sourceRoomId: 'room-a',
+    targetRoomId: 'room-b',
+    directed: false,
+    type: 'shared_evidence',
+    origin: 'auto',
+    score: 1.2,
+    strength: 'weak',
+    sharedSourceCount: 1,
+    sharedEntityCount: 0,
+    directMentionCount: 0,
+    pinned: false,
+    hidden: false,
+    label: null,
+    note: null,
+    topReasons: [],
+    updatedAt: '2026-08-25T00:00:00.000Z',
+  }
+
+  function stubRelations(edges: unknown[]) {
+    vi.stubGlobal('window', {
+      nxcore: {
+        knowledge: {
+          getRoomGraph: vi.fn(),
+          getRoomRelations: vi.fn().mockResolvedValue({
+            revision: 1,
+            generatedAt: '2026-08-25T00:00:00.000Z',
+            indexing: { status: 'ready', pendingSources: 0 },
+            nodes: [
+              { id: 'room-a', title: 'Current Room', kind: '项目', origin: 'user', updatedAt: '2026-08-25T00:00:00.000Z' },
+              { id: 'room-b', title: 'Related Room', kind: '项目', origin: 'user', updatedAt: '2026-08-25T00:00:00.000Z' },
+            ],
+            edges,
+          }),
+        },
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+  }
+
+  afterEach(() => {
+    graphProps.length = 0
+    fitViewCalls.count = 0
+    vi.unstubAllGlobals()
+  })
+
+  // 画布可自由缩放平移：缩到最小或拖走后图看不见，浮层按钮必须始终可点。
+  it('keeps an always-visible fit control that re-fits the graph', async () => {
+    const current = room('room-a', '项目', 'Current Room')
+    const related = room('room-b', '项目', 'Related Room')
+    stubRelations([edge])
+    let renderer: TestRenderer.ReactTestRenderer
+
+    await act(async () => {
+      renderer = TestRenderer.create(<RelationsPane room={current} rooms={[current, related]} onOpenRoom={vi.fn()} />)
+    })
+
+    const fitButton = renderer!.root.findByProps({ className: 'context-room-graph-fit' })
+    expect(fitButton.props['aria-label']).toBe('自适应图谱：缩放并居中')
+
+    await act(async () => {
+      fitButton.props.onClick()
+    })
+
+    expect(fitViewCalls.count).toBe(1)
+  })
+
+  it('hides the fit control when there is no graph to fit', async () => {
+    const current = room('room-a', '项目', 'Current Room')
+    stubRelations([])
+    let renderer: TestRenderer.ReactTestRenderer
+
+    await act(async () => {
+      renderer = TestRenderer.create(<RelationsPane room={current} rooms={[current]} onOpenRoom={vi.fn()} />)
+    })
+
+    expect(renderer!.root.findAllByProps({ className: 'context-room-graph-fit' })).toHaveLength(0)
   })
 })

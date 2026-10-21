@@ -1,4 +1,4 @@
-import { Link2, Maximize2, Network } from 'lucide-react'
+import { Link2, Network } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { RoomDocument } from '@nxcore/agent-contract'
@@ -10,6 +10,7 @@ import { useRoomRelationGraph } from '../../hooks/useRoomRelationGraph'
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from '../RoomGraphCanvas'
 import { RoomNodeInspector } from '../RoomGraphInspector'
 import { CreateRoomRelationDialog, relationTypeLabel, RoomRelationInspector } from '../RoomRelationControls'
+import { GraphFitButton } from '../GraphFitButton'
 import { PanelEmptyState } from './PanelEmptyState'
 
 export function RelationsPane({
@@ -72,22 +73,26 @@ export function RelationsPane({
               {t(visibility === 'hidden' ? 'contextRoom:relations.showActive' : 'contextRoom:relations.showHidden')}
             </button>
             <button type="button" aria-label={t('contextRoom:relations.newRelation')} title={t('contextRoom:relations.newRelation')} onClick={() => setCreateRelationOpen(true)}><Link2 aria-hidden="true" /></button>
-            <button type="button" aria-label={t('contextRoom:relations.fitRelatedRoomGraph')} title={t('contextRoom:relations.fitToCanvas')} onClick={() => void graphRef.current?.fitView()}><Maximize2 aria-hidden="true" /></button>
           </div>
         </header>
         <div className="context-room-related-graph-canvas">
           {loading && !graph ? <div className="context-room-graph-state">{t('contextRoom:relations.loadingGraph')}</div> : hasRelations ? (
-            <RoomGraphCanvas
-              ref={graphRef}
-              compact
-              rooms={graphRooms}
-              relations={graph?.edges ?? []}
-              selectedId={selectedGraphRoomId}
-              selectedRelationId={selectedRelationId}
-              onSelectRoom={(roomId) => { setSelectedRelationId(null); setSelectedGraphRoomId(roomId ?? room.id); setInspectorOpen(Boolean(roomId)) }}
-              onSelectRelation={(relationId) => { setSelectedRelationId(relationId); setSelectedGraphRoomId(room.id); setInspectorOpen(Boolean(relationId)) }}
-              onOpenRoom={onOpenRoom}
-            />
+            <>
+              <RoomGraphCanvas
+                ref={graphRef}
+                compact
+                rooms={graphRooms}
+                relations={graph?.edges ?? []}
+                selectedId={selectedGraphRoomId}
+                selectedRelationId={selectedRelationId}
+                onSelectRoom={(roomId) => { setSelectedRelationId(null); setSelectedGraphRoomId(roomId ?? room.id); setInspectorOpen(Boolean(roomId)) }}
+                onSelectRelation={(relationId) => { setSelectedRelationId(relationId); setSelectedGraphRoomId(room.id); setInspectorOpen(Boolean(relationId)) }}
+                onOpenRoom={onOpenRoom}
+              />
+              {/* 视口可自由缩放平移，缩到最小或拖出视野后图会看不见；
+                  浮层按钮常驻画布右上角，一键把图谱自适应缩放并居中。 */}
+              <GraphFitButton onFit={() => void graphRef.current?.fitView()} />
+            </>
           ) : (
             <PanelEmptyState
               icon={Network}
