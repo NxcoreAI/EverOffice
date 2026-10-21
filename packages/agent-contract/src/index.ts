@@ -725,6 +725,11 @@ export interface RoomMergeOperation {
 
 export interface StartAgentRunInput {
   prompt: string;
+  /**
+   * 用户可见文案（人话）：卡片按钮/产物库/AI 修改等确定性入口用 prompt 传技术指令，
+   * 用本字段传用户真正能看懂的一句话。运行时仍只收 prompt；落库消息、会话标题用本字段。
+   */
+  displayPrompt?: string;
   idempotencyKey: string;
   /** Stable local Agent installation id selected by an explicit composer mention. */
   targetAgentId?: string;

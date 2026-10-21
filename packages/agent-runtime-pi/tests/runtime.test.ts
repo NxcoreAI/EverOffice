@@ -1044,4 +1044,98 @@ describe("PiAgentRuntime", () => {
       await runtime.dispose();
     }
   });
+
+  it("clamps oversized tool results and prunes old tool payloads between turns", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let requestIndex = 0;
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => JSON.stringify({
+          id: `chatcmpl-budget-${String(requestIndex)}`,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
+        });
+        if (requestIndex < 3) {
+          response.write(`data: ${chunk({
+            tool_calls: [{
+              index: 0,
+              id: `call-${String(requestIndex)}`,
+              type: "function",
+              function: { name: "big_result", arguments: "{}" },
+            }],
+          })}\n\n`);
+          response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
+        } else {
+          response.write(`data: ${chunk({ content: "完成" })}\n\n`);
+          response.write(`data: ${chunk({}, "stop")}\n\n`);
+        }
+        requestIndex += 1;
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-budget-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+      // 单条工具结果 800 字符封顶；上下文估算超 50 token 后只保留最近 1 轮工具载荷。
+      maxToolResultChars: 800,
+      runContextGuard: { triggerTokens: 50, keepRecentTurns: 1 },
+    }, {
+      tools: [{
+        name: "big_result",
+        label: "大结果",
+        description: "返回一个超长结果",
+        parameters: { type: "object", additionalProperties: false, properties: {} },
+        execute: async () => ({ content: `BIG-${"x".repeat(5_000)}` }),
+      }],
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-budget",
+        sessionId: "session-budget",
+        runtimeSessionRef: null,
+        prompt: "连续调用工具",
+        pageLabel: "预算测试",
+        roomId: null,
+      });
+      for await (const _event of run.events) { /* consume */ }
+
+      expect(requestBodies).toHaveLength(4);
+      // 单条工具结果被预算截断后才进入下一轮请求。
+      expect(JSON.stringify(requestBodies[1])).toContain("截断");
+      // 第 3 轮请求里，更早的工具结果被替换成占位符，最近一轮保留。
+      const lastBody = JSON.stringify(requestBodies[3]);
+      expect(lastBody).toContain("已省略");
+      expect(lastBody).toContain("BIG-");
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
 });

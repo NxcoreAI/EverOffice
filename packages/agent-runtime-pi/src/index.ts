@@ -24,6 +24,7 @@ import {
   type RuntimeRun,
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
+import { clampToolResultText, guardRunMessages, type RunContextGuardOptions } from "./context-budget.js";
 import { KnowledgeServiceClient } from "./knowledge/client.js";
 import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from "./knowledge/tools.js";
 import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
@@ -36,6 +37,7 @@ import type { MemoryRuntimeConfig, RoomMemorySnapshot } from "./memory/types.js"
 export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
 export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
 export type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+export type { RunContextGuardOptions } from "./context-budget.js";
 export { resolveDefaultWikiIds } from "./knowledge/types.js";
 export type {
   KnowledgePageEntry,
@@ -120,6 +122,17 @@ export interface PiAgentRuntimeConfig {
   systemPrompt?: string;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
+  /**
+   * 单条工具结果进入上下文的字符预算（JSON 感知截断）；缺省/0 = 不截断。
+   * 建议只在子 Agent runtime 配置：主 Agent 的文档 read/patch 需要完整结果。
+   */
+  maxToolResultChars?: number;
+  /**
+   * run 内轮次级工具历史裁剪：上下文估算超过 triggerTokens 后，把最近
+   * keepRecentTurns 轮之外的 toolResult 正文 / assistant 工具参数替换为占位符。
+   * 只在「发给模型的那份上下文」生效，会话落盘与事件流保持完整。缺省关闭。
+   */
+  runContextGuard?: RunContextGuardOptions;
   /** Pi 内置工具白名单；缺省启用全部（read/bash/edit/write/grep/find/ls），可经 NXCORE_PI_TOOLS 收窄。 */
   builtinTools?: string[];
   /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
@@ -399,6 +412,41 @@ export function wrapSessionManagerDroppingThinking(manager: SessionManager): Ses
       return typeof value === "function" ? value.bind(target) : value;
     },
   }) as SessionManager;
+}
+
+interface TurnContextSnapshotLike {
+  context?: { messages?: unknown[]; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/**
+ * run 内上下文守卫：包一层 pi 的 prepareNextTurnWithContext（每个模型轮次前调用），
+ * 上下文超阈值时裁剪旧工具载荷。pi 的自动压缩只在整轮 run 结束后触发，子 Agent
+ * 一次 prompt 里几十个工具轮次等不到它；这里补上轮次级裁剪。
+ *
+ * pi-coding-agent 已把 SessionManager 的 systemPrompt/tools 刷新挂在该钩子外层，
+ * 所以必须「先调 previous 再改 messages」，不能整段覆盖。
+ */
+function installRunContextGuard(session: AgentSession, options: RunContextGuardOptions): void {
+  const agent = session.agent as unknown as {
+    prepareNextTurnWithContext?: (
+      turn: { context: { messages?: unknown[] } },
+      signal?: AbortSignal,
+    ) => Promise<TurnContextSnapshotLike | undefined> | TurnContextSnapshotLike | undefined;
+  };
+  const previous = agent.prepareNextTurnWithContext;
+  agent.prepareNextTurnWithContext = async (turn, signal) => {
+    const snapshot = previous ? await previous.call(agent, turn, signal) : undefined;
+    const context = snapshot?.context ?? turn.context;
+    const messages = context?.messages;
+    if (!Array.isArray(messages)) return snapshot;
+    const guarded = guardRunMessages(messages, options);
+    if (guarded === messages) return snapshot;
+    return {
+      ...(snapshot ?? {}),
+      context: { ...(context as Record<string, unknown>), messages: [...guarded] },
+    };
+  };
 }
 
 function compactHistoricalToolState(session: AgentSession): boolean {
@@ -720,7 +768,10 @@ export class PiAgentRuntime implements AgentRuntime {
             signal,
           );
           return {
-            content: [{ type: "text" as const, text: result.content }],
+            content: [{
+              type: "text" as const,
+              text: clampToolResultText(result.content, this.config.maxToolResultChars ?? 0),
+            }],
             details: result.details ?? {},
           };
         } catch (error) {
@@ -885,6 +936,9 @@ export class PiAgentRuntime implements AgentRuntime {
       sessionManager,
       settingsManager,
     });
+    if (this.config.runContextGuard) {
+      installRunContextGuard(session, this.config.runContextGuard);
+    }
     const ref = session.sessionFile;
     if (!ref) {
       session.dispose();
