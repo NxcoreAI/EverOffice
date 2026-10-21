@@ -82,7 +82,7 @@ export function AgentPanel({
   roomBackendReady: boolean
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
-  askRequest: { key: string; roomId: string; message: string } | null
+  askRequest: { key: string; roomId: string; message: string; displayMessage?: string } | null
   /** 统一搜索「加入上下文/交给 Agent」预填：注入文本与可选附件，不自动发送。 */
   prefillRequest: {
     key: string
@@ -542,7 +542,14 @@ export function AgentPanel({
     })
   }
 
-  const sendPrompt = async (prompt: string, replaceRunId?: string, files: File[] = [], mentioned: MentionedItem[] = []) => {
+  const sendPrompt = async (
+    prompt: string,
+    replaceRunId?: string,
+    files: File[] = [],
+    mentioned: MentionedItem[] = [],
+    /** 用户可见文案：prompt 是技术指令时用它渲染气泡/标题。 */
+    displayPrompt?: string,
+  ) => {
     if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
     const mentionedAgents: MentionedAgent[] = mentioned
       .filter((item) => item.kind === 'agent')
@@ -628,28 +635,45 @@ export function AgentPanel({
         externalConversation?.id ?? mentionedConversationId,
         mentionedAgents,
         mentioned,
+        displayPrompt,
       )
       if (externalConversation) setSelectedExternalConversation(null)
       if (roomCitations.length) onClearRoomCitations()
       setPendingExternalAttachment(null)
       setComposerResetKey((current) => current + 1)
     } catch {
-      setDraft(prompt.trim())
+      // 失败回填用用户能看懂的那句，不把内部指令塞回输入框。
+      setDraft((displayPrompt ?? prompt).trim())
     } finally {
       setSubmitting(false)
     }
   }
 
-  // slides「AI 修改」弹层转发注入：roomId 对上、会话就绪后自动发送（key 去重防重放）。
+  /** 确定性入口：hiddenPrompt 只交给运行时，displayText 渲染成用户气泡。 */
+  const sendAgentAction = async (hiddenPrompt: string, displayText: string): Promise<void> => {
+    await sendPrompt(hiddenPrompt, undefined, [], [], displayText)
+  }
+
+  // slides「AI 修改」/产物库建文件转发注入：roomId 对上、会话就绪后自动发送（key 去重防重放）。
+  // message 是内部指令（runtime 用），displayMessage 是用户能看懂的人话（气泡用）。
   useEffect(() => {
     if (!askRequest || askRequest.roomId !== roomId || session.loading) return
     if (handledAskKeysRef.current.has(askRequest.key)) return
     handledAskKeysRef.current.add(askRequest.key)
-    void sendPrompt(askRequest.message)
+    void sendAgentAction(askRequest.message, askRequest.displayMessage ?? askRequest.message)
       .then(() => onAskConsumed(askRequest.key))
       .catch(() => handledAskKeysRef.current.delete(askRequest.key))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [askRequest, roomId, session.loading])
+
+  // 停止/中断回执：中性提示（info toast），不伪装成失败。
+  useEffect(() => {
+    if (!session.runNotice) return
+    showToast({
+      title: t('surface:agentExecutionTimeline.stopped'),
+      message: session.runNotice.message,
+    })
+  }, [session.runNotice, t])
 
   // 统一搜索预填注入：填文本（追加）+挂附件（发送时解析版本），由用户手动发送。
   useEffect(() => {
@@ -853,10 +877,20 @@ export function AgentPanel({
         onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
-        onOpenDraftDocument={(documentId) => {
-          if (roomId) onOpenDocument({ roomId, documentId })
+        onOpenDraft={(documentId, roomIdHint) => {
+          // 草稿卡带所属 roomId：不在 Room 页时也能打开对应内容稿，不再静默 no-op。
+          const targetRoomId = roomIdHint ?? roomId
+          if (targetRoomId) onOpenDocument({ roomId: targetRoomId, documentId })
+          else {
+            showToast({
+              title: t('surface:agentChat.slidesOpenDraft'),
+              message: t('surface:agentChat.slidesDraftNoRoomNotice'),
+            })
+          }
         }}
-        onSlidesGenerate={(message) => void sendPrompt(message)}
+        onSlidesAction={(prompt, displayText) => void sendAgentAction(prompt, displayText)}
+        cancelledRunIds={session.cancelledRunIds}
+        interruptedRunIds={session.interruptedRunIds}
         onOpenMention={openMention}
         onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}

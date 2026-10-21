@@ -394,7 +394,7 @@ describe('AgentChatView', () => {
     act(() => renderer.unmount())
   })
 
-  it('detaches on an upward wheel and repins only when a downward wheel lands near the bottom (#297)', async () => {
+  it('detaches on an upward wheel and repins only once the visible bottom is reached (#297/#310)', async () => {
     const conversationNode = {
       clientHeight: 400,
       scrollHeight: 1_000,
@@ -452,11 +452,23 @@ describe('AgentChatView', () => {
       conversation.props.onWheel({ deltaY: -120 })
     })
     conversationNode.scrollTop = 500
+    act(() => {
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
     expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
 
-    // 距底 100px 的下滚手势恢复跟随并贴底。
+    // 距底 100px 的下滚不再吸底：旧 160px 宽阈值会把尾部预留 padding（输入框高度
+    // + 34px ≥ 166px）当成「底部附近」，任何下滚都瞬间贴底（回弹/被拽）。
     act(() => {
       conversation.props.onWheel({ deltaY: 120 })
+    })
+    expect(conversationNode.scrollTop).toBe(500)
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+
+    // 真的滚到可见底部附近（距底 25px ≤ 32px）才恢复跟随并贴底。
+    conversationNode.scrollTop = 575
+    act(() => {
+      conversation.props.onScroll({ currentTarget: conversationNode })
     })
     expect(conversationNode.scrollTop).toBe(1_000)
     expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
@@ -470,6 +482,285 @@ describe('AgentChatView', () => {
       conversation.props.onWheel({ deltaY: 120 })
     })
     expect(conversationNode.scrollTop).toBe(0)
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+    act(() => renderer.unmount())
+  })
+
+  it('ignores sub-pixel and horizontal wheel steps so the bottom does not detach/attach ping-pong', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    const conversation = renderer.root.findByProps({ className: 'agent-conversation' })
+
+    // 触控板收尾的 ±0.5px 步进（731c430b 只挡了 onScroll，wheel 路径同样要挡）：
+    // 底部上滑不该因此 detach、按钮不该闪。
+    act(() => {
+      conversation.props.onWheel({ deltaY: -0.5 })
+    })
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+    // 纯横向滚动 deltaY===0：既不 detach 也不回吸。
+    act(() => {
+      conversation.props.onWheel({ deltaY: 0 })
+    })
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+
+    // 真正上滑后再次派发 +0.5px 亚像素步进：不得贴底、不得收起按钮。
+    act(() => {
+      conversation.props.onWheel({ deltaY: -120 })
+    })
+    conversationNode.scrollTop = 600
+    act(() => {
+      conversation.props.onWheel({ deltaY: 0.5 })
+    })
+    expect(conversationNode.scrollTop).toBe(600)
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+
+    // 明确的向下手势才恢复跟随。
+    act(() => {
+      conversation.props.onWheel({ deltaY: 120 })
+    })
+    expect(conversationNode.scrollTop).toBe(1_000)
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+
+    // 极慢扫（每发 −0.5px）不能永远离不开底部：单发不闪按钮，累计到 2px 必须脱离。
+    act(() => {
+      conversation.props.onWheel({ deltaY: -0.5 })
+    })
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+    act(() => {
+      conversation.props.onWheel({ deltaY: -0.5 })
+    })
+    act(() => {
+      conversation.props.onWheel({ deltaY: -0.5 })
+    })
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+    act(() => {
+      conversation.props.onWheel({ deltaY: -0.5 })
+    })
+    expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
+    act(() => renderer.unmount())
+  })
+
+  it('re-snaps to the bottom when the composer height changes while following', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+      parentElement: { querySelector: () => null },
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    // 输入框高度变化只写 frame.style 上的 CSS 变量，不是消息区的 DOM mutation；
+    // 这里用可手动触发的 ResizeObserver 桩验证「吸底时重新贴底」。
+    // rAF 桩只入队、手动 flush：组件用 rAF 把贴底延后一帧，同步执行会让第二次
+    // 回调被 scheduled 守卫吞掉，测不出「脱离吸底时不许回吸」。
+    let resizeCallback: (() => void) | null = null
+    const pendingFrames: Array<(time: number) => void> = []
+    const flushFrames = () => {
+      for (const callback of pendingFrames.splice(0, pendingFrames.length)) callback(0)
+    }
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resizeCallback = callback }
+      observe() {}
+      disconnect() {}
+    })
+    vi.stubGlobal('requestAnimationFrame', (callback: (time: number) => void) => {
+      pendingFrames.push(callback)
+      return pendingFrames.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {
+      pendingFrames.length = 0
+    })
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    const conversation = renderer.root.findByProps({ className: 'agent-conversation' })
+    expect(resizeCallback).not.toBeNull()
+
+    // 输入框变高 30px → 尾部 padding 变高 → scrollHeight 变大。吸底时应当重新贴底，
+    // 否则最后一条消息和输入框之间会露出空隙、下一帧流式增长再猛跳一下。
+    conversationNode.scrollTop = 600
+    conversationNode.scrollHeight = 1_030
+    act(() => {
+      resizeCallback?.()
+      flushFrames()
+    })
+    expect(conversationNode.scrollTop).toBe(1_030)
+
+    // 已经脱离吸底（用户在上滑阅读）时，身高变化不得把人拽回底部。
+    act(() => {
+      conversation.props.onWheel({ deltaY: -120 })
+    })
+    conversationNode.scrollTop = 500
+    conversationNode.scrollHeight = 1_060
+    act(() => {
+      resizeCallback?.()
+      flushFrames()
+    })
+    expect(conversationNode.scrollTop).toBe(500)
+    act(() => renderer.unmount())
+  })
+
+  it('keeps following when the browser clamps scrollTop after the composer shrinks', async () => {
+    const conversationNode = {
+      clientHeight: 400,
+      scrollHeight: 1_000,
+      scrollTop: 600,
+    }
+    const message = (id: string, role: 'user' | 'assistant') => ({
+      id,
+      sessionId: 'session-1',
+      runId: 'run-1',
+      role,
+      content: `content-${id}`,
+      createdAt: '2026-08-20T00:00:00.000Z',
+    })
+    const renderView = (messages: Parameters<typeof AgentChatView>[0]['messages']) => (
+      <AgentChatView
+        activeDocument={null}
+        activeRunId={null}
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={messages}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{}}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{}}
+      />
+    )
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(renderView([message('user-1', 'user'), message('assistant-1', 'assistant')]), {
+        createNodeMock: (element) => element.props.className === 'agent-conversation'
+          ? conversationNode
+          : {},
+      })
+    })
+    const conversation = renderer.root.findByProps({ className: 'agent-conversation' })
+
+    // 贴底时输入框变矮（删多行草稿/发送清空）→ 尾部 padding 收缩 → scrollHeight 变小
+    // → 浏览器把 scrollTop clamp 回新的最大值并派发 scroll 事件。这不是用户上滑，
+    // 误 detach 会「人还在底部却弹出回到最新」，下一次下滚再吸回（抖动闭环）。
+    // 真实几何：scrollHeight 1000→960、clientHeight 400 → 新的最大 scrollTop = 560。
+    conversationNode.scrollHeight = 960
+    conversationNode.scrollTop = 560
+    act(() => {
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
+    expect(renderer.root.findAll((node) => node.props.className === 'agent-chat-jump-latest')).toHaveLength(0)
+
+    // 对照：几何没有收缩时，同样幅度的上移仍然按用户手势 detach。
+    conversationNode.scrollTop = 500
+    act(() => {
+      conversation.props.onScroll({ currentTarget: conversationNode })
+    })
     expect(renderer.root.findByProps({ className: 'agent-chat-jump-latest' })).toBeTruthy()
     act(() => renderer.unmount())
   })

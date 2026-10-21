@@ -1,530 +1,801 @@
-import { Check, ChevronDown, ChevronRight, FileText, LoaderCircle, Presentation, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import {
+  Check,
+  ChevronDown,
+  FileText,
+  LoaderCircle,
+  Presentation,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
 
-import type { DisplayAgentToolCall } from './agentRunActivity'
+import type { DisplayAgentToolStatus } from './agentRunActivity'
+import { SlidesPageImagesReview } from './slides/SlidesPageImagesReview'
+import { SlidesStylePicker } from './slides/SlidesStylePicker'
+import {
+  SLIDES_IN_PROGRESS_STAGES,
+  SLIDES_WAITING_STAGES,
+  selectSlidesTasks,
+  slidesProgressFromToolCall,
+  slidesTaskEntries,
+  type StyleCandidate,
+  type StyleCardData,
+  type SlidesPagePlan,
+  type SlidesProgressState,
+  type SlidesStage,
+  type SlidesTaskEntry,
+  type SlidesTaskSelection,
+} from './slides/slidesState'
 
-/** 单页方案（网关透传的 plan.pages 条目：文案要点/数据/配图/方向）。 */
-export interface SlidesPagePlan {
-  title?: string
-  points?: string[]
-  data?: string
-  materialHints?: string
-  notes?: string
-  materials?: Array<{ url: string; desc?: string }>
-  /** 配图确认/过目卡：该页的生图提示词与已生成图（everroom-material:// 寻址）。 */
-  imagePrompt?: string
-  url?: string
-  /** 过目打回：置灰展示，落页时该页退化图形版式。 */
-  rejected?: boolean
-  /** 后台生成失败：可手动重生成，否则该页退化。 */
-  failed?: boolean
+export type {
+  StyleCandidate,
+  StyleCardData,
+  SlidesPagePlan,
+  SlidesProgressState,
+  SlidesStage,
+  SlidesTaskEntry,
+  SlidesTaskSelection,
+}
+export {
+  SLIDES_IN_PROGRESS_STAGES,
+  SLIDES_WAITING_STAGES,
+  selectSlidesTasks,
+  slidesProgressFromToolCall,
+  slidesTaskEntries,
 }
 
-/** 风格纵览候选（everroom-material:// 寻址；label 是该候选的风格方向短名）。 */
-export interface StyleCandidate {
-  url: string
-  label?: string
-  generation: number
+/** 已知 errorCode → 人话（未知回落载荷 errorMessage，不直出技术码）。 */
+const ERROR_MESSAGE_KEYS: Record<string, string> = {
+  slides_office_generation_failed: 'surface:agentChat.SLIDES_ERROR_OFFICE_GENERATION',
+  slides_layout_agents_unavailable: 'surface:agentChat.SLIDES_ERROR_AGENTS_UNAVAILABLE',
+  slides_layout_apply_failed: 'surface:agentChat.SLIDES_ERROR_LAYOUT_APPLY',
+  slides_layout_tail_failed: 'surface:agentChat.SLIDES_ERROR_LAYOUT_TAIL',
+  slides_storyboard_unavailable: 'surface:agentChat.SLIDES_ERROR_STORYBOARD_UNAVAILABLE',
+  slides_page_images_generation_failed: 'surface:agentChat.SLIDES_ERROR_PAGE_IMAGES',
+  slides_page_images_empty: 'surface:agentChat.SLIDES_ERROR_NONE_NEEDED',
+  slides_page_images_session_invalid: 'surface:agentChat.SLIDES_ERROR_SESSION_EXPIRED',
+  slides_page_images_stage_conflict: 'surface:agentChat.SLIDES_ERROR_STAGE_CONFLICT',
 }
 
-/** 风格卡数据（色块/字号/线框 SVG/演示页/效果文案——全部效果语言）。 */
-export interface StyleCardData {
-  swatches: Array<{ hex: string; label: string }>
-  typography: Array<{ label: string; value: string }>
-  wireframes: Array<{ role: string; label: string; svg: string }>
-  demoImageUrl: string | null
-  effectLines: string[]
+interface ActionSpec {
+  prompt: string
+  display: string
 }
 
-/** slides_draft 进度载荷（网关 onUpdate details，全量快照，取最新一条即可）。 */
-export interface SlidesProgressState {
-  stage: 'draft_ready' | 'plan_ready' | 'page_images' | 'page_images_confirm' | 'page_images_review' | 'page_applied' | 'style_images_ready' | 'style_card_ready'
-  title?: string
-  totalPages?: number
-  pages?: SlidesPagePlan[]
-  doneCount?: number
-  documentId?: string
-  narrative?: string
-  warnings?: string[]
-  styleSessionId?: string
-  styleCandidates?: StyleCandidate[]
-  styleCard?: StyleCardData
-  /** 配图过目卡的重生成轮次：变化即重开折叠卡，新图才能被看到。 */
-  generation?: number
-  /** 会话最后落库时刻：轮询响应据此判新旧，防旧响应覆盖新广播。 */
-  updatedAt?: number
+export interface SlidesProgressCardProps {
+  state: SlidesProgressState
+  toolRunning: boolean
+  /** 只代表「用户消息正在提交」，不再因 agent 在跑而锁死整卡（P1-4）。 */
+  busy?: boolean
+  startedAt?: string
+  completedAt?: string
+  runId?: string
+  toolStatus?: DisplayAgentToolStatus
+  onAction?: (prompt: string, displayText: string) => void
+  onOpenDraft?: (documentId: string, roomId?: string) => void
+  cancelledRunIds?: ReadonlySet<string>
+  interruptedRunIds?: ReadonlySet<string>
+  /** 已完成旧卡收成一行回执。 */
+  compact?: boolean
 }
 
-const PROGRESS_STAGES = new Set(['draft_ready', 'plan_ready', 'page_images', 'page_applied'])
-const STYLE_STAGES = new Set(['style_images_ready', 'style_card_ready'])
-const PAGE_IMAGE_STAGES = new Set(['page_images_confirm', 'page_images_review'])
-/** 从 slides_draft 工具调用的 partialResult 还原进度载荷；不是进行中的 PPT 任务返回 null。 */
-export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefined): SlidesProgressState | null {
-  if (!tool || tool.name !== 'slides_draft') return null
-  const details = tool.partialResult
-  if (!details || typeof details !== 'object' || Array.isArray(details)) return null
-  const payload = (details as { details?: unknown }).details
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
-  const record = payload as Record<string, unknown>
-  if (typeof record.stage !== 'string') return null
-  const isStyleStage = STYLE_STAGES.has(record.stage)
-  const isPageImageStage = PAGE_IMAGE_STAGES.has(record.stage)
-  if (!isStyleStage && !isPageImageStage && !PROGRESS_STAGES.has(record.stage)) return null
-  if (isStyleStage && typeof record.styleSessionId !== 'string') return null
-  if (isPageImageStage && typeof record.documentId !== 'string') return null
-  if (!isStyleStage && !Array.isArray(record.pages)) return null
-  // 网关载荷的候选字段叫 candidates，前端接口叫 styleCandidates——在此对齐。
-  // 风格卡字段网关平铺在顶层（swatches/typography/...），前端嵌在 styleCard 下——同样对齐。
-  if (isStyleStage) {
-    const mapped = { ...record } as Record<string, unknown>
-    if (Array.isArray(record.candidates) && !record.styleCandidates) {
-      mapped.styleCandidates = record.candidates
+/** 已用时 mm:ss，运行中每秒刷新；有完成时刻就停止计时。 */
+function useElapsedLabel(startedAt: string | undefined, completedAt: string | undefined, running: boolean): string | null {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running || !startedAt || completedAt) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running, startedAt, completedAt])
+  if (!startedAt) return null
+  const start = Date.parse(startedAt)
+  if (Number.isNaN(start)) return null
+  const end = completedAt ? Date.parse(completedAt) : running ? now : Number.NaN
+  if (Number.isNaN(end)) return null
+  const seconds = Math.max(0, Math.floor((end - start) / 1000))
+  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+function pageNumberOf(page: SlidesPagePlan, index: number): number {
+  return (typeof page.pageIndex === 'number' ? page.pageIndex : index) + 1
+}
+
+/** 点击外部文件打开：卡片内直接开可编辑成品，不经 Agent 回合。 */
+function useDeckOpener(
+  state: SlidesProgressState,
+  title: string,
+  onError: (message: string) => void,
+) {
+  const { t } = useLocale()
+  return () => {
+    const files = typeof window === 'undefined' ? undefined : window.nxcore?.files
+    if (!files || !state.fileEntryId) {
+      onError(t('surface:agentChat.SLIDES_OPEN_FAILED'))
+      return
     }
-    if (record.stage === 'style_card_ready' && !record.styleCard) {
-      mapped.styleCard = {
-        swatches: record.swatches ?? [],
-        typography: record.typography ?? [],
-        wireframes: record.wireframes ?? [],
-        demoImageUrl: record.demoImageUrl ?? null,
-        effectLines: record.effectLines ?? [],
-      }
-    }
-    return mapped as unknown as SlidesProgressState
+    void files.openOriginal(
+      state.fileEntryId,
+      state.fileName ?? title,
+      undefined,
+      { editable: true, roomId: state.roomId },
+    ).catch(() => onError(t('surface:agentChat.SLIDES_OPEN_FAILED')))
   }
-  return record as unknown as SlidesProgressState
 }
 
 export function SlidesProgressCard({
   state,
   toolRunning,
-  busy,
+  busy = false,
+  startedAt,
+  completedAt,
+  runId,
+  toolStatus,
+  onAction,
   onOpenDraft,
-  onGenerate,
-}: {
-  state: SlidesProgressState
-  toolRunning: boolean
-  busy?: boolean
-  onOpenDraft?: (documentId: string) => void
-  onGenerate?: (message: string) => void
-}) {
+  cancelledRunIds,
+  interruptedRunIds,
+  compact = false,
+}: SlidesProgressCardProps) {
   const { t } = useLocale()
-  const isDraft = state.stage === 'draft_ready' && typeof state.documentId === 'string'
-  const isStyleImages = state.stage === 'style_images_ready'
-  const isStyleCard = state.stage === 'style_card_ready'
-  const isPageImagesConfirm = state.stage === 'page_images_confirm' && typeof state.documentId === 'string'
-  const isPageImagesReview = state.stage === 'page_images_review' && typeof state.documentId === 'string'
-  const awaitingUser = isDraft || isStyleImages || isStyleCard || isPageImagesConfirm || isPageImagesReview
-  // 换了新任务时清掉上一份 deck 的展开状态（渲染期重置，存上一份在 useState）
-  const [prevDeckTitle, setPrevDeckTitle] = useState(state.title)
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
-  // 点「生成/使用/确认」即收起：卡片折成短卡；新的等待目标到来才重新展开（渲染期重置）
-  const [confirmed, setConfirmed] = useState(!awaitingUser)
-  const [bodyOpen, setBodyOpen] = useState(awaitingUser)
-  const [prevAwaitingKey, setPrevAwaitingKey] = useState(
-    awaitingUser ? `${state.stage}:${state.styleSessionId ?? state.documentId ?? ''}` : null,
+  const [dismissed, setDismissed] = useState(false)
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [openError, setOpenError] = useState<string | null>(null)
+  const [stylePickerOpen, setStylePickerOpen] = useState(
+    state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0,
   )
-  if (prevDeckTitle !== state.title) {
-    setPrevDeckTitle(state.title)
-    setExpanded(new Set())
-  }
+  const [styleIndex, setStyleIndex] = useState(0)
+  const [expandedPages, setExpandedPages] = useState<ReadonlySet<number>>(new Set())
+
   const pages = state.pages ?? []
   const total = state.totalPages ?? pages.length
   const doneCount = state.doneCount ?? 0
-  const runningIndex = toolRunning ? doneCount : -1
+  const title = state.title || t('surface:agentChat.SLIDES_DEFAULT_TITLE')
+  const running = toolRunning
+  const interrupted = Boolean(runId && interruptedRunIds?.has(runId))
+  const stopped = !interrupted && (toolStatus === 'stopped' || Boolean(runId && cancelledRunIds?.has(runId)))
+  const isInProgress = SLIDES_IN_PROGRESS_STAGES.has(state.stage)
+  const completed = state.stage === 'page_applied' && state.completed !== false && !running
+  const partial = state.stage === 'page_applied' && state.completed === false
+  const failedPages = state.failedPages ?? []
+  const warnings = state.warnings ?? []
+  const elapsed = useElapsedLabel(startedAt, completedAt, running)
+  // 阶段翻转/新一批图到来：清掉「已提交」局部状态、重新展开、按新阶段决定是否弹大图。
+  const stageKey = `${state.stage}:${state.generation ?? ''}:${state.documentId ?? state.styleSessionId ?? ''}`
+  const [prevStageKey, setPrevStageKey] = useState(stageKey)
+  if (prevStageKey !== stageKey) {
+    setPrevStageKey(stageKey)
+    setPendingAction(null)
+    setNote(null)
+    setOpenError(null)
+    // 新阶段需要用户做决定时重新出现（关掉的卡不该错过下一个决策点）。
+    if (SLIDES_WAITING_STAGES.has(state.stage)) setDismissed(false)
+    setExpandedPages(new Set())
+    setStylePickerOpen(state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0)
+  }
 
-  // 等待目标变了（草稿确认 → 挑图 → 风格卡 → 配图确认 → 配图过目，等待阶段是连续的）
-  // 就重新开卡：上一阶段点按钮触发的「已确认、折叠」锁必须解开，否则下一
-  // 阶段的候选/风格卡永远不显示（真机实锤：挑图卡只剩标题、点不开）。
-  // 配图过目卡重生成后 stage 不变：generation 轮次拼进 key，新图到来才重开。
-  const awaitingKey = awaitingUser
-    ? `${state.stage}:${state.styleSessionId ?? state.documentId ?? ''}${state.stage === 'page_images_review' ? `:${String(state.generation ?? 1)}` : ''}`
-    : null
-  if (prevAwaitingKey !== awaitingKey) {
-    setPrevAwaitingKey(awaitingKey)
-    if (awaitingKey) {
-      setConfirmed(false)
-      setBodyOpen(true)
+  const runAction = (actionId: string, build: () => ActionSpec) => {
+    if (busy || pendingAction) return
+    const spec = build()
+    setPendingAction(actionId)
+    setOpenError(null)
+    setNote(t('surface:agentChat.SLIDES_ACTION_SUBMITTED'))
+    onAction?.(spec.prompt, spec.display)
+  }
+  const openDeck = useDeckOpener(state, title, setOpenError)
+  const openDraft = () => {
+    if (!state.documentId) return
+    onOpenDraft?.(state.documentId, state.roomId)
+  }
+
+  const phaseText = (() => {
+    if (interrupted) return t('surface:agentChat.SLIDES_INTERRUPTED')
+    if (stopped) return t('surface:agentChat.SLIDES_STOPPED')
+    switch (state.stage) {
+      case 'drafting': return t('surface:agentChat.SLIDES_PHASE_DRAFTING')
+      case 'style_generating': return t('surface:agentChat.SLIDES_PHASE_STYLE_GENERATING', { count: 3 })
+      case 'style_extracting': return t('surface:agentChat.SLIDES_PHASE_STYLE_EXTRACTING')
+      case 'planning': return t('surface:agentChat.SLIDES_PHASE_PLANNING')
+      case 'failed': return t('surface:agentChat.SLIDES_FAILED_PHASE')
+      case 'draft_ready': return t('surface:agentChat.SLIDES_DRAFT_READY')
+      case 'style_images_ready': return t('surface:agentChat.SLIDES_STYLE_PICK_PHASE')
+      case 'style_card_ready': return t('surface:agentChat.SLIDES_STYLE_CARD_PHASE')
+      case 'page_images_confirm': return t('surface:agentChat.SLIDES_IMAGES_CONFIRM_PHASE')
+      case 'page_images_review':
+        return doneCount < total
+          ? t('surface:agentChat.SLIDES_IMAGES_PROGRESS', { done: doneCount, total })
+          : t('surface:agentChat.SLIDES_IMAGES_REVIEW_PHASE')
+      case 'page_images': return t('surface:agentChat.SLIDES_IMAGES_PROGRESS', { done: doneCount, total })
+      case 'page_applied':
+        if (running) return t('surface:agentChat.SLIDES_DECK_PROGRESS', { done: doneCount, total })
+        if (state.completed === false) return t('surface:agentChat.SLIDES_PARTIAL_PHASE')
+        return t('surface:agentChat.SLIDES_DONE_PHASE')
+      default: return t('surface:agentChat.SLIDES_PHASE_WORKING')
     }
-  }
+  })()
 
-  const composeGenerateMessage = (): string => {
-    return t('surface:agentChat.slidesGenerateMessage', {
-      documentId: state.documentId ?? '',
-      title: state.title ?? '',
-    })
+  if (compact) {
+    return (
+      <div className="agent-slides-receipt" role="status">
+        <Check aria-hidden="true" />
+        <span>{t('surface:agentChat.SLIDES_RECEIPT_DONE', { title })}</span>
+        {state.fileEntryId ? (
+          <button
+            type="button"
+            className="agent-slides-receipt-open"
+            aria-label={t('surface:agentChat.SLIDES_RECEIPT_OPEN_LABEL', { title })}
+            onClick={openDeck}
+          >
+            {t('surface:agentChat.SLIDES_RECEIPT_OPEN')}
+          </button>
+        ) : null}
+      </div>
+    )
   }
+  if (dismissed) return null
 
+  const determinate = !isInProgress && total > 0 && (
+    state.stage === 'page_images' || state.stage === 'page_applied' || state.stage === 'page_images_review'
+  )
+  const showProgressLine = isInProgress || running || (state.stage === 'page_images_review' && doneCount < total)
+  const showPagesList = pages.length > 0
+    && state.stage !== 'style_images_ready' && state.stage !== 'style_card_ready'
+    && state.stage !== 'page_images_review' && state.stage !== 'page_images_confirm'
+  const runningIndex = running ? doneCount : -1
   const statusOf = (index: number): 'done' | 'running' | 'pending' => {
     if (index < doneCount) return 'done'
     if (index === runningIndex) return 'running'
     return 'pending'
   }
-  const toggleExpanded = (index: number) => {
-    setExpanded((prev) => {
+  const togglePage = (index: number) => {
+    setExpandedPages((prev) => {
       const next = new Set(prev)
       if (next.has(index)) next.delete(index)
       else next.add(index)
       return next
     })
   }
+  const statusIcon = state.stage === 'failed'
+    ? <TriangleAlert aria-hidden="true" />
+    : state.stage === 'page_applied' && completed
+      ? <Check aria-hidden="true" />
+      : <Presentation aria-hidden="true" />
 
-  const headerBody = (
-    <span className="agent-slides-progress-title">
-      <strong>{state.title}</strong>
-      <small>
-        {isDraft
-          ? t('surface:agentChat.slidesDraftPageCount', { total })
-          : isStyleImages
-            ? t('surface:agentChat.slidesStylePickTitle')
-            : isStyleCard
-              ? t('surface:agentChat.slidesStyleCardTitle')
-              : isPageImagesConfirm
-                ? t('surface:agentChat.slidesPageImagesConfirmTitle')
-                : isPageImagesReview
-                  ? doneCount < total
-                    ? t('surface:agentChat.slidesImagesProgress', { done: doneCount, total })
-                    : t('surface:agentChat.slidesPageImagesReviewTitle')
-                  : state.stage === 'page_images'
-                    ? t('surface:agentChat.slidesImagesProgress', { done: doneCount, total })
-                    : t('surface:agentChat.slidesDeckProgress', { done: doneCount, total })}
-        {isStyleImages ? <i aria-hidden="true" style={{ marginLeft: 4, fontSize: 9, color: '#4a90d9', fontStyle: 'normal' }}>·v3</i> : null}
-      </small>
-    </span>
-  )
+  const errorsBanner = (stopped || interrupted) ? (
+    <div className="agent-slides-state-banner" role="status">
+      <strong>{interrupted ? t('surface:agentChat.SLIDES_INTERRUPTED') : t('surface:agentChat.SLIDES_STOPPED')}</strong>
+      <span>
+        {interrupted
+          ? t('surface:agentChat.SLIDES_INTERRUPTED_HINT', { done: doneCount, total })
+          : t('surface:agentChat.SLIDES_STOPPED_HINT', { done: doneCount, total })}
+      </span>
+    </div>
+  ) : null
 
-  return (
-    <section className="agent-slides-progress" aria-label={state.title ?? undefined}>
-      {confirmed ? (
-        <button
-          type="button"
-          className="agent-slides-progress-header"
-          aria-expanded={bodyOpen}
-          onClick={() => setBodyOpen((prev) => !prev)}
-        >
-          <span className="agent-slides-progress-icon"><Presentation aria-hidden="true" /></span>
-          {headerBody}
-          {bodyOpen
-            ? <ChevronDown className="agent-slides-progress-chevron" aria-hidden="true" />
-            : <ChevronRight className="agent-slides-progress-chevron" aria-hidden="true" />}
-        </button>
-      ) : (
-        <header className="agent-slides-progress-header">
-          <span className="agent-slides-progress-icon"><Presentation aria-hidden="true" /></span>
-          {headerBody}
-        </header>
-      )}
+  const failedPagesBlock = failedPages.length ? (
+    <div className="agent-slides-failed-pages" role="status">
+      <strong>{t('surface:agentChat.SLIDES_FAILED_PAGES_TITLE')}</strong>
+      <ul>
+        {failedPages.map((pageIndex, index) => (
+          <li key={`${pageIndex}-${index}`}>{t('surface:agentChat.SLIDES_FAILED_PAGE_ITEM', { page: pageIndex + 1 })}</li>
+        ))}
+      </ul>
+    </div>
+  ) : null
 
-      {bodyOpen && state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
+  const warningsBlock = warnings.length ? (
+    <details className="agent-slides-warnings">
+      <summary>{t('surface:agentChat.SLIDES_WARNINGS_SUMMARY', { count: warnings.length })}</summary>
+      <ul>{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
+    </details>
+  ) : null
 
-      {bodyOpen && isStyleImages && !confirmed && state.styleCandidates?.length ? (
-        <div className="agent-slides-style-candidates">
-          {state.styleCandidates.map((candidate, index) => (
+  const pagesBlock = showPagesList ? (
+    isInProgress || (running && !completed && !partial)
+      ? (
+        <details className="agent-slides-pages-toggle">
+          <summary>{t('surface:agentChat.SLIDES_PAGE_LIST', { total })}</summary>
+          {renderPages()}
+        </details>
+      )
+      : renderPages()
+  ) : null
+
+  function renderPages(): ReactNode {
+    return (
+      <ol className="agent-slides-progress-pages">
+        {pages.map((page, index) => {
+          const status = statusOf(index)
+          const hasDetail = Boolean(page.points?.length || page.data || page.materialHints || page.notes || page.materials?.length)
+          const open = hasDetail && expandedPages.has(index)
+          return (
+            <li key={index} className={`agent-slides-page${status === 'running' ? ' is-running' : ''}${open ? ' is-open' : ''}`}>
+              <button
+                type="button"
+                className="agent-slides-page-head"
+                aria-expanded={open}
+                aria-label={t('surface:agentChat.SLIDES_PAGE_HEAD_LABEL', { page: pageNumberOf(page, index), title: page.title ?? '' })}
+                onClick={() => hasDetail && togglePage(index)}
+              >
+                <span className="agent-slides-page-index">{pageNumberOf(page, index)}</span>
+                <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
+                {status !== 'pending' ? (
+                  <span className={`agent-slides-page-status is-${status}`}>
+                    {status === 'done' ? <Check aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
+                  </span>
+                ) : null}
+                {hasDetail ? <ChevronDown className="agent-slides-page-chevron" aria-hidden="true" /> : null}
+              </button>
+              {open ? (
+                <div className="agent-slides-page-detail">
+                  {page.points?.length ? (
+                    <ul className="agent-slides-page-points">
+                      {page.points.map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}
+                    </ul>
+                  ) : null}
+                  {page.data ? <div className="agent-slides-page-data">{page.data}</div> : null}
+                  {page.materialHints ? <div className="agent-slides-page-notes">{page.materialHints}</div> : null}
+                  {page.notes ? <div className="agent-slides-page-notes">{page.notes}</div> : null}
+                  {page.materials?.length ? (
+                    <div className="agent-slides-page-media">
+                      {page.materials.map((material, materialIndex) => (
+                        <img
+                          key={materialIndex}
+                          src={material.url}
+                          alt={page.title ?? ''}
+                          title={material.desc ?? undefined}
+                          loading="lazy"
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </li>
+          )
+        })}
+      </ol>
+    )
+  }
+
+  let body: ReactNode = null
+  if (state.stage === 'draft_ready') {
+    body = (
+      <>
+        <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_DRAFT_HINT')}</p>
+        {pagesBlock}
+        <div className="agent-slides-actions">
+          <button
+            type="button"
+            className="agent-slides-action is-secondary"
+            aria-label={t('surface:agentChat.SLIDES_OPEN_DRAFT_LABEL', { title })}
+            disabled={busy || !state.documentId}
+            onClick={openDraft}
+          >
+            <FileText aria-hidden="true" />
+            {t('surface:agentChat.SLIDES_OPEN_DRAFT')}
+          </button>
+          <button
+            type="button"
+            className="agent-slides-action is-primary"
+            aria-label={t('surface:agentChat.SLIDES_CONFIRM_CONTENT_LABEL', { title })}
+            disabled={busy || pendingAction === 'confirm-content' || !state.documentId}
+            onClick={() => runAction('confirm-content', () => ({
+              prompt: t('surface:agentChat.SLIDES_CONFIRM_CONTENT_PROMPT', {
+                documentId: state.documentId ?? '',
+                title,
+              }),
+              display: t('surface:agentChat.SLIDES_CONFIRM_CONTENT_DISPLAY'),
+            }))}
+          >
+            {pendingAction === 'confirm-content' ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+            {t('surface:agentChat.SLIDES_CONFIRM_CONTENT')}
+          </button>
+        </div>
+      </>
+    )
+  } else if (state.stage === 'style_images_ready') {
+    const candidates = state.styleCandidates ?? []
+    body = (
+      <>
+        <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_STYLE_PICK_HINT')}</p>
+        <div className="agent-slides-style-strip">
+          {candidates.map((candidate, index) => (
             <button
               key={`${candidate.url}-${String(index)}`}
               type="button"
-              className="agent-slides-style-candidate"
-              aria-label={t('surface:agentChat.slidesStyleUse', { index: index + 1 })}
-              disabled={busy}
-              onClick={() => {
-                setConfirmed(true)
-                setBodyOpen(false)
-                onGenerate?.(t('surface:agentChat.slidesStylePickMessage', {
-                  index: index + 1,
-                  sessionId: state.styleSessionId ?? '',
-                }))
-              }}
+              className={`agent-slides-style-thumb${index === styleIndex ? ' is-active' : ''}`}
+              aria-label={t('surface:agentChat.SLIDES_STYLE_VIEW_BIG', {
+                index: index + 1,
+                label: candidate.label ?? t('surface:agentChat.SLIDES_STYLE_OPTION', { index: index + 1 }),
+              })}
+              onClick={() => { setStyleIndex(index); setStylePickerOpen(true) }}
             >
-              <img src={candidate.url} alt="" loading="lazy" />
-              {candidate.label ? <span className="agent-slides-style-candidate-label">{candidate.label}</span> : null}
+              <img src={candidate.url} alt={candidate.label ?? ''} loading="lazy" />
+              <span>{candidate.label ?? t('surface:agentChat.SLIDES_STYLE_OPTION', { index: index + 1 })}</span>
             </button>
           ))}
         </div>
-      ) : null}
-
-      {bodyOpen && isStyleCard && !confirmed && state.styleCard ? (
-        <div className="agent-slides-style-card">
-          {state.styleCard.swatches.length ? (
-            <div className="agent-slides-style-swatches">
-              {state.styleCard.swatches.map((swatch) => (
-                <span key={swatch.label} className="agent-slides-style-swatch">
-                  <i style={{ background: swatch.hex }} />
-                  <b>{swatch.label}</b>
-                  <small>{swatch.hex.toUpperCase()}</small>
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {state.styleCard.typography.length ? (
-            <dl className="agent-slides-style-typography">
-              {state.styleCard.typography.map((row) => (
-                <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
-              ))}
-            </dl>
-          ) : null}
-          {state.styleCard.wireframes.length ? (
-            <div className="agent-slides-style-wireframes">
-              {state.styleCard.wireframes.map((frame) => (
-                <figure key={frame.role} className="agent-slides-style-wireframe">
-                  <div dangerouslySetInnerHTML={{ __html: frame.svg }} />
-                  <figcaption>{frame.label}</figcaption>
-                </figure>
-              ))}
-            </div>
-          ) : null}
-          {state.styleCard.demoImageUrl ? (
-            <img className="agent-slides-style-demo" src={state.styleCard.demoImageUrl} alt="" loading="lazy" />
-          ) : null}
-          {state.styleCard.effectLines.length ? (
-            <ul className="agent-slides-style-lines">
-              {state.styleCard.effectLines.map((line) => <li key={line}>{line}</li>)}
-            </ul>
-          ) : null}
+        <div className="agent-slides-actions">
           <button
             type="button"
-            className="agent-slides-style-confirm"
-            disabled={busy}
-            onClick={() => {
-              setConfirmed(true)
-              setBodyOpen(false)
-              onGenerate?.(t('surface:agentChat.slidesStyleConfirmMessage', {
-                sessionId: state.styleSessionId ?? '',
-              }))
-            }}
+            className="agent-slides-action is-primary"
+            disabled={busy || candidates.length === 0}
+            onClick={() => { setStyleIndex(0); setStylePickerOpen(true) }}
           >
-            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
-            {t('surface:agentChat.slidesStyleConfirm')}
+            {t('surface:agentChat.SLIDES_STYLE_VIEW_BIG_ACTION')}
+          </button>
+          <button
+            type="button"
+            className="agent-slides-action is-secondary"
+            disabled={busy || pendingAction === 'style-regenerate'}
+            onClick={() => runAction('style-regenerate', () => ({
+              prompt: state.documentId
+                ? t('surface:agentChat.SLIDES_STYLE_REGENERATE_PROMPT', { documentId: state.documentId })
+                : t('surface:agentChat.SLIDES_STYLE_REGENERATE_PROMPT_NO_DOC'),
+              display: t('surface:agentChat.SLIDES_STYLE_REGENERATE_DISPLAY'),
+            }))}
+          >
+            {t('surface:agentChat.SLIDES_STYLE_REGENERATE')}
           </button>
         </div>
-      ) : null}
-
-      {bodyOpen && isPageImagesConfirm && !confirmed ? (
-        <div className="agent-slides-confirm">
-          <button
-            type="button"
-            className="agent-slides-generate"
-            disabled={busy}
-            onClick={() => {
-              setConfirmed(true)
-              setBodyOpen(false)
-              onGenerate?.(t('surface:agentChat.slidesPageImagesGenerateMessage', {
-                documentId: state.documentId ?? '',
-                title: state.title ?? '',
-              }))
-            }}
-          >
-            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
-            {t('surface:agentChat.slidesPageImagesGenerate')}
-          </button>
-          <button
-            type="button"
-            className="agent-slides-open-draft"
-            disabled={busy}
-            onClick={() => {
-              setConfirmed(true)
-              setBodyOpen(false)
-              onGenerate?.(t('surface:agentChat.slidesPageImagesSkipMessage', { documentId: state.documentId ?? '' }))
-            }}
-          >
-            {t('surface:agentChat.slidesPageImagesSkip')}
-          </button>
-        </div>
-      ) : null}
-
-      {bodyOpen && isPageImagesReview && !confirmed ? (
-        <>
-          <div className="agent-slides-page-review-list">
-            {pages.map((page, index) => {
-              if (!page.url) {
-                // 后台生成中/失败的页：标题行占位，失败的页可手动重生成。
-                return (
-                  <div key={index} className={`agent-slides-page-review is-pending${page.failed ? ' is-failed' : ''}`}>
-                    <div className="agent-slides-page-review-title">
-                      <span className="agent-slides-page-index">{index + 1}</span>
-                      <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
-                      <small>{page.failed
-                        ? t('surface:agentChat.slidesPageImagesFailed')
-                        : t('surface:agentChat.slidesPageImagesPending')}</small>
-                    </div>
-                    {page.failed ? (
-                      <button
-                        type="button"
-                        className="agent-slides-page-regenerate"
-                        disabled={busy}
-                        onClick={() => {
-                          setConfirmed(true)
-                          setBodyOpen(false)
-                          onGenerate?.(t('surface:agentChat.slidesPageImagesRegenerateMessage', {
-                            index: index + 1,
-                            documentId: state.documentId ?? '',
-                          }))
-                        }}
-                      >
-                        <RefreshCw aria-hidden="true" />
-                        {t('surface:agentChat.slidesPageImagesRegenerate')}
-                      </button>
-                    ) : null}
-                  </div>
-                )
-              }
-              return (
-              <div key={index} className={`agent-slides-page-review${page.rejected ? ' is-rejected' : ''}`}>
-                <img src={page.url} alt={page.imagePrompt ?? ''} title={page.imagePrompt ?? undefined} loading="lazy" />
-                <div className="agent-slides-page-review-actions">
-                  <button
-                    type="button"
-                    className="agent-slides-page-regenerate"
-                    disabled={busy}
-                    onClick={() => {
-                      setConfirmed(true)
-                      setBodyOpen(false)
-                      onGenerate?.(t('surface:agentChat.slidesPageImagesRegenerateMessage', {
-                        index: index + 1,
-                        documentId: state.documentId ?? '',
-                      }))
-                    }}
-                  >
-                    <RefreshCw aria-hidden="true" />
-                    {t('surface:agentChat.slidesPageImagesRegenerate')}
-                  </button>
-                  {page.rejected ? (
-                    <button
-                      type="button"
-                      className="agent-slides-page-restore"
-                      disabled={busy}
-                      onClick={() => {
-                        onGenerate?.(t('surface:agentChat.slidesPageImagesRestoreMessage', {
-                          index: index + 1,
-                          documentId: state.documentId ?? '',
-                        }))
-                      }}
-                    >
-                      {t('surface:agentChat.slidesPageImagesRestore')}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="agent-slides-page-reject"
-                      disabled={busy}
-                      onClick={() => {
-                        onGenerate?.(t('surface:agentChat.slidesPageImagesRejectMessage', {
-                          index: index + 1,
-                          documentId: state.documentId ?? '',
-                        }))
-                      }}
-                    >
-                      {t('surface:agentChat.slidesPageImagesReject')}
-                    </button>
-                  )}
-                </div>
-              </div>
-              )
-            })}
+      </>
+    )
+  } else if (state.stage === 'style_card_ready' && state.styleCard) {
+    const card = state.styleCard
+    body = (
+      <>
+        <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_STYLE_CARD_HINT')}</p>
+        {card.demoImageUrl ? (
+          <img className="agent-slides-style-demo" src={card.demoImageUrl} alt={t('surface:agentChat.SLIDES_STYLE_DEMO_ALT', { title })} loading="lazy" />
+        ) : null}
+        {card.effectLines.length ? (
+          <div className="agent-slides-style-meaning">
+            <strong>{t('surface:agentChat.SLIDES_STYLE_MEANING')}</strong>
+            <ul>{card.effectLines.map((line) => <li key={line}>{line}</li>)}</ul>
           </div>
-          <div className="agent-slides-confirm">
+        ) : null}
+        <details className="agent-slides-style-details-toggle">
+            <summary>{t('surface:agentChat.SLIDES_STYLE_DETAILS')}</summary>
+            {card.swatches.length ? (
+              <div className="agent-slides-style-swatches">
+                {card.swatches.map((swatch) => (
+                  <span key={swatch.label} className="agent-slides-style-swatch">
+                    <i style={{ background: swatch.hex }} />
+                    <b>{swatch.label}</b>
+                    <small>{swatch.hex.toUpperCase()}</small>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {card.typography.length ? (
+              <dl className="agent-slides-style-typography">
+                {card.typography.map((row) => (
+                  <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
+                ))}
+              </dl>
+            ) : null}
+            {card.details?.length ? (
+              <dl className="agent-slides-style-typography agent-slides-style-details">
+                {card.details.map((row) => (
+                  <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
+                ))}
+              </dl>
+            ) : null}
+            {card.wireframes.length ? (
+              <div className="agent-slides-style-wireframes">
+                {card.wireframes.map((frame) => (
+                  <figure key={frame.role} className="agent-slides-style-wireframe">
+                    <div dangerouslySetInnerHTML={{ __html: frame.svg }} />
+                    <figcaption>{frame.label}</figcaption>
+                  </figure>
+                ))}
+              </div>
+            ) : null}
+        </details>
+        <div className="agent-slides-actions">
+          <button
+            type="button"
+            className="agent-slides-action is-primary"
+            aria-label={t('surface:agentChat.SLIDES_STYLE_CONFIRM_LABEL', { title })}
+            disabled={busy || pendingAction === 'style-confirm' || !state.styleSessionId}
+            onClick={() => runAction('style-confirm', () => ({
+              prompt: t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT', {
+                sessionId: state.styleSessionId ?? '',
+              }),
+              display: t('surface:agentChat.SLIDES_STYLE_CONFIRM_DISPLAY'),
+            }))}
+          >
+            {pendingAction === 'style-confirm' ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+            {t('surface:agentChat.SLIDES_STYLE_CONFIRM')}
+          </button>
+          <button
+            type="button"
+            className="agent-slides-action is-ghost"
+            disabled={busy || pendingAction === 'style-regenerate'}
+            onClick={() => {
+              setStyleIndex(0)
+              setStylePickerOpen(false)
+              runAction('style-regenerate', () => ({
+                prompt: state.documentId
+                  ? t('surface:agentChat.SLIDES_STYLE_REGENERATE_PROMPT', { documentId: state.documentId })
+                  : t('surface:agentChat.SLIDES_STYLE_REGENERATE_PROMPT_NO_DOC'),
+                display: t('surface:agentChat.SLIDES_STYLE_REGENERATE_DISPLAY'),
+              }))
+            }}
+          >
+            {t('surface:agentChat.SLIDES_STYLE_REGENERATE')}
+          </button>
+        </div>
+      </>
+    )
+  } else if (state.stage === 'page_images_confirm') {
+    body = (
+      <>
+        <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_IMAGES_CONFIRM_HINT')}</p>
+        <div className="agent-slides-actions">
+          <button
+            type="button"
+            className="agent-slides-action is-primary"
+            aria-label={t('surface:agentChat.SLIDES_IMAGES_GENERATE_LABEL', { title })}
+            disabled={busy || pendingAction === 'images-generate' || !state.documentId}
+            onClick={() => runAction('images-generate', () => ({
+              prompt: t('surface:agentChat.SLIDES_IMAGES_GENERATE_PROMPT', {
+                documentId: state.documentId ?? '',
+                title,
+              }),
+              display: t('surface:agentChat.SLIDES_IMAGES_GENERATE_DISPLAY'),
+            }))}
+          >
+            {pendingAction === 'images-generate' ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+            {t('surface:agentChat.SLIDES_IMAGES_GENERATE')}
+          </button>
+          <button
+            type="button"
+            className="agent-slides-action is-secondary"
+            disabled={busy || pendingAction === 'images-skip'}
+            onClick={() => runAction('images-skip', () => ({
+              prompt: t('surface:agentChat.SLIDES_IMAGES_SKIP_PROMPT', { documentId: state.documentId ?? '' }),
+              display: t('surface:agentChat.SLIDES_IMAGES_SKIP_DISPLAY'),
+            }))}
+          >
+            {t('surface:agentChat.SLIDES_IMAGES_SKIP')}
+          </button>
+        </div>
+      </>
+    )
+  } else if (state.stage === 'page_images_review') {
+    body = (
+      <SlidesPageImagesReview
+        documentId={state.documentId}
+        generation={state.generation}
+        pages={pages}
+        doneCount={doneCount}
+        totalPages={total}
+        busy={busy}
+        pending={pendingAction !== null}
+        onSubmit={(prompt, displayText) => runAction('images-submit', () => ({ prompt, display: displayText }))}
+      />
+    )
+  } else if (state.stage === 'page_applied') {
+    if (completed) {
+      body = (
+        <>
+          <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_DONE_HINT')}</p>
+          {state.draftArchived ? (
+            <p className="agent-slides-card-note">{t('surface:agentChat.SLIDES_DRAFT_ARCHIVED')}</p>
+          ) : null}
+          <div className="agent-slides-actions">
+            {state.fileEntryId ? (
+              <button
+                type="button"
+                className="agent-slides-action is-primary"
+                aria-label={t('surface:agentChat.SLIDES_OPEN_PPT_LABEL', { title })}
+                disabled={busy}
+                onClick={openDeck}
+              >
+                <Presentation aria-hidden="true" />
+                {t('surface:agentChat.SLIDES_OPEN_PPT')}
+              </button>
+            ) : null}
             <button
               type="button"
-              className="agent-slides-style-confirm"
-              disabled={busy}
-              onClick={() => {
-                setConfirmed(true)
-                setBodyOpen(false)
-                onGenerate?.(t('surface:agentChat.slidesPageImagesAcceptMessage', { documentId: state.documentId ?? '' }))
-              }}
+              className="agent-slides-action is-secondary"
+              aria-label={t('surface:agentChat.SLIDES_CONTINUE_EDIT_LABEL', { title })}
+              disabled={busy || pendingAction === 'continue-edit'}
+              onClick={() => runAction('continue-edit', () => ({
+                prompt: t('surface:agentChat.SLIDES_CONTINUE_EDIT_PROMPT', {
+                  title,
+                  fileEntryId: state.fileEntryId ?? '',
+                }),
+                display: t('surface:agentChat.SLIDES_CONTINUE_EDIT_DISPLAY', { title }),
+              }))}
             >
-              {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
-              {t('surface:agentChat.slidesPageImagesAccept')}
+              {t('surface:agentChat.SLIDES_CONTINUE_EDIT')}
             </button>
           </div>
+          {openError ? <p className="agent-slides-error-note" role="alert">{openError}</p> : null}
+          {failedPagesBlock}
+          {warningsBlock}
         </>
-      ) : null}
-
-      {bodyOpen && pages.length > 0 && !isPageImagesReview ? (
-        <ol className="agent-slides-progress-pages">
-          {pages.map((page, index) => {
-            const status = statusOf(index)
-            const hasDetail = Boolean(page.points?.length || page.data || page.materialHints || page.notes || page.materials?.length || page.imagePrompt)
-            const open = hasDetail && expanded.has(index)
-            return (
-              <li key={index} className={`agent-slides-page${status === 'running' ? ' is-running' : ''}${open ? ' is-open' : ''}`}>
-                <button
-                  type="button"
-                  className="agent-slides-page-head"
-                  aria-expanded={open}
-                  aria-label={page.title ?? undefined}
-                  onClick={() => hasDetail && toggleExpanded(index)}
-                >
-                  <span className="agent-slides-page-index">{index + 1}</span>
-                  <span className="agent-slides-page-title" title={page.title ?? undefined}>{page.title}</span>
-                  {status !== 'pending' ? (
-                    <span className={`agent-slides-page-status is-${status}`}>
-                      {status === 'done' ? <Check aria-hidden="true" /> : <LoaderCircle className="spin" aria-hidden="true" />}
-                    </span>
-                  ) : null}
-                  {hasDetail ? <ChevronDown className="agent-slides-page-chevron" aria-hidden="true" /> : null}
-                </button>
-                {open ? (
-                  <div className="agent-slides-page-detail">
-                    {page.points?.length ? (
-                      <ul className="agent-slides-page-points">
-                        {page.points.map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}
-                      </ul>
-                    ) : null}
-                    {page.data ? <div className="agent-slides-page-data">{page.data}</div> : null}
-                    {page.materialHints ? <div className="agent-slides-page-notes">{page.materialHints}</div> : null}
-                    {page.notes ? <div className="agent-slides-page-notes">{page.notes}</div> : null}
-                    {page.imagePrompt ? <div className="agent-slides-page-notes">{page.imagePrompt}</div> : null}
-                    {page.materials?.length ? (
-                      <div className="agent-slides-page-media">
-                        {page.materials.map((material, materialIndex) => (
-                          <img
-                            key={materialIndex}
-                            src={material.url}
-                            alt={material.desc ?? ''}
-                            title={material.desc ?? undefined}
-                            loading="lazy"
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </li>
-            )
-          })}
-        </ol>
-      ) : null}
-
-      {state.warnings?.length ? (
-        <div className="agent-slides-stopped">{state.warnings.join('；')}</div>
-      ) : null}
-
-      {isDraft && !confirmed ? (
-        <div className="agent-slides-confirm">
-          <button
-            type="button"
-            className="agent-slides-open-draft"
-            disabled={busy}
-            onClick={() => onOpenDraft?.(state.documentId as string)}
-          >
-            <FileText aria-hidden="true" />
-            {t('surface:agentChat.slidesOpenDraft')}
-          </button>
-          <button
-            type="button"
-            className="agent-slides-generate"
-            disabled={busy}
-            onClick={() => {
-              setConfirmed(true)
-              setBodyOpen(false)
-              onGenerate?.(composeGenerateMessage())
-            }}
-          >
-            {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Presentation aria-hidden="true" />}
-            {t('surface:agentChat.slidesGenerate')}
-          </button>
+      )
+    } else if (partial) {
+      body = (
+        <>
+          <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_PARTIAL_HINT', { done: doneCount, total })}</p>
+          {pagesBlock}
+          {failedPagesBlock}
+          {warningsBlock}
+          <div className="agent-slides-actions">
+            {state.documentId ? (
+              <button
+                type="button"
+                className="agent-slides-action is-primary"
+                disabled={busy || pendingAction === 'continue-remaining'}
+                onClick={() => runAction('continue-remaining', () => ({
+                  prompt: t('surface:agentChat.SLIDES_CONTINUE_REMAINING_PROMPT', {
+                    documentId: state.documentId ?? '',
+                    pages: failedPages.map((pageIndex) => pageIndex + 1).join('、'),
+                  }),
+                  display: t('surface:agentChat.SLIDES_CONTINUE_REMAINING_DISPLAY'),
+                }))}
+              >
+                {t('surface:agentChat.SLIDES_CONTINUE_REMAINING')}
+              </button>
+            ) : null}
+            {state.fileEntryId ? (
+              <button type="button" className="agent-slides-action is-secondary" disabled={busy} onClick={openDeck}>
+                {t('surface:agentChat.SLIDES_OPEN_EXISTING')}
+              </button>
+            ) : null}
+          </div>
+          {openError ? <p className="agent-slides-error-note" role="alert">{openError}</p> : null}
+        </>
+      )
+    } else {
+      body = (
+        <>
+          {pagesBlock}
+          {warningsBlock}
+        </>
+      )
+    }
+  } else if (state.stage === 'failed') {
+    const errorText = state.errorCode && ERROR_MESSAGE_KEYS[state.errorCode]
+      ? t(ERROR_MESSAGE_KEYS[state.errorCode]!)
+      : (state.errorMessage || t('surface:agentChat.SLIDES_ERROR_UNKNOWN'))
+    body = (
+      <>
+        <div className="agent-slides-failure" role="alert">
+          <strong>{errorText}</strong>
+          {doneCount > 0 ? (
+            <small>{t('surface:agentChat.SLIDES_FAILED_KEPT_PROGRESS', { done: doneCount, total })}</small>
+          ) : null}
         </div>
+        {failedPagesBlock}
+        {warningsBlock}
+        <div className="agent-slides-actions">
+          {state.retryable ? (
+            <button
+              type="button"
+              className="agent-slides-action is-primary"
+              disabled={busy || pendingAction === 'retry'}
+              onClick={() => runAction('retry', () => ({
+                prompt: t('surface:agentChat.SLIDES_RETRY_PROMPT', { reason: errorText }),
+                display: t('surface:agentChat.SLIDES_RETRY_DISPLAY'),
+              }))}
+            >
+              {pendingAction === 'retry' ? <LoaderCircle className="spin" aria-hidden="true" /> : null}
+              {t('surface:agentChat.SLIDES_RETRY')}
+            </button>
+          ) : null}
+          {state.fileEntryId ? (
+            <button
+              type="button"
+              className={state.retryable ? 'agent-slides-action is-secondary' : 'agent-slides-action is-primary'}
+              disabled={busy}
+              onClick={openDeck}
+            >
+              {t('surface:agentChat.SLIDES_OPEN_EXISTING')}
+            </button>
+          ) : null}
+        </div>
+        {!state.retryable ? <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_RETRY_HINT')}</p> : null}
+        {openError ? <p className="agent-slides-error-note" role="alert">{openError}</p> : null}
+      </>
+    )
+  } else {
+    // drafting / style_generating / style_extracting / planning / page_images / plan_ready
+    body = (
+      <>
+        <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_IN_PROGRESS_HINT')}</p>
+        {pagesBlock}
+        {warningsBlock}
+      </>
+    )
+  }
+
+  return (
+    <section
+      className={`agent-slides-card${completed ? ' is-done' : ''}${state.stage === 'failed' ? ' is-failed' : ''}${stopped ? ' is-stopped' : ''}${interrupted ? ' is-interrupted' : ''}`}
+      aria-label={title}
+    >
+      <header className="agent-slides-card-head">
+        <span className="agent-slides-card-icon" aria-hidden="true">{statusIcon}</span>
+        <span className="agent-slides-card-titles">
+          <strong className="agent-slides-card-title">{title}</strong>
+          <span className="agent-slides-card-phase" aria-live="polite">{phaseText}</span>
+        </span>
+        {elapsed ? (
+          <span className="agent-slides-card-time">
+            {running
+              ? t('surface:agentChat.SLIDES_ELAPSED', { time: elapsed })
+              : t('surface:agentChat.SLIDES_ELAPSED_DONE', { time: elapsed })}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className="agent-slides-card-close"
+          aria-label={t('surface:agentChat.SLIDES_CLOSE_CARD')}
+          onClick={() => setDismissed(true)}
+        >
+          <X aria-hidden="true" />
+        </button>
+      </header>
+      {showProgressLine ? (
+        determinate ? (
+          <div
+            className="agent-slides-progress-line"
+            role="progressbar"
+            aria-label={phaseText}
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={doneCount}
+          >
+            <i style={{ width: `${total > 0 ? Math.min(100, Math.round((doneCount / total) * 100)) : 0}%` }} />
+          </div>
+        ) : (
+          <div className="agent-slides-progress-line is-indeterminate" role="progressbar" aria-label={phaseText} />
+        )
+      ) : null}
+      {errorsBanner}
+      {state.narrative ? <p className="agent-slides-narrative">{state.narrative}</p> : null}
+      <div className="agent-slides-card-body">
+        {body}
+        {note ? <p className="agent-slides-action-note" role="status">{note}</p> : null}
+      </div>
+      {stylePickerOpen && state.styleCandidates?.length ? (
+        <SlidesStylePicker
+          candidates={state.styleCandidates as StyleCandidate[]}
+          index={styleIndex}
+          title={title}
+          busy={busy}
+          pending={pendingAction !== null}
+          onIndexChange={setStyleIndex}
+          onUse={(index) => {
+            runAction('style-use', () => ({
+              prompt: t('surface:agentChat.SLIDES_STYLE_PICK_PROMPT', {
+                index: index + 1,
+                sessionId: state.styleSessionId ?? '',
+              }),
+              display: t('surface:agentChat.SLIDES_STYLE_PICK_DISPLAY', { index: index + 1 }),
+            }))
+            setStylePickerOpen(false)
+          }}
+          onRegenerate={() => {
+            setStylePickerOpen(false)
+            runAction('style-regenerate', () => ({
+              prompt: state.documentId
+                ? t('surface:agentChat.SLIDES_STYLE_REGENERATE_PROMPT', { documentId: state.documentId })
+                : t('surface:agentChat.SLIDES_STYLE_REGENERATE_PROMPT_NO_DOC'),
+              display: t('surface:agentChat.SLIDES_STYLE_REGENERATE_DISPLAY'),
+            }))
+          }}
+          onClose={() => setStylePickerOpen(false)}
+        />
       ) : null}
     </section>
   )

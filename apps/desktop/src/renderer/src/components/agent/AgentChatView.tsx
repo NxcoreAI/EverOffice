@@ -3,10 +3,19 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, 
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
-import { SlidesProgressCard, slidesProgressFromToolCall, type SlidesProgressState } from './SlidesProgressCard'
+import {
+  SlidesProgressCard,
+  selectSlidesTasks,
+  slidesTaskEntries,
+  type SlidesProgressState,
+  type SlidesTaskEntry,
+} from './SlidesProgressCard'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import {
   AGENT_CHAT_REPIN_DISTANCE_PX,
+  AGENT_CHAT_WHEEL_UP_DETACH_PX,
+  isGeometryClampScroll,
+  isNestedScrollerWheel,
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
@@ -405,13 +414,15 @@ export function AgentChatView({
   onRetryPrompt,
   onResolveApproval = () => undefined,
   onOpenSessionLink,
-  onOpenDraftDocument,
-  onSlidesGenerate,
+  onSlidesAction,
+  onOpenDraft,
   onOpenMention,
   onRejectDocumentIntent,
   onSelectRoom,
   onSelectDocument,
   onSelectPrompt,
+  cancelledRunIds,
+  interruptedRunIds,
   pendingNavigationByRun,
   reasoningByRun = {},
   runCompletedAtByRun,
@@ -444,8 +455,13 @@ export function AgentChatView({
   onRetryPrompt: (prompt: string, runId: string) => void
   onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
-  onOpenDraftDocument?: (documentId: string) => void
-  onSlidesGenerate?: (message: string) => void
+  /** 卡片动作两段式：prompt 是运行时技术指令，displayText 是用户人话（气泡/标题）。 */
+  onSlidesAction?: (prompt: string, displayText: string) => void
+  onOpenDraft?: (documentId: string, roomId?: string) => void
+  /** 用户主动停止的 run：卡片显示「已停止」。 */
+  cancelledRunIds?: ReadonlySet<string>
+  /** 网关重启等原因被中断的 run：卡片显示「运行被中断」。 */
+  interruptedRunIds?: ReadonlySet<string>
   onOpenMention?: (item: MentionedItem) => void
   onRejectDocumentIntent: () => void
   onSelectRoom: (
@@ -497,11 +513,11 @@ export function AgentChatView({
   const attachChatScroll = (element: HTMLElement) => {
     pinnedToBottomRef.current = true
     detachedBaseCountRef.current = 0
+    wheelUpAccumRef.current = 0
     setScrollDetached(false)
     setDetachedNewCount(0)
     element.scrollTop = element.scrollHeight
-    lastScrollTopRef.current = element.scrollTop
-    lastScrollHeightRef.current = element.scrollHeight
+    rememberGeometry(element)
   }
   const detachChatScroll = () => {
     if (!pinnedToBottomRef.current) return
@@ -512,6 +528,17 @@ export function AgentChatView({
   /** 上一帧的内容总高度：滚动事件比帧回调先触发，用它还原「滚动发生时的底部」，
    * 不被同一帧里流式插入的新高度污染（竞态消除的关键）。 */
   const lastScrollHeightRef = useRef(0)
+  /** 上一帧的视口高度：视口变高同样会让浏览器 clamp scrollTop（几何收缩而非手势）。 */
+  const lastClientHeightRef = useRef(0)
+  /** 上滑手势的方向累计：触控板 ±0.5px 步进不能单发解除吸底（按钮会闪），
+   * 但也不能永远不解除——累计到 AGENT_CHAT_WHEEL_UP_DETACH_PX 再真正 detach。 */
+  const wheelUpAccumRef = useRef(0)
+  /** 记录「上一帧几何」：scrollTop 方向只有在几何没收缩时才可信，clamp 判定依赖它。 */
+  const rememberGeometry = (element: HTMLElement) => {
+    lastScrollTopRef.current = element.scrollTop
+    lastScrollHeightRef.current = element.scrollHeight
+    lastClientHeightRef.current = element.clientHeight
+  }
   const lastUserMessageIdRef = useRef<string | null>(null)
   const previousSessionIdRef = useRef(currentSessionId)
   const hasConversation = messages.length > 0 || sessionLinks.length > 0 || pendingApprovals.length > 0
@@ -549,75 +576,88 @@ export function AgentChatView({
   )
   const latestTools = activeRunId ? toolCallsByRun[activeRunId] ?? [] : []
   const latestActivity = activeRunId ? activityByRun[activeRunId] : undefined
-  // PPT 逐页进度卡：最近一次带进度载荷的 slides_draft（进行中的优先）。
-  const slidesProgress = useMemo(() => {
-    const candidates = Object.values(toolCallsByRun)
-      .flat()
-      .map((tool) => ({ tool, progress: slidesProgressFromToolCall(tool) }))
-      .filter((entry): entry is { tool: DisplayAgentToolCall; progress: SlidesProgressState } => entry.progress !== null)
-    if (candidates.length === 0) return null
-    const live = candidates.filter((entry) => entry.tool.status === 'running' || entry.tool.status === 'pending')
-    const pool = live.length > 0 ? live : candidates
-    return pool.reduce((latest, entry) =>
-      Date.parse(entry.tool.startedAt) > Date.parse(latest.tool.startedAt) ? entry : latest)
-  }, [toolCallsByRun])
-  // PPT 卡是一次性的：工具结束后一旦对话已被后续用户消息推进（用户对卡采取过动作或聊了别的），整卡隐藏。
-  // 例外：挑图/风格卡是「等用户动作的问句」——闲聊不该把它顶掉（顶掉就无从挑选），
-  // 只有更新的 slides_draft 调用出现（已挑选/已重生成/流程推进）才隐藏。
-  const slidesProgressVisible = useMemo(() => {
-    if (!slidesProgress) return false
-    const tool = slidesProgress.tool
-    if (tool.status === 'running' || tool.status === 'pending') return true
-    const stage = slidesProgress.progress.stage
-    if (stage === 'style_images_ready' || stage === 'style_card_ready'
-      || stage === 'page_images_confirm' || stage === 'page_images_review') {
-      const startedAt = Date.parse(tool.startedAt)
-      return !Object.values(toolCallsByRun)
-        .flat()
-        .some((other) => other.name === 'slides_draft' && other.id !== tool.id && Date.parse(other.startedAt) > startedAt)
-    }
-    const toolTime = Date.parse(tool.completedAt ?? tool.startedAt)
-    return !messages.some((message) => message.role === 'user' && Date.parse(message.createdAt) > toolTime)
-  }, [slidesProgress, messages, toolCallsByRun])
+  // PPT 任务槽：卡片是任务不是挂件——最新一张 + 所有等待态 + 已完成回执，最多 3 张，其余折叠。
+  const [slidesShowAll, setSlidesShowAll] = useState(false)
+  useEffect(() => { setSlidesShowAll(false) }, [currentSessionId])
+  const slidesTasks = useMemo(() => slidesTaskEntries(toolCallsByRun), [toolCallsByRun])
+  const slidesSelection = useMemo(
+    () => selectSlidesTasks(slidesTasks, slidesShowAll ? Number.MAX_SAFE_INTEGER : 3),
+    [slidesShowAll, slidesTasks],
+  )
+  const slidesTaskCards = useMemo(() => {
+    const cards: Array<{ entry: SlidesTaskEntry; compact: boolean }> = []
+    if (slidesSelection.primary) cards.push({ entry: slidesSelection.primary, compact: false })
+    for (const entry of slidesSelection.waiting) cards.push({ entry, compact: false })
+    for (const entry of slidesSelection.receipts) cards.push({ entry, compact: true })
+    return cards
+  }, [slidesSelection])
 
-  // 配图后台逐张生成轮询：过目卡还有未完成张数时拉会话快照。工具调用的进度
-  // 通道在终态后被丢弃，轮询是后台推进期间唯一的刷新途径；旧响应（updatedAt
-  // 更小）不得覆盖更新的广播。
-  const pageImagesPollRef = useRef(0)
-  const pageImagesPollTarget = slidesProgress && slidesProgressVisible
-    && slidesProgress.progress.stage === 'page_images_review'
-    && typeof slidesProgress.progress.documentId === 'string'
-    && (slidesProgress.progress.pages ?? []).some((page) => !page.url && !page.failed)
-    ? slidesProgress.progress.documentId
-    : null
+  // 配图后台逐张生成轮询：轮询状态以 documentId 为 key，切换文档即清 state/ref；
+  // 响应校验 documentId 与 updatedAt，旧响应不得覆盖新广播（修 P1-7 串台）。
+  const pageImagesPollDoc = useMemo(() => {
+    const entries = [slidesSelection.primary, ...slidesSelection.waiting]
+      .filter((entry): entry is SlidesTaskEntry => Boolean(entry))
+    const target = entries.find((entry) => entry.progress.stage === 'page_images_review'
+      && typeof entry.progress.documentId === 'string'
+      && (entry.progress.pages ?? []).some((page) => !page.url && !page.failed && !page.rejected))
+    return target?.progress.documentId ?? null
+  }, [slidesSelection])
+  const [polledByDoc, setPolledByDoc] = useState<Record<string, SlidesProgressState>>({})
+  const pollUpdatedAtByDoc = useRef(new Map<string, number>())
+  const pollBroadcastUpdatedAt = useMemo(() => {
+    const entry = [slidesSelection.primary, ...slidesSelection.waiting]
+      .find((candidate) => candidate?.progress.documentId === pageImagesPollDoc && pageImagesPollDoc !== null)
+    return entry?.progress.updatedAt ?? 0
+  }, [pageImagesPollDoc, slidesSelection])
+  // 每个 documentId 各自的广播游标：切文档时不拿 A 的 updatedAt 去拒收 B 的响应。
+  const pollBroadcastRef = useRef(new Map<string, number>())
+  if (pageImagesPollDoc && pollBroadcastUpdatedAt > 0) {
+    pollBroadcastRef.current.set(
+      pageImagesPollDoc,
+      Math.max(pollBroadcastRef.current.get(pageImagesPollDoc) ?? 0, pollBroadcastUpdatedAt),
+    )
+  }
   useEffect(() => {
-    if (typeof slidesProgress?.progress.updatedAt === 'number'
-      && slidesProgress.progress.updatedAt > pageImagesPollRef.current) {
-      pageImagesPollRef.current = slidesProgress.progress.updatedAt
-    }
-  })
-  const [pageImagesPollState, setPageImagesPollState] = useState<SlidesProgressState | null>(null)
-  useEffect(() => {
-    if (!pageImagesPollTarget) return
+    // 切文档：丢掉别的文档的轮询快照与游标，防 A 的图与序号打到 B 文档。
+    setPolledByDoc((prev) => {
+      if (!pageImagesPollDoc) return Object.keys(prev).length ? {} : prev
+      const kept = prev[pageImagesPollDoc]
+      if (kept && Object.keys(prev).length === 1) return prev
+      return kept ? { [pageImagesPollDoc]: kept } : {}
+    })
+    pollUpdatedAtByDoc.current.clear()
+    if (!pageImagesPollDoc) return
+    const seed = pollBroadcastRef.current.get(pageImagesPollDoc) ?? 0
+    if (seed > 0) pollUpdatedAtByDoc.current.set(pageImagesPollDoc, seed)
+    if (typeof window === 'undefined') return
     let cancelled = false
     const timer = window.setInterval(() => {
-      void window.nxcore?.slides.pageImagesStatus(pageImagesPollTarget)
+      void window.nxcore?.slides.pageImagesStatus(pageImagesPollDoc)
         .then((status) => {
           if (cancelled || !status || status.stage !== 'page_images_review') return
-          if ((status.updatedAt ?? 0) < pageImagesPollRef.current) return
-          if (status.updatedAt) pageImagesPollRef.current = status.updatedAt
-          setPageImagesPollState(status as unknown as SlidesProgressState)
+          if (status.documentId && status.documentId !== pageImagesPollDoc) return
+          const updatedAt = status.updatedAt ?? 0
+          const cursor = pollUpdatedAtByDoc.current.get(pageImagesPollDoc) ?? 0
+          if (updatedAt < cursor) return
+          if (updatedAt) pollUpdatedAtByDoc.current.set(pageImagesPollDoc, updatedAt)
+          setPolledByDoc((prev) => ({ ...prev, [pageImagesPollDoc]: status as unknown as SlidesProgressState }))
         })
-        .catch(() => {})
+        .catch(() => undefined)
     }, 2500)
     return () => {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [pageImagesPollTarget])
-  const pageImagesDisplayState = pageImagesPollTarget
-    ? (pageImagesPollState ?? slidesProgress?.progress)
-    : slidesProgress?.progress
+  }, [pageImagesPollDoc])
+  const slidesDisplayState = (entry: SlidesTaskEntry): SlidesProgressState => (
+    (entry.progress.documentId && polledByDoc[entry.progress.documentId]) || entry.progress
+  )
+  const handleSlidesAction = (prompt: string, displayText: string) => {
+    onSlidesAction?.(prompt, displayText)
+  }
+  const handleOpenDraft = (documentId: string, roomId?: string) => {
+    onOpenDraft?.(documentId, roomId)
+  }
 
   const activeHasAssistant = activeRunId
     ? messages.some((message) => message.runId === activeRunId && message.role === 'assistant')
@@ -747,6 +787,8 @@ export function AgentChatView({
     lastUserMessageIdRef.current = null
     lastScrollTopRef.current = 0
     lastScrollHeightRef.current = 0
+    lastClientHeightRef.current = 0
+    wheelUpAccumRef.current = 0
     pinnedToBottomRef.current = true
     detachedBaseCountRef.current = 0
     setScrollDetached(false)
@@ -777,7 +819,7 @@ export function AgentChatView({
     if (!element || notificationTargetMessageId) return
     element.scrollTop = element.scrollHeight
     // 主动搬动滚动位置时同步参照值（jsdom 等无原生 scroll 事件的环境也保持一致）
-    lastScrollTopRef.current = element.scrollTop
+    rememberGeometry(element)
   }, [activeRunId, linkedRun.messages, linkedRun.reasoning, linkedRun.tools, messages, notificationTargetMessageId, pendingApprovals, toolCallsByRun])
 
   // DOM 级滚动跟随：吸底时内容一长就贴底，不依赖 React 状态形状。MutationObserver
@@ -794,16 +836,52 @@ export function AgentChatView({
       frame = requestAnimationFrame(() => {
         frame = null
         lastScrollHeightRef.current = element.scrollHeight
+        lastClientHeightRef.current = element.clientHeight
         if (notificationTargetActiveRef.current) return
         if (!pinnedToBottomRef.current) return
         element.scrollTop = element.scrollHeight
-        lastScrollTopRef.current = element.scrollTop
+        rememberGeometry(element)
       })
     })
     observer.observe(element, { childList: true, subtree: true, characterData: true })
     return () => {
       observer.disconnect()
       if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [])
+
+  // 输入框高度/面板高度变化也会改尾部预留的 padding（--agent-composer-height 是
+  // ResizeObserver 实测后写在 frame.style 上的，不是 DOM mutation，MutationObserver
+  // 看不到）。吸底时若不重新贴底，输入框变高会让内容底部与输入框之间露出空隙，
+  // 下一次流式增长再猛跳一下；变矮时浏览器会 clamp scrollTop，由 onScroll 的
+  // clamp 判定吞掉，不会误 detach。
+  useEffect(() => {
+    const frame = conversationRef.current?.parentElement
+    if (!frame || typeof ResizeObserver === 'undefined') return undefined
+    const shell = frame.querySelector<HTMLElement>('.agent-composer-shell')
+    let scheduled: number | null = null
+    // 挪到下一帧再贴底：ResizeObserver 回调顺序不保证先于 composer 自己写
+    // --agent-composer-height 的那次回调，本帧读到的 scrollHeight 可能还没含新 padding。
+    const sync = () => {
+      scheduled = null
+      const element = conversationRef.current
+      if (!element) return
+      lastScrollHeightRef.current = element.scrollHeight
+      lastClientHeightRef.current = element.clientHeight
+      if (notificationTargetActiveRef.current) return
+      if (!pinnedToBottomRef.current) return
+      element.scrollTop = element.scrollHeight
+      rememberGeometry(element)
+    }
+    const observer = new ResizeObserver(() => {
+      if (scheduled !== null) return
+      scheduled = requestAnimationFrame(sync)
+    })
+    observer.observe(frame)
+    if (shell) observer.observe(shell)
+    return () => {
+      observer.disconnect()
+      if (scheduled !== null) cancelAnimationFrame(scheduled)
     }
   }, [])
 
@@ -923,9 +1001,30 @@ export function AgentChatView({
           // 「距离≤32px」永远追不上（视图会冻在某个高度，#对话区卡住）。
           // 只有真的向上滚才解除；向下滚到接近底部则恢复吸底。
           const element = event.currentTarget
+          // 通知定位用的 scrollIntoView 是程序性滚动：别把它的方向当成手势
+          //（同 MutationObserver / 贴底 effect 的处理，避免定位时被抢底或误脱离）。
+          if (notificationTargetActiveRef.current) {
+            rememberGeometry(element)
+            return
+          }
           const lastTop = lastScrollTopRef.current
           lastScrollTopRef.current = element.scrollTop
           if (element.scrollTop < lastTop - 1) {
+            // scrollTop 变小不一定是用户上滑：输入框变矮（尾部 padding 收缩）、
+            // 折叠卡/图片重排、视口变高时，浏览器把 scrollTop 夹回新的最大值并照常
+            // 派发 scroll 事件。误判成手势会「人还在底部却脱离吸底」，下一次下滚
+            // 又被吸回来，形成抖动闭环。几何收缩量与上移量一致时按 clamp 处理。
+            if (isGeometryClampScroll({
+              lastScrollTop: lastTop,
+              scrollTop: element.scrollTop,
+              lastScrollHeight: lastScrollHeightRef.current,
+              scrollHeight: element.scrollHeight,
+              lastClientHeight: lastClientHeightRef.current,
+              clientHeight: element.clientHeight,
+            })) {
+              rememberGeometry(element)
+              return
+            }
             detachChatScroll()
             return
           }
@@ -943,16 +1042,30 @@ export function AgentChatView({
         }}
         onWheel={(event) => {
           // wheel 先于 scroll 事件：向上立即解除吸底，向上滚动不会被下一次
-          // 强制滚底吃掉；向下且已接近底部视为「想跟回」，直接重新吸底。
-          // 两个方向都用同一个手势回吸阈值，且只由手势触发（#297）。
+          // 强制滚底吃掉；向下且确实已到可见底部附近才视为「想跟回」。
+          // 触控板慢扫/平滑滚动收尾是 ±0.5px 级亚像素步进：向上按方向累计到
+          // 2px 才脱离（单发不闪按钮，极慢扫也能累计脱离），向下的亚像素/横向
+          // 滚动（deltaY≈0）不做任何回吸。731c430b 只修了 onScroll，这里补齐。
+          // 内层可滚动块（工具输出、房间选择列表）吃掉的手势不改写外层状态。
           const element = conversationRef.current
           if (!element) return
+          if (isNestedScrollerWheel(event.target, element, event.deltaY)) return
           if (event.deltaY < 0) {
+            wheelUpAccumRef.current += -event.deltaY
+            if (wheelUpAccumRef.current < AGENT_CHAT_WHEEL_UP_DETACH_PX) return
+            wheelUpAccumRef.current = 0
             detachChatScroll()
             return
           }
+          wheelUpAccumRef.current = 0
+          if (event.deltaY < 1) {
+            // 极小的向下分量/纯横向滚动不构成反向手势：只衰减上滑累计，
+            // 避免斜向慢扫或触控板噪声把「正在上滑」的累计直接清零。
+            wheelUpAccumRef.current = Math.max(0, wheelUpAccumRef.current - event.deltaY)
+            return
+          }
           const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-          if (distance < AGENT_CHAT_REPIN_DISTANCE_PX && !pinnedToBottomRef.current) attachChatScroll(element)
+          if (distance <= AGENT_CHAT_REPIN_DISTANCE_PX && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
       >
           {incomingLink ? (
@@ -1129,14 +1242,35 @@ export function AgentChatView({
             )
             : null}
           {composerNotice}
-          {slidesProgress && slidesProgressVisible ? (
-            <SlidesProgressCard
-              state={pageImagesDisplayState ?? slidesProgress.progress}
-              toolRunning={slidesProgress.tool.status === 'running' || slidesProgress.tool.status === 'pending'}
-              busy={Boolean(activeRunId) || submitting}
-              onOpenDraft={onOpenDraftDocument}
-              onGenerate={onSlidesGenerate}
-            />
+          {slidesTaskCards.length > 0 ? (
+            <div className="agent-slides-task-stack">
+              {slidesTaskCards.map(({ entry, compact }) => (
+                <SlidesProgressCard
+                  key={entry.tool.id}
+                  state={slidesDisplayState(entry)}
+                  toolRunning={entry.tool.status === 'running' || entry.tool.status === 'pending'}
+                  busy={submitting}
+                  startedAt={entry.tool.startedAt}
+                  completedAt={entry.tool.completedAt}
+                  runId={entry.tool.runId}
+                  toolStatus={entry.tool.status}
+                  compact={compact}
+                  onAction={handleSlidesAction}
+                  onOpenDraft={handleOpenDraft}
+                  cancelledRunIds={cancelledRunIds}
+                  interruptedRunIds={interruptedRunIds}
+                />
+              ))}
+              {slidesSelection.foldedCount > 0 ? (
+                <button
+                  type="button"
+                  className="agent-slides-folded"
+                  onClick={() => setSlidesShowAll(true)}
+                >
+                  {t('surface:agentChat.SLIDES_MORE_TASKS', { count: slidesSelection.foldedCount })}
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <AgentShellApproval
             approvals={pendingApprovals}

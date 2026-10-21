@@ -79,6 +79,10 @@ export function removeAgentRunMessages(
 export interface QueuedAgentSubmission {
   id: string
   prompt: string
+  /** 排队时所属会话：允许运行中切会话后，不能把 A 的排队消息发进 B。 */
+  sessionId?: string | null
+  /** 用户可见文案（技术指令排队时保留人话气泡）。 */
+  displayPrompt?: string
   selectedText?: string
   selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
@@ -219,6 +223,12 @@ export function useAgentSession(
   const [sending, setSending] = useState(false)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 用户主动停止的 run：卡片据此显示真实终态，不再永远「生成中…」。 */
+  const [cancelledRunIds, setCancelledRunIds] = useState<ReadonlySet<string>>(() => new Set<string>())
+  /** 网关重启/异常中断的 run（有 run.interrupted、无 run.completed）：同上。 */
+  const [interruptedRunIds, setInterruptedRunIds] = useState<ReadonlySet<string>>(() => new Set<string>())
+  /** 停止后的中性回执（不伪装成错误），由 AgentPanel 以 info toast 展示。 */
+  const [runNotice, setRunNotice] = useState<{ id: string; message: string } | null>(null)
   const [pendingApprovals, setPendingApprovals] = useState<PendingShellApproval[]>([])
   const [resolvingApprovalIds, setResolvingApprovalIds] = useState<Set<string>>(() => new Set())
   /** 实时上下文用量 + 压缩中标记（context.usage / context.compaction 事件折叠）。 */
@@ -257,6 +267,9 @@ export function useAgentSession(
   const queueFlushInFlightRef = useRef(false)
   const localeRef = useRef(locale)
   localeRef.current = locale
+  /** applyEvent 是非 memo 事件处理器；t 走 ref，避免把 t 塞进依赖导致重订阅。 */
+  const translateRef = useRef(t)
+  translateRef.current = t
 
   const updateToolCall = useCallback((event: AgentEvent) => {
     setToolCallsByRun((current) => {
@@ -347,7 +360,9 @@ export function useAgentSession(
         sessionRunIds.current.add(event.runId)
         const prompt = (event.payload as { prompt?: unknown }).prompt
         if (typeof prompt === 'string' && prompt.trim()) {
-          userPromptByRun.current.set(event.runId, prompt)
+          // 技术指令入口（卡片/AI 修改）的事件 prompt 是内部指令，展示素材由 sendPrompt 写入
+          // （displayMessage），这里只在没有更优值时兜底，避免把机器语言写进标题素材。
+          if (!userPromptByRun.current.has(event.runId)) userPromptByRun.current.set(event.runId, prompt)
           setMessages((current) => {
             const existing = current.find((message) =>
               message.role === 'user'
@@ -356,13 +371,16 @@ export function useAgentSession(
                 || (message.runId === 'pending' && message.content === prompt)
               )
             )
+              // displayPrompt 场景：乐观消息 content 是人话，与事件 prompt 不同；
+              // 认领在途的 pending 气泡，绝不再把内部指令渲染成第二个用户气泡。
+              ?? current.find((message) => message.role === 'user' && message.runId === 'pending')
 
             if (existing) {
               return current
                 .filter((message) => message.id === existing.id || !(
                   message.id !== existing.id
                   && message.role === 'user'
-                  && message.content === prompt
+                  && (message.content === prompt || message.content === existing.content)
                   && (message.runId === 'pending' || message.runId === event.runId)
                 ))
                 .map((message) => message.id === existing.id
@@ -495,6 +513,17 @@ export function useAgentSession(
       event.type === 'run.interrupted'
     ) {
       terminalRunIdsRef.current.add(event.runId)
+      // 停止/中断是终态但曾长期只清 activeRun：卡片会永远停在「生成中…」。
+      // 记下 runId 供卡片显示「已停止/已中断」，并给一句中性回执。
+      if (event.type === 'run.cancelled') {
+        setCancelledRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
+        setRunNotice({
+          id: event.runId,
+          message: translateRef.current('surface:agentChat.slidesStoppedNotice'),
+        })
+      } else if (event.type === 'run.interrupted') {
+        setInterruptedRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
+      }
       setActiveRunId((current) => current === event.runId ? null : current)
       setMessages((current) => current.map((message) => message.runId === event.runId && message.streaming
         ? { ...message, streaming: false }
@@ -587,12 +616,22 @@ export function useAgentSession(
     const nextCompletedAt: Record<string, string> = {}
     const nextAgentIdByRun: Record<string, string> = {}
     const nextApprovals: PendingShellApproval[] = []
+    const nextCancelledRunIds = new Set<string>()
+    const nextInterruptedRunIds = new Set<string>()
     const reducedByRun = new Map<string, ReducedAgentRunEvents>()
     for (const group of eventGroups) {
       const reduced = reduceAgentRunEvents(group.events)
       const savedAnswer = snapshot.messages.find((message) => (
         message.runId === group.runId && message.role === 'assistant'
       ))?.content ?? ''
+      // 重放历史事件：有终态中断/停止且没有完成，就恢复卡片真实终态（live 之外的第二来源）。
+      const hasCompleted = group.events.some((event) => event.type === 'run.completed')
+      if (!hasCompleted && group.events.some((event) => event.type === 'run.cancelled')) {
+        nextCancelledRunIds.add(group.runId)
+      }
+      if (!hasCompleted && group.events.some((event) => event.type === 'run.interrupted')) {
+        nextInterruptedRunIds.add(group.runId)
+      }
       reducedByRun.set(group.runId, reduced)
       sequenceByRun.current.set(group.runId, reduced.lastSequence)
       const acc = createAgentRunActivityAccumulator(savedAnswer)
@@ -644,6 +683,9 @@ export function useAgentSession(
     setRunCompletedAtByRun(nextCompletedAt)
     setPendingApprovals(nextApprovals)
     setResolvingApprovalIds(new Set())
+    setCancelledRunIds(nextCancelledRunIds)
+    setInterruptedRunIds(nextInterruptedRunIds)
+    setRunNotice(null)
     setContextUsage(contextState.usage)
     setContextCompacting(contextState.compacting)
     setPermissionModeState(nextPermissionMode)
@@ -723,6 +765,9 @@ export function useAgentSession(
     assistantContentByRun.current.clear()
     sessionRunIds.current.clear()
     setError(null)
+    setCancelledRunIds(new Set())
+    setInterruptedRunIds(new Set())
+    setRunNotice(null)
 
     if (api) {
       setLoading(true)
@@ -859,6 +904,9 @@ export function useAgentSession(
     assistantContentByRun.current.clear()
     sessionRunIds.current.clear()
     setError(null)
+    setCancelledRunIds(new Set())
+    setInterruptedRunIds(new Set())
+    setRunNotice(null)
   }, [activeRunId, api, t])
 
   const ensureSession = async (pendingMessages: DisplayAgentMessage[]): Promise<string> => {
@@ -943,6 +991,9 @@ export function useAgentSession(
           setReasoningByRun({})
           setPendingApprovals([])
           setResolvingApprovalIds(new Set())
+          setCancelledRunIds(new Set())
+          setInterruptedRunIds(new Set())
+          setRunNotice(null)
           setRunStartedAtByRun({})
           setRunCompletedAtByRun({})
           activityAccByRun.current.clear()
@@ -1011,15 +1062,22 @@ export function useAgentSession(
     referencedConversationId?: string,
     mentionedAgents?: MentionedAgent[],
     mentions?: MentionedItem[],
+    /** 用户可见文案：卡片按钮等入口的 prompt 是技术指令，气泡/会话标题用它。 */
+    displayPrompt?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
+    const displayPromptValue = displayPrompt?.trim() || undefined
+    // 技术指令只进运行时；落库/气泡/标题一律用 displayPrompt（缺省＝用户原话）。
+    const displayMessage = displayPromptValue ?? message
     if ((!message && !attachments?.length) || loading || sending) return null
     if (activeRunId) {
       // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
       if (replaceRunId) return null
       setQueuedSubmissions((current) => [...current, {
         id: crypto.randomUUID(),
+        sessionId: sessionIdRef.current,
         prompt: message,
+        ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
         selectedText,
         selectedRoomId,
         activeDocument,
@@ -1079,7 +1137,7 @@ export function useAgentSession(
       runId: 'pending',
       role: 'user',
       authorAgentId: null,
-      content: message,
+      content: displayMessage,
       createdAt: new Date().toISOString(),
       ...(mentionedAgents?.length && !channelAgentRef.current
         ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
@@ -1102,6 +1160,8 @@ export function useAgentSession(
       const run = await api!.startRun(currentSessionId, {
         prompt: message,
         idempotencyKey: crypto.randomUUID(),
+        // 技术指令照旧进运行时；displayPrompt 仅供落库/展示（网关不把它给 runtime）。
+        ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
         // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
@@ -1122,6 +1182,8 @@ export function useAgentSession(
         ),
       })
       const runAgentId = run.agentId ?? selectedAgentId
+      // AI 起标题素材用展示文案（网关兜底标题同源），避免 technical prompt 泄进标题。
+      userPromptByRun.current.set(run.id, displayMessage)
       setAgentIdByRun((current) => current[run.id] === runAgentId
         ? current
         : { ...current, [run.id]: runAgentId })
@@ -1130,7 +1192,7 @@ export function useAgentSession(
       setSessions((current) => current.map((session) => session.id === currentSessionId
         ? {
             ...session,
-            title: session.title ?? message.slice(0, 48),
+            title: session.title ?? displayMessage.slice(0, 48),
             ...(!runCompleted ? { status: 'running' as const } : {}),
             updatedAt,
           }
@@ -1139,14 +1201,14 @@ export function useAgentSession(
         ? {
             ...current,
             activeAgentId: runAgentId,
-            title: current.title ?? message.slice(0, 48),
+            title: current.title ?? displayMessage.slice(0, 48),
             ...(!runCompleted ? { status: 'running' as const } : {}),
             updatedAt,
           }
         : current)
       const nextTitle = currentSession?.id === currentSessionId && currentSession.title?.trim()
         ? currentSession.title.trim()
-        : message.slice(0, 48)
+        : displayMessage.slice(0, 48)
       setDisplayTitle(nextTitle)
       if (!runCompleted) {
         setActiveRunId(run.id)
@@ -1170,12 +1232,34 @@ export function useAgentSession(
   const sendPromptRef = useRef(sendPrompt)
   sendPromptRef.current = sendPrompt
 
+  /**
+   * 确定性入口（进度卡按钮、AI 修改、产物库建文件）：hiddenPrompt 只交给运行时，
+   * displayText 存进会话并渲染成用户气泡。排队/重试语义与 sendPrompt 完全一致。
+   */
+  const sendAgentAction = async (hiddenPrompt: string, displayText: string): Promise<string | null> => (
+    sendPrompt(
+      hiddenPrompt,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      displayText,
+    )
+  )
+
   // 队列排空：run 终态（activeRunId 清空）且无进行中发送时出队一条发出；
   // 新 run 启动会再次置 activeRunId，天然串行——网关 startRun 对 running
   // 会话直接抛 agent_session_busy，绝不并发。
   useEffect(() => {
     if (queuedSubmissions.length === 0 || activeRunId || loading || sending) return
     if (queueFlushInFlightRef.current) return
+    // 允许运行中切会话后，队列必须认会：A 会话的排队消息不能在 B 会话里发出。
+    if (queuedSubmissions[0]?.sessionId && queuedSubmissions[0].sessionId !== sessionIdRef.current) return
     const [next, ...rest] = queuedSubmissions
     setQueuedSubmissions(rest)
     queueFlushInFlightRef.current = true
@@ -1192,6 +1276,7 @@ export function useAgentSession(
           next.referencedConversationId,
           next.mentionedAgents,
           next.mentions,
+          next.displayPrompt,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。
@@ -1199,7 +1284,7 @@ export function useAgentSession(
         queueFlushInFlightRef.current = false
       }
     })()
-  }, [queuedSubmissions, activeRunId, loading, sending])
+  }, [queuedSubmissions, activeRunId, loading, sending, sessionId])
 
   const submitPendingIntent = async (
     intentId: string,
@@ -1328,9 +1413,13 @@ export function useAgentSession(
     startNewConversation,
     resolveApproval,
     resolvingApprovalIds,
+    cancelledRunIds,
+    interruptedRunIds,
+    runNotice,
     markSessionLinkReturned,
     selectSession,
     selectSessionById,
+    sendAgentAction,
     sendPrompt,
     sessionId,
     sessionLinks,
