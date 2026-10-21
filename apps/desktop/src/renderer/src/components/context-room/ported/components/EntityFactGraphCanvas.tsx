@@ -11,6 +11,7 @@ import {
   useForceGraphLayout,
 } from '@/components/graph'
 import { useLocale } from '../../../../i18n/LocaleContext'
+import { GraphFitButton } from './GraphFitButton'
 import type { EntityFactGraphData, EntityFactGraphNode } from './entityFactGraphModel'
 
 /** 详情面板小视口：布局稳定后只居中、不缩小；收敛期间相机逐帧跟随内容。 */
@@ -158,6 +159,7 @@ export function EntityFactGraphCanvas({ data, onSelect, selectedId }: EntityFact
         onReleaseNode={layout.release}
         onSelectNode={onSelect}
       />
+      {data.nodes.length > 0 ? <GraphFitButton onFit={() => canvasRef.current?.fitView()} /> : null}
       <div className="context-room-visually-hidden" aria-label={t('contextRoom:graphs.entityFactNodes')}>
         {data.nodes.map((node: EntityFactGraphNode) => (
           <button

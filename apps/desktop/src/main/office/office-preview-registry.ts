@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { webContents } from 'electron'
 
 import type { OfficeAgentFileEvent } from '../../shared/office'
+import { logDesktop } from '../logging/desktop-logger'
 import {
   officePreviewKindForFileName,
   type OfficePreviewKind,
@@ -160,6 +161,16 @@ export class OfficePreviewRegistry {
   private wireDocsThesisHook(runtime: PreparedGenOfficeRuntime): void {
     const bridge = this.thesisBridge
     if (!bridge) return
+    // 运行时能力守卫：论文排版桥是 genoffice 后加的导出，带着旧运行时启动时它是 undefined。
+    // 缺了只跳过这个桥（AI 页签排版面板不可用），不能让 ensureRuntime 抛错——那会让
+    // 整条 open() 失败，Room 里的 Office 产物全部退回「用系统默认应用打开」。
+    if (typeof runtime.docs.setDocsThesisPanelHook !== 'function') {
+      logDesktop('office', 'warn', {
+        event: 'office.thesis-bridge-unavailable',
+        message: 'genoffice runtime 缺少 setDocsThesisPanelHook，跳过论文排版桥',
+      })
+      return
+    }
     runtime.docs.setDocsThesisPanelHook(async (wcId, action) => {
       const instance = this.findByWebContentsId(wcId)
       const roomId = instance?.roomId ?? null

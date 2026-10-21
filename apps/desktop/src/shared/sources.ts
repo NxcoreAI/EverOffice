@@ -33,6 +33,8 @@ import type {
   RoomDuplicateCheckResult,
   RoomAppliedEntitiesResult,
   RoomOverviewProjection,
+  MovedRoomDocument,
+  MoveRoomDocumentsResult,
   RoomMergeOperation,
   RoomMergePreview,
   RoomMail,
@@ -1487,6 +1489,8 @@ export interface NxcoreDesktopApi {
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
+    move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument>
+    moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
     emptyTrash(roomId: string): Promise<void>

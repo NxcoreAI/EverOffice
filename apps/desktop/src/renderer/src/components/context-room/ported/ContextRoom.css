@@ -3690,15 +3690,18 @@
   --cr-border: #e5e7eb;
   --cr-blue: #408cf0;
   --cr-blue-soft: rgba(64, 140, 240, 0.14);
-  z-index: 1050;
+  z-index: 60;
+  box-sizing: border-box;
   width: min(320px, calc(100vw - 24px));
+  min-width: min(200px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
   padding: 20px;
-  border: 1px solid var(--cr-border);
-  border-radius: 16px;
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 18px;
   background: var(--cr-surface);
   box-shadow:
-    0 24px 70px rgba(21, 26, 34, 0.24),
-    0 2px 8px rgba(21, 26, 34, 0.06);
+    0 24px 60px rgba(17, 24, 39, 0.16),
+    0 6px 18px rgba(17, 24, 39, 0.06);
   color: var(--cr-text);
   font-family: 'Context Room Inter', 'HarmonyOS Sans SC', 'PingFang SC', sans-serif;
 }
@@ -3714,9 +3717,10 @@
 .context-room-document-create-popover input {
   width: 100%;
   height: 40px;
-  padding: 0 12px;
+  padding: 0 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 10px;
+  border-radius: 12px;
+  line-height: 1;
   outline: none;
   background: var(--cr-surface-secondary);
   color: var(--cr-text);
@@ -3744,7 +3748,7 @@
   gap: 7px;
   margin-top: 12px;
   border: 1px solid var(--cr-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--cr-surface);
   color: var(--cr-blue);
   font-size: 12.5px;
@@ -3786,11 +3790,12 @@
 }
 
 .context-room-document-create-popover footer button {
-  min-width: 64px;
-  height: 34px;
-  padding: 0 14px;
+  min-width: 72px;
+  height: 38px;
+  padding: 0 16px;
   border: 1px solid var(--cr-border);
-  border-radius: 9px;
+  border-radius: 10px;
+  line-height: 1;
   background: var(--cr-surface);
   color: var(--cr-muted);
   font-size: 12.5px;
@@ -3894,30 +3899,45 @@
 .context-room-artifact-toolbar {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 10px 8px;
+  row-gap: 8px;
+  padding: 12px 12px 10px;
   border-bottom: 1px solid var(--cr-border);
+}
+
+/* 工具条右侧动作组：整体不可压缩，窄面板时整组换行而不是把「新建产物」挤成竖排。 */
+.context-room-artifact-toolbar-actions {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
 }
 
 /* 统一下拉筛选（FilterSelect）：胶囊触发器 + 自绘菜单；选中非默认值转蓝。 */
 .context-room-filter-select {
   display: inline-flex;
-  max-width: 180px;
-  height: 26px;
+  max-width: 190px;
+  height: 36px;
   align-items: center;
-  gap: 5px;
-  padding: 0 9px 0 12px;
+  gap: 6px;
+  padding: 0 12px 0 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 999px;
+  border-radius: 10px;
   background: var(--cr-surface);
   color: var(--cr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
+  line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
 .context-room-filter-select:hover {
@@ -3938,8 +3958,8 @@
 
 .context-room-filter-select svg {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   color: var(--cr-tertiary);
 }
 
@@ -3956,22 +3976,26 @@
 /* 下拉菜单弹层：与卡片菜单同底（card-menu 提供白底/阴影/变量域），补齐布局与选中态。 */
 .context-room-filter-menu {
   --cr-blue: #3d6ff6;
-  min-width: 136px;
-  padding: 5px;
-  border: 1px solid var(--cr-border, #e5e7eb);
-  border-radius: 10px;
+  min-width: 150px;
+  padding: 7px;
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 12px;
+  box-shadow:
+    0 16px 40px rgba(17, 24, 39, 0.14),
+    0 4px 12px rgba(17, 24, 39, 0.05);
   animation: context-room-filter-menu-in 0.16s ease;
 }
 
 .context-room-filter-menu-item {
   display: flex;
+  min-height: 36px;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
   background: transparent;
   color: #1f1f1f;
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: pointer;
   outline: none;
   user-select: none;
@@ -4014,30 +4038,40 @@
 
 .context-room-artifact-new {
   display: inline-flex;
+  min-width: 92px;
+  height: 36px;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
   border: 1px solid var(--cr-border);
-  border-radius: 6px;
+  border-radius: 10px;
+  background: var(--cr-surface);
   color: var(--cr-text);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
 .context-room-artifact-new:hover {
   border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
   color: var(--cr-blue);
 }
 
 .context-room-artifact-new svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 .context-room-artifact-list {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 6px 8px 12px;
+  padding: 8px 10px 14px;
 }
 
 .context-room-artifact-row {
@@ -4050,12 +4084,14 @@
   display: flex;
   width: 100%;
   min-width: 0;
+  min-height: 44px;
   align-items: center;
-  gap: 9px;
-  padding: 8px 26px 8px 8px;
-  border-radius: 8px;
+  gap: 10px;
+  padding: 8px 34px 8px 10px;
+  border-radius: 10px;
   text-align: left;
   cursor: pointer;
+  transition: background-color 0.12s ease;
 }
 
 .context-room-artifact-item:hover {
@@ -4082,19 +4118,19 @@
 
 .context-room-artifact-ico {
   display: inline-flex;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: 9px;
   background: var(--cr-surface-sunken);
   color: var(--cr-muted);
 }
 
 .context-room-artifact-ico svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .context-room-artifact-body {
@@ -4114,7 +4150,7 @@
 
 .context-room-artifact-body b {
   color: var(--cr-text);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
 }
 
@@ -4131,7 +4167,7 @@
 }
 
 .context-room-artifact-tag {
-  padding: 1px 6px;
+  padding: 2px 8px;
   border: 1px solid var(--cr-border);
   border-radius: 999px;
   color: var(--cr-muted);
@@ -4147,9 +4183,9 @@
 .context-room-artifact-acts {
   position: absolute;
   top: 50%;
-  right: 6px;
+  right: 8px;
   display: inline-flex;
-  gap: 2px;
+  gap: 4px;
   opacity: 0;
   transition: opacity 0.15s ease;
 }
@@ -9144,6 +9180,7 @@
 }
 
 .context-room-related-graph-canvas {
+  position: relative;
   height: auto;
   min-height: 0;
   min-width: 0;
@@ -9153,6 +9190,42 @@
     linear-gradient(#eef0f3 1px, transparent 1px),
     linear-gradient(90deg, #eef0f3 1px, transparent 1px), #fbfcfd;
   background-size: 24px 24px;
+}
+
+/* 「自适应」浮层：视口可自由缩放平移，图缩小到看不见或拖走后，
+   这颗按钮仍钉在画布右上角，一键把节点整体缩放居中回来。
+   Context Room 各力导向图谱（首页全图/Room 关系/实体事实/建联/Wiki）共用同一套样式。 */
+.context-room-graph-fit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--cr-surface) 92%, transparent);
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 8%);
+  backdrop-filter: blur(4px);
+}
+
+.context-room-graph-fit:hover {
+  border-color: var(--cr-border-strong);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+}
+
+.context-room-graph-fit svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
 }
 
 .context-room-related-rooms-pane > .context-room-room-graph-inspector {
@@ -15338,6 +15411,7 @@ button.eg-walk.is-next:hover {
 /* 新建产物：类型选择网格（轻文档 / Word / PPT / Excel）。 */
 .context-room-document-create-popover.is-chooser {
   width: min(400px, calc(100vw - 24px));
+  min-width: min(300px, calc(100vw - 24px));
 }
 
 .context-room-document-create-types {
@@ -15351,9 +15425,9 @@ button.eg-walk.is-next:hover {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 12px 14px;
+  padding: 13px 15px;
   border: 1px solid var(--cr-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--cr-surface);
   color: var(--cr-text);
   cursor: pointer;
@@ -15372,8 +15446,8 @@ button.eg-walk.is-next:hover {
 }
 
 .context-room-document-create-type > svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex: none;
   color: var(--cr-blue);
 }
@@ -15388,6 +15462,7 @@ button.eg-walk.is-next:hover {
 .context-room-document-create-type-body b {
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .context-room-document-create-type-body small {
@@ -15804,4 +15879,365 @@ button.eg-walk.is-next:hover {
   left: 0;
   right: 0;
   text-align: center;
+}
+
+/* ── 产物行 ⋯ 操作菜单（移动到其他 Room / 删除） ── */
+.context-room-artifact-acts .context-room-resource-more {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--cr-muted);
+  opacity: 1;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.context-room-artifact-acts .context-room-resource-more:hover:not(:disabled),
+.context-room-artifact-acts .context-room-resource-more:focus-visible {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-artifact-acts .context-room-resource-more svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── 移动到其他 Room 目标选择器 ── */
+.context-room-move-dialog {
+  display: flex;
+  width: min(480px, 100%);
+  max-width: 100%;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 auto;
+  padding: 22px 20px 20px;
+}
+
+.context-room-move-dialog header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-right: 44px;
+}
+
+.context-room-move-dialog h2 {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.context-room-move-dialog header p {
+  margin: 3px 0 0;
+  color: var(--cr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.context-room-move-symbol {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-move-symbol svg {
+  width: 19px;
+  height: 19px;
+}
+
+.context-room-move-search {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: var(--cr-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.context-room-move-search:focus-within {
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+}
+
+.context-room-move-search svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--cr-tertiary);
+}
+
+.context-room-move-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--cr-text);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.context-room-move-list {
+  display: flex;
+  max-height: min(320px, 46vh);
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 12px;
+  background: var(--cr-surface);
+}
+
+.context-room-move-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 8px 4px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-move-group svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-move-room {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: 9px;
+  text-align: left;
+  transition: background-color 0.12s ease;
+}
+
+.context-room-move-room:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-move-room[data-selected] {
+  background: var(--cr-blue-soft);
+}
+
+.context-room-move-room-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-room-move-room-body b {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-move-room[data-selected] .context-room-move-room-body b {
+  color: var(--cr-blue);
+}
+
+.context-room-move-room-body small {
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-move-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  color: var(--cr-tertiary);
+  font-size: 12px;
+}
+
+.context-room-move-hint svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-move-error {
+  margin: 0;
+  color: #b54732;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.context-room-move-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.context-room-action-confirm-note {
+  margin: 0;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 产物相关的弹窗：16px 大圆角 + 柔和分层阴影（rounded-2xl 档）。 */
+.context-room-dialog-content.context-room-move-dialog-shell {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 16px;
+  box-shadow:
+    0 24px 60px rgba(17, 24, 39, 0.16),
+    0 6px 18px rgba(17, 24, 39, 0.06);
+}
+
+.context-room-dialog-content.context-room-artifact-delete-shell {
+  width: min(480px, calc(100vw - 32px));
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 16px;
+  box-shadow:
+    0 24px 60px rgba(17, 24, 39, 0.16),
+    0 6px 18px rgba(17, 24, 39, 0.06);
+}
+
+.context-room-artifact-delete-shell .context-room-action-confirm {
+  width: 100%;
+}
+
+/* 弹窗底部按钮统一 40px 高、12px 圆角，图标/文字垂直居中。 */
+.context-room-move-dialog footer button,
+.context-room-artifact-delete-shell .context-room-action-confirm footer button {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ── 产物库多选整理 ── */
+.context-room-artifact-select-toggle,
+.context-room-artifact-selection-move,
+.context-room-artifact-selection-cancel {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 13px;
+  border: 1px solid var(--cr-border);
+  border-radius: 10px;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.context-room-artifact-select-toggle:hover,
+.context-room-artifact-selection-cancel:hover {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-select-toggle svg,
+.context-room-artifact-selection-move svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-artifact-selection {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-artifact-selection > span {
+  color: var(--cr-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.context-room-artifact-selection-move {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-artifact-selection-move:disabled {
+  border-color: var(--cr-border);
+  background: transparent;
+  color: var(--cr-tertiary);
+  cursor: not-allowed;
+}
+
+.context-room-artifact-check {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: 5px;
+  background: var(--cr-surface);
+  color: #fff;
+}
+
+.context-room-artifact-check[aria-checked='true'] {
+  border-color: var(--cr-blue);
+  background: var(--cr-blue);
+}
+
+.context-room-artifact-check svg {
+  width: 12px;
+  height: 12px;
+}
+
+.context-room-artifact-row[data-selecting] .context-room-artifact-item {
+  padding-left: 4px;
+}
+
+/* 产物行 ⋯ 菜单：12px 圆角 + 柔和阴影 + 36px 行高，与浮层/弹窗同一视觉档。 */
+.context-room-artifact-menu {
+  z-index: 60;
+  min-width: 200px;
+  padding: 8px;
+  border-color: rgba(17, 24, 39, 0.06);
+  border-radius: 12px;
+  box-shadow:
+    0 16px 40px rgba(17, 24, 39, 0.14),
+    0 4px 12px rgba(17, 24, 39, 0.05);
+}
+
+.context-room-artifact-menu [role='menuitem'] {
+  min-height: 36px;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+
+.context-room-artifact-menu svg {
+  width: 15px;
+  height: 15px;
 }

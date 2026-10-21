@@ -1,9 +1,10 @@
-import { BookOpenText, ChevronDown, ChevronRight, FileText, ListTree, Network, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, X } from 'lucide-react'
+import { BookOpenText, ChevronDown, ChevronRight, FileText, ListTree, Maximize2, Network, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   WikiGraphCanvas,
   WIKI_CLUSTERS,
+  type WikiGraphCanvasHandle,
 } from '../context-room/ported/components/WikiGraphCanvas'
 import { MarkdownBody, resolveWikiLinkTarget } from '../context-room/ported/components/detail-panels/MarkdownBody'
 import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WIKI_TREE_CARET_SLOT, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
@@ -88,6 +89,7 @@ export function WikiPage() {
   const [revealPath, setRevealPath] = useState<string | null>(null)
   const switcherRef = useRef<HTMLDivElement | null>(null)
   const sidebarRef = useRef<HTMLElement | null>(null)
+  const graphCanvasRef = useRef<WikiGraphCanvasHandle | null>(null)
 
   useEffect(() => {
     const timer = setTimeout(() => setGraphFilter(graphQuery), 200)
@@ -622,8 +624,10 @@ export function WikiPage() {
                     <>
                       {displayGraph && displayGraph.nodes.length > 0 ? (
                         <WikiGraphCanvas
+                          ref={graphCanvasRef}
                           graph={displayGraph}
                           selectedPath={selectedPage?.path ?? null}
+                          showFitButton={false}
                           onSelectPage={(path) => {
                             const page = pages.find((candidate) => candidate.path === path)
                             if (page) openPage(page)
@@ -666,6 +670,18 @@ export function WikiPage() {
                           onClick={() => setCoreOnly((value) => !value)}
                         >
                           {coreOnly ? t('surface:wiki.graphShowAll') : t('surface:wiki.graphCoreOnly')}
+                        </button>
+                        {/* 自适应按钮放在工具条里（原来浮在画布右上角会压住「显示全部」），
+                            画布自带的那颗在这里关掉，避免同屏两个。 */}
+                        <button
+                          type="button"
+                          className="wiki-graph-mode wiki-graph-fit"
+                          title={t('surface:wiki.graphFitHint')}
+                          aria-label={t('surface:wiki.graphFitHint')}
+                          onClick={() => graphCanvasRef.current?.fitView()}
+                        >
+                          <Maximize2 aria-hidden="true" />
+                          {t('surface:wiki.graphFitToCanvas')}
                         </button>
                       </div>
                       <div className="wiki-graph-stats" aria-label={t('surface:wiki.graphStatistics')}>

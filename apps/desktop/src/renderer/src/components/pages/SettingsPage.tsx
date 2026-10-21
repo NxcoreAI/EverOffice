@@ -4,6 +4,7 @@ import {
   Brain,
   Camera,
   CalendarClock,
+  Check,
   Cloud,
   LoaderCircle,
   Languages,
@@ -924,10 +925,32 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         </div>
         <div className="reality-setting-row">
           <div><strong>{t('surface:settings.transcriptionLanguages')}</strong></div>
-          <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionLanguages')}>
+          {/* 多选：用带勾选框的独立芯片表达，不用分段控件（那是单选语义）。 */}
+          <div className="language-toggles" role="group" aria-label={t('surface:settings.realityPerceptionTranscriptionLanguages')}>
             {([['zh', 'surface:settings.chinese'], ['en', 'surface:settings.english']] as const).map(([value, label]) => {
               const active = realitySettings.languages.includes(value)
-              return <button key={value} type="button" data-active={String(active)} onClick={() => updateRealitySettings({ languages: active && realitySettings.languages.length > 1 ? realitySettings.languages.filter((item) => item !== value) : active ? realitySettings.languages : [...realitySettings.languages, value] })}>{t(label)}</button>
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={active}
+                  className="language-toggle"
+                  data-active={String(active)}
+                  onClick={() => updateRealitySettings({
+                    languages: active && realitySettings.languages.length > 1
+                      ? realitySettings.languages.filter((item) => item !== value)
+                      : active
+                        ? realitySettings.languages
+                        : [...realitySettings.languages, value],
+                  })}
+                >
+                  <span className="language-toggle-box" aria-hidden="true">
+                    {active ? <Check aria-hidden="true" /> : null}
+                  </span>
+                  {t(label)}
+                </button>
+              )
             })}
           </div>
         </div>
