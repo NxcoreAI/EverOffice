@@ -6,7 +6,7 @@
  * everroom-material://<hash> 寻址（桌面主进程协议回源网关）。
  */
 
-import type { SlidesStyleSessionData } from "./types.js";
+import type { SlidesStyleSessionData, StyleParams } from "./types.js";
 import { presetThumbnails, type ThumbnailRole } from "./preset-thumbnails.js";
 
 function materialUrl(hash: string): string {
@@ -38,6 +38,11 @@ export interface StyleImagesPayload {
   candidates: Array<{ url: string; label?: string; generation: number }>;
 }
 
+export interface StyleCardDetail {
+  label: string;
+  value: string;
+}
+
 export interface StyleCardPayload {
   stage: "style_card_ready";
   styleSessionId: string;
@@ -45,6 +50,8 @@ export interface StyleCardPayload {
   generation: number;
   swatches: StyleCardSwatch[];
   typography: StyleCardTypographyRow[];
+  /** 机器字段的人话摘要（构图/明暗/母题/卡面/分隔/图片/字号），和 agent 拿到的 token 对齐。 */
+  details: StyleCardDetail[];
   wireframes: StyleCardWireframe[];
   demoImageUrl: string | null;
   effectLines: string[];
@@ -75,6 +82,44 @@ export function styleImagesPayload(session: SlidesStyleSessionData, title?: stri
       generation: image.generation,
     })),
   };
+}
+
+const COMPOSITION_LABELS: Record<string, string> = {
+  swiss: "瑞士网格",
+  editorial: "编辑杂志",
+  poster: "海报大字",
+  immersive: "沉浸大图",
+};
+
+const MOTIF_LABELS: Record<string, string> = {
+  none: "无",
+  "ghost-number": "幽灵大数字",
+  "ghost-word": "幽灵大字",
+  "color-band": "色带",
+  "corner-accent": "角落色块",
+};
+
+/** 风格卡机器字段 → 用户可读摘要；与 layouter styleTokens 同源，避免「卡上看不到、组件里却生效」。 */
+function styleCardDetails(params: StyleParams | null): StyleCardDetail[] {
+  if (!params) return [];
+  const decoration = params.decoration;
+  const cardParts = [
+    decoration.cardStroke ? `描边 ${decoration.cardStroke.toUpperCase()}` : "无描边",
+    decoration.cardShadow === "none" ? "无阴影" : `阴影 ${decoration.cardShadow}`,
+    `圆角 ${String(params.spacing.cornerRadius)}px`,
+  ];
+  const typeScale = params.typography.typeScale;
+  const display = typeScale?.display ?? params.typography.sizes.coverTitle;
+  const body = typeScale?.body ?? params.typography.sizes.body;
+  return [
+    { label: "构图", value: COMPOSITION_LABELS[params.composition ?? "editorial"] ?? "编辑杂志" },
+    { label: "明暗", value: params.darkCover ? "封面/章节深底" : "全篇浅底" },
+    { label: "母题", value: MOTIF_LABELS[params.motif.kind] ?? "无" },
+    { label: "卡面", value: cardParts.join(" · ") },
+    { label: "分隔", value: decoration.divider === "none" ? "无分隔线" : "发丝线" },
+    { label: "图片", value: decoration.imageFit === "contain" ? "完整呈现" : "裁切填满" },
+    { label: "视觉字号", value: `大标题 ${String(display)}pt · 正文 ${String(body)}pt` },
+  ];
 }
 
 export function styleCardPayload(
@@ -108,6 +153,7 @@ export function styleCardPayload(
     generation: session.generation,
     swatches,
     typography,
+    details: styleCardDetails(params),
     wireframes,
     demoImageUrl: session.demoImageHash ? materialUrl(session.demoImageHash) : null,
     effectLines: params?.effectLines ?? [],

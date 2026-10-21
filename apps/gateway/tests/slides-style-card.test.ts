@@ -185,6 +185,9 @@ describe("style card payloads", () => {
     expect(payload.swatches.length).toBe(6);
     expect(payload.swatches[1]).toEqual({ hex: "#1e3a5f", label: "主色" });
     expect(payload.typography[0]?.value).toBe("64pt");
+    expect(payload.details.map((row) => row.label)).toEqual(["构图", "明暗", "母题", "卡面", "分隔", "图片", "视觉字号"]);
+    expect(payload.details.find((row) => row.label === "明暗")?.value).toBe("封面/章节深底");
+    expect(payload.details.find((row) => row.label === "母题")?.value).toBe("无");
     expect(payload.wireframes).toHaveLength(3);
     expect(payload.wireframes.map((frame) => frame.label)).toEqual(["封面 · 瑞士网格", "内容页 · 瑞士网格", "数据页 · 瑞士网格"]);
     expect(payload.demoImageUrl).toBe(`everroom-material://${"d".repeat(64)}`);

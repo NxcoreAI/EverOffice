@@ -16,6 +16,7 @@ import type {
 } from "./types.js";
 import { normalizeStyleHex } from "./types.js";
 import type { PaletteRoles, Rgb } from "./extract.js";
+import { TYPE_TOKENS, type TypeToken } from "../slides-layout/theme.js";
 import {
   contrast,
   hexToRgb,
@@ -279,6 +280,18 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
       kpi: clampNumber(sizesRow.kpi, 28, 90, "sizes.kpi", 44),
       table: clampNumber(sizesRow.table, 9, 24, "sizes.table", 13),
     },
+    ...((): { typeScale?: Partial<Record<TypeToken, number>> } => {
+      const row = typoRow?.typeScale as Record<string, unknown> | undefined;
+      if (!row) return {};
+      const scale: Partial<Record<TypeToken, number>> = {};
+      for (const token of TYPE_TOKENS) {
+        const value = row[token];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          scale[token] = clampNumber(value, 9, 120, `typeScale.${token}`, value);
+        }
+      }
+      return Object.keys(scale).length > 0 ? { typeScale: scale } : {};
+    })(),
     headingBold: typeof typoRow?.headingBold === "boolean" ? typoRow.headingBold : true,
   };
 
