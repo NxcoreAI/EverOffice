@@ -349,6 +349,26 @@ describe('SlidesProgressCard 完成与失败（P0-3/P0-5/P0-6）', () => {
     expect(flattenText(warnings.findByType('summary').props.children)).toContain(`${KEY}SLIDES_WARNINGS_SUMMARY?count=2`)
   })
 
+  it('落页按完成顺序：按页号集合打勾，不把未落的前页算成已完成', () => {
+    const payload = { stage: 'page_applied', title: '季度汇报', totalPages: 3, pages: [{ title: '封面' }], appliedPages: [1, 2] }
+    expect(slidesProgressFromToolCall(wrap(payload))?.appliedPages).toEqual([1, 2])
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'page_applied',
+        title: '季度汇报',
+        doneCount: 2,
+        appliedPages: [1, 2],
+        totalPages: 3,
+        documentId: 'doc-1',
+        pages: [{ title: '封面' }, { title: '业绩' }, { title: '计划' }],
+      },
+      toolRunning: true,
+    }))
+    // 第 2、3 页先落（第 1 页还在排）：打勾的只有这两页，第 1 页仍是无标记的待定页。
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })).toHaveLength(2)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-head' })).toHaveLength(3)
+  })
+
   it('failed：已知 errorCode 人话化，retryable 给「再试一次」并带重试指令', () => {
     const onAction = vi.fn()
     const renderer = TestRenderer.create(cardFixture({

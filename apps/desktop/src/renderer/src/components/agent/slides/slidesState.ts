@@ -67,6 +67,8 @@ export interface SlidesProgressState {
   documentId?: string
   totalPages?: number
   doneCount?: number
+  /** 已落定页号（0 起 plan 页序）。落页按完成顺序发生，页号集合是打勾的唯一依据。 */
+  appliedPages?: number[]
   pages?: SlidesPagePlan[]
   narrative?: string
   warnings?: string[]
@@ -173,6 +175,12 @@ function normalizeProgress(record: Record<string, unknown>): SlidesProgressState
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
   } else {
     delete mapped.failedPages
+  }
+  if (Array.isArray(record.appliedPages)) {
+    mapped.appliedPages = record.appliedPages
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  } else {
+    delete mapped.appliedPages
   }
   if (Array.isArray(record.warnings)) {
     mapped.warnings = record.warnings.filter((value): value is string => typeof value === 'string')

@@ -244,8 +244,14 @@ export function SlidesProgressCard({
   const showPagesList = pages.length > 0
     && state.stage !== 'style_images_ready' && state.stage !== 'style_card_ready'
     && state.stage !== 'page_images_review' && state.stage !== 'page_images_confirm'
-  const runningIndex = running ? doneCount : -1
+  // 落页按完成顺序发生（第 2 页可能先落）：有页号集合就按集合打勾，
+  // 只留「前 doneCount 页已完成」作旧载荷的兼容回落。
+  const appliedPageSet = Array.isArray(state.appliedPages) && state.appliedPages.length > 0
+    ? new Set(state.appliedPages)
+    : null
+  const runningIndex = running && !appliedPageSet ? doneCount : -1
   const statusOf = (index: number): 'done' | 'running' | 'pending' => {
+    if (appliedPageSet) return appliedPageSet.has(index) ? 'done' : 'pending'
     if (index < doneCount) return 'done'
     if (index === runningIndex) return 'running'
     return 'pending'
