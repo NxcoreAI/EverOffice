@@ -390,6 +390,10 @@ const RoomFileDto = Type.Object({
   confidence: Type.Union([Type.Number(), Type.Null()]),
   sourceKind: Type.String(),
   uploadedAt: Type.String(),
+  /** 目录侧最新版本号；legacy 上传无版本链 → null/缺省（不伪造 v1）。 */
+  versionNo: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
+  /** 最新版本时间（无版本链回落文件元数据时间）。 */
+  updatedAt: Type.String(),
 });
 
 const RuleMatcherSchema = Type.Object({
@@ -723,6 +727,7 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
         items: service.listRoomFiles(request.params.id).map((file) => ({
           ...file,
           uploadedAt: iso(file.uploadedAt),
+          updatedAt: iso(file.updatedAt),
         })),
       }),
     );

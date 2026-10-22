@@ -7,6 +7,8 @@
  */
 
 import type { SlidesStyleImageGenerator } from "../slides-style/image-gen.js";
+import { inspectSlideImage } from "./slides-image-qc.js";
+import type { SlideImageVlmVerdict } from "./slides-image-vlm-qc.js";
 import { IMAGE_MODEL_UNCONFIGURED_MARKER } from "../slides-style/image-gen.js";
 
 export const MAX_PAGE_IMAGES = 8;
@@ -31,6 +33,10 @@ export interface SlidesPageImagesDeps {
   signal?: AbortSignal;
   onUpdate?: (update: { content: string; details: Record<string, unknown> }) => void;
   now?: () => number;
+  /** 按内容哈希读素材字节；提供时生成图先过确定性 QC（空白/纯色/过曝/低分辨率）。 */
+  readMaterialBytes?: (hash: string) => Promise<{ buffer: Buffer; mime: string } | null>;
+  /** 可选的 VLM 切题性质检；未配置时跳过。 */
+  reviewImage?: (image: { buffer: Buffer; mime: string }, pagePrompt: string, styleContext?: string) => Promise<SlideImageVlmVerdict>;
 }
 
 export interface SlidesPageImagesSummary {
@@ -39,11 +45,32 @@ export interface SlidesPageImagesSummary {
   failed: number;
   skipped?: string;
   /** 逐页结果：pageIndex 指向 plan.pages 下标；失败页只有 error。 */
-  results: Array<{ pageIndex: number; contentHash?: string; error?: string }>;
+  results: Array<{ pageIndex: number; contentHash?: string; error?: string; warning?: string }>;
 }
 
 function isHexColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function isDarkHex(hex: string): boolean {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return (r * 0.299 + g * 0.587 + b * 0.114) < 128;
+}
+
+/** 给 VLM 审阅用的 deck 风格摘要；没有 palette 时返回 undefined。 */
+export function imageStyleContext(palette: SlidesPageImagesPalette | null | undefined): string | undefined {
+  if (!palette) return undefined;
+  const parts: string[] = [];
+  if (isHexColor(palette.primary)) parts.push(`主色 ${palette.primary}`);
+  if (isHexColor(palette.accent)) parts.push(`强调色 ${palette.accent}`);
+  if (isHexColor(palette.background)) {
+    parts.push(`底色 ${palette.background}`);
+    parts.push(isDarkHex(palette.background) ? "整体暗调" : "整体明亮");
+  }
+  return parts.length > 0 ? parts.join("；") : undefined;
 }
 
 /** 生图提示词 + 风格卡调色板确定性后缀（色调统一，无额外 LLM 调用），整体不超过 600 字。 */
@@ -57,6 +84,8 @@ export function composePageImagePrompt(
   if (isHexColor(palette?.accent)) parts.push(`强调 ${palette.accent}`);
   if (isHexColor(palette?.background)) parts.push(`底色 ${palette.background}`);
   if (parts.length === 0) return prompt.slice(0, MAX_COMPOSED_PROMPT_CHARS);
+  const background = palette?.background;
+  if (isHexColor(background)) parts.push(`基调 ${isDarkHex(background) ? "暗调" : "明亮"}`);
   const suffix = `色调参考：${parts.join("、")}；画面统一在此色调内。`;
   return `${prompt.slice(0, MAX_COMPOSED_PROMPT_CHARS - suffix.length)}${suffix}`;
 }
@@ -109,7 +138,8 @@ export async function generateSlidesPageImages(
       ...(title ? { title } : {}),
       totalPages: pending.length,
       doneCount,
-      pages: pending.map((item) => ({ title: item.title })),
+      pages: pending.map((item) => ({ pageIndex: item.pageIndex, title: item.title })),
+      updatedAt: Date.now(),
     };
     deps.onUpdate({ content: JSON.stringify(payload), details: payload });
   };
@@ -136,18 +166,53 @@ export async function generateSlidesPageImages(
           skipped ??= "已中止，剩余页未生成配图";
           return;
         }
+        // stagger 等待期间其他 worker 可能已判定整批放弃（无中转会话等），复查后再生图。
+        if (skipped) return;
       }
       try {
         const result = await deps.images.generateImage({
           prompt: composePageImagePrompt(item.imagePrompt, deps.stylePalette),
           retryDelaysMs: PAGE_IMAGE_RETRY_DELAYS_MS,
         });
+        let bytes: { buffer: Buffer; mime: string } | null = null;
+        if (deps.readMaterialBytes) {
+          bytes = await deps.readMaterialBytes(result.contentHash).catch(() => null);
+          if (bytes) {
+            const qc = await inspectSlideImage(bytes.buffer).catch(() => null);
+            if (qc && !qc.ok) {
+              summary.failed += 1;
+              summary.results.push({ pageIndex: item.pageIndex, error: `配图质检未通过：${qc.reason ?? "unknown"}` });
+              emit(summary.generated);
+              continue;
+            }
+          }
+        }
+        let warning: string | undefined;
+        if (bytes && deps.reviewImage) {
+          const verdict = await deps.reviewImage(bytes, item.imagePrompt, imageStyleContext(deps.stylePalette)).catch(() => null);
+          if (verdict && verdict.ok === false) {
+            if (verdict.score <= 2) {
+              summary.failed += 1;
+              summary.results.push({
+                pageIndex: item.pageIndex,
+                error: `配图切题质检未通过：${verdict.reason ?? `score ${verdict.score}`}`,
+              });
+              emit(summary.generated);
+              continue;
+            }
+            warning = `配图弱相关（${verdict.score}/5）：${verdict.reason ?? "建议人工复核"}`;
+          }
+          if (verdict && verdict.styleScore !== undefined && verdict.styleScore <= 2) {
+            const styleWarning = `配图风格弱适配（${verdict.styleScore}/5）：${verdict.styleReason ?? "建议检查明暗/色调"}${warning ? `；${warning}` : ""}`;
+            warning = styleWarning;
+          }
+        }
         item.page.materials = [{
           url: `everroom-material://${result.contentHash}`,
           desc: `AI 生成配图：${item.imagePrompt.slice(0, 180)}`,
         }];
         summary.generated += 1;
-        summary.results.push({ pageIndex: item.pageIndex, contentHash: result.contentHash });
+        summary.results.push({ pageIndex: item.pageIndex, contentHash: result.contentHash, ...(warning ? { warning } : {}) });
       } catch (error) {
         // 无中转会话/套餐未配生图模型都是环境性失败：后续页同样生不出，整批放弃（该次 generate 照常落页）。
         if (error instanceof Error && error.message.includes(NO_RELAY_SESSION_MARKER)) {

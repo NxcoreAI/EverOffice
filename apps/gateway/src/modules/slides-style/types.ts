@@ -8,6 +8,8 @@
  *   不含任何来源说明（像素换算/近似匹配等禁词归 styler SYSTEM 约束）。
  */
 
+import type { TypeToken } from "../slides-layout/theme.js";
+
 /** 引擎可用色值：#RRGGBB。 */
 export type StyleHex = string;
 
@@ -55,6 +57,8 @@ export interface StyleTypography {
   /** 正文字体。 */
   fontBody: string;
   sizes: StyleTypographySizes;
+  /** v2 字号 token；缺省由 sizes 推导。 */
+  typeScale?: Partial<Record<TypeToken, number>>;
   headingBold: boolean;
 }
 

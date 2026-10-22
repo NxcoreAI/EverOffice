@@ -97,7 +97,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools } from "../modules/subagents/slides-agent-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
@@ -205,6 +205,7 @@ import { AiRelaySessionStore, relayPathPrefix } from "../modules/ai-relay/sessio
 import { SlidesStyleImageGenerator } from "../modules/slides-style/image-gen.js";
 import { SlidesStyleSessionStore } from "../modules/slides-style/style-session.js";
 import { SlidesPageImageSessionStore } from "../modules/subagents/slides-page-images-store.js";
+import { SlidesStoryboardStore } from "../modules/subagents/slides-storyboards-store.js";
 import { SlidesPageImageRunner } from "../modules/subagents/slides-page-images-runner.js";
 import { slidesPageImagesRoutes } from "../modules/slides/page-images-routes.js";
 import { ThesisFormatService } from "../modules/thesis-format/service.js";
@@ -894,6 +895,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
   // slides-reviewer（审页代理）工具面：说明书按需取（review-context 按 manualToken）+ 复用布局树校验。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-reviewer", () => createSlidesReviewerAgentTools());
+  // layouter/reviewer 的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
+  // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
+  subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
+  subagentRuntimeManager.registerAgentResultValidator("slides-reviewer", createSlidesTreeResultValidator());
   // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
   //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
   subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
@@ -1177,6 +1182,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             slidesProgress,
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
+            // slides 编辑层影子模式（M1）：默认开启，不改变可见产物；关闭只需在装配层不传本项。
+            slidesEditor: subagentConfig.enabled
+              ? { store: new SlidesStoryboardStore(db), active: true }
+              : null,
             // 布局树落页装配（generate 尾部）：与 office-plugin 共享同一批实例；
             // readMaterialBlob 供图片 AR 解析（everroom-material:// 按 hash 回源）。
             slidesLayoutOffice: subagentConfig.enabled
@@ -1398,7 +1407,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   async function hotReloadAgentRuntimes(): Promise<void> {
     try {
       const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
-      void agentService.replaceRuntime(primary.current);
+      // await 进本函数的 catch：replaceRuntime 的 dispose 链可能 reject，
+      // void 调用漏接即未处理拒绝、直接杀死网关进程（2026-10-17 排障）。
+      await agentService.replaceRuntime(primary.current);
       // 档位 runtime 热替换：main-direct 恒重载（占位/真身都由工厂决定）；
       // main-lite 仅在仍配置时重载（工厂返回 null 会炸 trackedRuntime），
       // 配置被移除时注册残留但 tier resolver 拦截，会话回落 primary。
@@ -1409,7 +1420,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         await lite.previous?.dispose();
       }
       const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
-      void transcriptionSummaryService.replaceRuntime(background.current);
+      await transcriptionSummaryService.replaceRuntime(background.current);
       for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
         if (!agentResolver.has(agentId)) continue;
         const { previous } = agentResolver.reload(agentId);
@@ -1581,7 +1592,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     runtimeConfigManager.onChange(() => {
       if (!agentResolver.has(BUILTIN_AGENT_IDS.diary)) return;
       const { current } = agentResolver.reload(BUILTIN_AGENT_IDS.diary);
-      void diaryGenerator.replaceRuntime(current);
+      // replaceRuntime 的 dispose 链可能 reject；onChange 回调是 fire-and-forget，
+      // 漏接即未处理拒绝、直接杀死网关进程（2026-10-17 排障）。
+      diaryGenerator.replaceRuntime(current).catch((error: unknown) => {
+        app.log.error({ error: error instanceof Error ? error.message : String(error) }, "diary generator runtime replace failed");
+      });
     });
   }
   const agentSchedulerService = new AgentSchedulerService(db, diaryService, agentService);

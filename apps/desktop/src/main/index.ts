@@ -287,6 +287,7 @@ const GATEWAY_CHANNELS = {
 const MIGRATION_CHANNELS = {
   discover: 'migrations:discover', chooseOpenClaw: 'migrations:choose-openclaw', importOpenClaw: 'migrations:import-openclaw',
   localAgentSources: 'migrations:local-agent-sources', chooseLocalAgentDirectory: 'migrations:choose-local-agent-directory', importLocalAgentMigration: 'migrations:import-local-agent-migration',
+  importCherry: 'migrations:import-cherry', setCherrySync: 'migrations:set-cherry-sync', exportCherry: 'migrations:export-cherry',
   importNotionZip: 'migrations:import-notion-zip', sources: 'migrations:sources', runs: 'migrations:runs', cancel: 'migrations:cancel',
   retry: 'migrations:retry', reimport: 'migrations:reimport', clear: 'migrations:clear', conversations: 'migrations:conversations',
   preview: 'migrations:preview', progress: 'migrations:progress',
@@ -2334,6 +2335,9 @@ function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
   handle(MIGRATION_CHANNELS.chooseLocalAgentDirectory, (_event, provider: 'codex' | 'claude') => coordinator.chooseLocalAgentDirectory(provider))
   handle(MIGRATION_CHANNELS.importLocalAgentMigration, (_event, provider: 'codex' | 'claude', id?: string) => coordinator.importLocalAgentMigration(provider, id))
   handle(MIGRATION_CHANNELS.importNotionZip, () => coordinator.importNotionZip())
+  handle(MIGRATION_CHANNELS.importCherry, (_event, id?: string) => coordinator.importCherry(id))
+  handle(MIGRATION_CHANNELS.setCherrySync, (_event, sourceId: string, active: boolean) => coordinator.setCherrySync(sourceId, active))
+  handle(MIGRATION_CHANNELS.exportCherry, (_event, sourceId: string) => coordinator.exportCherryConversations(sourceId))
   handle(MIGRATION_CHANNELS.sources, () => coordinator.sources())
   handle(MIGRATION_CHANNELS.runs, (_event, sourceId?: string) => coordinator.runs(sourceId))
   handle(MIGRATION_CHANNELS.cancel, (_event, runId: string) => coordinator.cancel(runId))
@@ -4443,6 +4447,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     migrationCoordinator = new MigrationCoordinator(new MigrationsGatewayBridge(gatewaySupervisor), filesGatewayBridge, () => BrowserWindow.getAllWindows()[0] ?? null, join(dataDirectory, 'migrations', 'sources.json'), join(dataDirectory, 'backups'))
     await migrationCoordinator.initialize()
     registerMigrationHandlers(migrationCoordinator)
+    void migrationCoordinator.restoreCherrySync()
     clipperAssetBridge = filesGatewayBridge
     officeFilesBridge = filesGatewayBridge
     // Room 产物 docx 人手编辑：保存 → 去抖重导入（fileEntryId 钉条目走版本链）→ 广播刷新。

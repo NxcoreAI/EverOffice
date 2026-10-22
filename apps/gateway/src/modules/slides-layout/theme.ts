@@ -3,7 +3,49 @@
  * agents/slides-styler/schemas/output.schema.json 为真源）→ 展开器直接可用的
  * 主题对象。styleParams 缺失时用与 layout 技能文档口径一致的缺省主题。
  * 坐标、字号、配色全部在这里定：预设描述符只管结构，不管取值。
+ *
+ * 字号不在这里做设计判断：**场景（scene）决定字号阶梯与硬下限**，风格卡
+ * 的字号字段（typography.sizes / typography.typeScale）一律忽略。见 scene.ts。
  */
+
+import { resolveScene, type SceneId } from "./scene.js";
+
+/** v2 排版口径：字号只从 token 取，不写裸 pt。 */
+export const TYPE_TOKENS = [
+  "display", "hero", "h1", "h2", "h3", "lead", "body", "label", "kicker", "caption",
+] as const;
+export type TypeToken = typeof TYPE_TOKENS[number];
+
+/** 构图家族：风格卡第三轴；组件默认 surface/density/numeral 由此推导。 */
+export const STYLE_COMPOSITIONS = ["swiss", "editorial", "poster", "immersive"] as const;
+export type StyleComposition = typeof STYLE_COMPOSITIONS[number];
+
+/** 全篇重复的视觉母题（风格卡 motif.kind）。 */
+export const MOTIF_KINDS = ["ghost-number", "ghost-word", "color-band", "corner-accent", "none"] as const;
+export type MotifKind = typeof MOTIF_KINDS[number];
+
+/**
+ * 组件样式词汇：agent 只写这些语义枚举，像素/色号由 resolveComponentSkin 解析。
+ * 枚举同时被 v1 组件归一与 v2 节点归一共用。
+ */
+export const COMPONENT_SURFACES = ["none", "card", "tint", "outline", "ink", "band"] as const;
+export type ComponentSurface = typeof COMPONENT_SURFACES[number];
+export const COMPONENT_SEPARATORS = ["line", "gap", "none"] as const;
+export type ComponentSeparator = typeof COMPONENT_SEPARATORS[number];
+export const COMPONENT_ALIGNS = ["start", "center"] as const;
+export type ComponentAlign = typeof COMPONENT_ALIGNS[number];
+export const COMPONENT_DENSITIES = ["tight", "normal", "airy"] as const;
+export type ComponentDensity = typeof COMPONENT_DENSITIES[number];
+export const COMPONENT_NUMERALS = ["serif", "sans", "none"] as const;
+export type ComponentNumeral = typeof COMPONENT_NUMERALS[number];
+export const COMPONENT_ACCENTS = ["primary", "accent", "muted"] as const;
+export type ComponentAccent = typeof COMPONENT_ACCENTS[number];
+
+export interface StyleMotifInput {
+  kind?: MotifKind;
+  /** 母题参数（如 ghost 的 alpha 与字号、色带方向）；组件按 kind 解释。 */
+  spec?: Record<string, string | number>;
+}
 
 export interface StyleParamsInput {
   palette?: {
@@ -19,11 +61,17 @@ export interface StyleParamsInput {
   typography?: {
     fontHeading?: string;
     fontBody?: string;
+    /**
+     * @deprecated 字号只由场景决定（scene.ts）。字段保留只为兼容旧风格卡产物，
+     * 运行时**完全忽略**；slides-styler 已不再产出该字段。
+     */
     sizes?: Partial<Record<
       "coverTitle" | "sectionTitle" | "pageTitle" | "subtitle" | "body" | "caption" | "kpi" | "table",
       number
     >>;
     headingBold?: boolean;
+    /** @deprecated 同 sizes：忽略。 */
+    typeScale?: Partial<Record<TypeToken, number>>;
   };
   spacing?: Partial<{ margin: number; gutter: number; cardPadding: number; cornerRadius: number }>;
   decoration?: Partial<{
@@ -36,9 +84,15 @@ export interface StyleParamsInput {
   /** 页脚契约：缺省（未配置）不注入页脚。pageNumbers 缺省 false。 */
   footer?: Partial<{ brand: string; label: string; pageNumbers: boolean }>;
   darkCover?: boolean;
+  /** 构图家族（风格卡权威来源：用户挑中的纵览候选）。 */
+  composition?: StyleComposition;
+  /** 母题：全篇重复的视觉签名。 */
+  motif?: StyleMotifInput;
 }
 
 export interface ResolvedTheme {
+  /** 本 deck 的场景（字号体系来源）。 */
+  scene: SceneId;
   colors: {
     background: string;
     surface: string;
@@ -57,6 +111,8 @@ export interface ResolvedTheme {
     /** 主色浅档（我方列提亮/当前阶段底）。 */
     primarySoft: string;
   };
+  /** v2 字号阶梯（pt）；layout v2 唯一字号来源。 */
+  typeScale: Record<TypeToken, number>;
   fonts: { heading: string; body: string; headingBold: boolean };
   sizes: {
     coverTitle: number;
@@ -78,6 +134,23 @@ export interface ResolvedTheme {
   };
   /** 页脚契约（styleParams.footer 解析产物；未配置时 pageNumbers=false 且 brand/label 为空）。 */
   footer: { brand: string; label: string; pageNumbers: boolean };
+  /**
+   * 风格卡的设计轴与组件默认值（单一出处）：组件只读这里，不写默认。
+   * resolveComponentSkin 在此之上叠加每组件显式 style。
+   */
+  design: {
+    composition: StyleComposition;
+    motif: { kind: MotifKind; spec: Record<string, string | number> };
+    darkCover: boolean;
+    /** 组件缺省底面语言。 */
+    surface: ComponentSurface;
+    separator: ComponentSeparator;
+    align: ComponentAlign;
+    density: ComponentDensity;
+    numeral: ComponentNumeral;
+    /** 唯一强调位取色角色。 */
+    accent: ComponentAccent;
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -174,6 +247,20 @@ export function deriveCardSurface(background: string): string {
   return luminance(mixed) - luminance(background) < 0.03 ? DEFAULTS.palette.surface.toLowerCase() : mixed;
 }
 
+/** v2 字号阶梯 → 旧的 8 个字号词（compile 的 VARIANT_SIZE_KEY 与组件读这一份）。 */
+function sizesFromTypeScale(typeScale: Record<TypeToken, number>): ResolvedTheme["sizes"] {
+  return {
+    coverTitle: typeScale.display,
+    sectionTitle: typeScale.h1,
+    pageTitle: typeScale.h2,
+    subtitle: typeScale.lead,
+    body: typeScale.body,
+    caption: typeScale.caption,
+    kpi: typeScale.hero,
+    table: typeScale.body,
+  };
+}
+
 const DEFAULTS = {
   palette: {
     // 钴蓝纸面：冷纸白 + 墨色 + 唯一钴蓝（editorial 缺省系统）
@@ -203,11 +290,23 @@ export function snap4(value: number): number {
   return Math.round(value / 4) * 4;
 }
 
-export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedTheme {
+/**
+ * OOXML 的 typeface 只能有一个字体名，不能是 CSS 的逗号栈；把风格卡的
+ * `"Songti SC, Georgia"` 归一成 `"Songti SC"`，让 PowerPoint 对中文/拉丁各自回退，
+ * 而不是把整串当字体名找不到后回退到默认字体。
+ */
+export function primaryFontFamily(value: string | undefined): string {
+  if (!value) return "";
+  const first = value.split(",")[0]?.trim() ?? "";
+  return first.replace(/^["']|["']$/g, "").trim().slice(0, 80);
+}
+
+export function resolveTheme(styleParams?: StyleParamsInput | null, sceneId?: string | null): ResolvedTheme {
   const palette = styleParams?.palette ?? {};
   const typography = styleParams?.typography ?? {};
   const spacing = styleParams?.spacing ?? {};
   const decoration = { ...DEFAULTS.decoration, ...(styleParams?.decoration ?? {}) };
+  const profile = resolveScene(sceneId);
 
   const background = normalizeHex(palette.background, DEFAULTS.palette.background);
   const primary = normalizeHex(palette.primary, DEFAULTS.palette.primary);
@@ -219,25 +318,36 @@ export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedThe
     .slice(0, 6)
     .map((hex) => normalizeHex(hex, primary));
 
-  const sizes = { ...DEFAULTS.sizes, ...(typography.sizes ?? {}) };
-  sizes.coverTitle = clamp(sizes.coverTitle, 40, 110);
-  sizes.sectionTitle = clamp(sizes.sectionTitle, 28, 60);
-  sizes.pageTitle = clamp(sizes.pageTitle, 20, 40);
-  sizes.subtitle = clamp(sizes.subtitle, 14, 24);
-  sizes.body = clamp(sizes.body, 12, 18);
-  sizes.caption = clamp(sizes.caption, 9, 13);
-  sizes.kpi = clamp(sizes.kpi, 28, 90);
-  sizes.table = clamp(sizes.table, 9, 24);
+  // 字号只由场景决定：typography.sizes / typography.typeScale 一律忽略（风格卡不提取字号）。
+  const typeScale: Record<TypeToken, number> = { ...profile.typeScale };
+  const sizes = sizesFromTypeScale(typeScale);
 
   const margin = clamp(Math.round(spacing.margin ?? DEFAULTS.spacing.margin), 32, 96);
   const gutter = clamp(Math.round(spacing.gutter ?? DEFAULTS.spacing.gutter), 8, 40);
 
+  const accent = normalizeHex(palette.accent, DEFAULTS.palette.accent);
+  const composition = isStyleComposition(styleParams?.composition) ? styleParams!.composition! : "editorial";
+  const motifKind: MotifKind = isMotifKind(styleParams?.motif?.kind) ? styleParams!.motif!.kind! : "none";
+  const motif: { kind: MotifKind; spec: Record<string, string | number> } = {
+    kind: motifKind,
+    // 母题关闭时参数不保留，避免 styleTokens 里出现「none 却带 ghost 参数」的噪声。
+    spec: motifKind === "none" ? {} : sanitizeMotifSpec(styleParams?.motif?.spec),
+  };
+  // 卡面语言由装饰 token 决定：有描边或阴影 = 风格卡在卖卡片；否则看构图家族。
+  const surface: ComponentSurface =
+    decoration.cardShadow !== "none" || decoration.cardStroke !== null
+      ? "card"
+      : composition === "immersive"
+        ? "tint"
+        : "none";
+
   return {
+    scene: profile.id,
     colors: {
       background,
       surface: normalizeHex(palette.surface, deriveCardSurface(background)),
       primary,
-      accent: normalizeHex(palette.accent, DEFAULTS.palette.accent),
+      accent,
       text,
       textMuted,
       onDarkText: normalizeHex(palette.onDarkText, DEFAULTS.palette.onDarkText),
@@ -249,11 +359,12 @@ export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedThe
       primarySoft: mixHex(primary, background, 0.82),
     },
     fonts: {
-      heading: typography.fontHeading ?? DEFAULTS.fonts.heading,
-      body: typography.fontBody ?? DEFAULTS.fonts.body,
+      heading: primaryFontFamily(typography.fontHeading) || DEFAULTS.fonts.heading,
+      body: primaryFontFamily(typography.fontBody) || DEFAULTS.fonts.body,
       headingBold: typography.headingBold ?? DEFAULTS.fonts.headingBold,
     },
     sizes,
+    typeScale,
     spacing: {
       margin: snap4(margin),
       gutter: snap4(gutter),
@@ -266,5 +377,35 @@ export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedThe
       label: (styleParams?.footer?.label ?? "").trim().slice(0, 24),
       pageNumbers: styleParams?.footer?.pageNumbers === true,
     },
+    design: {
+      composition,
+      motif,
+      darkCover: styleParams?.darkCover ?? true,
+      surface,
+      // 分隔线关掉时，组件默认退到「只留间距」——不再画任何发丝线。
+      separator: decoration.divider === "none" ? "gap" : "line",
+      align: "start",
+      density: composition === "swiss" ? "tight" : composition === "poster" || composition === "immersive" ? "airy" : "normal",
+      numeral: "serif",
+      accent: accent === primary ? "primary" : "accent",
+    },
   };
+}
+
+function isStyleComposition(value: unknown): value is StyleComposition {
+  return typeof value === "string" && (STYLE_COMPOSITIONS as readonly string[]).includes(value);
+}
+
+function isMotifKind(value: unknown): value is MotifKind {
+  return typeof value === "string" && (MOTIF_KINDS as readonly string[]).includes(value);
+}
+
+function sanitizeMotifSpec(raw: unknown): Record<string, string | number> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const spec: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, 8)) {
+    if (typeof value === "string") spec[key.slice(0, 24)] = value.slice(0, 80);
+    else if (typeof value === "number" && Number.isFinite(value)) spec[key.slice(0, 24)] = value;
+  }
+  return spec;
 }

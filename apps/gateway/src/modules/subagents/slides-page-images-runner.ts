@@ -5,8 +5,8 @@
  *
  * 并发不变式：worker 只给「尚无图」的页写 hash/materials（认领制，一页一 worker）；
  * 用户的打回/恢复/重生成只作用于「已有图」的页。两边写入前都重读会话合并
- * （单线程异步下安全），accept/skip 通过 abort 取消循环，会话被覆盖重建
- * （id 变化）时循环自行退出；无中转会话整轮停止。
+ * （单线程异步下安全），skip 通过 abort 取消循环，accept 先转 settling 等图就绪、
+ * 超时才 abort；会话被覆盖重建（id 变化）时循环自行退出；无中转会话整轮停止。
  */
 
 import {
@@ -19,9 +19,14 @@ import type {
   SlidesPageImageSessionData,
 } from "./slides-page-images-store.js";
 import type { SlidesPageImagesStageDeps } from "./slides-page-images-stage.js";
+import { pageImagesReviewPayload } from "./slides-page-images-stage.js";
+import { imageStyleContext } from "./slides-page-images.js";
+import { inspectSlideImage } from "./slides-image-qc.js";
 
 interface RunningEntry {
   controller: AbortController;
+  /** 用户主动取消（accept/skip/覆盖）：未完成页由落页路径处理，循环不再补标失败。 */
+  userAborted: boolean;
   done: Promise<void>;
 }
 
@@ -41,7 +46,10 @@ export class SlidesPageImageRunner {
 
   /** 取消某会话的后台生成（accept/skip 落页、会话覆盖时调用）；进行中的那张作废。 */
   abort(sessionId: string): void {
-    this.active.get(sessionId)?.controller.abort();
+    const entry = this.active.get(sessionId);
+    if (!entry) return;
+    entry.userAborted = true;
+    entry.controller.abort();
   }
 
   /** 测试与诊断用：等待某会话的后台循环结束。 */
@@ -56,19 +64,24 @@ export class SlidesPageImageRunner {
   ): Promise<void> {
     const existing = this.active.get(deps.sessionId);
     if (existing) return existing.done;
-    const controller = new AbortController();
-    const done = this.loop(input, deps, controller).finally(() => {
+    const entry: RunningEntry = {
+      controller: new AbortController(),
+      userAborted: false,
+      done: Promise.resolve(),
+    };
+    entry.done = this.loop(input, deps, entry).finally(() => {
       this.active.delete(deps.sessionId);
     });
-    this.active.set(deps.sessionId, { controller, done });
-    return done;
+    this.active.set(deps.sessionId, entry);
+    return entry.done;
   }
 
   private async loop(
     input: { roomId: string; draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
-    controller: AbortController,
+    entry: RunningEntry,
   ): Promise<void> {
+    const controller = entry.controller;
     const startedAt = Date.now();
     const claimed = new Set<number>();
     let launched = 0;
@@ -87,14 +100,39 @@ export class SlidesPageImageRunner {
           await sleep(burstIndex * FIRST_BURST_STAGGER_MS);
           if (controller.signal.aborted) return;
         }
+        // 编排预热的在途图：等同一张的结果，不重新生图（防重复烧额度）。
+        const prewarmed = deps.preseed?.inflight.get(next.pageIndex) ?? null;
         try {
-          const result = await deps.images.generateImage({
-            prompt: composePageImagePrompt(next.imagePrompt, session.stylePalette),
-            retryDelaysMs: PAGE_IMAGE_RETRY_DELAYS_MS,
-          });
-          if (controller.signal.aborted) return;
+          let contentHash: string;
+          if (prewarmed) {
+            deps.preseed!.inflight.delete(next.pageIndex);
+            const hash = await prewarmed;
+            if (controller.signal.aborted) return;
+            if (typeof hash !== "string" || hash.length === 0) throw new Error("预热生图失败");
+            contentHash = hash;
+          } else {
+            const result = await deps.images.generateImage({
+              prompt: composePageImagePrompt(next.imagePrompt, session.stylePalette),
+              retryDelaysMs: PAGE_IMAGE_RETRY_DELAYS_MS,
+            });
+            if (controller.signal.aborted) return;
+            contentHash = result.contentHash;
+          }
+          if (deps.readMaterialBytes) {
+            const bytes = await deps.readMaterialBytes(contentHash).catch(() => null);
+            if (bytes) {
+              const qc = await inspectSlideImage(bytes.buffer).catch(() => null);
+              if (qc && !qc.ok) throw new Error(`配图质检未通过：${qc.reason ?? "unknown"}`);
+              if (deps.reviewImage) {
+                const verdict = await deps.reviewImage(bytes, next.imagePrompt, imageStyleContext(session.stylePalette)).catch(() => null);
+                if (verdict && verdict.ok === false && verdict.score <= 2) {
+                  throw new Error(`配图切题质检未通过：${verdict.reason ?? `score ${verdict.score}`}`);
+                }
+              }
+            }
+          }
           this.patchPage(input, deps, next.pageIndex, {
-            contentHash: result.contentHash,
+            contentHash,
             failed: false,
             rejected: false,
           });
@@ -111,15 +149,44 @@ export class SlidesPageImageRunner {
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+    if (entry.userAborted) return;
+    // deadline 到点/循环异常退出（含中转会话不可用）：未完成页标 failed 并广播 review 载荷，
+    // 前端显示「生成失败/可重生成」，不再永远停在「生成中…」。
+    this.failUnfinishedPages(input, deps);
   }
 
-  /** 会话有效性：存在、id 未变、仍在 review（accept/skip 落定或覆盖重建即停）。 */
+  /** 兜底落账：未完成页 failed:true + patch + 广播（广播失败不影响循环退出）。 */
+  private failUnfinishedPages(
+    input: { roomId: string; draftDocumentId: string },
+    deps: SlidesPageImagesStageDeps & { sessionId: string },
+  ): void {
+    try {
+      const session = this.readSession(input, deps);
+      if (!session) return;
+      const unfinished = session.pages.filter((page) => !page.contentHash && !page.failed);
+      if (unfinished.length === 0) return;
+      const unfinishedIndexes = new Set(unfinished.map((page) => page.pageIndex));
+      const pages = session.pages.map((page) =>
+        unfinishedIndexes.has(page.pageIndex) ? { ...page, failed: true } : page);
+      deps.sessions.patch(deps.sessionId, { pages });
+      const payload = {
+        ...pageImagesReviewPayload({ ...session, pages }),
+        warnings: [`${String(unfinished.length)} 张配图未完成（超时或中断），已标记失败；可重新生成或直接落页`],
+      };
+      deps.onUpdate?.({ content: JSON.stringify(payload), details: payload });
+    } catch {
+      // 兜底标失败失败不阻塞循环退出。
+    }
+  }
+
+  /** 会话有效性：存在、id 未变、仍在 review/settling（accept 等图期不中断；skip 落定或覆盖重建即停）。 */
   private readSession(
     input: { roomId: string; draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
   ): SlidesPageImageSessionData | null {
     const session = deps.sessions.byDraftId(input.roomId, input.draftDocumentId);
-    if (!session || session.id !== deps.sessionId || session.stage !== "review") return null;
+    if (!session || session.id !== deps.sessionId) return null;
+    if (session.stage !== "review" && session.stage !== "settling") return null;
     return session;
   }
 

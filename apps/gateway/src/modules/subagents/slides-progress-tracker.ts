@@ -19,6 +19,8 @@ export interface SlidesProgressSnapshot {
   pages: SlidesProgressPage[];
   /** 已落定的页数（0..totalPages）。 */
   doneCount: number;
+  /** 已落定的页号（0 起，页序）。落页按完成顺序发生，页号集合是卡面打勾的唯一依据。 */
+  appliedPages?: number[];
   /** 叙事主线。 */
   narrative?: string;
   /** 方案告警（素材缺口等）。 */
@@ -31,6 +33,8 @@ export type SlidesProgressEvent = {
   slideIndex: number;
   title: string;
   snapshot: SlidesProgressSnapshot;
+  /** 广播时刻（ms）：载荷公共字段，渲染层据此做新旧单调守卫。 */
+  updatedAt: number;
 };
 
 interface TrackerState {
@@ -61,20 +65,29 @@ export class SlidesProgressTracker {
     this.runs.clear();
   }
 
-  /** set_page 成功落页后调用：广播一条带全量快照的进度事件（未登记的 run 静默忽略）。 */
-  notify(runId: string | undefined, slideIndex: number): void {
+  /**
+   * set_page 成功落页后调用：广播一条带全量快照的进度事件（未登记的 run 静默忽略）。
+   * `appliedPages` 传「已落定页号集合」——落页按完成顺序发生，第 2 页可能先于第 1 页落定，
+   * 所以不能再用 slideIndex 推 doneCount（那会把没落的页算成已完成）。
+   */
+  notify(runId: string | undefined, slideIndex: number, appliedPages?: readonly number[]): void {
     const state = runId ? this.runs.get(runId) : undefined;
     if (!state) return;
-    state.appliedCount = Math.max(state.appliedCount, slideIndex + 1);
+    const applied = appliedPages
+      ? [...new Set(appliedPages)].sort((a, b) => a - b)
+      : null;
+    state.appliedCount = applied ? applied.length : Math.max(state.appliedCount, slideIndex + 1);
     state.relay?.({
       kind: "page_applied",
       slideIndex,
       title: state.plan.pages[slideIndex]?.title ?? "",
+      updatedAt: Date.now(),
       snapshot: {
         title: state.plan.title,
         totalPages: state.plan.pages.length,
         pages: state.plan.pages.slice(0, 24),
         doneCount: state.appliedCount,
+        ...(applied ? { appliedPages: applied } : {}),
         ...(state.plan.narrative ? { narrative: state.plan.narrative } : {}),
         ...(state.plan.warnings?.length ? { warnings: state.plan.warnings } : {}),
       },

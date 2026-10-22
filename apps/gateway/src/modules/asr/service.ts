@@ -161,7 +161,10 @@ export class AsrService {
 
   private track(promise: Promise<void>): void {
     this.inFlight.add(promise);
-    void promise.finally(() => this.inFlight.delete(promise));
+    // 前置段（getStoredRow/payloadOf）在 submit 的 try 之外，存储 payload 畸形时
+    // promise 直接 reject；finally 链漏接即未处理拒绝、杀进程（2026-10-17 排障）。
+    // 失败细节已由 submit/refresh 内部的 markFailed 落账，这里只消音。
+    promise.finally(() => this.inFlight.delete(promise)).catch(() => undefined);
   }
 
   private getStoredRow(id: string): typeof jobs.$inferSelect | null {

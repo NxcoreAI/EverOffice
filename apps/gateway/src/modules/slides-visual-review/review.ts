@@ -63,6 +63,37 @@ const REVIEW_PROMPT = `你检查一张演示文稿页面的渲染截图，只判
 {"pass": false, "issues": [{"item": "<上面七个英文键之一>", "where": "<一句话指出位置，如：左下角第二张卡片>", "severity": "major|minor"}]}
 severity：major = 明显影响阅读或观感；minor = 轻微、可容忍。`;
 
+export interface DesignReviewIssue {
+  item: "weak_hierarchy" | "flat_background" | "no_visual_anchor" | "text_wall" | "misalignment" | "low_contrast" | "cramped" | "empty_space";
+  where: string;
+  severity: "major" | "minor";
+}
+
+export type DesignReviewOutcome =
+  | { status: "pass" }
+  | { status: "issues"; issues: DesignReviewIssue[] }
+  | { status: "skipped"; reason: string }
+  | { status: "error"; reason: string };
+
+const DESIGN_PROMPT = `你检查一张演示文稿页面的渲染截图，只判客观可指的版面问题，不做口味评价。
+
+只允许以下问题：
+1. weak_hierarchy：主标题、辅助信息、正文之间没有明显主次，阅读顺序混乱。
+2. flat_background：整页纯白/纯色底，没有任何色块、线条、图形或图片承载信息。
+3. no_visual_anchor：除了文字和表格，画面没有任何图标、图形、图片或数字视觉锚点。
+4. text_wall：大段连续文字占满页面，缺少分段/表格/图形。
+5. misalignment：同组元素的左右边缘或行列明显不齐。
+6. low_contrast：文字与底色对比度不足，读不清。
+7. cramped：表格/文字贴边或互相挤压，没有呼吸空间。
+8. empty_space：内容挤在一角，同时出现大片无意义空白。
+
+判定纪律：
+- 每项必须在截图中指认具体位置；找不到具体位置就不报。
+- 轻微的留白、居中、配色口味不算问题。
+- 不确定时判通过。
+
+只输出 JSON：{"pass":true} 或 {"pass":false,"issues":[{"item":"...","where":"一句话位置","severity":"major|minor"}]}`;
+
 const MAX_VISUAL_RETRIES = 1;
 const REVIEW_TIMEOUT_MS = 90_000;
 
@@ -118,6 +149,38 @@ export class SlidesVisualReviewer {
   forgetDeck(fileId: string): void {
     for (const key of this.reviewCounts.keys()) {
       if (key.startsWith(`${fileId}:`)) this.reviewCounts.delete(key);
+    }
+  }
+
+  /** 单页预览的设计审阅：只看客观版面问题，供 layouter 在一次 invocation 内自查。 */
+  async reviewDesign(png: Buffer): Promise<DesignReviewOutcome> {
+    const vlm = this.resolveVlm();
+    if (!vlm) return { status: "skipped", reason: "vlm 未配置" };
+    try {
+      const raw = await vlm.analyze({ buffer: png, mime: "image/png" }, DESIGN_PROMPT, AbortSignal.timeout(REVIEW_TIMEOUT_MS));
+      const value = raw !== null && typeof raw === "object" && !Array.isArray(raw)
+        ? raw as Record<string, unknown>
+        : null;
+      if (!value || typeof value.pass !== "boolean") return { status: "error", reason: "VLM 返回格式非法" };
+      if (value.pass) return { status: "pass" };
+      const issues: DesignReviewIssue[] = [];
+      if (Array.isArray(value.issues)) {
+        for (const rawIssue of value.issues) {
+          if (!rawIssue || typeof rawIssue !== "object" || Array.isArray(rawIssue)) continue;
+          const entry = rawIssue as Record<string, unknown>;
+          const item = entry.item;
+          if (typeof item !== "string" || !["weak_hierarchy", "flat_background", "no_visual_anchor", "text_wall", "misalignment", "low_contrast", "cramped", "empty_space"].includes(item)) continue;
+          issues.push({
+            item: item as DesignReviewIssue["item"],
+            where: typeof entry.where === "string" ? entry.where.slice(0, 120) : "",
+            severity: entry.severity === "major" ? "major" : "minor",
+          });
+        }
+      }
+      if (issues.length === 0) return { status: "pass" };
+      return { status: "issues", issues };
+    } catch (error) {
+      return { status: "error", reason: `设计审阅失败：${error instanceof Error ? error.message : String(error)}` };
     }
   }
 

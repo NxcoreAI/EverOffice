@@ -7,6 +7,7 @@ vi.mock('../src/main/office/office-runtime', () => ({
 }))
 
 import {
+  buildAgentAskDisplayMessage,
   buildAgentAskMessage,
   wireSlidesAgentAsk,
   type SlidesAgentAskPayload,
@@ -109,6 +110,7 @@ describe('wireSlidesAgentAsk', () => {
     expect(forward).toHaveBeenCalledWith({
       roomId: 'room-9',
       message: buildAgentAskMessage('季度汇报.pptx', OP),
+      displayMessage: buildAgentAskDisplayMessage('季度汇报.pptx', OP),
     })
   })
 })

@@ -106,8 +106,10 @@ describe("checkDemoPage", () => {
   it("flags blank and wrong-background renders", async () => {
     const canvas = createCanvas(1280, 720);
     const context = canvas.getContext("2d");
-    // 纯红底：底色错、满页墨、无文字带、无强调色——四层全翻。
-    context.fillStyle = "#cc2222";
+    // 纯紫底：底色错、满页墨、无文字带、无强调色——四层全翻。
+    // 不用纯红：#cc2222 与缺省强调色（#b87e25）的逐通道均值距离只有 38（容差 40），
+    // 会被判成"强调色出现过"，让这条用例变成对色距公式的隐式断言而不是对四层的断言。
+    context.fillStyle = "#7a1fa2";
     context.fillRect(0, 0, 1280, 720);
     const report = await checkDemoPage(canvas.toBuffer("image/png"), params);
     expect(report.passed).toBe(false);
@@ -185,6 +187,9 @@ describe("style card payloads", () => {
     expect(payload.swatches.length).toBe(6);
     expect(payload.swatches[1]).toEqual({ hex: "#1e3a5f", label: "主色" });
     expect(payload.typography[0]?.value).toBe("64pt");
+    expect(payload.details.map((row) => row.label)).toEqual(["构图", "明暗", "母题", "卡面", "分隔", "图片", "视觉字号"]);
+    expect(payload.details.find((row) => row.label === "明暗")?.value).toBe("封面/章节深底");
+    expect(payload.details.find((row) => row.label === "母题")?.value).toBe("无");
     expect(payload.wireframes).toHaveLength(3);
     expect(payload.wireframes.map((frame) => frame.label)).toEqual(["封面 · 瑞士网格", "内容页 · 瑞士网格", "数据页 · 瑞士网格"]);
     expect(payload.demoImageUrl).toBe(`everroom-material://${"d".repeat(64)}`);

@@ -393,7 +393,7 @@ export interface CloudDevice {
   name: string
   platform: string
   appVersion?: string | null
-  status: string
+  connectionStatus?: 'online' | 'offline'
   lastSeenAt: string
   createdAt?: string
 }

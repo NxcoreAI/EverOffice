@@ -40,6 +40,12 @@ export interface StartRuntimeRunInput {
   referencedLocalAgents?: LocalAgentInvocationTarget[];
   /** Structured handoff for an explicitly selected external/local Agent. */
   delegationContext?: LocalAgentDelegationContext;
+  /**
+   * 运行期元数据，只供工具/扩展按需读取，不进入 prompt。
+   * 子 Agent 派遣时携带 { subagentAgentId, subagentInput }，让工具能按阶段
+   * （如 slides-planner 的 draft/arrange）收紧取数预算。
+   */
+  runtimeMetadata?: Record<string, unknown>;
 }
 
 export interface RuntimeAttachment {

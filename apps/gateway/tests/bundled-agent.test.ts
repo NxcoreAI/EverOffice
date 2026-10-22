@@ -44,6 +44,9 @@ describe("bundled project Agent", () => {
     expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toMatchObject({
       required: expect.arrayContaining(["summary", "facts", "missingFields"]),
     });
+    // 仓库内 slides 代理的上下文/预算配置可被注册表解析（审页降思考档、布局工具预算放宽）。
+    expect(registry.get("slides-reviewer")?.revision.policy.model).toMatchObject({ reasoning: "low" });
+    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBe(24);
 
     const catalog = createSubagentPiTools(registry, orchestrator)
       .find((tool) => tool.name === "agent_catalog")!;

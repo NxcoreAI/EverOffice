@@ -169,19 +169,34 @@ export class AgentSchedulerService {
   private async tick(): Promise<void> {
     if (this.tickPromise) return this.tickPromise;
     this.tickPromise = (async () => {
-      const task = this.list()[0]!;
-      const currentDayRunId = task.enabled ? this.diary.ensureCurrentDayRun() : null;
-      // 外部调度接管了 DiaryService 的内部调度（scheduleManagedExternally），
-      // 但此前只覆盖“今天”：enabledFrom 之后的漏跑日永远不会自动补生成。
-      this.diary.backfillMissedDays();
-      if (currentDayRunId) await this.diary.drain();
-      if (task.enabled && task.nextRunAt && new Date(task.nextRunAt) <= this.now()) {
-        this.diary.createRun(this.diary.currentDate(), "scheduled");
-        this.diary.advanceSchedule();
-        await this.diary.drain();
+      // 顶层兜底：tick 由 void 调用（30s 一跳），任何未接住的异常都是未处理
+      // 拒绝、直接杀死网关进程（2026-10-17 排障：线上频繁死亡根因）。任务行
+      // 单独 catch，单个坏任务不阻塞同轮其他任务。
+      try {
+        const task = this.list()[0];
+        if (!task) return;
+        const currentDayRunId = task.enabled ? this.diary.ensureCurrentDayRun() : null;
+        // 外部调度接管了 DiaryService 的内部调度（scheduleManagedExternally），
+        // 但此前只覆盖“今天”：enabledFrom 之后的漏跑日永远不会自动补生成。
+        this.diary.backfillMissedDays();
+        if (currentDayRunId) await this.diary.drain();
+        if (task.enabled && task.nextRunAt && new Date(task.nextRunAt) <= this.now()) {
+          this.diary.createRun(this.diary.currentDate(), "scheduled");
+          this.diary.advanceSchedule();
+          await this.diary.drain();
+        }
+        const due = this.db.select().from(agentSchedules).where(and(eq(agentSchedules.enabled, true), lte(agentSchedules.nextRunAt, this.now()))).all();
+        for (const row of due) {
+          try {
+            await this.runNow(row.id);
+          } catch (error) {
+            // runNow 失败不前移 nextRunAt，下轮 30s 重试；只记日志不中断其他任务。
+            console.error(`[agent-scheduler] schedule ${row.id} 运行失败：`, error);
+          }
+        }
+      } catch (error) {
+        console.error("[agent-scheduler] 定时巡检失败（下轮重试）：", error);
       }
-      const due = this.db.select().from(agentSchedules).where(and(eq(agentSchedules.enabled, true), lte(agentSchedules.nextRunAt, this.now()))).all();
-      for (const row of due) await this.runNow(row.id);
     })().finally(() => { this.tickPromise = null; });
     return this.tickPromise;
   }

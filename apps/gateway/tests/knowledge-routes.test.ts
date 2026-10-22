@@ -94,6 +94,45 @@ describe('knowledge room routes', () => {
     }
   })
 
+  it('exposes Room file version and update time in the artifact list DTO', async () => {
+    // 版本可见性：目录文件带 vN + 最新版本时间；legacy 无版本链 → null（不伪造 v1）
+    const listRoomFiles = vi.fn().mockReturnValue([
+      {
+        id: 'file-1', originalName: 'Q3方案.pptx', bytes: 1024, title: 'Q3方案',
+        status: 'confirmed', decidedBy: 'resolution', confidence: null,
+        sourceKind: 'agent-generated',
+        uploadedAt: new Date('2026-10-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-10-20T08:00:00.000Z'),
+        versionNo: 3,
+      },
+      {
+        id: 'file-legacy', originalName: '旧资料.md', bytes: 10, title: null,
+        status: 'auto', decidedBy: 'llm', confidence: 0.8,
+        sourceKind: 'legacy-upload',
+        uploadedAt: new Date('2026-10-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-10-01T00:00:00.000Z'),
+        versionNo: null,
+      },
+    ])
+    const service = { listRoomFiles } as unknown as KnowledgeService
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>()
+    await app.register(knowledgeRoutes(service))
+
+    try {
+      const response = await app.inject({ url: '/v1/knowledge/rooms/room-1/files' })
+      expect(response.statusCode).toBe(200)
+      const items = response.json().items as Array<Record<string, unknown>>
+      expect(items).toHaveLength(2)
+      expect(items[0]).toMatchObject({ id: 'file-1', versionNo: 3, updatedAt: '2026-10-20T08:00:00.000Z' })
+      expect(items[1]).toMatchObject({ id: 'file-legacy', updatedAt: '2026-10-01T00:00:00.000Z' })
+      // null 必须原样透出：客户端据此省略 v 段
+      expect(items[1]!.versionNo).toBeNull()
+      expect(listRoomFiles).toHaveBeenCalledWith('room-1')
+    } finally {
+      await app.close()
+    }
+  })
+
   it('treats deletion of an absent Room as an idempotent success', async () => {
     const deleteRoom = vi.fn().mockReturnValue(false)
     const service = { deleteRoom } as unknown as KnowledgeService

@@ -177,6 +177,17 @@ export function SourcesPage() {
     finally { setBusyId(null) }
   }
 
+  const importCherry = async () => {
+    setBusyId('migration-cherry'); setMessage(null)
+    try {
+      const run = await window.nxcore!.migrations.importCherry()
+      setMessage(t('surface:sources.cherryImported', { count: run.messagesCompleted }))
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ''
+      setMessage(code === 'cherry_format_unsupported' ? t('surface:sources.cherryUnsupported') : t('surface:sources.migrationFailed'))
+    } finally { setBusyId(null) }
+  }
+
   const mountObsidian = async () => {
     setObsidianImportOpen(true)
   }
@@ -704,6 +715,7 @@ export function SourcesPage() {
             onGoogleDocs={() => setMarkdownSource('google-docs')}
             onNotion={() => setMarkdownSource('notion')}
             onOpenClaw={() => void importOpenClaw()}
+            onCherry={() => void importCherry()}
             onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
             connectorsEnabled={connectorsEnabled}
             onConnectorProvider={(provider) => void connectConnector(provider)}
@@ -730,6 +742,7 @@ export function SourcesPage() {
               onGoogleDocs={() => setMarkdownSource('google-docs')}
               onNotion={() => setMarkdownSource('notion')}
                 onOpenClaw={() => void importOpenClaw()}
+              onCherry={() => void importCherry()}
               onLocalAgentHistory={(provider) => void importLocalAgentHistory(provider)}
               connectorsEnabled={connectorsEnabled}
               onConnectorProvider={(provider) => void connectConnector(provider)}

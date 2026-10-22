@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTree, type LayoutTree } from "./schema.js";
+import { isLeaf, normalizeTree, type LayoutTree } from "./schema.js";
 import { contractFromStyleParams } from "./layout-contract.js";
 import { darkPageTheme, deriveCardSurface, mixHex, resolveTheme } from "../theme.js";
 import { compileTree } from "./compile.js";
@@ -276,15 +276,16 @@ describe("深色页组件主题视图", () => {
     const fills = result.spec.elements
       .filter((el) => el.type === "shape")
       .map((el) => (el as { fill?: string }).fill!);
-    expect(fills[0]?.toLowerCase()).toBe(dark.colors.text.toLowerCase());
-    expect(fills[2]?.toLowerCase()).toBe(
-      mixHex(dark.colors.text, dark.colors.background, 0.78).toLowerCase(),
-    );
+    // 新口径：filled 主色明度渐隐（首级主色压深、末级向页墨收淡）。
+    const solid = mixHex(dark.colors.primary, dark.colors.text, 0.32);
+    expect(fills[0]).not.toBe(fills[2]);
+    expect(fills[0]?.toLowerCase()).toBe(mixHex(solid, dark.colors.text, 0.04).toLowerCase());
+    expect(fills[2]?.toLowerCase()).toBe(mixHex(solid, dark.colors.text, 0.37).toLowerCase());
     const lastStage = result.spec.elements.find(
       (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "付费")),
     );
     expect(lastStage && lastStage.type === "text" ? lastStage.paragraphs[0]!.runs[0]!.color : undefined)
-      .toBe(CONTRACT.theme.colors.onDarkText);
+      .toBe(dark.colors.background);
   });
 
   it("浅色页深面板内的组件同样换深色视图", () => {
@@ -403,7 +404,7 @@ describe("justify 打包", () => {
 });
 
 describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () => {
-  it("KPI 卡装不下卡框时报缺陷，不再让墨迹溢出", () => {
+  it("KPI 卡装不下卡框时自动缩字收敛，不溢出", () => {
     const result = compileTree(tree({
       role: "data", title: "茶经立典",
       direction: "column", weights: [0.6, 1.6], children: [
@@ -418,7 +419,8 @@ describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () =
       ],
     }), CONTRACT);
     const defects = measureDefects(result, CONTRACT);
-    expect(defects.some((d) => d.type === "overflow" && /KPI 卡/.test(d.detail))).toBe(true);
+    expect(defects.some((d) => d.type === "overflow" && /KPI 卡/.test(d.detail))).toBe(false);
+    expect(result.spec.elements.length).toBeGreaterThan(0);
   });
 
   it("文本含 emoji 报 emoji 缺陷", () => {
@@ -456,8 +458,15 @@ describe("shrinkToFit", () => {
       ],
     });
     const shrunk = shrinkToFit(t, CONTRACT);
+    // 降档确实发生了（degraded），但字号下限抬高之后，超长文字不再能靠缩字号硬塞进去：
+    // 这是刻意的——过去正是"缩到 9pt 也要塞下"制造了满屏小字。装不下就该报错回给上游精简。
     expect(shrunk.degraded).toBe(true);
-    expect(shrunk.defects.filter((d) => d.type === "overflow")).toEqual([]);
+    const sizes = shrunk.result.spec.elements
+      .flatMap((element) => (element.type === "text" ? element.paragraphs ?? [] : []))
+      .flatMap((paragraph) => paragraph.runs ?? [])
+      .map((run) => run.sizePt ?? 0);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(16);
+    expect(shrunk.defects.some((d) => d.type === "overflow" || d.type === "font_floor")).toBe(true);
   });
 
   it("字号到下限仍装不下时报 font_floor 且不再降", () => {
@@ -865,13 +874,19 @@ describe("组件层（component）", () => {
     }
   });
 
-  it("timeline 横版结构：脊柱 + 每条刻度/年份/正文", () => {
+  it("timeline 横版结构：轴线 + 每条节点/年份/正文", () => {
     const result = compileTree(tree(COMPONENT_TREES["timeline 横"]!), CONTRACT);
-    expect(result.stats.elements).toBe(11); // 1 标题带 + 1 脊柱 + 3×(刻度+年份+正文)
-    const spine = result.spec.elements.find((el) => el.type === "shape" && el.h === 1 && el.w === CONTRACT.contentFrame.w);
-    expect(spine).toBeDefined();
-    const ticks = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "rect" && el.w === 4 && el.h === 16);
-    expect(ticks).toHaveLength(3);
+    const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; h: number; w: number; fill?: string }[];
+    const axis = shapes.find((el) => el.shape === "rect" && el.h === 2 && el.w > CONTRACT.contentFrame.w * 0.9);
+    expect(axis).toBeDefined();
+    expect(shapes.filter((el) => el.shape === "ellipse")).toHaveLength(3);
+    const texts = result.spec.elements.filter((el) => el.type === "text") as TextElement[];
+    for (const year of ["2026", "2027", "2028"]) {
+      expect(texts.some((el) => el.paragraphs.some((p) => p.runs.some((r) => r.text === year))), year).toBe(true);
+    }
+    for (const body of ["品类验证与供应链打底", "渠道扩张与区域仓成网", "品牌溢价与出海首站"]) {
+      expect(texts.some((el) => el.paragraphs.some((p) => p.runs.some((r) => r.text === body))), body).toBe(true);
+    }
   });
 
   it("stats 展开元素数 = 每条 3 个 + 列间发丝线", () => {
@@ -931,8 +946,12 @@ describe("组件层（component）", () => {
       ],
     }), CONTRACT);
     const cf = CONTRACT.contentFrame;
+    const frameX = Math.round(cf.x + (cf.w * 10) / 100);
+    const frameW = Math.round((cf.w * 80) / 100);
     const quoteText = result.spec.elements.find((el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "图上引言"))) as TextElement | undefined;
-    expect(quoteText?.x).toBe(Math.round(cf.x + (cf.w * 10) / 100));
+    expect(quoteText).toBeDefined();
+    expect(quoteText!.x).toBeGreaterThanOrEqual(frameX);
+    expect(quoteText!.x + quoteText!.w).toBeLessThanOrEqual(frameX + frameW + 2);
     expect(result.placements.find((p) => p.kind === "component")?.overlay).toBe(true);
   });
 });
@@ -1064,14 +1083,60 @@ describe("组件库扩展（第一批+第二批）", () => {
     }
   });
 
-  it("chevron 首段 homePlate 后续 chevron，描边空心", () => {
+  it("chevron 首段 homePlate 后续 chevron，默认实心", () => {
     const result = compileTree(tree(LIB_TREES.chevron!), CONTRACT);
     const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; fill?: string; stroke?: { color: string } }[];
     expect(shapes.map((s) => s.shape)).toEqual(["homePlate", "chevron", "chevron", "chevron"]);
     for (const shape of shapes) {
-      expect(shape.fill).toBe("#00000000");
-      expect(shape.stroke?.color).toBe(CONTRACT.theme.colors.text);
+      expect(shape.fill).toBe(CONTRACT.theme.colors.primary);
+      expect(shape.stroke).toBeUndefined();
     }
+    // 实心深底 → 段内文字反白。
+    const firstText = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "选品")),
+    ) as TextElement | undefined;
+    expect(firstText?.paragraphs[0]?.runs[0]?.color).toBe(CONTRACT.theme.colors.onDarkText);
+  });
+
+  it("chevron 相扣链：等高等距、相邻形留斜缝，文字落在形内", () => {
+    const result = compileTree(tree(LIB_TREES.chevron!), CONTRACT);
+    const shapes = result.spec.elements.filter((el) => el.type === "shape") as { shape: string; x: number; y: number; w: number; h: number }[];
+    const first = shapes[0]!;
+    for (const shape of shapes) {
+      expect(shape.y).toBe(first.y);
+      expect(shape.h).toBe(first.h);
+    }
+    let previousX = -Infinity;
+    for (const shape of shapes) {
+      expect(shape.x).toBeGreaterThanOrEqual(previousX); // 列向右推进（形状之间可咬合重叠）
+      expect(shape.w).toBeGreaterThan(shape.h * 0.5);
+      previousX = shape.x;
+    }
+    const texts = result.spec.elements.filter(
+      (el) => el.type === "text" && el.y >= first.y,
+    ) as TextElement[];
+    expect(texts.length).toBe(6);
+    for (const text of texts) {
+      const inside = shapes.some((shape) => text.x + text.w / 2 >= shape.x && text.x + text.w / 2 <= shape.x + shape.w && text.y >= shape.y && text.y <= shape.y + shape.h);
+      expect(inside).toBe(true);
+    }
+  });
+
+  it("venn 两圆相交成透镜、主色淡填充可见，交集标签对透镜中心", () => {
+    const result = compileTree(tree(LIB_TREES.venn!), CONTRACT);
+    const circles = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "ellipse") as { x: number; w: number; fill?: string }[];
+    expect(circles).toHaveLength(2);
+    const [c1, c2] = circles as [typeof circles[number], typeof circles[number]];
+    expect(c2.x).toBeLessThan(c1.x + c1.w); // 相交
+    const lens = c1.x + c1.w - c2.x;
+    expect(lens).toBeGreaterThanOrEqual(100); // 透镜宽可辨（目标 140）
+    for (const c of circles) expect(c.fill).toBe(`${CONTRACT.theme.colors.primary}1C`);
+    const both = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs[0]?.runs[0]?.color === CONTRACT.theme.colors.primary,
+    ) as { x: number; w: number } | undefined;
+    expect(both).toBeDefined();
+    const lensMid = (c1.x + c1.w + c2.x) / 2;
+    expect(Math.abs(both!.x + both!.w / 2 - lensMid)).toBeLessThanOrEqual(2);
   });
 
   it("funnel 横条逐级收窄且数值落在条内", () => {
@@ -1083,8 +1148,8 @@ describe("组件库扩展（第一批+第二批）", () => {
 
   it("progress 前景条宽 = 百分比 × 轨道宽，填充为墨色", () => {
     const result = compileTree(tree(LIB_TREES.progress!), CONTRACT);
-    const bars = (result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect") as { x: number; w: number; fill?: string; h: number }[])
-      .filter((b) => b.h <= 8);
+    const bars = (result.spec.elements.filter((el) => el.type === "shape" && el.shape === "roundRect") as { x: number; w: number; fill?: string; h: number }[])
+      .filter((b) => b.h >= 8);
     expect(bars.length).toBe(6); // 3 项 × 轨道+前景（序：轨道、前景交替）
     expect(bars[1]!.w).toBe(Math.round(bars[0]!.w * 0.72)); // 第一项 value=72
     expect(bars[1]!.fill).toBe(CONTRACT.theme.colors.text);
@@ -1094,20 +1159,23 @@ describe("组件库扩展（第一批+第二批）", () => {
     const result = compileTree(tree(LIB_TREES.orgChart!), CONTRACT);
     const lines = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "line");
     expect(lines.length).toBe(5); // 根下垂 1 + 横干 1 + 子下垂 3
-    const boxes = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "rect");
-    expect(boxes.length).toBe(4); // 根 + 3 子
+    const boxes = result.spec.elements.filter((el) => el.type === "shape" && (el as { shape: string }).shape === "roundRect");
+    expect(boxes.length).toBe(4); // 根 + 3 子（圆角卡）
   });
 
-  it("bentoGrid wide 条目占整行，格间发丝分隔", () => {
+  it("bentoGrid wide 条目占整行，卡片按行铺排", () => {
     const result = compileTree(tree(LIB_TREES.bentoGrid!), CONTRACT);
-    const rules = result.spec.elements.filter((el) => el.type === "shape") as { w: number; h: number }[];
-    // [wide]、[a,b]、[c] 三行：行间水平线 2 + 中行竖向分隔 1
-    expect(rules.filter((r) => r.h === 1)).toHaveLength(2);
-    expect(rules.filter((r) => r.w === 1)).toHaveLength(1);
-    // wide 条目标题占满整行宽
-    const titles = result.spec.elements.filter((el) => el.type === "text") as { w: number }[];
-    const widest = Math.max(...titles.map((t) => t.w));
-    expect(widest).toBeGreaterThan(CONTRACT.contentFrame.w * 0.9);
+    // 新口径用卡片 + 间距分隔，不再画发丝线。
+    expect(result.spec.elements.some((el) => el.type === "shape" && el.h === 1)).toBe(false);
+    const wideTitle = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "会员体系")),
+    ) as TextElement | undefined;
+    expect(wideTitle).toBeDefined();
+    // wide 行的标题框明显宽于普通 tile（整行铺开）。
+    const normalTitle = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "冷萃茶饮")),
+    ) as TextElement | undefined;
+    expect(wideTitle!.w).toBeGreaterThan(normalTitle!.w);
   });
 
   it("新组件参数越界在归一层拦下", () => {
@@ -1436,8 +1504,8 @@ describe("批次2 扩展：五个新组件", () => {
       role: "对比", direction: "row",
       children: [{ type: "component", name: "comparison",
         left: { title: "甲", points: ["一", "二"] }, right: { title: "乙", points: ["一", "二"] } }] });
-    const legacyFirst = legacy.children[0]!;
-    expect("type" in legacyFirst && legacyFirst.type === "component" && legacyFirst.name === "comparison").toBe(true);
+    const first = legacy.children[0]!;
+    expect(isLeaf(first) && first.type === "component" && first.name === "comparison").toBe(true);
   });
 
   it("comparison 校验：sides 与 left/right 同给拒绝；mark 非法拒绝；4 方限 4 点", () => {
@@ -1459,8 +1527,11 @@ describe("批次2 扩展：五个新组件", () => {
       ] }] }), CONTRACT);
     const imgs = result.spec.elements.filter((el) => el.type === "image" && el.circle);
     expect(imgs.length).toBe(1);
+    // 新口径：无图成员用姓名首字衬线徽章，不再画通用 user 图标。
     const userIcons = result.spec.elements.filter((el) => el.type === "icon" && el.icon === "user");
-    expect(userIcons.length).toBe(3);
+    expect(userIcons.length).toBe(0);
+    const badges = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "ellipse");
+    expect(badges.length).toBe(3);
   });
 
   it("quotes：星级与头像；rating 越界拒绝", () => {
@@ -1486,9 +1557,20 @@ describe("批次2 扩展：五个新组件", () => {
           { name: "团队版", price: "¥198", unit: "/人/月", features: ["50 人以内", "社区支持"] },
           { name: "企业版", price: "¥398", unit: "/人/月", features: ["人数不限", "私有部署", "SLA"], cta: "选择企业版" },
         ], featured: 1 }] }), CONTRACT);
-    // featured 面板（tint 底）+ 顶条 + 实心按钮
+    // featured = 一块 ink 反白卡 + 强调色顶条 + 实心按钮；两档同一基线。
+    const featuredCards = result.spec.elements.filter(
+      (el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100 && el.fill === CONTRACT.theme.colors.text,
+    ) as { x: number; y: number; w: number; h: number }[];
+    expect(featuredCards.length).toBe(1);
     const solids = result.spec.elements.filter((el) => el.type === "shape" && el.fill === CONTRACT.theme.colors.primary);
     expect(solids.length).toBeGreaterThanOrEqual(2); // 顶条 + 按钮
+    const bars = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect" && el.h === 4) as { x: number; w: number; y: number }[];
+    expect(bars.length).toBe(1);
+    expect(bars[0]!.x).toBeGreaterThanOrEqual(featuredCards[0]!.x); // 顶条覆盖卡顶（平铺时与卡同宽）
+    // 两档文字都在页面上（非 featured 档平铺在纸面）。
+    for (const name of ["团队版", "企业版"]) {
+      expect(result.spec.elements.some((el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === name))), name).toBe(true);
+    }
     expect(() => tree({ role: "定价", direction: "row", children: [{ type: "component", name: "pricingTiers",
       tiers: [{ name: "甲", price: "1", features: ["a", "b"] }, { name: "乙", price: "2", features: ["a", "b"] }] }] })).toThrow(/featured/);
     expect(() => tree({ role: "定价", direction: "row", children: [{ type: "component", name: "pricingTiers",
@@ -1617,5 +1699,100 @@ describe("表格参数与 pointList（xPoint 嫁接）", () => {
     expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", items: one }] })).toThrow(/items 必须是 2~5 项/);
     expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", items: six }] })).toThrow(/items 必须是 2~5 项/);
     expect(() => tree({ ...base, children: [{ type: "component", name: "pointList", numbered: false, items: [...one, ...one] }] })).toThrow(/numbered 只接受 true/);
+  });
+});
+
+describe("indexHeader 与 eraRail（fork 转正）", () => {
+  it("indexHeader：衬线序号主色+标题+右侧小注，发丝线贴区域下缘", () => {
+    const result = compileTree(tree({
+      role: "content", title: "并列栏", direction: "row", children: [
+        { direction: "column", weights: [0.32, 1], gapScale: 1.2, children: [
+          { type: "component", name: "indexHeader", num: "壹", title: "茶之源", note: "起源" },
+          { type: "text", variant: "body", text: "从战国遗存到三代饮法。" },
+        ] },
+        { direction: "column", weights: [0.32, 1], gapScale: 1.2, children: [
+          { type: "component", name: "indexHeader", num: "贰", title: "茶之典" },
+          { type: "text", variant: "body", text: "一部《茶经》写成了文明。" },
+        ] },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(measureDefects(result, CONTRACT)).toEqual([]);
+    const headers = result.spec.elements.filter(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "壹" || r.text === "贰")),
+    ) as TextElement[];
+    expect(headers).toHaveLength(2);
+    expect(headers[0]!.paragraphs[0]!.runs[0]!.color).toBe(CONTRACT.theme.colors.primary);
+    const rules = result.spec.elements.filter((el) => el.type === "shape" && el.h === 2);
+    expect(rules).toHaveLength(2);
+    expect(new Set(rules.map((r) => (r as { y: number }).y)).size).toBe(1); // 两条 2px 墨线同一水平线
+  });
+
+  it("eraRail：脊线压顶+刻度+衬线年代+静音短注，highlight 条目主色", () => {
+    const result = compileTree(tree({
+      role: "content", title: "茶之远", direction: "column", children: [
+        { type: "component", name: "eraRail", items: [
+          { era: "唐代", note: "东传日韩" },
+          { era: "北宋", note: "茶马贸易" },
+          { era: "1610 年", note: "荷船抵欧" },
+          { era: "1773 年", note: "倾茶事件" },
+        ], highlight: 3 },
+      ],
+    }), CONTRACT);
+    expect(result.defects).toEqual([]);
+    expect(measureDefects(result, CONTRACT)).toEqual([]);
+    // 脊线 1 + 每条(刻度+年代+短注)×4
+    expect(result.stats.elements).toBe(1 + 1 + 4 * 3); // 标题带 + 脊线 + 每条 3 元素
+    const hotTick = result.spec.elements.find(
+      (el) => el.type === "shape" && (el as unknown as { h: number }).h >= 18 && el.fill === CONTRACT.theme.colors.primary,
+    ) as unknown as { fill: string } | undefined;
+    expect(hotTick).toBeDefined();
+    expect(hotTick!.fill).toBe(CONTRACT.theme.colors.primary);
+    const era = result.spec.elements.find(
+      (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "1773 年" && r.color === CONTRACT.theme.colors.primary)),
+    );
+    expect(era).toBeDefined();
+  });
+
+  it("eraRail 年代超 8 字、短注超 12 字在归一层拦下", () => {
+    const base = { role: "content", direction: "column" };
+    const items = [
+      { era: "距今近 2500 年", note: "茶叶遗存" },
+      { era: "西汉", note: "《僮约》茶市" },
+      { era: "唐", note: "饮茶大行" },
+    ];
+    expect(() => tree({ ...base, children: [{ type: "component", name: "eraRail", items }] }))
+      .toThrow(/era「距今近 2500 年」超 8 字/);
+    expect(() => tree({ ...base, children: [{ type: "component", name: "eraRail", items: [
+      { era: "战国早期", note: "这是一条非常非常长的短注早就超过十二个字了" },
+      { era: "西汉", note: "《僮约》茶市" },
+      { era: "唐", note: "饮茶大行" },
+    ] }] })).toThrow(/note「[^」]+」超 12 字/);
+    expect(() => tree({ ...base, children: [{ type: "component", name: "eraRail", items: [
+      { era: "战国早期", note: "茶叶遗存" },
+      { era: "西汉", note: "《僮约》茶市" },
+      { era: "唐", note: "饮茶大行" },
+    ], highlight: 9 }] })).toThrow(/highlight 必须是 0~2 的整数/);
+  });
+
+  it("indexHeader num 超 2 字在归一层拦下", () => {
+    expect(() => tree({ role: "content", direction: "column", children: [
+      { type: "component", name: "indexHeader", num: "第一栏", title: "栏目标题" },
+    ] })).toThrow(/num 须为 1~2 字/);
+  });
+
+  it("timeline 年代超宽降档后仍放不下报缺陷", () => {
+    const result = compileTree(tree({
+      role: "content", direction: "row", weights: [1.6, 1], children: [
+        { type: "text", variant: "body", text: "占位栏，压缩右侧年代轴的格宽。" },
+        { type: "component", name: "timeline", items: [
+          { label: "距今近两千五百年", text: "战国遗存" },
+          { label: "距今更久远的年代", text: "更早的起点" },
+          { label: "无法追溯的上古", text: "传说时代" },
+        ] },
+      ],
+    }), CONTRACT);
+    const defects = measureDefects(result, CONTRACT);
+    expect(defects.some((d) => d.type === "overflow" && /统一短年代格式/.test(d.detail))).toBe(true);
   });
 });

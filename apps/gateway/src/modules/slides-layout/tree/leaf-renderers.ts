@@ -16,6 +16,8 @@ import {
   type TableElement,
   type TableCell,
 } from "../elements.js";
+import { valueAxisPlan } from "../chart-axis.js";
+import { contrastRatio } from "../color-guard.js";
 import { mixHex, withAlpha, type ResolvedTheme } from "../theme.js";
 import {
   estimateLineHeight,
@@ -209,6 +211,19 @@ export function renderChartLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTh
     highlightIdx === undefined
       ? undefined
       : [leaf.categories.map((_, i) => (i === highlightIdx ? theme.colors.primary : tint))];
+  // 小字一律取场景字号（投影 14 / 研读 11）。历史上这里写死 Math.max(9, caption)，
+  // 把轴标签、图例、数据标签钉在 9pt——这是"满屏无意义小字"的直接来源之一。
+  const captionPt = theme.sizes.caption;
+  const seriesColors = theme.colors.chartSeries.slice(
+    0,
+    Math.max(leaf.series.length, leaf.kind === "pie" || leaf.kind === "doughnut" ? points : leaf.series.length),
+  );
+  // C6：数据标签压在图元上，必须与**每一条系列色**都拉得开，否则宁可不要标签。
+  // 旧产物里出现过系列色标签压在同色柱上（深红压深红），肉眼基本读不出数字。
+  const labelsReadable = seriesColors.every((hex) => contrastRatio(theme.colors.text, hex) >= 3);
+  const showDataLabels = points <= 8 && leaf.kind !== "scatter" && labelsReadable;
+  // 图例只在"多系列且类目足够多"时才有信息量；两根柱配一个图例是纯噪音。
+  const showLegend = leaf.legend === true && leaf.series.length > 1 && points > 2;
   const elements: SpecElement[] = [
     {
       type: "chart",
@@ -219,13 +234,27 @@ export function renderChartLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTh
       h: Math.round(frame.h),
       categories: leaf.categories,
       series: leaf.series,
-      colors: theme.colors.chartSeries.slice(
-        0,
-        Math.max(leaf.series.length, leaf.kind === "pie" || leaf.kind === "doughnut" ? points : leaf.series.length),
-      ),
+      colors: seriesColors,
       ...(pointColors ? { pointColors } : {}),
-      ...(points <= 8 && leaf.kind !== "scatter" ? { dataLabels: true } : {}),
-      ...(leaf.legend ? { legend: true } : {}),
+      ...(showDataLabels ? { dataLabels: true } : {}),
+      // 直接标注优先：有标签时关掉网格线，减少一层小字与细线噪音。
+      ...(showDataLabels ? { gridlines: false } : {}),
+      ...(showLegend ? { legend: true } : {}),
+      axis: {
+        labelColor: theme.colors.textMuted,
+        labelSizePt: captionPt,
+        lineColor: theme.colors.divider,
+        gridColor: theme.colors.divider,
+        legendColor: theme.colors.textMuted,
+        legendSizePt: captionPt,
+        dataLabelColor: theme.colors.text,
+        dataLabelSizePt: captionPt,
+        ...valueAxisPlan({
+          values: leaf.series.flatMap((series) => series.values),
+          dataLabels: showDataLabels,
+          categories: points,
+        }),
+      },
     },
   ];
   // 涨跌徽章：图表右上角主色圆角签（白字），宽随文字。
@@ -280,7 +309,7 @@ function renderWaterfallLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTheme
   const rise = theme.colors.primary;
   const fall = mixHex(theme.colors.text, theme.colors.background, 0.62);
   const resultColor = theme.colors.chartSeries[3] ?? theme.colors.accent;
-  const labelSize = Math.min(theme.sizes.caption, 11);
+  const labelSize = theme.sizes.caption;
   const elements: SpecElement[] = [];
   const fmt = (v: number) => (Number.isInteger(v) ? `${v}` : `${Math.round(v * 10) / 10}`);
   for (let i = 0; i < n; i++) {
@@ -307,7 +336,7 @@ function renderWaterfallLeaf(leaf: ChartLeaf, frame: Frame, theme: ResolvedTheme
     elements.push(
       textElement(
         { x: Math.round(cx - slotW / 2), y: Math.round(labelY), w: Math.round(slotW), h: Math.round(labelSize * 1.6) },
-        [{ runs: [{ text: labelText, sizePt: labelSize, bold: isResult, color: isFall ? theme.colors.textMuted : color }] }],
+        [{ runs: [{ text: labelText, sizePt: labelSize, bold: isResult, color: isFall ? theme.colors.textMuted : theme.colors.text }] }],
       ),
     );
     // 类目标签：图底部一行。

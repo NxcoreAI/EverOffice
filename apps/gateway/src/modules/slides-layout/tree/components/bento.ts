@@ -1,12 +1,21 @@
 /**
- * bentoGrid 组件（editorial）。信息拼贴改发丝网格：格与格之间用 1px 分隔线，
- * 无底板；wide 占整行。
+ * bentoGrid 组件（editorial）：信息拼贴。
+ *
+ * 版式：普通格两两成行（三条时整行三等分），wide 独占整行；首格 ink 反白承担最强
+ * 对比。每格：索引微标签 + 图标（右上）→ 底部锚定的强调短规则 + 标题 24 + 正文 16；
+ * wide 格改为横向构图（左侧索引/标题/正文，右侧大号图标），让宽条带不空。
+ * 卡面（含反白格）/内边距/字号全部来自 ComponentSkin 语义色。
  */
 
-import { splitColumns, splitRows, type Frame } from "../../grid.js";
-import type { ResolvedTheme } from "../../theme.js";
-import { bodyRuns, headingRuns, textElement, type SpecElement } from "../../elements.js";
-import { estimateLineHeight, estimateLines } from "../../text-metrics.js";
+import { padFrame, splitColumns, splitRows, type Frame } from "../../grid.js";
+import { mixHex, type ResolvedTheme } from "../../theme.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
+import {
+  estimateLineHeight,
+  estimateLines,
+  singleLineBoxHeight,
+} from "../../text-metrics.js";
 
 export interface BentoItem {
   title: string;
@@ -22,108 +31,187 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-function hline(frame: Frame, y: number, theme: ResolvedTheme): SpecElement {
-  return { type: "shape", shape: "rect", fill: theme.colors.divider, x: Math.round(frame.x), y: Math.round(y), w: Math.round(frame.w), h: 1 };
+const DENSITY_PAD: Record<string, number> = { tight: 0.9, normal: 1, airy: 1.12 };
+
+function cardPad(skin: ComponentSkin, frame: Frame): number {
+  const m = skin.metrics(frame);
+  const scale = DENSITY_PAD[skin.density] ?? 1;
+  return Math.max(26, Math.min(36, Math.round(m.pad * scale)));
 }
 
-export function expandBentoGrid(items: BentoItem[], frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
-  // 行规划：wide 独占一行；普通条目两两配对，落单的独占左半行
+function cardBox(skin: ComponentSkin, frame: Frame, pad: number): Frame {
+  const base = skin.contentBox(frame);
+  const styled = Math.min(skin.pad, Math.floor(Math.min(frame.w, frame.h) * 0.18));
+  const guard = Math.floor(Math.min(base.w, base.h) * 0.06);
+  const inset = Math.min(Math.max(0, pad - styled), guard);
+  return inset > 0 ? padFrame(base, inset) : base;
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** 行规划：wide 独占一行；连续普通格按 3/2 分组，避免落单半行。 */
+function planRows(items: BentoItem[]): BentoItem[][] {
   const rows: BentoItem[][] = [];
-  let pair: BentoItem[] = [];
+  let normal: BentoItem[] = [];
+  const flush = (count: number) => {
+    while (normal.length > 0) {
+      // 3 条 → 一行三等分；其余按 2 条成行；4 条 → 2+2。
+      const take = normal.length === 3 ? 3 : Math.min(count, normal.length);
+      rows.push(normal.slice(0, take));
+      normal = normal.slice(take);
+    }
+  };
   for (const item of items) {
     if (item.wide) {
-      if (pair.length > 0) {
-        rows.push(pair);
-        pair = [];
-      }
+      flush(2);
       rows.push([item]);
     } else {
-      pair.push(item);
-      if (pair.length === 2) {
-        rows.push(pair);
-        pair = [];
-      }
+      normal.push(item);
     }
   }
-  if (pair.length > 0) rows.push(pair);
+  // 收尾：三条整行，四条 2+2，五条 3+2，其余两两成行。
+  while (normal.length > 0) {
+    const take = normal.length === 3 || normal.length === 5 ? 3 : Math.min(2, normal.length);
+    rows.push(normal.slice(0, take));
+    normal = normal.slice(take);
+  }
+  return rows;
+}
 
-  const rowFrames = splitRows(frame, rows.length, theme.spacing.gutter * 1.5);
-  const titleSize = Math.min(17, Math.max(14, theme.sizes.body + 2));
-  const bodySize = theme.sizes.caption;
-  const pad = theme.spacing.cardPadding;
+export function expandBentoGrid(
+  items: BentoItem[],
+  frame: Frame,
+  theme: ResolvedTheme,
+  what: string,
+  skin: ComponentSkin,
+): SpecElement[] {
+  void theme; // 组件只读 skin
+  const m = skin.metrics(frame);
+  const rows = planRows(items);
+  const gutter = Math.max(m.tightGap, Math.round(m.gap * 0.9));
+  const rowFrames = splitRows(frame, rows.length, gutter);
+  const pad = cardPad(skin, frame);
+  const titleSize = Math.min(24, Math.max(20, Math.round(m.title * 0.8)));
+  const bodySize = Math.max(16, m.body - 2);
+  const indexSize = m.label;
+  const align = skin.alignExplicit ? skin.paragraphAlign : "left";
+  const ruleH = Math.max(2, Math.round(indexSize * 0.16));
+  const ruleW = Math.max(28, Math.round(m.display * 0.26));
+  // 首格 ink 反白：只在卡面/浅色底面语言上启用（none 保持纯平铺，ink 整组已是反白，
+  // outline/band 由 agent 显式选择时不被反白抢掉）。
+  const invertFirst = skin.surface === "card" || skin.surface === "tint";
   const elements: SpecElement[] = [];
+  let itemIndex = 0;
+
   rows.forEach((row, r) => {
     const rowFrame = rowFrames[r]!;
-    // 行间水平发丝线（首行上方不画）
-    if (r > 0) elements.push(hline(frame, rowFrame.y - theme.spacing.gutter * 0.75, theme));
-    const cells = row.length === 1 ? (row[0]!.wide ? [rowFrame] : splitColumns(rowFrame, 2, theme.spacing.gutter * 1.5).slice(0, 1)) : splitColumns(rowFrame, 2, theme.spacing.gutter * 1.5);
-    // 行内竖向分隔线（非 wide 行）
-    if (row.length === 2) {
-      elements.push({
-        type: "shape",
-        shape: "rect",
-        fill: theme.colors.divider,
-        x: Math.round((cells[0]!.x + cells[0]!.w + cells[1]!.x) / 2),
-        y: Math.round(rowFrame.y),
-        w: 1,
-        h: Math.round(rowFrame.h),
-      });
-    }
+    const wide = row.length === 1;
+    const cells = row.length === 1 ? [rowFrame] : splitColumns(rowFrame, row.length, gutter);
     row.forEach((item, i) => {
       const cell = cells[i]!;
-      const innerW = cell.w;
-      const iconSize = 24;
-      // 图槽高：格子高的 1/3 封顶、56px 起步；放不下就不画图。
-      const imgH = item.image ? Math.min(110, Math.max(56, Math.round(cell.h * 0.34))) : 0;
-      const iconH = !item.image && item.icon ? iconSize + 8 : 0;
-      const titleH = estimateLines(item.title, titleSize, innerW) * estimateLineHeight(titleSize) + 4;
-      const bodyH = item.body ? estimateLines(item.body, bodySize, innerW) * estimateLineHeight(bodySize) + 4 : 0;
-      const need = imgH + iconH + titleH + (bodyH ? 6 + bodyH : 0);
-      if (need > cell.h || innerW < 100) {
-        bad(`${what}「${item.title.slice(0, 12)}」格内容高约 ${Math.round(need)}px 超过 ${Math.round(cell.h)}px——精简正文或减少条目`);
-      }
-      const top = cell.y + Math.max(0, (cell.h - need) / 2);
-      let y = top;
-      if (item.image && imgH > 0) {
-        const radiusAdj =
-          theme.spacing.cornerRadius > 0
-            ? Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.min(innerW, imgH)) * 100000))
-            : undefined;
+      const index = itemIndex++;
+      const inverted = invertFirst && index === 0;
+      if (inverted) {
+        // 反白格：与 skin.paint("ink") 同口径的墨面（语义色，不写裸色号）。
+        const adj = skin.imageRadiusAdj(cell.w, cell.h);
         elements.push({
-          type: "image",
-          url: item.image,
-          fit: "cover",
-          ...(radiusAdj !== undefined ? { radiusAdj } : {}),
+          type: "shape",
+          shape: "roundRect",
+          fill: skin.colors.text,
           x: Math.round(cell.x),
-          y: Math.round(y),
-          w: Math.round(innerW),
-          h: imgH,
+          y: Math.round(cell.y),
+          w: Math.round(cell.w),
+          h: Math.round(cell.h),
+          ...(adj !== undefined ? { adj } : {}),
         });
-        y += imgH + 8;
-      } else if (item.icon) {
+      } else {
+        elements.push(...skin.paint(cell));
+      }
+      const inkTitle = inverted ? skin.colors.inkText : skin.colors.text;
+      const inkBody = inverted ? mixHex(skin.colors.inkText, skin.colors.text, 0.32) : skin.colors.muted;
+      const inkIndex = inverted ? skin.colors.emphasis : skin.colors.muted;
+      const box = cardBox(skin, cell, pad);
+      const innerW = box.w;
+      const iconSize = Math.max(24, Math.round(m.body * 1.5));
+      const topH = singleLineBoxHeight(Math.max(indexSize, iconSize));
+      const titleH = estimateLines(item.title, titleSize, innerW) * estimateLineHeight(titleSize) + 8;
+      const bodyH = item.body
+        ? estimateLines(item.body, bodySize, innerW) * estimateLineHeight(bodySize) + 4
+        : 0;
+      const imgH = item.image ? Math.min(Math.round(box.h * 0.42), Math.max(56, Math.round(box.h * 0.3))) : 0;
+      const need = (wide ? 0 : topH + imgH)
+        + ruleH + Math.round(m.tightGap * 1.4)
+        + titleH + (item.body ? bodyH + Math.round(m.tightGap * 0.4) : 0);
+      if (need > box.h) {
+        bad(`${what}「${item.title.slice(0, 12)}」格内容高约 ${Math.round(need)}px 超过 ${Math.round(box.h)}px——精简正文或减少条目`);
+      }
+
+      // 顶行：索引（左）+ 图标（右）
+      elements.push(
+        textElement({ x: box.x, y: box.y, w: Math.round(innerW * 0.55), h: topH }, [
+          { runs: [skin.micro(pad2(index + 1), inkIndex)] },
+        ]),
+      );
+      if (item.icon && !item.image && !wide) {
         elements.push({
           type: "icon",
           icon: item.icon,
-          color: theme.colors.primary,
-          x: Math.round(cell.x),
-          y: Math.round(y),
+          color: skin.colors.emphasis,
+          x: Math.round(box.x + innerW - iconSize),
+          y: Math.round(box.y + (topH - iconSize) / 2),
           w: iconSize,
           h: iconSize,
         });
-        y += iconH;
+      } else if (item.image) {
+        const radiusAdj = skin.imageRadiusAdj(innerW, imgH);
+        elements.push({
+          type: "image",
+          url: item.image,
+          fit: skin.imageFit,
+          ...(radiusAdj !== undefined ? { radiusAdj } : {}),
+          x: Math.round(box.x),
+          y: Math.round(box.y + topH),
+          w: Math.round(innerW),
+          h: imgH,
+        });
       }
+
+      // 底部块：强调短规则 + 标题 + 正文。普通格底对齐（索引/图标在上、结论压底）；
+      // wide 格整体垂直居中（横向条带里居中构图，不压在带底）。
+      const blockH = ruleH + Math.round(m.tightGap * 0.7) + titleH
+        + (item.body ? bodyH + Math.round(m.tightGap * 0.4) : 0);
+      const ruleY = wide
+        ? box.y + topH + Math.max(0, Math.round((box.h - topH - blockH) / 2))
+        : box.y + box.h - bodyH - titleH - (item.body ? Math.round(m.tightGap * 0.4) : 0) - Math.round(m.tightGap * 0.7) - ruleH;
+      const titleY = ruleY + ruleH + Math.round(m.tightGap * 0.7);
+      const bodyY = titleY + titleH + Math.round(m.tightGap * 0.4);
       elements.push(
-        textElement({ x: cell.x, y, w: innerW, h: titleH }, [
-          { runs: headingRuns(item.title, titleSize, theme.colors.text, theme) },
+        skin.accentRule(box, { x: box.x, y: ruleY, width: ruleW, height: ruleH }),
+      );
+      elements.push(
+        textElement({ x: box.x, y: titleY, w: innerW, h: titleH }, [
+          { runs: skin.heading(item.title, titleSize, inkTitle), ...(align === "center" ? { align } : {}) },
         ]),
       );
-      y += titleH;
       if (item.body) {
         elements.push(
-          textElement({ x: cell.x, y: y + 6, w: innerW, h: bodyH }, [
-            { runs: bodyRuns(item.body, bodySize, theme.colors.textMuted, theme) },
+          textElement({ x: box.x, y: bodyY, w: innerW, h: bodyH }, [
+            { runs: skin.body(item.body, bodySize, inkBody), ...(align === "center" ? { align } : {}) },
           ]),
         );
+      }
+      // wide 格：右侧大号图标补足横向构图（垂直居中在条带右侧）。
+      if (wide && item.icon && !item.image) {
+        const big = Math.max(44, Math.round(Math.min(box.h * 0.42, 72)));
+        elements.push({
+          type: "icon",
+          icon: item.icon,
+          color: skin.colors.emphasis,
+          x: Math.round(box.x + innerW - big),
+          y: Math.round(box.y + (box.h - big) / 2),
+          w: big,
+          h: big,
+        });
       }
     });
   });

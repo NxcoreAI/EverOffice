@@ -1,18 +1,18 @@
 /**
- * featureCards 组件：特性行（editorial）。无卡片——图标 + 标题 + 正文，
- * 列间竖发丝线，整组在框内垂直居中。
+ * featureCards：卡片行。图标徽章/图槽 + 标题 + 正文；卡面由风格卡决定。
+ * 每张卡的内容按卡高分配（徽章顶、标题中、正文随行），避免「大卡小字」。
  */
 
 import { splitColumns, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
-import { bodyRuns, headingRuns, textElement, type SpecElement } from "../../elements.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
 import { estimateLineHeight, estimateLines } from "../../text-metrics.js";
 
 export interface FeatureItem {
   title: string;
   body?: string;
   icon?: string;
-  /** 图槽：条目顶部圆角图片块（给了 image 时 icon 不画）。 */
   image?: string;
 }
 
@@ -20,84 +20,76 @@ function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-export function expandFeatureCards(items: FeatureItem[], frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
-  const cells = splitColumns(frame, items.length, theme.spacing.gutter * 1.5);
-  const titleSize = Math.min(18, Math.max(14, theme.sizes.body + 2));
-  const bodySize = theme.sizes.caption;
-  const iconSize = 24;
+export function expandFeatureCards(
+  items: FeatureItem[],
+  frame: Frame,
+  theme: ResolvedTheme,
+  what: string,
+  skin: ComponentSkin,
+): SpecElement[] {
+  void theme;
+  const m = skin.metrics(frame);
+  const align = skin.alignExplicit ? skin.paragraphAlign : "left";
+  const cells = splitColumns(frame, items.length, m.gap);
+  const titleSize = Math.round(m.title * 0.9);
+  const bodySize = m.body;
+  const iconSize = Math.round(Math.min(Math.max(36, m.pad * 1.3), 52));
   const elements: SpecElement[] = [];
   const built = items.map((item, i) => {
     const cell = cells[i]!;
-    const innerW = cell.w;
-    // 图槽高：条目高的 1/3 封顶，短框收缩到 56px；放不下就不画图。
-    const imgH = item.image ? Math.min(120, Math.max(56, Math.round(cell.h * 0.32))) : 0;
-    const iconH = !item.image && item.icon ? iconSize + 10 : 0;
-    const titleH = estimateLines(item.title, titleSize, innerW) * estimateLineHeight(titleSize) + 4;
-    const bodyH = item.body ? estimateLines(item.body, bodySize, innerW) * estimateLineHeight(bodySize) + 4 : 0;
-    const total = imgH + iconH + titleH + (bodyH ? 8 + bodyH : 0);
-    if (total > cell.h) {
-      bad(`${what}「${item.title.slice(0, 12)}」内容高约 ${Math.round(total)}px 超过 ${Math.round(cell.h)}px——精简正文或加大权重`);
+    elements.push(...skin.paint(cell));
+    const box = skin.contentBox(cell);
+    const innerW = box.w;
+    const imageH = item.image ? Math.round(box.h * 0.44) : 0;
+    const titleH = estimateLines(item.title, titleSize, innerW) * estimateLineHeight(titleSize, 108) + 4;
+    const bodyH = item.body ? estimateLines(item.body, bodySize, innerW) * estimateLineHeight(bodySize, 124) + 4 : 0;
+    const topBlock = imageH > 0 ? imageH + Math.round(m.tightGap * 1.1) : iconSize + Math.round(m.tightGap * 1.2);
+    const need = topBlock + titleH + (bodyH ? Math.round(m.tightGap * 0.8) + bodyH : 0);
+    if (need > box.h) {
+      bad(`${what}「${item.title.slice(0, 12)}」内容高约 ${Math.round(need)}px 超过 ${Math.round(box.h)}px——精简正文或加大权重`);
     }
-    return { item, cell, innerW, imgH, iconH, titleH, bodyH, total };
+    return { item, box, innerW, imageH, titleH, bodyH, topBlock, need };
   });
-  const contentH = Math.max(...built.map((b) => b.total));
-  const top = frame.y + Math.max(0, (frame.h - contentH) / 2);
-  built.forEach((b, i) => {
-    const { item, cell, innerW, imgH, iconH, titleH, bodyH } = b;
-    let y = top;
-    if (item.image && imgH > 0) {
-      const radiusAdj =
-        theme.spacing.cornerRadius > 0
-          ? Math.min(50000, Math.round((theme.spacing.cornerRadius / Math.min(innerW, imgH)) * 100000))
-          : undefined;
+  built.forEach(({ item, box, innerW, imageH, titleH, bodyH, topBlock }, i) => {
+    let y = box.y;
+    if (item.image && imageH > 0) {
+      const radiusAdj = skin.imageRadiusAdj(innerW, imageH);
       elements.push({
-        type: "image",
-        url: item.image,
-        fit: "cover",
+        type: "image", url: item.image, fit: skin.imageFit,
         ...(radiusAdj !== undefined ? { radiusAdj } : {}),
-        x: Math.round(cell.x),
-        y: Math.round(y),
-        w: Math.round(innerW),
-        h: imgH,
+        x: Math.round(box.x), y: Math.round(y), w: Math.round(innerW), h: imageH,
       });
-      y += imgH + 10;
     } else if (item.icon) {
       elements.push({
-        type: "icon",
-        icon: item.icon,
-        color: theme.colors.primary,
-        x: Math.round(cell.x),
-        y: Math.round(y),
-        w: iconSize,
-        h: iconSize,
+        type: "icon", icon: item.icon, color: skin.colors.emphasis,
+        x: Math.round(box.x), y: Math.round(box.y), w: iconSize, h: iconSize,
       });
-      y += iconH;
+    }
+    // 标题落在卡面视觉中段（有图则在图下），让大卡不空。
+    const titleY = item.image && imageH > 0
+      ? box.y + topBlock
+      : box.y + Math.max(topBlock + Math.round(m.tightGap * 0.8), Math.round(box.h * 0.42));
+    if (!(item.image && imageH > 0)) {
+      elements.push(skin.accentRule(box, { x: box.x, y: titleY - Math.round(m.tightGap * 0.9), width: 32, height: 3 }));
     }
     elements.push(
-      textElement({ x: cell.x, y, w: innerW, h: titleH }, [
-        { runs: headingRuns(item.title, titleSize, theme.colors.text, theme) },
+      textElement({ x: box.x, y: titleY, w: innerW, h: titleH }, [
+        { runs: skin.heading(item.title, titleSize, skin.colors.text), ...(align === "center" ? { align } : {}) },
       ]),
     );
-    y += titleH;
     if (item.body) {
       elements.push(
-        textElement({ x: cell.x, y: y + 8, w: innerW, h: bodyH }, [
-          { runs: bodyRuns(item.body, bodySize, theme.colors.textMuted, theme) },
+        textElement({ x: box.x, y: titleY + titleH + Math.round(m.tightGap * 0.8), w: innerW, h: bodyH }, [
+          { runs: skin.body(item.body, bodySize, skin.colors.muted), ...(align === "center" ? { align } : {}) },
         ]),
       );
     }
-    // 列间竖发丝线
-    if (i > 0) {
-      elements.push({
-        type: "shape",
-        shape: "rect",
-        fill: theme.colors.divider,
-        x: Math.round(cell.x - theme.spacing.gutter * 0.75),
-        y: Math.round(top),
-        w: 1,
-        h: Math.round(contentH),
-      });
-    }
+    // 卡片序号压底：让卡内文本簇覆盖整卡高度，避免引擎把图标/文字整体下移造成错位。
+    elements.push(
+      textElement({ x: box.x, y: box.y + box.h - 20, w: innerW, h: 20 }, [
+        { runs: [skin.micro(String(i + 1).padStart(2, "0"), skin.colors.divider)] },
+      ]),
+    );
   });
   return elements;
 }

@@ -16,6 +16,8 @@ import type {
 } from "./types.js";
 import { normalizeStyleHex } from "./types.js";
 import type { PaletteRoles, Rgb } from "./extract.js";
+import { TYPE_TOKENS, type TypeToken } from "../slides-layout/theme.js";
+import { ensureSeriesVisible, guardPalette } from "../slides-layout/color-guard.js";
 import {
   contrast,
   hexToRgb,
@@ -279,6 +281,18 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
       kpi: clampNumber(sizesRow.kpi, 28, 90, "sizes.kpi", 44),
       table: clampNumber(sizesRow.table, 9, 24, "sizes.table", 13),
     },
+    ...((): { typeScale?: Partial<Record<TypeToken, number>> } => {
+      const row = typoRow?.typeScale as Record<string, unknown> | undefined;
+      if (!row) return {};
+      const scale: Partial<Record<TypeToken, number>> = {};
+      for (const token of TYPE_TOKENS) {
+        const value = row[token];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          scale[token] = clampNumber(value, 9, 120, `typeScale.${token}`, value);
+        }
+      }
+      return Object.keys(scale).length > 0 ? { typeScale: scale } : {};
+    })(),
     headingBold: typeof typoRow?.headingBold === "boolean" ? typoRow.headingBold : true,
   };
 
@@ -299,9 +313,26 @@ export function normalizeStyleParams(raw: unknown, notes: string[] = []): StyleP
     imageFit: optionalEnum(decoRow.imageFit ?? "cover", ["cover", "contain"] as const, "decoration.imageFit"),
   };
 
-  const palette = sanitizePaletteRelations(basePalette, decoration, notes);
+  // 颜色守门（C1/C2/C4/C5）：先压大面积饱和、再按对比度与明度差修，**色相全部保留**。
+  // 放在 sanitizePaletteRelations 之前：它会改写底色（降饱和），卡面与图元必须按新底色重推。
+  const guarded = guardPalette({
+    background: basePalette.background,
+    surface: basePalette.surface,
+    primary: basePalette.primary,
+    accent: basePalette.accent,
+    text: basePalette.text,
+    textMuted: basePalette.textMuted,
+    onDarkText: basePalette.onDarkText,
+  });
+  notes.push(...guarded.notes);
+
+  const palette = sanitizePaletteRelations({ ...basePalette, ...guarded.palette }, decoration, notes);
   palette.chartSeries = explicitChartSeries
     ?? deriveChartSeries(palette.primary, palette.accent, palette.background);
+  // 系列色不参与色板推导，但要保证每一条在底色上看得见（暗红柱压深红底就是这一步拦住的）。
+  const seriesGuard = ensureSeriesVisible(palette.chartSeries, palette.background);
+  palette.chartSeries = seriesGuard.series;
+  notes.push(...seriesGuard.notes);
 
   const motifRow = (row.motif ?? {}) as Record<string, unknown>;
   const motifSpecRaw = (motifRow.spec ?? {}) as Record<string, unknown>;

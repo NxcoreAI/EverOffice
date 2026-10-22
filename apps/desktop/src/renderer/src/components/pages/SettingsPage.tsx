@@ -708,7 +708,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                 <div className="cloud-device-list">
                   {devices.map((device) => {
                     const isCurrent = device.id === account.device?.id
-                    const isOnline = device.status === 'online'
+                    const isOnline = device.connectionStatus === 'online'
                     return (
                       <div key={device.id} className="cloud-device-row">
                         <span className="cloud-device-icon" aria-hidden="true">

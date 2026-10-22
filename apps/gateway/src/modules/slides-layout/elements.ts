@@ -43,14 +43,14 @@ export interface TextElement extends SpecBase {
 export interface ShapeElement extends SpecBase {
   type: "shape";
   shape: string;
-  /** 预设几何调节值（roundRect 圆角 adj，1/1000 %；与 ImageElement.radiusAdj 同口径）。 */
-  adj?: number | undefined;
   fill?: string;
   gradient?: { stops: { pos: number; color: string }[]; angle: number };
   stroke?: { color: string; widthPt: number };
   paragraphs?: SpecParagraph[];
   valign?: "top" | "middle" | "bottom";
   shadow?: "soft" | "medium" | "strong";
+  /** 形状调节值（OOXML prst adj，1/1000 %，50000 = 短边一半）；缺省按形状默认。 */
+  adj?: number;
 }
 
 export interface ImageElement extends SpecBase {
@@ -87,6 +87,21 @@ export interface ChartElement extends SpecBase {
   legend?: boolean;
   dataLabels?: boolean;
   gridlines?: boolean;
+  /** Chart theme tokens: axis/legend/data-label colors and sizes. */
+  axis?: {
+    labelColor?: string;
+    labelSizePt?: number;
+    lineColor?: string;
+    gridColor?: string;
+    legendColor?: string;
+    legendSizePt?: number;
+    dataLabelColor?: string;
+    dataLabelSizePt?: number;
+    /** 值轴主刻度步长（c:majorUnit）；不传则由引擎按绘图区自动推。 */
+    majorUnit?: number;
+    /** 隐藏值轴刻度标签（数据标签已直接标注时，值轴只剩噪音）。 */
+    hideValueAxis?: boolean;
+  };
 }
 
 export interface IconElement extends SpecBase {
@@ -129,6 +144,8 @@ export type SpecElement =
 
 export interface PageSpec {
   background?: string;
+  /** Speaker notes (PPTX notesSlide body); omitted = no notes. */
+  notes?: string;
   elements: SpecElement[];
 }
 

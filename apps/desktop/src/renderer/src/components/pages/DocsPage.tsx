@@ -1,4 +1,4 @@
-import { ChevronRight, FileSpreadsheet, FileText, FolderKanban, Presentation, Search } from 'lucide-react'
+import { ChevronRight, FileSpreadsheet, FileText, FolderKanban, LoaderCircle, Presentation, Search } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
@@ -50,6 +50,8 @@ interface ManuscriptRow {
   updatedAt: string
   type: ManuscriptType
   documentId?: string
+  /** Office 产物：最新版本号（无版本链/旧网关为 null），行内角标用。 */
+  versionNo?: number | null
   office?: { fileId: string; originalName: string; editable: boolean }
 }
 
@@ -74,6 +76,8 @@ export function DocsPage({
   const [roomFilter, setRoomFilter] = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<ManuscriptType | 'all'>('all')
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  // 打开失败的行内原因：留在该行直到下次发起打开，避免静默吞掉失败。
+  const [openError, setOpenError] = useState<{ key: string; message: string } | null>(null)
   const [roomPickerOpen, setRoomPickerOpen] = useState(false)
 
   // 「+新建文档」：选 Room → 预写工作现场为产物库板块 → 登记自动展开新建产物面板的
@@ -118,8 +122,10 @@ export function DocsPage({
           roomId,
           roomTitle,
           title: file.originalName,
-          updatedAt: file.uploadedAt,
+          // 目录文件有版本链时 updatedAt = 最新版本时间；旧网关/legacy 回落上传时间
+          updatedAt: file.updatedAt ?? file.uploadedAt,
           type: kind,
+          versionNo: file.versionNo ?? null,
           office: {
             fileId: file.id,
             originalName: file.originalName,
@@ -128,7 +134,9 @@ export function DocsPage({
         })
       }
     }
-    return collected.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    // ISO 倒序；同刻按 key 稳定排序（云文档无 versionNo，不因新字段换位）
+    return collected.sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) || left.key.localeCompare(right.key))
   }, [documentsByRoom, filesByRoom, roomTitleById, t])
 
   // 筛选选项只列出真实存在文稿的 Room，避免演示 Room 干扰。
@@ -179,7 +187,22 @@ export function DocsPage({
   const openOfficeFile = (row: ManuscriptRow) => {
     const files = window.nxcore?.files
     const office = row.office
-    if (!files || !office || busyKey) return
+    if (!files) {
+      // 无桌面文件服务：直接说明原因，不再静默 return。
+      setOpenError({ key: row.key, message: t('surface:docs.fileServiceUnavailable') })
+      showToast({ title: t('surface:docs.unableToOpenFile'), message: t('surface:docs.fileServiceUnavailable'), variant: 'error' })
+      return
+    }
+    if (!office) {
+      setOpenError({ key: row.key, message: t('surface:docs.unableToOpenFile') })
+      return
+    }
+    if (busyKey) {
+      // 按钮已 disabled，这里只是兜底：告知正在打开另一份，不吞点击。
+      showToast({ title: t('surface:docs.openingAnotherDocument') })
+      return
+    }
+    setOpenError(null)
     setBusyKey(row.key)
     void files.openOriginal(
       office.fileId,
@@ -190,9 +213,13 @@ export function DocsPage({
       .then((result) => {
         if (result.openedWith === 'office') {
           onOpenOfficePreview({ id: result.instanceId, title: office.originalName, kind: row.type as OfficePreviewKind })
+          return
         }
+        // 主进程内嵌预览不可用时会把原件交给系统默认应用：如实说明，别留无反馈的空白。
+        setOpenError({ key: row.key, message: t('surface:docs.openedWithSystemApp') })
       })
       .catch((error) => {
+        setOpenError({ key: row.key, message: error instanceof Error ? error.message : t('surface:docs.unableToOpenFile') })
         showToast({
           title: t('surface:docs.unableToOpenFile'),
           message: error instanceof Error ? error.message : undefined,
@@ -280,19 +307,41 @@ export function DocsPage({
             <div className="doc-list">
               {group.rows.map((row) => {
                 const Icon = TYPE_ICON[row.type]
+                const opening = busyKey === row.key
+                const rowError = openError?.key === row.key ? openError.message : null
                 return (
                   <button
                     key={row.key}
                     type="button"
                     className="doc-row"
+                    // 打开是单通道：有 Office 行在打开中时其余 Office 行一并禁用，
+                    // 否则点击会撞上 busyKey 守卫被吞掉。
+                    disabled={Boolean(row.office) && busyKey !== null}
+                    aria-busy={opening}
                     onClick={() => (row.office
                       ? openOfficeFile(row)
                       : onOpenDocument({ roomId: row.roomId, documentId: row.documentId! }))}
                   >
-                    <span className="item-icon"><Icon aria-hidden="true" strokeWidth={1.8} /></span>
+                    <span className="item-icon">
+                      {opening
+                        ? <LoaderCircle aria-hidden="true" strokeWidth={1.8} className="is-spinning" />
+                        : <Icon aria-hidden="true" strokeWidth={1.8} />}
+                    </span>
                     <span>
                       <strong>{row.title}</strong>
-                      <small>{row.roomTitle} · {t(`surface:docs.type.${row.type}`)}</small>
+                      <small
+                        role={rowError ? 'alert' : undefined}
+                        aria-live={opening || rowError ? 'polite' : undefined}
+                      >
+                        {opening
+                          ? t('surface:docs.opening')
+                          : rowError ?? [
+                              row.roomTitle,
+                              t(`surface:docs.type.${row.type}`),
+                              // 版本角标：同一份 PPT 再生成/被 AI 修改后能看见 +1
+                              row.versionNo != null ? `v${row.versionNo}` : null,
+                            ].filter((part): part is string => Boolean(part)).join(' · ')}
+                      </small>
                     </span>
                     <time>{formatDocumentTime(row.updatedAt, locale, t)}</time>
                     <ChevronRight aria-hidden="true" strokeWidth={1.8} />

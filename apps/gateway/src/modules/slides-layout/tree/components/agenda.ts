@@ -1,58 +1,54 @@
 /**
- * agenda 组件（editorial）。衬线双位序号 + 条目，行底发丝线，超四条分两栏。
+ * agenda：目录。衬线大序号 + 条目 + 行规则；按可用高度均匀分布，两栏（>4 条）。
  */
 
 import { splitColumns, type Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
-import { bodyRuns, numeralFont, textElement, type SpecElement } from "../../elements.js";
-import { estimateLineHeight, estimateLines } from "../../text-metrics.js";
+import type { ComponentSkin } from "./kit.js";
+import { textElement, type SpecElement } from "../../elements.js";
+import { estimateTextWidth, singleLineBoxHeight } from "../../text-metrics.js";
 
 function bad(message: string): never {
   throw new Error(`LAYOUT_LEAF_INVALID: ${message}`);
 }
 
-export function expandAgenda(items: string[], frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
-  const elements: SpecElement[] = [];
+export function expandAgenda(items: string[], frame: Frame, theme: ResolvedTheme, what: string, skin: ComponentSkin): SpecElement[] {
+  void theme;
+  const elements: SpecElement[] = skin.surfaceExplicit
+    ? [...skin.paint(frame), ...skin.motifDecor(frame, "corner")]
+    : [];
+  const box = skin.surfaceExplicit ? skin.contentBox(frame) : frame;
+  const m = skin.metrics(box);
+  const serialSize = m.serial;
+  const textSize = Math.round(m.title * 0.86);
+  const numW = Math.max(64, Math.round(estimateTextWidth("00", serialSize)) + m.gap);
+  const columns = items.length > 4 ? splitColumns(box, 2, Math.round(m.gap * 1.6)) : [box];
   const half = Math.ceil(items.length / 2);
-  const columns = items.length > 4 ? splitColumns(frame, 2, theme.spacing.gutter * 2) : [frame];
-  const numSize = 26;
-  const numFont = numeralFont(theme);
-  const textSize = Math.min(19, Math.max(14, theme.sizes.subtitle - 2));
   columns.forEach((col, c) => {
     const slice = items.slice(c * half, (c + 1) * half);
-    const numW = 64;
     const textW = col.w - numW;
-    const rowH = Math.max(estimateLineHeight(numSize) * 1.3, estimateLineHeight(textSize) * 1.7);
-    const rowGap = 18;
-    const total = slice.length * (rowH + rowGap);
-    if (total > col.h) {
-      bad(`${what} 条目高约 ${Math.round(total)}px 超过 ${Math.round(col.h)}px——减少条目或精简文字`);
+    const rowH = Math.max(singleLineBoxHeight(serialSize), singleLineBoxHeight(textSize) + Math.round(m.tightGap * 0.8));
+    const sum = rowH * slice.length;
+    const gap = slice.length > 1 ? Math.min(64, Math.max(m.gap, Math.round((col.h - sum) / slice.length))) : 0;
+    const total = sum + gap * (slice.length - 1);
+    if (total > col.h + 2) {
+      bad(`${what} 条目高约 ${Math.round(total)}px 超过区域 ${Math.round(col.h)}px——减少条目或精简文字`);
     }
-    const top = col.y + Math.max(0, (col.h - total) / 2);
+    let y = col.y + Math.max(0, (col.h - total) / 2);
     slice.forEach((item, j) => {
       const index = c * half + j;
-      const y = top + j * (rowH + rowGap);
+      const serialRuns = skin.numeralRun(String(index + 1).padStart(2, "0"), serialSize, skin.colors.emphasis);
+      elements.push(textElement({ x: col.x, y: y - Math.round(singleLineBoxHeight(serialSize) * 0.08), w: numW - m.gap, h: singleLineBoxHeight(serialSize) }, [{ runs: serialRuns ?? [] }]));
       elements.push(
-        textElement({ x: col.x, y, w: numW, h: rowH }, [
-          { runs: [{ text: String(index + 1).padStart(2, "0"), sizePt: numSize, color: theme.colors.primary, ...(numFont ? { font: numFont } : {}) }] },
+        textElement({ x: col.x + numW, y: y + Math.round((rowH - singleLineBoxHeight(textSize)) / 2), w: textW, h: singleLineBoxHeight(textSize) }, [
+          { runs: skin.body(item, textSize, skin.colors.text, true) },
         ]),
       );
-      const lines = estimateLines(item, textSize, textW);
-      elements.push(
-        textElement({ x: col.x + numW, y: y + (rowH - lines * estimateLineHeight(textSize)) / 2, w: textW, h: rowH }, [
-          { runs: bodyRuns(item, textSize, theme.colors.text, theme) },
-        ]),
-      );
-      // 行底发丝线
-      elements.push({
-        type: "shape",
-        shape: "rect",
-        fill: theme.colors.divider,
-        x: Math.round(col.x),
-        y: Math.round(y + rowH + rowGap / 2 - 1),
-        w: Math.round(col.w),
-        h: 1,
-      });
+      if (j < slice.length - 1) {
+        const divider = skin.dividerH(col, Math.round(y + rowH + gap / 2));
+        if (divider) elements.push(divider);
+      }
+      y += rowH + gap;
     });
   });
   return elements;

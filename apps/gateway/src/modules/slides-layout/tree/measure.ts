@@ -81,7 +81,7 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
     // justify 打包的叶子框高=内容自然高（刻意贴合），只查宽度下限；
     // overlay 子节点与 icon 是小件定位（角标/压图短句/图标），下限单独放宽；
     // divider 是 1px 装饰线，天然窄条，豁免尺寸下限。
-    const small = placement.overlay === true || placement.kind === "icon";
+    const small = placement.overlay === true || placement.flexible === true || placement.kind === "icon";
     const isThin = placement.kind === "divider";
     const minW = isThin ? 0 : small ? OVERLAY_MIN_W : contract.minLeaf.w;
     const minHeight = placement.packed || isThin ? 0 : small ? OVERLAY_MIN_H : contract.minLeaf.h;
@@ -99,22 +99,33 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
         push(
           placement.path,
           "overflow",
-          `文字估算 ${Math.round(placement.neededHeight)}px 超出区域 ${Math.round(frame.h)}px（${placement.variant} ${placement.sizePt}pt）`,
+          `文字估算 ${Math.round(placement.neededHeight)}px 超出区域 ${Math.round(frame.h)}px（${placement.label ?? placement.variant ?? "text"} ${placement.sizePt}pt）`,
           "加大权重/换更宽的区域，精简文字，或拆成多个文字叶子",
         );
       }
     }
-    if (placement.kind === "image" && placement.contain && placement.url && input.imageArs) {
+    if (placement.kind === "image" && placement.url && input.imageArs) {
       const ar = input.imageArs.get(placement.url);
       if (ar !== undefined && ar > 0) {
         const frameAr = frame.w / frame.h;
         const deviation = Math.abs(frameAr / ar - 1);
-        if (deviation > contract.imageArTolerance) {
+        if (placement.contain === true) {
+          if (deviation > contract.imageArTolerance) {
+            push(
+              placement.path,
+              "image_ar",
+              `contain 模式下框长宽比 ${frameAr.toFixed(2)} 与图 ${ar.toFixed(2)} 偏差 ${Math.round(deviation * 100)}%（空带过宽）`,
+              "调整区域比例贴近图片长宽比，或改用 cover 裁切填满",
+            );
+          }
+        } else if (deviation > 0.4) {
+          // cover 不报错（裁切是合法设计），但偏差过大时给 warning 级缺陷：
+          // 16:9 素材压进 3:1 条带会把主体裁掉，需要换槽位或改 focus。
           push(
             placement.path,
             "image_ar",
-            `contain 模式下框长宽比 ${frameAr.toFixed(2)} 与图 ${ar.toFixed(2)} 偏差 ${Math.round(deviation * 100)}%（空带过宽）`,
-            "调整区域比例贴近图片长宽比，或改用 cover 裁切填满",
+            `cover 框长宽比 ${frameAr.toFixed(2)} 与图 ${ar.toFixed(2)} 偏差 ${Math.round(deviation * 100)}%，主体可能被裁掉`,
+            "调整该图区域比例贴近素材，或给 image 加 focus 指定主体位置",
           );
         }
       }
@@ -196,6 +207,11 @@ export interface ShrinkResult {
  * 到契约字号下限为止。卡片/表格类溢出不在此兜底（保持内容不丢，交 VLM 终检）。
  */
 export function shrinkToFit(tree: LayoutTree, contract: LayoutContract, input: MeasureInput = {}, maxIterations = 12): ShrinkResult {
+  // v2 字号只由 type token 决定，不做逐档降字号；溢出直接报缺陷，交给 layouter 重排。
+  if (tree.version === 2 && tree.v2) {
+    const result = compileTree(tree, contract);
+    return { result, defects: measureDefects(result, contract, input), degraded: false, overrides: new Map() };
+  }
   const overrides = new Map<string, number>();
   let degraded = false;
   let current = compileTree(tree, contract, overrides);

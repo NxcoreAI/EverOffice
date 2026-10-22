@@ -3,6 +3,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { Check, Ellipsis, FileText, FileSpreadsheet, FileUp, FolderInput, FolderOpen, ListChecks, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
+import { formatRelative } from '@/components/pages/sources/sourceKinds';
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../../resources';
@@ -69,6 +70,9 @@ export function ArtifactLibraryPane({
   const isCloudDoc = (resource: ContextRoomResource): resource is ContextRoomCloudDocResource =>
     resource.kind === 'cloud-doc';
   const cloudDocs = library.resources.filter(isCloudDoc).filter((resource) => !resource.trashed);
+  // 版本/更新时间来自文件清单 DTO（资源映射只带预格式化体积/状态文本）：
+  // 旧网关无字段时 undefined → 副标题自然省略，不伪造成 v1。
+  const fileById = useMemo(() => new Map(artifactFiles.map((file) => [file.id, file])), [artifactFiles]);
 
   const [filter, setFilter] = useState<ArtifactFilter>('all');
   const [createPopoverOpen, setCreatePopoverOpen] = useState(false);
@@ -263,10 +267,15 @@ export function ArtifactLibraryPane({
         ? `请用 slides_draft(task=draft) 新建`
         : `请用 context_room_sheets_create 新建`;
     const kindLabel = t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
+    // message 是内部指令（runtime 用）；displayMessage 是用户看得懂的人话（气泡/会话标题用）。
+    const displayMessage = type === 'ppt'
+      ? `帮我新建一份 PPT《${title}》，先出内容稿，后续我再补充。`
+      : `帮我新建一份${kindLabel}《${title}》，先搭个基本骨架，后续我再补充。`;
     window.dispatchEvent(new CustomEvent('everroom:room-agent-ask', {
       detail: {
         roomId: room.id,
         message: `${createInstruction}一份${kindLabel}《${title}》：内容从简，只生成标题与基本骨架，后续我再补充；完成后告知文件名。`,
+        displayMessage,
       },
     }));
     setCreatePopoverOpen(false);
@@ -535,6 +544,15 @@ export function ArtifactLibraryPane({
           const cloud = resource.kind === 'cloud-doc' ? resource : null;
           const backendDocument = cloud ? backendDocuments.find((document) => document.id === cloud.binding.docId) ?? null : null;
           const citations = backendDocument ? citationCounts.get(backendDocument.id) ?? 0 : 0;
+          const officeFile = office ? fileById.get(office.fileId) ?? null : null;
+          // 副标题：版本 · 更新时间 · 体积——同一份产物的多版本才分得清谁最新
+          const officeMeta = office
+            ? [
+                officeFile?.versionNo != null ? `v${officeFile.versionNo}` : null,
+                formatRelative(officeFile?.updatedAt ?? officeFile?.uploadedAt ?? office.uploadedAt, locale),
+                office.sizeLabel,
+              ].filter((part): part is string => Boolean(part)).join(' · ')
+            : null;
           return (
             <div
               className="context-room-artifact-row"
@@ -568,9 +586,7 @@ export function ArtifactLibraryPane({
                 <span className="context-room-artifact-ico"><FileText aria-hidden="true" /></span>
                 <span className="context-room-artifact-body">
                   <b>{resource.name}</b>
-                  <small>{office
-                    ? `${office.sizeLabel} · ${office.statusLabel}`
-                    : cloud && `${cloud.version} · ${cloud.updatedAt}`}</small>
+                  <small>{office ? officeMeta : cloud && `${cloud.version} · ${cloud.updatedAt}`}</small>
                 </span>
                 <span className="context-room-artifact-meta">
                   {office ? (

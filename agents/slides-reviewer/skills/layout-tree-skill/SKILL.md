@@ -1,6 +1,6 @@
 ---
 name: layout-tree-skill
-description: 布局树语法与硬约束——容器/叶子/25 组件词汇表、比例/缝隙/justify 打包、整页背景图与 overlay 叠层、容器面板、data 行内格式翻译、多样性与收敛规则
+description: 布局树语法与硬约束——容器/叶子/27 组件词汇表、比例/缝隙/justify 打包、整页背景图与 overlay 叠层、容器面板、data 行内格式翻译、多样性与收敛规则
 ---
 
 # 布局树（LayoutTree）
@@ -70,20 +70,89 @@ overlay 容器不带 weights/gapScale/justify；每个直接子节点必须带 `
 | `table` | `rows`（首行表头，2~12 行、2~8 列）、`colWidths?`、`style?`（lines/darkHeader/zebra）、`header?: false`、`topRule?: true` | 单元格是字符串或 {text, bold?, align?}。`header: false`＝无表头，rows 全数据行（账目式两列表；与 darkHeader 互斥）；`topRule: true`＝顶部压一条 2px 墨线，表格下移让位 |
 | `divider` | 无 | 分隔线：高框渲染竖线、扁框渲染横线，主题分隔线色 |
 | `icon` | `icon`（引擎图标集名称） | 主题主色图标；名称如 check-circle、light-bulb、chart-bar、rocket-launch、users |
-| `component` | `name` + 各组件参数 | 参数化积木（见下节），只给文案/条目/方向 |
+| `component` | `name` + 各组件参数 + 可选 `style` | 参数化积木（见下节），只给文案/条目/方向；样式用语义枚举 |
+
+## 组件样式（style）
+
+`component` 节点可带可选 `style`。值全部是语义枚举，缺省从风格卡推导（输入 `styleTokens.componentDefaults`）；不写 `style` 即完全按风格卡默认。组件只读引擎解析出的像素：**不要写裸色号 / 裸 pt / 裸 px**，也不要写不认识的字段（未知字段报错）。
+
+| 字段 | 取值 | 语义 |
+|---|---|---|
+| `surface` | `none \| card \| tint \| outline \| ink \| band` | 底面语言：无底 / 卡面（描边+阴影+圆角）/ 主色浅档 / 透明描边 / 墨面反白 / 强调色顶条 |
+| `separator` | `line \| gap \| none` | 条目之间：1px 分隔线 / 只留间距 / 什么都不留（风格卡关掉分隔线时 `line` 自动降为 `gap`） |
+| `align` | `start \| center` | 文本对齐与整组水平落位 |
+| `density` | `tight \| normal \| airy` | 内部间距密度：间距与内边距 ×0.75 / 1 / 1.4 |
+| `numeral` | `serif \| sans \| none` | 装饰性序号/年份/大数字：标题字体 / 正文字体 / 去掉装饰序号 |
+| `accent` | `primary \| accent \| muted` | 唯一强调位（刻标、顶条、星、目标刻度）取色 |
+| `motif` | `inherit \| none` | 是否在**有底面的组件**上画风格卡母题（色带 / 角标 / 幽灵块）；`inherit` 跟随风格卡，`surface:"none"` 时不重复画（页级母题由引擎统一铺） |
+
+默认值来自风格卡（`styleTokens.componentDefaults`），省略即继承。输入里的 `styleBrief` 只是风格意图的散文说明；像素口径、以及两者冲突时，一律以 `styleTokens` 为准。
+
+**组件专属变体**（每个组件至多一个，全部枚举）：
+
+| 组件 | 变体 | 取值 |
+|---|---|---|
+| `stats` | `layout` | `row \| column \| grid` |
+| `timeline` | `axis` | `line \| dots \| none` |
+| `steps` | `connector` | `line \| gap \| none` |
+| `chevron` / `pyramid` / `funnel` | `form` | `outline \| filled \| tint` |
+| `calloutBox` | `form` | `bar \| panel \| tint` |
+| `cycle` | `marker` | `dot \| number` |
+| `progress` | `fill` | `ink \| primary` |
+| `orgChart` | `connector` | `elbow \| none` |
+| `teamGrid` | `avatar` | `circle \| initial` |
+| `logoWall` | `monochrome` | `true \| false` |
+
+```json
+{ "type": "component", "name": "stats",
+  "style": { "surface": "card", "separator": "gap", "numeral": "sans", "accent": "accent" },
+  "items": [ { "value": "2.83", "unit": "万亿元", "label": "2020 年 GDP" } ] }
+```
+
+### 组件语义子集（哪些 style 真的有差）
+
+组件只表达与自己语义相关的维度：没列出的组合对该组件是 no-op（不报错、也不会有视觉变化）。默认底面一列写「卡片」的组件会用风格卡卡面；写「平铺」的组件只有显式 `style.surface` 才铺底。
+
+| 组件 | 默认底面 | separator | accent | numeral | 图槽 |
+|---|---|---|---|---|---|
+| stats | 平铺 | ✓ | ✓ | ✓ | — |
+| timeline | 平铺 | 轴线独立控制 | ✓ | ✓（年份字体） | — |
+| steps | 平铺 | connector 独立控制 | ✓ | ✓ | — |
+| agenda | 平铺 | ✓ | ✓ | ✓ | — |
+| pointList | 平铺 | ✓ | ✓ | ✓ | — |
+| featureCards | 卡片 | — | ✓ | — | ✓ |
+| comparison | 卡片 | ✓ | ✓ | — | — |
+| matrix2x2 | 卡片 | ✓ | — | — | — |
+| prosCons | 卡片 | ✓ | ✓ | ✓ | — |
+| quote | 平铺 | — | ✓（刻标） | ✓（引文字体） | — |
+| quotes | 卡片 | — | ✓ | — | ✓ |
+| teamGrid | 卡片 | ✓ | ✓ | ✓ | ✓ |
+| persona | 卡片 | ✓ | ✓ | ✓ | ✓ |
+| bentoGrid | 卡片 | — | ✓ | — | ✓ |
+| layeredStack | 卡片 | ✓ | ✓ | ✓ | — |
+| pricingTiers | 卡片 | ✓ | ✓ | ✓ | — |
+| logoWall | 卡片 | ✓ | — | — | ✓（灰度 contain） |
+| indexHeader | 平铺 | ✓ | ✓ | ✓ | — |
+| eraRail | 平铺 | ✓（脊线/刻度） | ✓ | ✓ | — |
+| progress | 平铺 | — | ✓ | — | — |
+| cycle | 平铺 | — | ✓ | ✓ | — |
+| chevron / pyramid / funnel | 平铺 | — | ✓ | — | — |
+| venn | 平铺 | — | ✓ | — | — |
+| calloutBox | 卡片 | — | ✓ | — | — |
+| orgChart | 平铺 | — | ✓ | — | — |
 
 ### 组件（参数化积木）
 
-组件是参数化的复合叶子：只给文案与条目，内部结构与配色由引擎确定性展开；展开产物照常受 48 元素、墨迹不重叠、装不下报缺陷的约束。「约几元素」是排页时的预算参考。组件是排印系统的：无卡片无色面，靠发丝线、衬线大数字（stats/steps/agenda/时间轴年份/引文）与唯一主色刻标表达层级；stats/featureCards/comparison/prosCons/persona/calloutBox/pointList 的内容高跟内容走、整组在区域内垂直居中，过高的框只增加留白。progress 条目可选 target（0~100）画目标刻度。
+组件是参数化的复合叶子：只给文案与条目，内部结构与样式由引擎确定性展开；展开产物照常受 48 元素、墨迹不重叠、装不下报缺陷的约束。「约几元素」是排页时的预算参考。组件外观跟随风格卡（`styleTokens.componentDefaults`）：`surface` 决定有没有卡面与描边阴影、`separator` 决定条目间是发丝线还是留白、`numeral` 决定序号用衬线还是无衬线、`accent` 决定唯一强调位取色；per-node `style` 只是同一设计系统内的变奏（见上节）。stats/featureCards/comparison/prosCons/persona/calloutBox/pointList 的内容高跟内容走、整组在区域内垂直居中，过高的框只增加留白。progress 条目可选 target（0~100）画目标刻度。同排并列栏共用 indexHeader 做栏头（序号+标题+底部分隔，等高即对齐）；年代/进程序列用 eraRail（脊线压顶、年代一行、短注一行），页脚节奏带优先于零散 caption。
 
 | 组件 | 形态与语义 | 参数 | 条目/取值 | 约几元素 |
 |---|---|---|---|---|
-| `timeline` | 轴线串节点，上标签下说明——进程与先后 | `direction?`（h/v）、`items: [{ label, text }]` | 3~6 条 | 10~19 |
+| `timeline` | 轴线串节点，上标签下说明——进程与先后 | `direction?`（h/v）、`items: [{ label, text }]` | 3~6 条；label 一行（超宽自动降档至 16pt，仍超报错） | 10~19 |
 | `steps` | 大编号+标题+说明横排——有序步骤 | `items: [{ title, text? }]` | 3~5 步 | 6~15 |
 | `stats` | 大数字+标签的指标卡横排——量化基本面 | `items: [{ value, unit?, label }]` | 2~4 项 | 6~12 |
 | `featureCards` | 图标或图片+标题+正文的卡片行——并列卖点 | `items: [{ title, body?, icon?, image? }]` | 2~4 张；条目给 `image`（http(s) 直链）时顶部画圆角图块、icon 不画 | 4~16 |
 | `quote` | 大引号+居中引文+署名——引用定调 | `text`、`author?` | — | 2~3 |
-| `comparison` | 2~4 方对照，中央竖线分栏——多方横评 | `sides: [{ title, tag?, points }]`、`featured?`（重点列下标）；点为字符串或 `{ text, mark: "yes"\|"mid"\|"no" }`（钩/横/叉打头） | 2~4 方；每方 2~5 点（4 方时限 4 点） | 6~20 |
+| `comparison` | 2~4 方对照，中央分隔随 `style.separator`——多方横评 | `sides: [{ title, tag?, points }]`、`featured?`（重点列下标）；点为字符串或 `{ text, mark: "yes"\|"mid"\|"no" }`（钩/横/叉打头） | 2~4 方；每方 2~5 点（4 方时限 4 点） | 6~20 |
 | `matrix2x2` | 四块面板田字格+四边轴标——双维度交叉定位 | `quadrants: [{ title, points? }]×4`、`axes?: { top?, right?, bottom?, left? }` | 象限固定 4；每象限 1~4 点 | 8~20 |
 | `prosCons` | 左优势右风险两栏，钩/叉图标打头——利弊清单 | `pros`/`cons`: 字符串数组 | 各 2~5 条 | 4+2×条数 |
 | `agenda` | 大编号+条目纵列，超四条分两栏——目录 | `items: 字符串数组` | 4~8 条 | 2×条数 |
@@ -99,10 +168,12 @@ overlay 容器不带 weights/gapScale/justify；每个直接子节点必须带 `
 | `bentoGrid` | 两列格子拼版，wide 占整行——信息拼贴 | `items: [{ title, body?, icon?, image?, wide? }]` | 3~5 格；条目给 `image`（http(s) 直链）时格子顶部画圆角图块、icon 不画 | 6~20 |
 | `layeredStack` | 整宽横条逐层堆叠，左标题右说明——分层堆叠 | `items: [{ title, text? }]` | 3~5 层 | 6~15 |
 | `teamGrid` | 圆头像+姓名+职位（主色）+两行简介——团队网格 | `members: [{ name, role?, bio?, image? }]` | 2~6 人（≤4 单行，5~6 两行各 3） | ~4×人数 |
-| `quotes` | 星级+引文+短发丝线+头像署名——评价墙 | `items: [{ text, name, role?, avatar?, rating?(1~5) }]` | 2~3 条 | 6~10×条数 |
+| `quotes` | 星级+引文+条目分隔（随 `style.separator`）+头像署名——评价墙 | `items: [{ text, name, role?, avatar?, rating?(1~5) }]` | 2~3 条 | 6~10×条数 |
 | `pricingTiers` | 套餐定价卡，featured 档垫板描边上浮+实心按钮 | `tiers: [{ name, price, unit?, features, cta? }]`、`featured`（恰一个） | 2~4 档；每档 2~4 特性行 | ~7×档数+3 |
 | `logoWall` | 灰度图标/文字字标网格——客户墙 | `logos: [{ image?, text? }]`（二选一；图自动灰度 contain） | 4~8 个 | ≤8 |
-| `pointList` | 刻度要点纵列：可选衬线序号+粗标签+静音正文，条目间发丝线——分类词条、要点清单 | `items: [{ label, body }]`、`numbered?: true`（衬线序号 01/02/…） | 2~5 条；标签 ≤12 字、正文 ≤140 字 | 5~17 |
+| `pointList` | 刻度要点纵列：可选衬线序号+粗标签+静音正文，条目分隔随 `style.separator`——分类词条、要点清单 | `items: [{ label, body }]`、`numbered?: true`（衬线序号 01/02/…） | 2~5 条；标签 ≤12 字、正文 ≤140 字 | 5~17 |
+| `indexHeader` | 衬线序号（主色）+标题+右侧小注，底部分隔随 `style.separator`——并列栏统一栏头 | `num`（1~2 字：壹/儒/01）、`title`、`note?` | title ≤12 字、note ≤12 字 | 3~4 |
+| `eraRail` | 脊线压区域顶，刻度下挂衬线年代+静音短注，highlight 条目主色——年代轴、节奏带 | `items: [{ era, note }]`、`highlight?`（重点条下标） | 3~6 条；era ≤8 字、note ≤12 字，各限一行 | 1+3×条数 |
 
 ```json
 { "type": "component", "name": "timeline",

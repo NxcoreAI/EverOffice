@@ -67,9 +67,9 @@ describe("validateLayoutTree", () => {
 });
 
 describe("slides-layouter 工具面", () => {
-  it("工具面只有 slides_layout_validate 且执行返回 JSON", async () => {
+  it("工具面为 validate + 页预览，validate 执行返回 JSON", async () => {
     const tools = createSlidesLayouterAgentTools();
-    expect(tools.map((t) => t.name)).toEqual(["slides_layout_validate"]);
+    expect(tools.map((t) => t.name)).toEqual(["slides_layout_validate", "slides_page_preview"]);
     const token = "tool-deck-token-0002";
     registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
     const result = await tools[0]!.execute({} as never, { token, tree: GOOD_TREE });

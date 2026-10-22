@@ -61,6 +61,10 @@ const RawConfigSchema = Type.Object(
     aiBackgroundModel: Type.String(),
     aiTranscriptionModel: Type.String(),
     aiSlidesReviewerModel: Type.String(),
+    /** 审页档独立预算：视觉模型输出上限/窗口/思考档（缺省沿用主模型档）。 */
+    aiSlidesReviewerMaxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
+    aiSlidesReviewerContextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
+    aiSlidesReviewerReasoning: Type.Optional(AiReasoningSchema),
     aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
@@ -205,6 +209,10 @@ export interface PiRuntimeConfig {
   skillPrompts?: Record<string, string>;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
+  /** 子 Agent 单条工具结果字符预算（JSON 感知截断）。 */
+  maxToolResultChars?: number;
+  /** 子 Agent run 内轮次级工具历史裁剪。 */
+  runContextGuard?: { triggerTokens: number; keepRecentTurns: number };
   /** Pi 内置工具白名单；缺省启用全部，NXCORE_PI_TOOLS（逗号分隔）收窄。 */
   builtinTools?: string[];
   /** MCP 服务器注入配置（pi-mcp-adapter）；读取 NXCORE_MCP_CONFIG 或 dataDir/agent/mcp.json。 */
@@ -443,6 +451,17 @@ function parseTemperature(value: string, name = "NXCORE_AI_TEMPERATURE"): number
   return temperature;
 }
 
+const AI_REASONING_LEVELS: AiReasoning[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function parseAiReasoning(name: string, value: string | undefined): AiReasoning | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (!AI_REASONING_LEVELS.includes(trimmed as AiReasoning)) {
+    throw new Error(`Invalid ${name}: ${trimmed}`);
+  }
+  return trimmed as AiReasoning;
+}
+
 function parseFraction(name: string, value: string): number {
   const fraction = Number(value);
   if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
@@ -602,6 +621,16 @@ export function loadConfig(
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
     aiTranscriptionModel: env.NXCORE_AI_TRANSCRIPTION_MODEL?.trim() || "",
     aiSlidesReviewerModel: env.NXCORE_AI_SLIDES_REVIEWER_MODEL?.trim() || "",
+    aiSlidesReviewerMaxTokens: env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS?.trim()
+      ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS", env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS)
+      : undefined,
+    aiSlidesReviewerContextWindow: env.NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW?.trim()
+      ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW", env.NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW)
+      : undefined,
+    aiSlidesReviewerReasoning: parseAiReasoning(
+      "NXCORE_AI_SLIDES_REVIEWER_REASONING",
+      env.NXCORE_AI_SLIDES_REVIEWER_REASONING,
+    ),
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
@@ -1137,8 +1166,22 @@ export function loadConfig(
     // 审页档（slides-reviewer 专用，多模态）：model 可来自 env 专用键，也可由
     // runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
     // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
+    // 输出上限/窗口/思考档支持独立 env 键：审页模型常是 qwen 系视觉模型，
+    // 输出上限远小于主模型；沿用主模型档会让长思考把输出预算吃满（2026-10 实测）。
     slidesReviewerPi: pi
-      ? { ...pi, model: rawConfig.aiSlidesReviewerModel }
+      ? {
+          ...pi,
+          model: rawConfig.aiSlidesReviewerModel,
+          ...(rawConfig.aiSlidesReviewerMaxTokens === undefined
+            ? {}
+            : { maxTokens: rawConfig.aiSlidesReviewerMaxTokens }),
+          ...(rawConfig.aiSlidesReviewerContextWindow === undefined
+            ? {}
+            : { contextWindow: rawConfig.aiSlidesReviewerContextWindow }),
+          ...(rawConfig.aiSlidesReviewerReasoning === undefined
+            ? {}
+            : { reasoning: rawConfig.aiSlidesReviewerReasoning }),
+        }
       : null,
     subagents: {
       enabled: rawConfig.subagentsEnabled,

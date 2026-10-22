@@ -91,7 +91,11 @@ export class RoomMemoryDeriveWorker {
 
   async drain(): Promise<void> {
     if (this.drainPromise) return this.drainPromise;
-    this.drainPromise = this.drainPending().finally(() => {
+    // drain 由 void 调用（定时轮询），整链漏接即未处理拒绝、直接杀死网关进程
+    // （2026-10-17 排障）。整轮兜底记日志。
+    this.drainPromise = this.drainPending().catch((error: unknown) => {
+      this.logger.warn({ err: error }, "memory room derive drain failed");
+    }).finally(() => {
       this.drainPromise = null;
     });
     return this.drainPromise;

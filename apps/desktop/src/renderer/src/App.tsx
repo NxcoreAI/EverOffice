@@ -132,7 +132,8 @@ export function App() {
   const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
-  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string } | null>(null)
+  // displayMessage：给用户看的人话；message 仍是交给 Agent 的完整指令（不渲染成用户气泡）。
+  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string; displayMessage?: string } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [agentPrefillRequest, setAgentPrefillRequest] = useState<{
     key: string
@@ -700,7 +701,21 @@ export function App() {
         showToast({ title: t('surface:agentOffice.error.title', { kind }), message: payload.message, variant: 'error' })
         return
       }
-      showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })
+      // 完成提示：只有全部页落定才会收到 done（生成期 done 已由桌面端 deferDone 推迟），
+      // 部分完成时如实给出页数，不把「1 页骨架」说成「已生成」。
+      if (payload.partial) {
+        showToast({
+          title: t('surface:agentOffice.done.partialTitle', { kind }),
+          message: t('surface:agentOffice.done.partialMessage', {
+            title: payload.title,
+            applied: payload.appliedPages ?? 0,
+            total: payload.totalPages ?? 0,
+          }),
+          variant: 'error',
+        })
+      } else {
+        showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })
+      }
       // Room 资料页/产物库清单监听此 DOM 事件刷新（见 useRoomKnowledgeFiles）。
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
       if (payload.fileId && payload.originalName && payload.roomId) {
@@ -726,20 +741,31 @@ export function App() {
       const room = availableContextRooms.find((item) => item.id === payload.roomId)
       if (room) openContextRoomTab(room)
       else activateContextRoomTab(payload.roomId)
-      setAgentAskRequest({ key: `agent-ask-${Date.now()}`, roomId: payload.roomId, message: payload.message })
+      setAgentOpen(true)
+      setAgentAskRequest({
+        key: `agent-ask-${Date.now()}`,
+        roomId: payload.roomId,
+        message: payload.message,
+        ...(payload.displayMessage ? { displayMessage: payload.displayMessage } : {}),
+      })
     })
   }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
 
   // 产物库「新建 Office」：经 Room 会话派发生成请求（自动展开对应 Room 会话）。
   useEffect(() => {
     const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ roomId?: string; message?: string }>).detail
+      const detail = (event as CustomEvent<{ roomId?: string; message?: string; displayMessage?: string }>).detail
       if (!detail?.roomId || !detail.message) return
       const room = availableContextRooms.find((item) => item.id === detail.roomId)
       if (room) openContextRoomTab(room)
       else activateContextRoomTab(detail.roomId)
       setAgentOpen(true)
-      setAgentAskRequest({ key: `artifact-create-${Date.now()}`, roomId: detail.roomId, message: detail.message })
+      setAgentAskRequest({
+        key: `artifact-create-${Date.now()}`,
+        roomId: detail.roomId,
+        message: detail.message,
+        ...(detail.displayMessage ? { displayMessage: detail.displayMessage } : {}),
+      })
     }
     window.addEventListener('everroom:room-agent-ask', open)
     return () => window.removeEventListener('everroom:room-agent-ask', open)

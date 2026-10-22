@@ -630,7 +630,7 @@ export const dataMigrationSources = sqliteTable(
   "data_migration_sources",
   {
     id: text("id").primaryKey(),
-    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude"] }).notNull(),
+    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude", "cherry", "hermes"] }).notNull(),
     transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
     stableSourceKey: text("stable_source_key").notNull(),
     displayName: text("display_name").notNull(),
@@ -648,7 +648,7 @@ export const dataMigrationRuns = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceId: text("source_id").notNull().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude"] }).notNull(),
+    provider: text("provider", { enum: ["notion", "openclaw", "codex", "claude", "cherry", "hermes"] }).notNull(),
     transport: text("transport", { enum: ["oauth", "zip", "local-sqlite", "local-jsonl", "archive", "directory"] }).notNull(),
     status: text("status", { enum: ["queued", "running", "completed", "failed", "cancelled"] }).notNull().default("queued"),
     phase: text("phase", { enum: ["discovering", "reading", "normalizing", "saving", "memory", "finalizing", "completed"] }).notNull().default("discovering"),
@@ -693,7 +693,7 @@ export const externalAgentThreads = sqliteTable(
   {
     id: text("id").primaryKey(),
     sourceId: text("source_id").notNull().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
-    provider: text("provider", { enum: ["openclaw", "codex", "claude"] }).notNull(),
+    provider: text("provider", { enum: ["openclaw", "codex", "claude", "cherry", "hermes"] }).notNull(),
     stableKey: text("stable_key").notNull(),
     agentId: text("agent_id"),
     externalSessionId: text("external_session_id").notNull(),
@@ -701,6 +701,8 @@ export const externalAgentThreads = sqliteTable(
     importVersion: integer("import_version").notNull().default(1),
     memorySessionId: text("memory_session_id").notNull(),
     memoryStatus: text("memory_status", { enum: ["pending", "indexed", "error"] }).notNull().default("pending"),
+    contentHash: text("content_hash"),
+    memoryRuleVersion: integer("memory_rule_version").notNull().default(1),
     available: integer("available", { mode: "boolean" }).notNull().default(true),
     messageCount: integer("message_count").notNull().default(0),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
@@ -725,6 +727,7 @@ export const externalAgentMessages = sqliteTable(
     role: text("role", { enum: ["user", "assistant"] }).notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
+    attachments: text("attachments").notNull().default("[]"),
     ordinal: integer("ordinal").notNull(),
     occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
@@ -734,6 +737,20 @@ export const externalAgentMessages = sqliteTable(
     uniqueIndex("external_agent_messages_thread_key_idx").on(table.threadId, table.stableKey),
     index("external_agent_messages_thread_order_idx").on(table.threadId, table.ordinal),
   ],
+);
+
+export const migrationSourceCapabilities = sqliteTable(
+  "migration_source_capabilities",
+  {
+    sourceId: text("source_id").primaryKey().references(() => dataMigrationSources.id, { onDelete: "cascade" }),
+    importState: text("import_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    syncState: text("sync_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    onDemandState: text("on_demand_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    writeBackState: text("write_back_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    nativeRestoreState: text("native_restore_state", { enum: ["not_available", "available", "active", "error", "paused"] }).notNull().default("not_available"),
+    syncDetail: text("sync_detail").notNull().default("{}"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
 );
 
 export const agentSessionExternalThreads = sqliteTable(
@@ -2830,7 +2847,7 @@ export const slidesPageImageSessions = sqliteTable(
     roomId: text("room_id").notNull(),
     draftDocumentId: text("draft_document_id").notNull(),
     styleSessionId: text("style_session_id"),
-    stage: text("stage", { enum: ["confirm", "review", "resolved"] }).notNull(),
+    stage: text("stage", { enum: ["confirm", "review", "settling", "resolved"] }).notNull(),
     /** 第几轮重生成（单张重掷递增，前端凭它重开过目卡）。 */
     generation: integer("generation").notNull().default(1),
     /** arrange 全量落页方案（等待期间唯一事实来源，resume 不重排）。 */
@@ -2848,6 +2865,27 @@ export const slidesPageImageSessions = sqliteTable(
   },
   (table) => [
     index("slides_page_image_sessions_draft_idx").on(table.roomId, table.draftDocumentId),
+  ],
+);
+
+/** slides 编辑层 storyboard（M1 影子模式）：按草稿 + 内容 hash 存最近一次的压缩结果与验收报告。 */
+export const slidesStoryboards = sqliteTable(
+  "slides_storyboards",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    draftDocumentId: text("draft_document_id").notNull(),
+    /** 用户确认后草稿内容 hash：同一草稿再编辑即视为新版本。 */
+    draftHash: text("draft_hash").notNull(),
+    /** storyboard/v2 全量 JSON（editor 输出）。 */
+    storyboard: text("storyboard", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    /** 网关确定性验收报告（errors/warnings/字数）。 */
+    report: text("report", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("slides_storyboards_draft_idx").on(table.roomId, table.draftDocumentId),
   ],
 );
 

@@ -362,6 +362,10 @@ export interface KnowledgeFileDto {
   /** 目录来源（manual-upload/local-folder/connector/…）；agent-generated = Agent 生成产物。 */
   sourceKind: string
   uploadedAt: string
+  /** 最新版本号（旧网关无此字段 → undefined；legacy 上传为 null）。 */
+  versionNo?: number | null
+  /** 最新版本时间（旧网关无此字段 → undefined；用时回落 uploadedAt）。 */
+  updatedAt?: string
 }
 
 /** 最近已落定（confirmed）决策：撤销入口用。 */

@@ -1468,6 +1468,9 @@ export class AgentService {
     const now = new Date();
     const runId = randomUUID();
     const safePrompt = redactText(input.prompt);
+    // 展示用提示词：卡片按钮等确定性入口用 prompt 传技术指令，靠 displayPrompt 让
+    // 入库消息/会话标题保持人话；runtime 仍只收 input.prompt（运行时语义不变）。
+    const displayPrompt = input.displayPrompt?.trim() ? redactText(input.displayPrompt).trim() : safePrompt;
     const runRow: typeof agentRuns.$inferInsert = {
       id: runId,
       sessionId,
@@ -1520,7 +1523,7 @@ export class AgentService {
           sessionId,
           runId,
           role: "user",
-          content: safePrompt,
+          content: displayPrompt,
           createdAt: now,
         }).run();
         enqueueSearchIndex(tx, { itemType: "message", refId: userMessageId, priority: "high" });
@@ -1530,7 +1533,7 @@ export class AgentService {
           status: "running",
           ...(invocationMode === "explicit_switch" ? { activeAgentId: selectedAgentId } : {}),
           updatedAt: now,
-          title: session.title ?? safePrompt.slice(0, 48),
+          title: session.title ?? displayPrompt.slice(0, 48),
         })
         .where(eq(agentSessions.id, sessionId))
         .run();
@@ -1769,10 +1772,17 @@ export class AgentService {
         await this.appendEvent(sessionId, runId, this.attachRoomSelectionIntent(sessionId, runId, event));
       }
     } catch (error) {
-      await this.appendEvent(sessionId, runId, {
-        type: "run.failed",
-        payload: { message: error instanceof Error ? error.message : "Runtime failed" },
-      });
+      // 失败落账本身再抛（DB 抖动）会让 consumer promise 变成无人 await 的
+      // 拒绝——runtimeEventConsumers 只在热重载/dispose 时才被 allSettled，
+      // 漏接即未处理拒绝、杀进程（2026-10-17 排障）。
+      try {
+        await this.appendEvent(sessionId, runId, {
+          type: "run.failed",
+          payload: { message: error instanceof Error ? error.message : "Runtime failed" },
+        });
+      } catch (appendError) {
+        this.logger.info({ sessionId, runId, err: appendError }, "failed to append run.failed event");
+      }
     }
   }
 

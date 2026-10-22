@@ -9,6 +9,7 @@ systemPrompt: ./SYSTEM.md
 
 skills:
   - ./skills/layout-tree-skill
+  - ./skills/layout-tree-v2-skill
 
 mcp: []
 
@@ -19,5 +20,10 @@ policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 4
   # 看图判断 1 轮 + 决定修改时：读说明书/语法 2~3 次 + validate ≤4 次 + 提交 1 次。
-  maxToolCalls: 12
-  timeoutSeconds: 240
+  # 16 留出一次「读 v1+v2 技能 + 多一轮校验」的余量（实测 17 轮 validate 打穿过 16）。
+  maxToolCalls: 16
+  timeoutSeconds: 300
+  # 审页模型（vlm 档）输出上限通常只有 8k：思考档 medium 时会先烧光输出预算，
+  # 导致 stopReason=length（2026-10 近 7 天 12 次 failed）。降到 low 给正文留空间。
+  model:
+    reasoning: low

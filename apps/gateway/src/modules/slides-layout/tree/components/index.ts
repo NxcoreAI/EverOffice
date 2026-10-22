@@ -8,6 +8,13 @@ import type { Frame } from "../../grid.js";
 import type { ResolvedTheme } from "../../theme.js";
 import type { SpecElement } from "../../elements.js";
 import { ICON_NAMES } from "../icons.js";
+import { ATOM_NAMES, expandAtomLeaf, isAtomName, type AtomName } from "./atoms.js";
+import {
+  normalizeComponentStyle,
+  resolveComponentSkin,
+  type ComponentSkin,
+  type ComponentStyleInput,
+} from "./kit.js";
 import { expandTimeline, type TimelineItem } from "./timeline.js";
 import { expandSteps, type StepItem } from "./steps.js";
 import { expandStats, type StatItem } from "./stats.js";
@@ -33,48 +40,58 @@ import { expandQuotes, type QuoteEntry } from "./quotes.js";
 import { expandPricingTiers, type PricingTier } from "./pricing-tiers.js";
 import { expandLogoWall, type LogoSlot } from "./logo-wall.js";
 import { expandPointList, type PointItem } from "./point-list.js";
-
+import { expandIndexHeader, type IndexHeaderInput } from "./index-header.js";
+import { expandEraRail, type EraRailItem } from "./era-rail.js";
 export type {
   TimelineItem, StepItem, StatItem, FeatureItem, ComparisonSide, ComparisonPoint,
   Quadrant, MatrixAxes, ProsConsInput, ChevronItem, TierItem,
   FunnelItem, VennInput, CalloutInput, CycleItem, ProgressItem,
   OrgNode, PersonaInput, BentoItem, LayerItem,
   TeamMember, QuoteEntry, PricingTier, LogoSlot, PointItem,
+  IndexHeaderInput, EraRailItem,
 };
 
-export type ComponentLeaf =
-  | { type: "component"; name: "timeline"; direction?: "h" | "v"; items: TimelineItem[] }
-  | { type: "component"; name: "steps"; items: StepItem[] }
-  | { type: "component"; name: "stats"; items: StatItem[] }
+type ComponentLeafCore =
+  | { type: "component"; name: "timeline"; direction?: "h" | "v"; axis?: "line" | "dots" | "none"; items: TimelineItem[] }
+  | { type: "component"; name: "steps"; connector?: "line" | "gap" | "none"; items: StepItem[] }
+  | { type: "component"; name: "stats"; layout?: "row" | "column" | "grid"; items: StatItem[] }
   | { type: "component"; name: "featureCards"; items: FeatureItem[] }
   | { type: "component"; name: "quote"; text: string; author?: string }
   | { type: "component"; name: "comparison"; sides: ComparisonSide[]; featured?: number }
   | { type: "component"; name: "matrix2x2"; quadrants: Quadrant[]; axes?: MatrixAxes }
   | { type: "component"; name: "prosCons"; pros: string[]; cons: string[] }
   | { type: "component"; name: "agenda"; items: string[] }
-  | { type: "component"; name: "chevron"; items: ChevronItem[] }
-  | { type: "component"; name: "pyramid"; items: TierItem[] }
-  | { type: "component"; name: "funnel"; items: FunnelItem[] }
+  | { type: "component"; name: "chevron"; form?: "outline" | "filled" | "tint"; items: ChevronItem[] }
+  | { type: "component"; name: "pyramid"; form?: "outline" | "filled" | "tint"; items: TierItem[] }
+  | { type: "component"; name: "funnel"; form?: "outline" | "filled" | "tint"; items: FunnelItem[] }
   | { type: "component"; name: "venn"; a: string; b: string; both?: string }
-  | { type: "component"; name: "calloutBox"; text: string; icon?: string }
-  | { type: "component"; name: "cycle"; items: CycleItem[] }
-  | { type: "component"; name: "progress"; items: ProgressItem[] }
+  | { type: "component"; name: "calloutBox"; text: string; icon?: string; form?: "bar" | "panel" | "tint" }
+  | { type: "component"; name: "cycle"; marker?: "dot" | "number"; items: CycleItem[] }
+  | { type: "component"; name: "progress"; fill?: "ink" | "primary"; items: ProgressItem[] }
 
-  | { type: "component"; name: "orgChart"; root: OrgNode; children: OrgNode[] }
+  | { type: "component"; name: "orgChart"; connector?: "elbow" | "none"; root: OrgNode; children: OrgNode[] }
   | { type: "component"; name: "persona"; person: { name: string; role?: string }; points: string[]; image?: string }
   | { type: "component"; name: "bentoGrid"; items: BentoItem[] }
   | { type: "component"; name: "layeredStack"; items: LayerItem[] }
-  | { type: "component"; name: "teamGrid"; members: TeamMember[] }
+  | { type: "component"; name: "teamGrid"; avatar?: "circle" | "initial"; members: TeamMember[] }
   | { type: "component"; name: "quotes"; items: QuoteEntry[] }
   | { type: "component"; name: "pricingTiers"; tiers: PricingTier[]; featured: number }
-  | { type: "component"; name: "logoWall"; logos: LogoSlot[] }
-  | { type: "component"; name: "pointList"; numbered?: true; items: PointItem[] };
+  | { type: "component"; name: "logoWall"; monochrome?: boolean; logos: LogoSlot[] }
+  | { type: "component"; name: "pointList"; numbered?: true; items: PointItem[] }
+  | { type: "component"; name: "indexHeader"; num: string; title: string; note?: string }
+  | { type: "component"; name: "eraRail"; items: EraRailItem[]; highlight?: number }
+  | { type: "component"; name: AtomName; [key: string]: unknown };
+
+
+export type ComponentLeaf = ComponentLeafCore & { style?: ComponentStyleInput };
 
 export const COMPONENT_NAMES = [
   "timeline", "steps", "stats", "featureCards", "quote", "comparison",
   "matrix2x2", "prosCons", "agenda", "chevron", "pyramid", "funnel",
   "venn", "calloutBox", "cycle", "progress", "orgChart", "persona",
   "bentoGrid", "layeredStack", "teamGrid", "quotes", "pricingTiers", "logoWall", "pointList",
+  "indexHeader", "eraRail",
+  ...ATOM_NAMES,
 ] as const;
 
 function bad(message: string): never {
@@ -124,7 +141,15 @@ function optImageUrl(value: unknown, what: string): string | undefined {
   return url;
 }
 
-function normalizeComponentLeaf(node: Record<string, unknown>, path: string): ComponentLeaf {
+function enumField<T extends string>(value: unknown, allowed: readonly T[], field: string): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
+    bad(`${field} 必须是 ${allowed.join("|")}，收到 ${String(value)}`);
+  }
+  return value as T;
+}
+
+function normalizeComponentBody(node: Record<string, unknown>, path: string): ComponentLeafCore {
   const name = node.name;
   if (typeof name !== "string" || !(COMPONENT_NAMES as readonly string[]).includes(name)) {
     bad(`${path}.name 必须是 ${COMPONENT_NAMES.join("|")}，收到 ${String(name)}`);
@@ -135,28 +160,36 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       if (direction !== undefined && direction !== "h" && direction !== "v") {
         bad(`${path}.direction 必须是 h|v（缺省 h 横向）`);
       }
+      const axis = enumField(node.axis, ["line", "dots", "none"] as const, `${path}.axis`);
       const items = itemArray(node.items, `${path}.items`, 3, 6).map((item, i) => ({
         label: reqText(item.label, `${path}.items[${i}].label`, 24),
         text: reqText(item.text, `${path}.items[${i}].text`, 80),
       }));
-      return { type: "component", name: "timeline", ...(direction === "v" ? { direction: "v" } : {}), items };
+      return {
+        type: "component", name: "timeline",
+        ...(direction === "v" ? { direction: "v" } : {}),
+        ...(axis ? { axis } : {}),
+        items,
+      };
     }
     case "steps": {
+      const connector = enumField(node.connector, ["line", "gap", "none"] as const, `${path}.connector`);
       const items = itemArray(node.items, `${path}.items`, 3, 5).map((item, i) => {
         const title = reqText(item.title, `${path}.items[${i}].title`, 24);
         const text = optText(item.text, 80);
         return { title, ...(text ? { text } : {}) };
       });
-      return { type: "component", name: "steps", items };
+      return { type: "component", name: "steps", ...(connector ? { connector } : {}), items };
     }
     case "stats": {
+      const layout = enumField(node.layout, ["row", "column", "grid"] as const, `${path}.layout`);
       const items = itemArray(node.items, `${path}.items`, 2, 4).map((item, i) => {
         const value = reqText(item.value, `${path}.items[${i}].value`, 16);
         const label = reqText(item.label, `${path}.items[${i}].label`, 40);
         const unit = optText(item.unit, 8);
         return { value, label, ...(unit ? { unit } : {}) };
       });
-      return { type: "component", name: "stats", items };
+      return { type: "component", name: "stats", ...(layout ? { layout } : {}), items };
     }
     case "featureCards": {
       const items = itemArray(node.items, `${path}.items`, 2, 4).map((item, i) => {
@@ -191,7 +224,7 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
             if (pt.mark !== undefined && pt.mark !== "yes" && pt.mark !== "mid" && pt.mark !== "no") {
               bad(`${path}.${key}.points[${i}].mark 必须是 yes|mid|no，收到 ${String(pt.mark)}`);
             }
-            return { text, ...(pt.mark ? { mark: pt.mark as "yes" | "mid" | "no" } : {}) };
+            return { text, ...(pt.mark ? { mark: pt.mark as NonNullable<ComparisonPoint["mark"]> } : {}) };
           }
           bad(`${path}.${key}.points[${i}] 必须是字符串或 { text, mark? }`);
         });
@@ -223,6 +256,7 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       bad(`${path} 需要 sides（2~4 方）或 left/right`);
     }
     case "teamGrid": {
+      const avatar = enumField(node.avatar, ["circle", "initial"] as const, `${path}.avatar`);
       const members = itemArray(node.members, `${path}.members`, 2, 6).map((m, i) => {
         const name = reqText(m.name, `${path}.members[${i}].name`, 16);
         const role = optText(m.role, 24);
@@ -230,7 +264,7 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
         const image = optImageUrl(m.image, `${path}.members[${i}].image`);
         return { name, ...(role ? { role } : {}), ...(bio ? { bio } : {}), ...(image ? { image } : {}) };
       });
-      return { type: "component", name: "teamGrid", members };
+      return { type: "component", name: "teamGrid", ...(avatar ? { avatar } : {}), members };
     }
     case "quotes": {
       const items = itemArray(node.items, `${path}.items`, 2, 3).map((q, i) => {
@@ -264,13 +298,16 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       return { type: "component", name: "pricingTiers", tiers, featured: node.featured as number };
     }
     case "logoWall": {
+      if (node.monochrome !== undefined && typeof node.monochrome !== "boolean") {
+        bad(`${path}.monochrome 只接受 true|false（true=灰度字标，false=保留原色）`);
+      }
       const logos = itemArray(node.logos, `${path}.logos`, 4, 8).map((l, i) => {
         const image = optImageUrl(l.image, `${path}.logos[${i}].image`);
         const text = optText(l.text, 20);
         if (!image && !text) bad(`${path}.logos[${i}] 需要 image 或 text`);
         return { ...(image ? { image } : {}), ...(!image && text ? { text } : {}) } as LogoSlot;
       });
-      return { type: "component", name: "logoWall", logos };
+      return { type: "component", name: "logoWall", ...(typeof node.monochrome === "boolean" ? { monochrome: node.monochrome } : {}), logos };
     }
     case "pointList": {
       if (node.numbered !== undefined && node.numbered !== true) {
@@ -281,6 +318,29 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
         body: reqText(item.body, `${path}.items[${i}].body`, 140),
       }));
       return { type: "component", name: "pointList", ...(node.numbered === true ? { numbered: true } : {}), items };
+    }
+    case "indexHeader": {
+      const num = reqText(node.num, `${path}.num`, 8);
+      if ([...num].length > 2) bad(`${path}.num 须为 1~2 字（壹/儒/01），收到「${num}」`);
+      const title = reqText(node.title, `${path}.title`, 12);
+      const note = optText(node.note, 12);
+      return { type: "component", name: "indexHeader", num, title, ...(note ? { note } : {}) };
+    }
+    case "eraRail": {
+      const items = itemArray(node.items, `${path}.items`, 3, 6).map((item, i) => {
+        const era = reqText(item.era, `${path}.items[${i}].era`, 20);
+        if ([...era].length > 8) bad(`${path}.items[${i}].era「${era}」超 8 字——统一短年代格式（如「2026」「唐代」「1610 年」）`);
+        const note = reqText(item.note, `${path}.items[${i}].note`, 20);
+        if ([...note].length > 12) bad(`${path}.items[${i}].note「${note}」超 12 字——细节挪进正文，轴线只留路标`);
+        return { era, note };
+      });
+      if (node.highlight !== undefined) {
+        if (typeof node.highlight !== "number" || !Number.isInteger(node.highlight) || node.highlight < 0 || node.highlight >= items.length) {
+          bad(`${path}.highlight 必须是 0~${items.length - 1} 的整数，收到 ${String(node.highlight)}`);
+        }
+        return { type: "component", name: "eraRail", items, highlight: node.highlight };
+      }
+      return { type: "component", name: "eraRail", items };
     }
     case "matrix2x2": {
       const quadrants = itemArray(node.quadrants, `${path}.quadrants`, 4, 4).map((item, i) => {
@@ -321,28 +381,31 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       return { type: "component", name: "agenda", items };
     }
     case "chevron": {
+      const form = enumField(node.form, ["outline", "filled", "tint"] as const, `${path}.form`);
       const items = itemArray(node.items, `${path}.items`, 3, 5).map((item, i) => {
         const title = reqText(item.title, `${path}.items[${i}].title`, 16);
         const text = optText(item.text, 40);
         return { title, ...(text ? { text } : {}) };
       });
-      return { type: "component", name: "chevron", items };
+      return { type: "component", name: "chevron", ...(form ? { form } : {}), items };
     }
     case "pyramid": {
+      const form = enumField(node.form, ["outline", "filled", "tint"] as const, `${path}.form`);
       const items = itemArray(node.items, `${path}.items`, 3, 5).map((item, i) => {
         const title = reqText(item.title, `${path}.items[${i}].title`, 16);
         const text = optText(item.text, 40);
         return { title, ...(text ? { text } : {}) };
       });
-      return { type: "component", name: "pyramid", items };
+      return { type: "component", name: "pyramid", ...(form ? { form } : {}), items };
     }
     case "funnel": {
+      const form = enumField(node.form, ["outline", "filled", "tint"] as const, `${path}.form`);
       const items = itemArray(node.items, `${path}.items`, 3, 4).map((item, i) => {
         const stage = reqText(item.stage, `${path}.items[${i}].stage`, 16);
         const value = optText(item.value, 16);
         return { stage, ...(value ? { value } : {}) };
       });
-      return { type: "component", name: "funnel", items };
+      return { type: "component", name: "funnel", ...(form ? { form } : {}), items };
     }
     case "venn": {
       const a = reqText(node.a, `${path}.a`, 10);
@@ -353,15 +416,18 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
     case "calloutBox": {
       const text = reqText(node.text, `${path}.text`, 120);
       const icon = optIcon(node.icon, `${path}.icon`);
-      return { type: "component", name: "calloutBox", text, ...(icon ? { icon } : {}) };
+      const form = enumField(node.form, ["bar", "panel", "tint"] as const, `${path}.form`);
+      return { type: "component", name: "calloutBox", text, ...(icon ? { icon } : {}), ...(form ? { form } : {}) };
     }
     case "cycle": {
+      const marker = enumField(node.marker, ["dot", "number"] as const, `${path}.marker`);
       const items = itemArray(node.items, `${path}.items`, 3, 5).map((item, i) => ({
         title: reqText(item.title, `${path}.items[${i}].title`, 6),
       }));
-      return { type: "component", name: "cycle", items };
+      return { type: "component", name: "cycle", ...(marker ? { marker } : {}), items };
     }
     case "progress": {
+      const fill = enumField(node.fill, ["ink", "primary"] as const, `${path}.fill`);
       const items = itemArray(node.items, `${path}.items`, 2, 4).map((item, i) => {
         const label = reqText(item.label, `${path}.items[${i}].label`, 24);
         const value = item.value;
@@ -378,9 +444,10 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
         }
         return { label, value, ...(unit ? { unit } : {}), ...(target !== undefined ? { target } : {}) };
       });
-      return { type: "component", name: "progress", items };
+      return { type: "component", name: "progress", ...(fill ? { fill } : {}), items };
     }
     case "orgChart": {
+      const connector = enumField(node.connector, ["elbow", "none"] as const, `${path}.connector`);
       const nodeOf = (raw: unknown, key: string): OrgNode => {
         if (typeof raw !== "object" || raw === null || Array.isArray(raw)) bad(`${path}.${key} 必须是 { title, subtitle? }`);
         const n = raw as Record<string, unknown>;
@@ -390,7 +457,7 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       };
       const root = nodeOf(node.root, "root");
       const children = itemArray(node.children, `${path}.children`, 2, 4).map((item, i) => nodeOf(item, `children[${i}]`));
-      return { type: "component", name: "orgChart", root, children };
+      return { type: "component", name: "orgChart", ...(connector ? { connector } : {}), root, children };
     }
     case "persona": {
       if (typeof node.person !== "object" || node.person === null || Array.isArray(node.person)) bad(`${path}.person 必须是 { name, role? }`);
@@ -427,63 +494,117 @@ function normalizeComponentLeaf(node: Record<string, unknown>, path: string): Co
       });
       return { type: "component", name: "layeredStack", items };
     }
+    default:
+      bad(`${path}.name 未实现`);
   }
 }
 
-export { normalizeComponentLeaf };
+/** 组件节点归一：先校验公共 style，再归一名/参数；任何未知 style 字段直接报错。 */
+export function normalizeComponentLeaf(node: Record<string, unknown>, path: string): ComponentLeaf {
+  if (typeof node.name === "string" && isAtomName(node.name)) {
+    return { ...node, type: "component", name: node.name } as ComponentLeaf;
+  }
+  const style = normalizeComponentStyle(node.style, `${path}.style`);
+  const body = normalizeComponentBody(node, path);
+  return style ? { ...body, style } : body;
+}
 
-/** 展开分发：组件 → 普通 PageSpec 元素（量测与上限对产物照常生效）。 */
-export function expandComponent(leaf: ComponentLeaf, frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
+/** 按一份已解析 skin 展开组件（内部用；供自动缩字重试复用）。 */
+function dispatchComponent(leaf: ComponentLeaf, frame: Frame, theme: ResolvedTheme, what: string, skin: ComponentSkin): SpecElement[] {
   switch (leaf.name) {
     case "timeline":
-      return expandTimeline(leaf.direction ?? "h", leaf.items, frame, theme, what);
+      return expandTimeline(leaf.direction ?? "h", leaf.items, frame, theme, what, skin, leaf.axis);
     case "steps":
-      return expandSteps(leaf.items, frame, theme, what);
+      return expandSteps(leaf.items, frame, theme, what, skin, leaf.connector);
     case "stats":
-      return expandStats(leaf.items, frame, theme, what);
+      return expandStats(leaf.items, frame, theme, what, skin, leaf.layout);
     case "featureCards":
-      return expandFeatureCards(leaf.items, frame, theme, what);
+      return expandFeatureCards(leaf.items, frame, theme, what, skin);
     case "quote":
-      return expandQuote(leaf, frame, theme, what);
+      return expandQuote(leaf, frame, theme, what, skin);
     case "comparison":
-      return expandComparison(leaf.sides, leaf.featured, frame, theme, what);
+      return expandComparison(leaf.sides, leaf.featured, frame, theme, what, skin);
     case "matrix2x2":
-      return expandMatrix2x2(leaf.quadrants, leaf.axes ?? {}, frame, theme, what);
+      return expandMatrix2x2(leaf.quadrants, leaf.axes ?? {}, frame, theme, what, skin);
     case "prosCons":
-      return expandProsCons(leaf, frame, theme, what);
+      return expandProsCons(leaf, frame, theme, what, skin);
     case "agenda":
-      return expandAgenda(leaf.items, frame, theme, what);
+      return expandAgenda(leaf.items, frame, theme, what, skin);
     case "chevron":
-      return expandChevron(leaf.items, frame, theme, what);
+      return expandChevron(leaf.items, frame, theme, what, skin, leaf.form);
     case "pyramid":
-      return expandPyramid(leaf.items, frame, theme, what);
+      return expandPyramid(leaf.items, frame, theme, what, skin, leaf.form);
     case "funnel":
-      return expandFunnel(leaf.items, frame, theme, what);
+      return expandFunnel(leaf.items, frame, theme, what, skin, leaf.form);
     case "venn":
-      return expandVenn(leaf, frame, theme, what);
+      return expandVenn(leaf, frame, theme, what, skin);
     case "calloutBox":
-      return expandCallout(leaf, frame, theme, what);
+      return expandCallout(leaf, frame, theme, what, skin);
     case "cycle":
-      return expandCycle(leaf.items, frame, theme, what);
+      return expandCycle(leaf.items, frame, theme, what, skin, leaf.marker);
     case "progress":
-      return expandProgress(leaf.items, frame, theme, what);
+      return expandProgress(leaf.items, frame, theme, what, skin, leaf.fill);
     case "orgChart":
-      return expandOrgChart(leaf.root, leaf.children, frame, theme, what);
+      return expandOrgChart(leaf.root, leaf.children, frame, theme, what, skin, leaf.connector);
     case "persona":
-      return expandPersona(leaf, frame, theme, what);
+      return expandPersona(leaf, frame, theme, what, skin);
     case "bentoGrid":
-      return expandBentoGrid(leaf.items, frame, theme, what);
+      return expandBentoGrid(leaf.items, frame, theme, what, skin);
     case "layeredStack":
-      return expandLayeredStack(leaf.items, frame, theme, what);
+      return expandLayeredStack(leaf.items, frame, theme, what, skin);
     case "teamGrid":
-      return expandTeamGrid(leaf.members, frame, theme, what);
+      return expandTeamGrid(leaf.members, frame, theme, what, skin, leaf.avatar);
     case "quotes":
-      return expandQuotes(leaf.items, frame, theme, what);
+      return expandQuotes(leaf.items, frame, theme, what, skin);
     case "pricingTiers":
-      return expandPricingTiers(leaf.tiers, leaf.featured, frame, theme, what);
+      return expandPricingTiers(leaf.tiers, leaf.featured, frame, theme, what, skin);
     case "logoWall":
-      return expandLogoWall(leaf.logos, frame, theme, what);
+      return expandLogoWall(leaf.logos, frame, theme, what, skin, leaf.monochrome);
     case "pointList":
-      return expandPointList(leaf.items, frame, theme, what, leaf.numbered === true);
+      return expandPointList(leaf.items, frame, theme, what, skin, leaf.numbered === true);
+    case "indexHeader":
+      return expandIndexHeader(leaf, frame, theme, what, skin);
+    case "eraRail":
+      return expandEraRail(leaf.items, frame, theme, what, skin, leaf.highlight);
+    default:
+      bad(`${what} 未实现`);
+  }
+}
+
+/** 小框降级：把风格卡字号整体缩一档（颜色/间距不变），用于组件在窄槽里溢出时自动收敛。 */
+function scaledTheme(theme: ResolvedTheme, factor: number): ResolvedTheme {
+  const scaleRecord = <T extends Record<string, number>>(record: T): T =>
+    Object.fromEntries(Object.entries(record).map(([key, value]) => [key, Math.max(8, Math.round(value * factor))])) as T;
+  return {
+    ...theme,
+    typeScale: scaleRecord(theme.typeScale),
+    sizes: scaleRecord(theme.sizes),
+  };
+}
+
+/**
+ * 展开分发：组件 → 普通 PageSpec 元素（量测与上限对产物照常生效）。
+ * 样式先经 resolveComponentSkin 解析：agent 的 style 覆盖风格卡默认值，组件只读 skin。
+ * 框太小时先按 0.85/0.72/0.6 三档缩整体字号重试，仍装不下才抛缺陷——窄槽里组件优雅降级，
+ * 避免整页因一个组件溢出而重排。
+ */
+export function expandComponent(leaf: ComponentLeaf, frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
+  if (isAtomName(leaf.name)) {
+    return expandAtomLeaf(leaf.name, leaf as unknown as Record<string, unknown>, frame, theme, what, resolveComponentSkin(leaf.style, theme, what));
+  }
+  const firstSkin = resolveComponentSkin(leaf.style, theme, what);
+  try {
+    return dispatchComponent(leaf, frame, theme, what, firstSkin);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("LAYOUT_LEAF_INVALID:")) throw error;
+    for (const factor of [0.85, 0.72, 0.6]) {
+      const scaled = scaledTheme(theme, factor);
+      try {
+        return dispatchComponent(leaf, frame, scaled, what, resolveComponentSkin(leaf.style, scaled, what));
+      } catch (retryError) {
+        if (!(retryError instanceof Error) || !retryError.message.startsWith("LAYOUT_LEAF_INVALID:")) throw retryError;
+      }
+    }
+    throw error;
   }
 }

@@ -1,15 +1,58 @@
 import React from 'react'
-import TestRenderer, { act } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import TestRenderer, { act, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/i18n/LocaleContext', () => ({
-  useLocale: () => ({ t: (key: string, params?: Record<string, unknown>) => {
-    if (!params) return key
-    return `${key}?${Object.entries(params).map(([k, v]) => `${k}=${v}`).join('&')}`
-  } }),
+  useLocale: () => ({
+    t: (key: string, params?: Record<string, unknown>) => {
+      if (!params) return key
+      return `${key}?${Object.entries(params).map(([k, v]) => `${k}=${v}`).join('&')}`
+    },
+  }),
 }))
 
+import type { DisplayAgentToolCall } from './agentRunActivity'
 import { SlidesProgressCard, slidesProgressFromToolCall, type SlidesProgressState } from './SlidesProgressCard'
+import { selectSlidesTasks, type SlidesTaskEntry } from './slides/slidesState'
+
+const KEY = 'surface:agentChat.'
+
+function wrap(details: unknown, overrides: Partial<DisplayAgentToolCall> = {}): DisplayAgentToolCall {
+  return {
+    id: 'tool-1',
+    runId: 'run-1',
+    name: 'slides_draft',
+    args: {},
+    status: 'running',
+    startedAt: '2026-09-30T00:00:00.000Z',
+    partialResult: { details },
+    ...overrides,
+  }
+}
+
+function flattenText(node: unknown): string {
+  if (Array.isArray(node)) return node.map(flattenText).join('')
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (node && typeof node === 'object') {
+    if ('children' in node) return flattenText((node as { children?: unknown }).children)
+    if ('props' in node) return flattenText((node as { props?: { children?: unknown } }).props?.children)
+  }
+  return ''
+}
+
+function buttonWithText(root: ReactTestInstance, text: string): ReactTestInstance {
+  const buttons = root.findAllByType('button')
+  const found = buttons.find((button) => flattenText(button.props.children) === text)
+  if (!found) throw new Error(`button not found: ${text}; have: ${buttons.map((b) => flattenText(b.props.children)).join(' | ')}`)
+  return found
+}
+
+function buttonContaining(root: ReactTestInstance, text: string): ReactTestInstance {
+  const buttons = root.findAllByType('button')
+  const found = buttons.find((button) => flattenText(button.props.children).includes(text))
+  if (!found) throw new Error(`button not found containing: ${text}`)
+  return found
+}
 
 const draftState: SlidesProgressState = {
   stage: 'draft_ready',
@@ -17,516 +60,520 @@ const draftState: SlidesProgressState = {
   totalPages: 2,
   doneCount: 0,
   documentId: 'doc-draft-1',
+  roomId: 'room-1',
   pages: [
     { title: '封面', points: ['季度汇报'], materialHints: '简洁封面' },
     { title: '业绩', data: 'Q1: 1.2 亿；Q2: 1.5 亿' },
   ],
 }
 
+const reviewState: SlidesProgressState = {
+  stage: 'page_images_review',
+  title: '季度汇报',
+  documentId: 'doc-draft-1',
+  generation: 1,
+  totalPages: 3,
+  doneCount: 3,
+  pages: [
+    { title: '封面', url: 'everroom-material://aa', pageIndex: 0 },
+    { title: '业绩', url: 'everroom-material://bb', pageIndex: 1 },
+    { title: '计划', url: 'everroom-material://cc', pageIndex: 2 },
+  ],
+}
+
+const styleState: SlidesProgressState = {
+  stage: 'style_images_ready',
+  title: '季度汇报',
+  documentId: 'doc-draft-1',
+  styleSessionId: 'style-9',
+  styleCandidates: [
+    { url: 'everroom-material://s0', label: '深色杂志', generation: 1 },
+    { url: 'everroom-material://s1', label: '暖纸手作', generation: 1 },
+  ],
+}
+
+const cardFixture = (overrides: Partial<React.ComponentProps<typeof SlidesProgressCard>> = {}) => (
+  <SlidesProgressCard state={draftState} toolRunning={false} {...overrides} />
+)
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('slidesProgressFromToolCall', () => {
-  it('只认 slides_draft 的三段进度载荷，其余返回 null', () => {
-    const wrap = (details: unknown) => ({
-      id: 'tool-1',
-      name: 'slides_draft',
-      status: 'running',
-      startedAt: '2026-09-30T00:00:00.000Z',
-      partialResult: { details },
-    })
-    expect(slidesProgressFromToolCall(wrap({ stage: 'draft_ready', pages: [] }) as never)?.stage).toBe('draft_ready')
-    expect(slidesProgressFromToolCall(wrap({ stage: 'page_applied', pages: [] }) as never)?.stage).toBe('page_applied')
-    expect(slidesProgressFromToolCall(wrap({ stage: 'page_gate', pages: [] }) as never)).toBeNull()
-    expect(slidesProgressFromToolCall(wrap({ stage: 'draft_ready' }) as never)).toBeNull()
-    expect(slidesProgressFromToolCall({ ...wrap({ stage: 'draft_ready', pages: [] }), name: 'bash' } as never)).toBeNull()
+  it('新增长等待阶段（drafting/style_generating/style_extracting/planning）都识别为任务', () => {
+    for (const stage of ['drafting', 'style_generating', 'style_extracting', 'planning'] as const) {
+      const progress = slidesProgressFromToolCall(wrap({ stage, title: '季度汇报', documentId: 'doc-1' }))
+      expect(progress?.stage).toBe(stage)
+      expect(progress?.title).toBe('季度汇报')
+    }
+  })
+
+  it('failed 无 pages 也保留（失败卡不许消失），未知 stage 返回 null', () => {
+    const failed = slidesProgressFromToolCall(wrap({
+      stage: 'failed',
+      errorCode: 'slides_layout_tail_failed',
+      errorMessage: '排版收尾失败',
+      retryable: true,
+      failedPages: [1, 'x', 3],
+    }))
+    expect(failed?.stage).toBe('failed')
+    expect(failed?.errorCode).toBe('slides_layout_tail_failed')
+    expect(failed?.retryable).toBe(true)
+    expect(failed?.failedPages).toEqual([1, 3])
+    expect(slidesProgressFromToolCall(wrap({ stage: 'page_gate', pages: [] }))).toBeNull()
+    expect(slidesProgressFromToolCall(wrap({ stage: 'whatever' }))).toBeNull()
     expect(slidesProgressFromToolCall(undefined)).toBeNull()
+    expect(slidesProgressFromToolCall({ ...wrap({ stage: 'drafting' }), name: 'bash' })).toBeNull()
   })
 
-  it('配图生成阶段（page_images）按普通进度载荷识别，缺 pages 不认', () => {
-    const wrap = (details: unknown) => ({
-      id: 'tool-1',
-      name: 'slides_draft',
-      status: 'running',
-      startedAt: '2026-09-30T00:00:00.000Z',
-      partialResult: { details },
-    })
-    const images = slidesProgressFromToolCall(wrap({
-      stage: 'page_images',
-      title: '季度汇报',
-      totalPages: 3,
-      doneCount: 1,
-      pages: [{ title: '封面' }, { title: '业绩' }, { title: '计划' }],
-    }) as never)
-    expect(images?.stage).toBe('page_images')
-    expect(images?.totalPages).toBe(3)
-    expect(slidesProgressFromToolCall(wrap({ stage: 'page_images' }) as never)).toBeNull()
+  it('工具直接报错（无阶段载荷）兜底成失败卡；非 slides_draft 不兜底', () => {
+    expect(slidesProgressFromToolCall(wrap(undefined, { status: 'error' }))?.stage).toBe('failed')
+    const bash = { ...wrap(undefined, { status: 'error' }), name: 'bash' }
+    expect(slidesProgressFromToolCall(bash)).toBeNull()
   })
 
-  it('配图确认/过目阶段要求 documentId 与 pages，缺一不认', () => {
-    const wrap = (details: unknown) => ({
-      id: 'tool-1',
-      name: 'slides_draft',
-      status: 'running',
-      startedAt: '2026-09-30T00:00:00.000Z',
-      partialResult: { details },
-    })
-    const confirm = slidesProgressFromToolCall(wrap({
-      stage: 'page_images_confirm',
-      documentId: 'doc-1',
-      totalPages: 2,
-      pages: [{ title: '封面', imagePrompt: '深蓝城市天际线' }],
-    }) as never)
-    expect(confirm?.stage).toBe('page_images_confirm')
-    expect(slidesProgressFromToolCall(wrap({ stage: 'page_images_confirm', pages: [] }) as never)).toBeNull()
-    const review = slidesProgressFromToolCall(wrap({
+  it('进度阶段要求 pages，配图阶段要求 documentId，风格阶段要求 styleSessionId', () => {
+    expect(slidesProgressFromToolCall(wrap({ stage: 'draft_ready', pages: [] }))?.stage).toBe('draft_ready')
+    expect(slidesProgressFromToolCall(wrap({ stage: 'draft_ready' }))).toBeNull()
+    expect(slidesProgressFromToolCall(wrap({ stage: 'page_images', pages: [{ title: '封面' }] }))?.stage).toBe('page_images')
+    expect(slidesProgressFromToolCall(wrap({ stage: 'page_images' }))).toBeNull()
+    expect(slidesProgressFromToolCall(wrap({ stage: 'page_images_confirm', pages: [] }))).toBeNull()
+    expect(slidesProgressFromToolCall(wrap({
       stage: 'page_images_review',
       documentId: 'doc-1',
       generation: 2,
-      pages: [{ title: '封面', url: 'everroom-material://aa' }],
-    }) as never)
-    expect(review?.stage).toBe('page_images_review')
-    expect(review?.generation).toBe(2)
-    expect(slidesProgressFromToolCall(wrap({ stage: 'page_images_review', documentId: 'doc-1' }) as never)).toBeNull()
+      pages: [{ title: '封面', url: 'everroom-material://aa', pageIndex: 0 }],
+    }))?.generation).toBe(2)
+    expect(slidesProgressFromToolCall(wrap({ stage: 'style_images_ready' }))).toBeNull()
   })
 
-  it('风格阶段载荷要求 styleSessionId，不要求 pages', () => {
-    const wrap = (details: unknown) => ({
-      id: 'tool-1',
-      name: 'slides_draft',
-      status: 'running',
-      startedAt: '2026-09-30T00:00:00.000Z',
-      partialResult: { details },
-    })
+  it('风格阶段字段兼容映射：candidates→styleCandidates、顶层风格卡→styleCard', () => {
     const images = slidesProgressFromToolCall(wrap({
       stage: 'style_images_ready',
       styleSessionId: 's1',
-      styleCandidates: [{ url: 'everroom-material://abc', generation: 1 }],
-    }) as never)
-    expect(images?.stage).toBe('style_images_ready')
+      candidates: [{ url: 'everroom-material://abc', generation: 1 }],
+    }))
     expect(images?.styleCandidates).toHaveLength(1)
-    // 缺 styleSessionId 的风格载荷不认。
-    expect(slidesProgressFromToolCall(wrap({ stage: 'style_images_ready' }) as never)).toBeNull()
+    const card = slidesProgressFromToolCall(wrap({
+      stage: 'style_card_ready',
+      styleSessionId: 's1',
+      swatches: [{ hex: '#1e3a5f', label: '主色' }],
+      typography: [{ label: '正文', value: '14pt' }],
+      demoImageUrl: 'everroom-material://dd',
+      effectLines: ['主色 深藏青'],
+    }))
+    expect(card?.styleCard?.swatches[0]?.hex).toBe('#1e3a5f')
+    expect(card?.styleCard?.demoImageUrl).toBe('everroom-material://dd')
   })
 })
 
-describe('SlidesProgressCard', () => {
-  it('草稿卡：打开草稿回传文档 id，确认合成 style 阶段消息（无选项表单）', () => {
-    const onOpenDraft = vi.fn()
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard state={draftState} toolRunning={false} onOpenDraft={onOpenDraft} onGenerate={onGenerate} />,
-    )
+function entryOf(state: SlidesProgressState, options: {
+  id?: string
+  startedAt?: string
+  status?: string
+  completed?: boolean
+} = {}): SlidesTaskEntry {
+  return {
+    tool: {
+      id: options.id ?? `tool-${state.stage}`,
+      runId: 'run-1',
+      name: 'slides_draft',
+      args: {},
+      status: (options.status ?? 'completed') as SlidesTaskEntry['tool']['status'],
+      startedAt: options.startedAt ?? '2026-09-30T00:00:00.000Z',
+    },
+    progress: state,
+  }
+}
 
-    act(() => renderer.root.findByProps({ className: 'agent-slides-open-draft' }).props.onClick())
-    expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1')
-    // 无三个下拉选项。
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
+describe('selectSlidesTasks', () => {
+  const base = '2026-09-30T00:00:00.000Z'
+  const at = (minutes: number) => new Date(Date.parse(base) + minutes * 60_000).toISOString()
 
-    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    const message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesGenerateMessage?')
-    expect(message).toContain('documentId=doc-draft-1')
-    expect(message).toContain('title=季度汇报')
-  })
-
-  it('点「生成」后折成短卡：动作消失，头部按钮可重展页列表但不回显动作', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
-    )
-
-    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    expect(onGenerate).toHaveBeenCalledTimes(1)
-
-    // 确认后只剩短卡头部（按钮），页列表与动作都收起。
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(0)
-    const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
-    expect(header.type).toBe('button')
-    expect(header.props['aria-expanded']).toBe(false)
-
-    // 重展：页列表回来，动作不回显。
-    act(() => header.props.onClick())
-    expect(header.props['aria-expanded']).toBe(true)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(2)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
-  })
-
-  it('新一轮 draft_ready 到来：折起的卡片重新展开并恢复动作', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
-    )
-    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
-
-    // 生成中（plan_ready）：折叠保持。
-    const planState: SlidesProgressState = {
-      stage: 'plan_ready',
-      title: draftState.title,
-      totalPages: 2,
-      doneCount: 0,
-      pages: draftState.pages,
-    }
-    act(() => renderer.update(
-      <SlidesProgressCard state={planState} toolRunning={true} onGenerate={onGenerate} />,
-    ))
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
-    expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('button')
-
-    // 新一轮草稿确认到来 → 恢复展开 + 动作（与标题无关，看阶段翻转）。
-    act(() => renderer.update(
-      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
-    ))
-    expect(renderer.root.findByProps({ className: 'agent-slides-progress-header' }).type).toBe('header')
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(1)
-  })
-
-  it('生成卡：默认折成短卡，点头部展开看页进度（按 doneCount 打勾，进行中的页转圈）', () => {
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'page_applied',
-          title: '季度汇报',
-          totalPages: 3,
-          doneCount: 1,
-          pages: [{ title: '封面' }, { title: '业绩' }, { title: '计划' }],
-        }}
-        toolRunning={true}
-      />,
-    )
-    // 未展开：无动作无页列表，头部是可点的按钮。
-    expect(renderer.root.findAllByType('select')).toHaveLength(0)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page' })).toHaveLength(0)
-    const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
-    expect(header.type).toBe('button')
-
-    act(() => header.props.onClick())
-    expect(renderer.root.findByProps({ className: 'agent-slides-progress-title' }).children).toEqual([
-      expect.anything(),
-      expect.anything(),
+  it('最新一张为主卡，等待态保留，已完成旧卡收成回执', () => {
+    const selection = selectSlidesTasks([
+      entryOf({ ...styleState }, { id: 't3', startedAt: at(3) }),
+      entryOf({ ...draftState }, { id: 't2', startedAt: at(2) }),
+      entryOf({ stage: 'page_applied', title: '旧 PPT', documentId: 'doc-old', fileEntryId: 'file-1', completed: true }, { id: 't1', startedAt: at(1) }),
     ])
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })).toHaveLength(1)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-running' })).toHaveLength(1)
+    expect(selection.primary?.tool.id).toBe('t3')
+    // 草稿卡与最新挑图卡是同一文档：已被新调用顶掉，不再重复展示。
+    expect(selection.waiting).toHaveLength(0)
+    expect(selection.receipts).toHaveLength(1)
+    expect(selection.receipts[0]?.progress.fileEntryId).toBe('file-1')
+    expect(selection.foldedCount).toBe(0)
   })
 
-  it('配图生成卡：头部标签显示张数进度，页列表按 doneCount 打勾转圈', () => {
+  it('不同文档的等待态并存，超过 3 张折叠计数；展开后全部返回', () => {
+    const entries = [1, 2, 3, 4, 5].map((index) => entryOf(
+      { stage: 'page_images_confirm', title: `deck-${index}`, documentId: `doc-${index}` },
+      { id: `t${index}`, startedAt: at(index) },
+    )).reverse()
+    const collapsed = selectSlidesTasks(entries)
+    expect(collapsed.primary?.progress.documentId).toBe('doc-5')
+    expect(1 + collapsed.waiting.length).toBe(3)
+    expect(collapsed.foldedCount).toBe(2)
+    const expanded = selectSlidesTasks(entries, Number.MAX_SAFE_INTEGER)
+    expect(1 + expanded.waiting.length).toBe(5)
+    expect(expanded.foldedCount).toBe(0)
+  })
+})
+
+describe('SlidesProgressCard 长等待阶段（P0-2）', () => {
+  it('drafting 阶段：标题 + 人话阶段名 + 已用时 + 不确定进度条，不出现「正在调用工具」', () => {
+    const startedAt = new Date(Date.now() - 65_000).toISOString()
     const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'page_images',
-          title: '季度汇报',
-          totalPages: 3,
-          doneCount: 1,
-          pages: [{ title: '封面' }, { title: '业绩' }, { title: '计划' }],
-        }}
-        toolRunning={true}
-      />,
+      cardFixture({ state: { stage: 'drafting', documentId: 'doc-1' }, toolRunning: true, startedAt }),
     )
-    const title = renderer.root.findByProps({ className: 'agent-slides-progress-title' })
-    const small = title.children[1] as { children: unknown[] }
-    expect(String(small.children[0])).toContain('slidesImagesProgress?done=1&total=3')
-    // 默认折起，点头部展开后按 doneCount 打勾、当前张转圈。
-    const header = renderer.root.findByProps({ className: 'agent-slides-progress-header' })
-    act(() => header.props.onClick())
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })).toHaveLength(1)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-running' })).toHaveLength(1)
+    expect(renderer.root.findByProps({ className: 'agent-slides-card-phase' }).children).toContain(`${KEY}SLIDES_PHASE_DRAFTING`)
+    // 后端没给 title：用「演示文稿」兜底（走 i18n key）。
+    expect(renderer.root.findByProps({ className: 'agent-slides-card-title' }).children).toContain(`${KEY}SLIDES_DEFAULT_TITLE`)
+    const time = String(renderer.root.findByProps({ className: 'agent-slides-card-time' }).children)
+    expect(time).toContain(`${KEY}SLIDES_ELAPSED?time=`)
+    expect(time).toMatch(/time=\d{2}:\d{2}$/)
+    expect(renderer.root.findByProps({ className: 'agent-slides-progress-line is-indeterminate' })).toBeTruthy()
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('callingATool')
   })
 
-  it('配图确认卡：两按钮合成 generate/skip 消息（嵌工具调用与文档 id）', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'page_images_confirm',
-          title: '季度汇报',
-          documentId: 'doc-draft-1',
-          totalPages: 2,
-          pages: [
-            { title: '封面', imagePrompt: '深蓝城市天际线' },
-            { title: '计划', imagePrompt: '团队白板特写' },
-          ],
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    )
-    const generate = renderer.root.findByProps({ className: 'agent-slides-generate' })
-    act(() => generate.props.onClick())
-    let message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesPageImagesGenerateMessage?')
-    expect(message).toContain('documentId=doc-draft-1')
-    expect(message).toContain('title=季度汇报')
-
-    // 确认后折叠：动作消失。
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
-  })
-
-  it('配图过目卡：图上重生成按钮与确认落页按钮合成消息；generation 变化重开卡', () => {
-    const onGenerate = vi.fn()
-    const reviewState: SlidesProgressState = {
-      stage: 'page_images_review',
-      title: '季度汇报',
-      documentId: 'doc-draft-1',
-      generation: 1,
-      totalPages: 2,
-      pages: [
-        { title: '封面', url: 'everroom-material://aa', imagePrompt: '深蓝城市天际线' },
-        { title: '计划', url: 'everroom-material://bb', imagePrompt: '团队白板特写' },
-      ],
+  it('style_generating / style_extracting / planning 各有阶段名', () => {
+    const cases = [
+      ['style_generating', 'SLIDES_PHASE_STYLE_GENERATING'],
+      ['style_extracting', 'SLIDES_PHASE_STYLE_EXTRACTING'],
+      ['planning', 'SLIDES_PHASE_PLANNING'],
+    ] as const
+    for (const [stage, key] of cases) {
+      const renderer = TestRenderer.create(
+        cardFixture({ state: { stage, title: '季度汇报' } as SlidesProgressState, toolRunning: true }),
+      )
+      expect(renderer.root.findByProps({ className: 'agent-slides-card-phase' }).children.join('')).toContain(`${KEY}${key}`)
+      renderer.unmount()
     }
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard state={reviewState} toolRunning={false} onGenerate={onGenerate} />,
-    )
-    const images = renderer.root.findAllByType('img')
-    expect(images).toHaveLength(2)
-    expect(images[0]?.props.src).toBe('everroom-material://aa')
-
-    const regenerateButtons = renderer.root.findAllByProps({ className: 'agent-slides-page-regenerate' })
-    expect(regenerateButtons).toHaveLength(2)
-    act(() => regenerateButtons[1]!.props.onClick())
-    let message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesPageImagesRegenerateMessage?')
-    expect(message).toContain('index=2')
-    expect(message).toContain('documentId=doc-draft-1')
-    // 点完折叠：重生成按钮收起。
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-regenerate' })).toHaveLength(0)
-
-    // 重生成后同 stage 新 generation 载荷到来：卡片必须重开（同 key 不重开的坑）。
-    act(() => renderer.update(
-      <SlidesProgressCard state={{ ...reviewState, generation: 2 }} toolRunning={false} onGenerate={onGenerate} />,
-    ))
-    const reopened = renderer.root.findAllByProps({ className: 'agent-slides-page-regenerate' })
-    expect(reopened).toHaveLength(2)
-
-    act(() => renderer.root.findByProps({ className: 'agent-slides-style-confirm' }).props.onClick())
-    message = onGenerate.mock.calls[1]![0] as string
-    expect(message).toContain('slidesPageImagesAcceptMessage?')
-    expect(message).toContain('documentId=doc-draft-1')
   })
 
-  it('过目卡打回：不折叠连续审核，打回后显示恢复按钮', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'page_images_review',
-          title: '季度汇报',
-          documentId: 'doc-draft-1',
-          generation: 1,
-          totalPages: 2,
-          pages: [
-            { title: '封面', url: 'everroom-material://aa', imagePrompt: '深蓝城市天际线' },
-            { title: '计划', url: 'everroom-material://bb', imagePrompt: '团队白板特写' },
-          ],
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    )
+  it('阶段名走 aria-live=polite，播报阶段变化', () => {
+    const renderer = TestRenderer.create(cardFixture({ state: { stage: 'planning' } as SlidesProgressState, toolRunning: true }))
+    expect(renderer.root.findByProps({ className: 'agent-slides-card-phase' }).props['aria-live']).toBe('polite')
+  })
+})
 
-    const rejectButtons = renderer.root.findAllByProps({ className: 'agent-slides-page-reject' })
-    expect(rejectButtons).toHaveLength(2)
-    act(() => rejectButtons[0]!.props.onClick())
-    const message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesPageImagesRejectMessage?')
-    expect(message).toContain('index=1')
-    expect(message).toContain('documentId=doc-draft-1')
-    // 打回不折叠：其余张的打回按钮仍在，可继续审核。
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-reject' })).toHaveLength(2)
+describe('SlidesProgressCard 草稿与动作语义（P1-1/P1-2）', () => {
+  it('草稿卡：内容稿文案 + 「内容确认，去选风格」，动作两段式且不再暴露 task=', () => {
+    const onAction = vi.fn()
+    const onOpenDraft = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({ onAction, onOpenDraft }))
 
-    // 打回载荷到来：该张按钮变「恢复使用」，图容器置灰。
-    act(() => renderer.update(
-      <SlidesProgressCard
-        state={{
-          stage: 'page_images_review',
-          title: '季度汇报',
-          documentId: 'doc-draft-1',
-          generation: 1,
-          totalPages: 2,
-          pages: [
-            { title: '封面', url: 'everroom-material://aa', imagePrompt: '深蓝城市天际线', rejected: true },
-            { title: '计划', url: 'everroom-material://bb', imagePrompt: '团队白板特写' },
-          ],
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    ))
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-reject' })).toHaveLength(1)
-    const restore = renderer.root.findByProps({ className: 'agent-slides-page-restore' })
-    const rejectedWrap = renderer.root.findAllByProps({ className: 'agent-slides-page-review is-rejected' })
-    expect(rejectedWrap).toHaveLength(1)
-    act(() => restore.props.onClick())
-    const restoreMessage = onGenerate.mock.calls[1]![0] as string
-    expect(restoreMessage).toContain('slidesPageImagesRestoreMessage?')
-    expect(restoreMessage).toContain('index=1')
+    expect(renderer.root.findByProps({ className: 'agent-slides-card-hint' }).children).toContain(`${KEY}SLIDES_DRAFT_HINT`)
+    act(() => renderer.root.findByProps({ className: 'agent-slides-actions' }).findAllByType('button')[0]!.props.onClick())
+    expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1', 'room-1')
+
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_CONFIRM_CONTENT`).props.onClick())
+    expect(onAction).toHaveBeenCalledTimes(1)
+    const [hiddenPrompt, displayText] = onAction.mock.calls[0] as [string, string]
+    expect(hiddenPrompt).toBe(`${KEY}SLIDES_CONFIRM_CONTENT_PROMPT?documentId=doc-draft-1&title=季度汇报`)
+    expect(displayText).toBe(`${KEY}SLIDES_CONFIRM_CONTENT_DISPLAY`)
+    // 动作提交后卡片保留并显示「已提交」，不整卡消失。
+    expect(renderer.root.findByProps({ className: 'agent-slides-card' })).toBeTruthy()
+    expect(renderer.root.findByProps({ className: 'agent-slides-action-note' }).children).toContain(`${KEY}SLIDES_ACTION_SUBMITTED`)
   })
 
-  it('过目卡生成中：未出图的页显示占位行，头部显示张数进度，失败页可重生成', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'page_images_review',
-          title: '季度汇报',
-          documentId: 'doc-draft-1',
-          generation: 1,
-          totalPages: 3,
-          doneCount: 1,
-          pages: [
-            { title: '封面', url: 'everroom-material://aa', imagePrompt: '深蓝城市天际线' },
-            { title: '业绩', imagePrompt: '车间实拍' },
-            { title: '计划', imagePrompt: '白板特写', failed: true },
-          ],
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    )
+  it('卡片可手动关闭（× 本地状态）', () => {
+    const renderer = TestRenderer.create(cardFixture())
+    act(() => renderer.root.findByProps({ className: 'agent-slides-card-close' }).props.onClick())
+    expect(renderer.toJSON()).toBeNull()
+  })
+})
 
-    // 未全部完成：头部用「配图生成中 x/y」标签。
-    const title = renderer.root.findByProps({ className: 'agent-slides-progress-title' })
-    const small = title.children[1] as { children: unknown[] }
-    expect(String(small.children[0])).toContain('slidesImagesProgress?done=1&total=3')
+describe('SlidesProgressCard 完成与失败（P0-3/P0-5/P0-6）', () => {
+  it('page_applied + completed：给「打开 PPT」「继续修改」；打开直接走 files.openOriginal（可编辑 + roomId）', () => {
+    const openOriginal = vi.fn().mockResolvedValue({ openedWith: 'office' })
+    vi.stubGlobal('window', { nxcore: { files: { openOriginal } } })
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'page_applied',
+        title: '季度汇报',
+        completed: true,
+        doneCount: 8,
+        totalPages: 8,
+        fileEntryId: 'file-9',
+        fileName: '季度汇报.pptx',
+        roomId: 'room-1',
+      },
+      toolRunning: false,
+      onAction,
+      startedAt: '2026-09-30T00:00:00.000Z',
+      completedAt: '2026-09-30T00:02:00.000Z',
+    }))
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_OPEN_PPT`).props.onClick())
+    expect(openOriginal).toHaveBeenCalledWith('file-9', '季度汇报.pptx', undefined, { editable: true, roomId: 'room-1' })
+    // 完成卡显示总用时。
+    expect(String(renderer.root.findByProps({ className: 'agent-slides-card-time' }).children))
+      .toContain(`${KEY}SLIDES_ELAPSED_DONE?time=02:00`)
 
-    // 已出的图渲染；未出的渲染占位行（生成中/失败）。
-    expect(renderer.root.findAllByType('img')).toHaveLength(1)
-    const isReviewRow = (className: unknown): boolean =>
-      className === 'agent-slides-page-review'
-      || (typeof className === 'string' && className.startsWith('agent-slides-page-review is-'))
-    const reviewRows = renderer.root.findAll((node) => isReviewRow(node.props?.className))
-    expect(reviewRows).toHaveLength(3)
-    expect(reviewRows.filter((node) => String(node.props.className).includes('is-pending'))).toHaveLength(2)
-    expect(reviewRows.filter((node) => String(node.props.className).includes('is-failed'))).toHaveLength(1)
-
-    // 失败页的占位行上有重生成按钮，合成消息带序号。
-    const regenerateButtons = renderer.root.findAllByProps({ className: 'agent-slides-page-regenerate' })
-    expect(regenerateButtons).toHaveLength(2) // 已出图 1 个 + 失败占位 1 个
-    act(() => regenerateButtons[1]!.props.onClick())
-    const message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesPageImagesRegenerateMessage?')
-    expect(message).toContain('index=3')
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_CONTINUE_EDIT`).props.onClick())
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toContain(`${KEY}SLIDES_CONTINUE_EDIT_PROMPT?`)
+    expect(prompt).toContain('fileEntryId=file-9')
+    expect(display).toContain(`${KEY}SLIDES_CONTINUE_EDIT_DISPLAY?title=季度汇报`)
   })
 
-  it('挑图卡：候选出图，点第二张图即选定并合成 style_select 消息并收起', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'style_images_ready',
-          title: '季度汇报',
-          styleSessionId: 'style-9',
-          styleCandidates: [
-            { url: 'everroom-material://aa', generation: 1 },
-            { url: 'everroom-material://bb', generation: 1 },
-          ],
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    )
-    // 图即按钮：候选本体就是可点的 button。
-    const candidates = renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })
-    expect(candidates).toHaveLength(2)
-    expect(candidates.every((node) => node.type === 'button')).toBe(true)
-
-    act(() => candidates[1]!.props.onClick())
-    const message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesStylePickMessage?')
-    expect(message).toContain('index=2')
-    expect(message).toContain('sessionId=style-9')
-    // 选完即收起候选。
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })).toHaveLength(0)
+  it('final 载荷没有 fileEntryId：不显示打开按钮，也不报错', () => {
+    const renderer = TestRenderer.create(cardFixture({
+      state: { stage: 'page_applied', title: '季度汇报', completed: true, doneCount: 3, totalPages: 3 },
+      toolRunning: false,
+    }))
+    expect(renderer.root.findAll((node) => flattenText(node.props?.children) === `${KEY}SLIDES_OPEN_PPT`)).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-error-note' })).toHaveLength(0)
   })
 
-  it('连续等待阶段（草稿确认 → 挑图）：上一阶段的折叠锁必须解开，候选重新展示', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard state={draftState} toolRunning={false} onGenerate={onGenerate} />,
-    )
-    // 草稿确认：点「生成 PPT」→ 卡片折叠锁定。
-    act(() => renderer.root.findByProps({ className: 'agent-slides-generate' }).props.onClick())
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-generate' })).toHaveLength(0)
-
-    // 下一阶段直接是挑图（四步流程里等待阶段连续）：必须自动重新展开并显示候选。
-    act(() => renderer.update(
-      <SlidesProgressCard
-        state={{
-          stage: 'style_images_ready',
-          title: draftState.title,
-          styleSessionId: 'style-9',
-          styleCandidates: [{ url: 'everroom-material://aa', generation: 1 }],
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    ))
-    const candidates = renderer.root.findAllByProps({ className: 'agent-slides-style-candidate' })
-    expect(candidates).toHaveLength(1)
-    act(() => candidates[0]!.props.onClick())
-    expect(onGenerate).toHaveBeenCalledTimes(2)
-    const message = onGenerate.mock.calls[1]![0] as string
-    expect(message).toContain('index=1')
+  it('completed=false：部分完成 + failedPages 高亮列出（第 N 页）', () => {
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'page_applied',
+        title: '季度汇报',
+        completed: false,
+        doneCount: 2,
+        totalPages: 4,
+        documentId: 'doc-1',
+        failedPages: [1, 3],
+        warnings: ['第 2 页视觉复检未通过，已放行', '第 4 页布局树未收敛，已用兜底版式'],
+      },
+      toolRunning: false,
+    }))
+    const failed = renderer.root.findByProps({ className: 'agent-slides-failed-pages' })
+    expect(flattenText(failed.props.children)).toContain(`${KEY}SLIDES_FAILED_PAGE_ITEM?page=2`)
+    expect(flattenText(failed.props.children)).toContain(`${KEY}SLIDES_FAILED_PAGE_ITEM?page=4`)
+    // warnings 收进可展开的中性小字里。
+    const warnings = renderer.root.findByProps({ className: 'agent-slides-warnings' })
+    expect(flattenText(warnings.findByType('summary').props.children)).toContain(`${KEY}SLIDES_WARNINGS_SUMMARY?count=2`)
   })
 
-  it('风格卡：色块/字号/线框/演示页齐上，确认按钮合成 generate 消息', () => {
-    const onGenerate = vi.fn()
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'style_card_ready',
-          title: '季度汇报',
-          styleSessionId: 'style-9',
-          styleCard: {
-            swatches: [
-              { hex: '#f5f2ec', label: '底色' },
-              { hex: '#1e3a5f', label: '主色' },
-            ],
-            typography: [{ label: '正文', value: '14pt' }],
-            wireframes: [{ role: 'cover', label: '封面 P1a', svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>' }],
-            demoImageUrl: 'everroom-material://dd',
-            effectLines: ['主色 深藏青 #1E3A5F'],
-          },
-        }}
-        toolRunning={false}
-        onGenerate={onGenerate}
-      />,
-    )
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-style-swatch' })).toHaveLength(2)
-    expect(renderer.root.findAllByProps({ className: 'agent-slides-style-wireframe' })).toHaveLength(1)
+  it('落页按完成顺序：按页号集合打勾，不把未落的前页算成已完成', () => {
+    const payload = { stage: 'page_applied', title: '季度汇报', totalPages: 3, pages: [{ title: '封面' }], appliedPages: [1, 2] }
+    expect(slidesProgressFromToolCall(wrap(payload))?.appliedPages).toEqual([1, 2])
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'page_applied',
+        title: '季度汇报',
+        doneCount: 2,
+        appliedPages: [1, 2],
+        totalPages: 3,
+        documentId: 'doc-1',
+        pages: [{ title: '封面' }, { title: '业绩' }, { title: '计划' }],
+      },
+      toolRunning: true,
+    }))
+    // 第 2、3 页先落（第 1 页还在排）：打勾的只有这两页，第 1 页仍是无标记的待定页。
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-status is-done' })).toHaveLength(2)
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-page-head' })).toHaveLength(3)
+  })
+
+  it('failed：已知 errorCode 人话化，retryable 给「再试一次」并带重试指令', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'failed',
+        title: '季度汇报',
+        errorCode: 'slides_layout_tail_failed',
+        errorMessage: '技术原因',
+        retryable: true,
+        doneCount: 3,
+        totalPages: 8,
+      },
+      toolRunning: false,
+      onAction,
+    }))
+    expect(renderer.root.findByProps({ className: 'agent-slides-failure' }).findByType('strong').children)
+      .toContain(`${KEY}SLIDES_ERROR_LAYOUT_TAIL`)
+    expect(renderer.root.findByProps({ className: 'agent-slides-card-phase' }).children)
+      .toContain(`${KEY}SLIDES_FAILED_PHASE`)
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_RETRY`).props.onClick())
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toContain(`${KEY}SLIDES_RETRY_PROMPT?`)
+    expect(prompt).toContain('reason=')
+    expect(display).toBe(`${KEY}SLIDES_RETRY_DISPLAY`)
+  })
+
+  it('failed：未知 errorCode 回落 errorMessage，不可重试时给「继续上次」提示而非假按钮', () => {
+    const renderer = TestRenderer.create(cardFixture({
+      state: { stage: 'failed', title: '季度汇报', errorCode: 'mystery_code', errorMessage: '排版时连接断了', retryable: false },
+      toolRunning: false,
+    }))
+    expect(renderer.root.findByProps({ className: 'agent-slides-failure' }).findByType('strong').children).toContain('排版时连接断了')
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-error-note' })).toHaveLength(0)
+    expect(flattenText(renderer.toJSON())).toContain(`${KEY}SLIDES_RETRY_HINT`)
+    // 没有伪造「再试一次」按钮。
+    expect(renderer.root.findAll((node) => flattenText(node.props?.children) === `${KEY}SLIDES_RETRY`)).toHaveLength(0)
+  })
+
+  it('已停止/被中断：显示对应状态而不是永远生成中（含 tool.status=stopped 兜底）', () => {
+    const stoppedRenderer = TestRenderer.create(cardFixture({
+      state: { stage: 'planning', doneCount: 2, totalPages: 5 },
+      toolRunning: false,
+      runId: 'run-1',
+      cancelledRunIds: new Set(['run-1']),
+      toolStatus: 'stopped',
+    }))
+    expect(stoppedRenderer.root.findByProps({ className: 'agent-slides-card-phase' }).children)
+      .toContain(`${KEY}SLIDES_STOPPED`)
+    expect(stoppedRenderer.root.findByProps({ className: 'agent-slides-state-banner' })).toBeTruthy()
+
+    const interruptedRenderer = TestRenderer.create(cardFixture({
+      state: { stage: 'page_images', doneCount: 1, totalPages: 5 },
+      toolRunning: false,
+      runId: 'run-2',
+      interruptedRunIds: new Set(['run-2']),
+    }))
+    expect(interruptedRenderer.root.findByProps({ className: 'agent-slides-card-phase' }).children)
+      .toContain(`${KEY}SLIDES_INTERRUPTED`)
+  })
+
+  it('已完成旧卡紧凑回执：一行「已完成《标题》· 打开」，无 fileEntryId 时不显示打开', () => {
+    const withFile = TestRenderer.create(cardFixture({
+      state: { stage: 'page_applied', title: '旧 PPT', completed: true, fileEntryId: 'file-1' },
+      toolRunning: false,
+      compact: true,
+    }))
+    expect(flattenText(withFile.toJSON())).toContain(`${KEY}SLIDES_RECEIPT_DONE?title=旧 PPT`)
+    expect(buttonWithText(withFile.root, `${KEY}SLIDES_RECEIPT_OPEN`)).toBeTruthy()
+
+    const withoutFile = TestRenderer.create(cardFixture({
+      state: { stage: 'page_applied', title: '旧 PPT', completed: true },
+      toolRunning: false,
+      compact: true,
+    }))
+    expect(withoutFile.root.findAllByType('button')).toHaveLength(0)
+  })
+})
+
+describe('SlidesProgressCard 配图过目批量提交（P1-5/P2-5）', () => {
+  it('九宫格显示「第 N 页 · 标题」，勾选不用/换一张后一次提交批量参数', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({ state: reviewState, toolRunning: false, onAction }))
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-image-cell' })).toHaveLength(3)
+    expect(flattenText(renderer.root.findByProps({ className: 'agent-slides-images' })))
+      .toContain(`${KEY}SLIDES_IMAGES_PAGE_LABEL?page=1&title=封面`)
+
+    act(() => renderer.root.findByProps({
+      'aria-label': `${KEY}SLIDES_IMAGES_DROP_LABEL?page=2&title=业绩`,
+    }).props.onClick())
+    act(() => renderer.root.findByProps({
+      'aria-label': `${KEY}SLIDES_IMAGES_REPLACE_LABEL?page=3&title=计划`,
+    }).props.onClick())
+
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_IMAGES_APPLY?count=2`).props.onClick())
+    expect(onAction).toHaveBeenCalledTimes(1)
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toBe(`${KEY}SLIDES_IMAGES_APPLY_PROMPT?documentId=doc-draft-1&rejects=, rejectPageImages=[2]&regenerates=, regeneratePageImages=[3]&restores=`)
+    expect(display).toBe(`${KEY}SLIDES_IMAGES_APPLY_DISPLAY?count=2`)
+  })
+
+  it('「用这些图生成」= accept，一次回合提交', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({ state: reviewState, toolRunning: false, onAction }))
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_IMAGES_ACCEPT`).props.onClick())
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toBe(`${KEY}SLIDES_IMAGES_ACCEPT_PROMPT?documentId=doc-draft-1`)
+    expect(display).toBe(`${KEY}SLIDES_IMAGES_ACCEPT_DISPLAY`)
+  })
+
+  it('「全部不用，直接生成页面」必须二次确认，danger 文案说明配图会被丢弃', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({ state: reviewState, toolRunning: false, onAction }))
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_IMAGES_ALL_DROP`).props.onClick())
+    expect(renderer.root.findByProps({ className: 'agent-slides-danger-confirm' })).toBeTruthy()
+    expect(flattenText(renderer.root.findByProps({ className: 'agent-slides-danger-confirm' })))
+      .toContain(`${KEY}SLIDES_IMAGES_ALL_DROP_HINT`)
+    expect(onAction).not.toHaveBeenCalled()
+
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_IMAGES_ALL_DROP_CONFIRM`).props.onClick())
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toBe(`${KEY}SLIDES_IMAGES_SKIP_PROMPT?documentId=doc-draft-1`)
+    expect(display).toBe(`${KEY}SLIDES_IMAGES_ALL_DROP_DISPLAY`)
+  })
+})
+
+describe('SlidesProgressCard 风格大图选择器（P1-3）', () => {
+  it('style_images_ready 自动打开大浮层：大图 + 「用这套 / 都不太合适，再换一批 / 关闭」', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({ state: styleState, toolRunning: false, onAction }))
+    const overlay = renderer.root.findByProps({ className: 'agent-slides-style-overlay' })
+    expect(overlay.findByProps({ role: 'dialog' })).toBeTruthy()
+    expect(overlay.findByProps({ className: 'agent-slides-style-overlay-figure' }).findByType('img').props.src)
+      .toBe('everroom-material://s0')
+    // 大图下只给方向短名，不给 hex。
+    expect(flattenText(overlay)).toContain('深色杂志')
+
+    act(() => buttonWithText(overlay, `${KEY}SLIDES_STYLE_USE`).props.onClick())
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toBe(`${KEY}SLIDES_STYLE_PICK_PROMPT?index=1&sessionId=style-9`)
+    expect(display).toBe(`${KEY}SLIDES_STYLE_PICK_DISPLAY?index=1`)
+    // 选完关闭浮层，卡片保留。
+    expect(renderer.root.findAllByProps({ className: 'agent-slides-style-overlay' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ className: 'agent-slides-card' })).toBeTruthy()
+  })
+
+  it('「都换一批」带 regenerate=true 的 hiddenPrompt（含 documentId）', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({ state: styleState, toolRunning: false, onAction }))
+    const overlay = renderer.root.findByProps({ className: 'agent-slides-style-overlay' })
+    act(() => buttonWithText(overlay, `${KEY}SLIDES_STYLE_REGENERATE`).props.onClick())
+    const [prompt, display] = onAction.mock.calls[0] as [string, string]
+    expect(prompt).toBe(`${KEY}SLIDES_STYLE_REGENERATE_PROMPT?documentId=doc-draft-1`)
+    expect(display).toBe(`${KEY}SLIDES_STYLE_REGENERATE_DISPLAY`)
+  })
+
+  it('documentId 缺失时「换一批」退化为纯人话指令', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({
+      state: { ...styleState, documentId: undefined },
+      toolRunning: false,
+      onAction,
+    }))
+    const overlay = renderer.root.findByProps({ className: 'agent-slides-style-overlay' })
+    act(() => buttonWithText(overlay, `${KEY}SLIDES_STYLE_REGENERATE`).props.onClick())
+    expect(onAction.mock.calls[0]![0]).toBe(`${KEY}SLIDES_STYLE_REGENERATE_PROMPT_NO_DOC`)
+  })
+
+  it('style_card_ready：演示页大图优先，hex/pt 收进「配色与字号细节」，effectLines 作「这套风格意味着…」', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'style_card_ready',
+        title: '季度汇报',
+        styleSessionId: 'style-9',
+        styleCard: {
+          swatches: [{ hex: '#1e3a5f', label: '主色' }],
+          typography: [{ label: '正文', value: '14pt' }],
+          wireframes: [{ role: 'cover', label: '封面 P1a', svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>' }],
+          demoImageUrl: 'everroom-material://dd',
+          effectLines: ['主色低调、留白多'],
+        },
+      },
+      toolRunning: false,
+      onAction,
+    }))
     expect(renderer.root.findByProps({ className: 'agent-slides-style-demo' }).props.src).toBe('everroom-material://dd')
-
-    act(() => renderer.root.findByProps({ className: 'agent-slides-style-confirm' }).props.onClick())
-    const message = onGenerate.mock.calls[0]![0] as string
-    expect(message).toContain('slidesStyleConfirmMessage?')
-    expect(message).toContain('sessionId=style-9')
+    expect(flattenText(renderer.root.findByProps({ className: 'agent-slides-style-meaning' })))
+      .toContain(`${KEY}SLIDES_STYLE_MEANING`)
+    // 原始色值不裸露，折叠在细节里。
+    const details = renderer.root.findByProps({ className: 'agent-slides-style-details-toggle' })
+    expect(details.findAllByProps({ className: 'agent-slides-style-swatch' })).toHaveLength(1)
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_STYLE_CONFIRM`).props.onClick())
+    expect(onAction.mock.calls[0]![0]).toBe(`${KEY}SLIDES_STYLE_CONFIRM_PROMPT?sessionId=style-9`)
   })
 
-  it('三层结构：内容区单独滚动，操作按钮固定在底栏、不随内容滚走', () => {
-    const renderer = TestRenderer.create(
-      <SlidesProgressCard
-        state={{
-          stage: 'style_card_ready',
-          title: '季度汇报',
-          styleSessionId: 'style-9',
-          narrative: '一段说明文字',
-          styleCard: {
-            swatches: [{ hex: '#f5f2ec', label: '底色' }],
-            typography: [{ label: '正文', value: '14pt' }],
-            wireframes: [],
-            demoImageUrl: null,
-            effectLines: ['主色 #1E3A5F'],
-          },
-        }}
-        toolRunning={false}
-      />,
-    )
-    const body = renderer.root.findAll((node) => node.props?.className === 'agent-slides-progress-body')
+  it('三层结构：head / body / actions 分层，长页列表在卡片内单独滚动', () => {
+    // 卡片落在 360px 级气泡里：页列表必须自带滚动容器，不能靠卡片被撑高来容纳内容。
+    const renderer = TestRenderer.create(<SlidesProgressCard state={draftState} toolRunning={false} />)
+    expect(renderer.root.findAll((node) => node.props?.className === 'agent-slides-card-head')).toHaveLength(1)
+    const body = renderer.root.findAll((node) => node.props?.className === 'agent-slides-card-body')
     expect(body).toHaveLength(1)
-    // 正文（可滚）里不再混入操作按钮。
-    expect(body[0]!.findAllByType('button')).toHaveLength(0)
-    // 确认按钮在底栏，底栏是卡片里紧随正文的独立一层。
-    const footer = renderer.root.findAll((node) => node.props?.className === 'agent-slides-confirm')
-    expect(footer).toHaveLength(1)
-    expect(footer[0]!.findByProps({ className: 'agent-slides-style-confirm' })).toBeTruthy()
+    // 页列表是卡内独立滚动层（CSS max-height + overflow:auto），多页不会把卡片拉长。
+    expect(body[0]!.findAllByProps({ className: 'agent-slides-progress-pages' })).toHaveLength(1)
+    // 操作区是卡片里紧随正文的独立一层，不在可滚区域内。
+    const actions = renderer.root.findAll((node) => node.props?.className === 'agent-slides-actions')
+    expect(actions).toHaveLength(1)
   })
 })

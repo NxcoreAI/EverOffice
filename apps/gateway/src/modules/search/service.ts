@@ -331,6 +331,11 @@ export class SearchService {
         // 批间让步，避免回填洪峰长时间占用主线程。
         if (processed > 0 && processed % 50 === 0) await new Promise((resolve) => setImmediate(resolve));
       }
+    } catch (error) {
+      // drain 由 void 调用（2s 一跳），漏接即未处理拒绝、直接杀死网关进程
+      // （2026-10-17 排障：线上频繁死亡根因）。坏任务留在队首会卡轮次——
+      // 记日志后照常放行下一轮，由上层 API 路由负责具体报错反馈。
+      console.error("[search] index drain failed:", error);
     } finally {
       this.draining = false;
     }

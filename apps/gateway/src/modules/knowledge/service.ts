@@ -893,6 +893,9 @@ export class KnowledgeService {
    * b. 房间实体链接派生——多对多沉淀下 mention 链接的文件同样落在
    *    本 Room，primary_room_id 只记主房，不看链接会漏。
    * 弱实体期（无已晋升链接）的文件不在任何 Room 名下。
+   * 目录侧额外带版本诚实度字段：versionNo = 该 entry 的 max(versionNo)，
+   * updatedAt = 最新版本的 createdAt；legacy 无版本链 → null / 元数据时间，
+   * 绝不伪造成 v1。
    */
   listRoomFiles(roomId: string): Array<{
     id: string;
@@ -904,6 +907,10 @@ export class KnowledgeService {
     confidence: number | null;
     sourceKind: string;
     uploadedAt: Date;
+    /** 最新版本号；无版本链（legacy uploaded_files）为 null。 */
+    versionNo: number | null;
+    /** 最新版本时间；无版本链回落文件元数据时间。 */
+    updatedAt: Date;
   }> {
     roomId = this.canonicalRoomId(roomId);
     const decisions = this.db.select().from(routeDecisions)
@@ -942,11 +949,27 @@ export class KnowledgeService {
     if (wanted.length === 0) return [];
     // 元信息双轨：统一导入管线（/v1/file-imports）只写 file_entries 目录，
     // uploaded_files 仅为遗留字节通道；先旧表后目录表补齐，两边都缺才算不存在
-    const fileMetaById = new Map<string, { originalName: string; bytes: number; uploadedAt: Date; sourceKind: string }>();
+    type FileMeta = {
+      originalName: string;
+      bytes: number;
+      uploadedAt: Date;
+      updatedAt: Date;
+      versionNo: number | null;
+      sourceKind: string;
+    };
+    const fileMetaById = new Map<string, FileMeta>();
     const sourceIds = wanted.map((decision) => decision.sourceId);
     for (const row of this.db.select().from(uploadedFiles)
       .where(inArray(uploadedFiles.id, sourceIds)).all()) {
-      fileMetaById.set(row.id, { originalName: row.originalName, bytes: row.bytes, uploadedAt: row.createdAt, sourceKind: "legacy-upload" });
+      // legacy 通道只有单条字节记录、无版本链：versionNo 留 null
+      fileMetaById.set(row.id, {
+        originalName: row.originalName,
+        bytes: row.bytes,
+        uploadedAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        versionNo: null,
+        sourceKind: "legacy-upload",
+      });
     }
     const missingIds = sourceIds.filter((id) => !fileMetaById.has(id));
     if (missingIds.length > 0) {
@@ -961,11 +984,27 @@ export class KnowledgeService {
         .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
         .where(and(inArray(fileEntries.id, missingIds), isNull(fileEntries.deletedAt)))
         .all();
+      // 目录侧版本链：取每个 entry 的 max(versionNo) 与那条版本的 createdAt
+      const latestVersionByEntry = new Map<string, { versionNo: number; createdAt: Date }>();
+      for (const row of this.db.select({
+        fileEntryId: fileVersions.fileEntryId,
+        versionNo: fileVersions.versionNo,
+        createdAt: fileVersions.createdAt,
+      }).from(fileVersions)
+        .where(inArray(fileVersions.fileEntryId, missingIds)).all()) {
+        const latest = latestVersionByEntry.get(row.fileEntryId);
+        if (!latest || row.versionNo > latest.versionNo) {
+          latestVersionByEntry.set(row.fileEntryId, { versionNo: row.versionNo, createdAt: row.createdAt });
+        }
+      }
       for (const row of catalogRows) {
+        const latest = latestVersionByEntry.get(row.id);
         fileMetaById.set(row.id, {
           originalName: row.originalName,
           bytes: row.bytes ?? 0,
           uploadedAt: row.createdAt,
+          updatedAt: latest?.createdAt ?? row.createdAt,
+          versionNo: latest?.versionNo ?? null,
           sourceKind: row.sourceKind,
         });
       }
@@ -984,6 +1023,8 @@ export class KnowledgeService {
           confidence: decision.confidence ?? null,
           sourceKind: file.sourceKind,
           uploadedAt: file.uploadedAt,
+          versionNo: file.versionNo,
+          updatedAt: file.updatedAt,
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);

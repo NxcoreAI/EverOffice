@@ -189,7 +189,8 @@ describe('RelationsPane graph selection', () => {
     })
 
     expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-scroll' })).toBeTruthy()
-    expect(renderer!.root.findByProps({ className: 'context-room-graph-inspector-footer' })).toBeTruthy()
+    // 当前 Room 自身不渲染「打开 Room」按钮，页脚随之省略。
+    expect(renderer!.root.findAllByProps({ className: 'context-room-graph-inspector-footer' })).toHaveLength(0)
 
     await act(async () => {
       graphProps.at(-1)!.onSelectRelation('relation-a-b')

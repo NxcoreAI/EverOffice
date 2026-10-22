@@ -20,12 +20,16 @@ import {
   titleBand,
 } from "./leaf-renderers.js";
 import { expandComponent } from "./components/index.js";
+import { DARK_COVER_ROLES, pageMotifElements } from "./components/kit.js";
+import { compileV2Page } from "./v2/compile.js";
 
 export interface LeafPlacement {
   path: string;
   kind: LeafNode["type"];
   frame: Frame;
   variant?: TextVariant;
+  /** v2 的可读标签（type token），仅用于缺陷文案。 */
+  label?: string;
   sizePt?: number;
   /** 文字叶子的估算内容高（px）。 */
   neededHeight?: number;
@@ -35,6 +39,8 @@ export interface LeafPlacement {
   packed?: boolean;
   /** overlay place 定位的子节点（min_size 下限放宽，允许小件）。 */
   overlay?: boolean;
+  /** v2 slot 节点：栅格槽位可能小于 v1 minLeaf，按小件下限检查。 */
+  flexible?: boolean;
 }
 
 export interface CompileDefect {
@@ -91,7 +97,7 @@ function emitPanel(panel: PanelSpec, frame: Frame, state: WalkState): Frame {
         y: Math.round(frame.y),
         w: Math.round(frame.w),
         h: Math.round(frame.h),
-        adj: radiusAdj(frame.w, frame.h),
+        ...(radiusAdj(frame.w, frame.h) !== undefined ? { adj: radiusAdj(frame.w, frame.h)! } : {}),
       });
       state.stats.elements += 1;
       return frame;
@@ -109,7 +115,7 @@ function emitPanel(panel: PanelSpec, frame: Frame, state: WalkState): Frame {
         y: Math.round(frame.y),
         w: Math.round(frame.w),
         h: Math.round(frame.h),
-        adj: radiusAdj(frame.w, frame.h),
+        ...(radiusAdj(frame.w, frame.h) !== undefined ? { adj: radiusAdj(frame.w, frame.h)! } : {}),
       });
       const barInset = Math.min(12, theme.spacing.cornerRadius);
       state.elements.push({
@@ -136,7 +142,7 @@ function emitPanel(panel: PanelSpec, frame: Frame, state: WalkState): Frame {
         y: Math.round(frame.y),
         w: Math.round(frame.w),
         h: Math.round(frame.h),
-        adj: radiusAdj(frame.w, frame.h, theme.spacing.cornerRadius + 10),
+        ...(radiusAdj(frame.w, frame.h, theme.spacing.cornerRadius + 10) !== undefined ? { adj: radiusAdj(frame.w, frame.h, theme.spacing.cornerRadius + 10)! } : {}),
       });
       const insetX = 44;
       const insetY = 34;
@@ -155,7 +161,7 @@ function emitPanel(panel: PanelSpec, frame: Frame, state: WalkState): Frame {
         y: Math.round(card.y),
         w: Math.round(card.w),
         h: Math.round(card.h),
-        adj: radiusAdj(card.w, card.h, theme.spacing.cornerRadius + 2),
+        ...(radiusAdj(card.w, card.h, theme.spacing.cornerRadius + 2) !== undefined ? { adj: radiusAdj(card.w, card.h, theme.spacing.cornerRadius + 2)! } : {}),
         stroke: { color: theme.colors.divider, widthPt: 0.75 },
       });
       state.stats.elements += 2;
@@ -172,7 +178,7 @@ function emitPanel(panel: PanelSpec, frame: Frame, state: WalkState): Frame {
         y: Math.round(frame.y),
         w: Math.round(frame.w),
         h: Math.round(frame.h),
-        adj: radiusAdj(frame.w, frame.h, 4),
+        ...(radiusAdj(frame.w, frame.h, 4) !== undefined ? { adj: radiusAdj(frame.w, frame.h, 4)! } : {}),
       });
       state.stats.elements += 1;
       return frame;
@@ -194,7 +200,7 @@ function emitPanel(panel: PanelSpec, frame: Frame, state: WalkState): Frame {
         y: Math.round(frame.y),
         w: Math.round(frame.w),
         h: Math.round(frame.h),
-        adj: radiusAdj(frame.w, frame.h),
+        ...(radiusAdj(frame.w, frame.h) !== undefined ? { adj: radiusAdj(frame.w, frame.h)! } : {}),
       });
       state.stats.elements += 1;
       return frame;
@@ -534,13 +540,42 @@ export interface CompileOptions {
   pageCount?: number;
 }
 
+/**
+ * 在给定 frame 内编译一棵 v1 子树：复用 v1 的容器/weights/overlay/panel 能力，
+ * 不参与整页标题带与背景。v2 的 group 已改为 v2 原生分区、不再调用本函数，
+ * 保留它只为 v1 树的读兼容与其它调用方。
+ */
+export function compileV1Subtree(
+  tree: LayoutTree,
+  contract: LayoutContract,
+  frame: Frame,
+  dark = false,
+): { elements: SpecElement[]; placements: LeafPlacement[]; defects: CompileDefect[]; stats: { elements: number; leaves: number; depth: number; images: number; paths: number } } {
+  const state: WalkState = {
+    elements: [],
+    placements: [],
+    defects: [],
+    stats: { elements: 0, leaves: 0, depth: 0, images: 0, paths: 0 },
+    sizeOverrides: new Map(),
+    packedPaths: new Set(),
+    overlayPaths: new Set(),
+    dark,
+    contract,
+  };
+  walk(tree, frame, "group", 0, state, false);
+  return { elements: state.elements, placements: state.placements, defects: state.defects, stats: state.stats };
+}
+
 export function compileTree(
   tree: LayoutTree,
   contract: LayoutContract,
   sizeOverrides?: Map<string, number>,
   options: CompileOptions = {},
 ): CompileResult {
-  const dark = tree.dark === true || tree.bg !== undefined;
+  if (tree.version === 2 && tree.v2) return compileV2Page(tree.v2, contract, options);
+  // 风格卡 darkCover：封面/章节/收尾页确定性落深底；agent 显式 dark/bg 优先。
+  const dark = tree.dark === true || tree.bg !== undefined
+    || (contract.theme.design.darkCover && DARK_COVER_ROLES.has(tree.role));
   const state: WalkState = {
     elements: [],
     placements: [],
@@ -600,6 +635,12 @@ export function compileTree(
       });
       state.stats.elements += 1;
     }
+  }
+  // 风格卡母题：压在标题与内容之下，作为全篇视觉签名（只画形状）。
+  const motif = pageMotifElements(contract.theme, { role: tree.role });
+  if (motif.length > 0) {
+    state.elements.push(...motif);
+    state.stats.elements += motif.length;
   }
   if (tree.title) {
     const bandFrame: Frame = {

@@ -102,6 +102,12 @@ export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): 
   )
 }
 
+/** 同一请求的用户可见文案：只留页码与修改意图，元素 id / fileId / 子代理名不出现在社交层。 */
+export function buildAgentAskDisplayMessage(title: string, op: SlidesAgentAskPayload): string {
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  return `把 PPT《${title}》第 ${op.slideIndex + 1} 页选中的内容改一下：${instruction}。`
+}
+
 /** 渲染层注入事件：room 确定后由主进程广播（channel office:agent-ask）。 */
 export type AgentAskForwardEvent = OfficeAgentAskEvent
 
@@ -123,7 +129,11 @@ export function wireSlidesAgentAsk(
     if (!instance.roomId) {
       return { ok: false, error: '该文件未在 Room 中打开，无法转发给 Agent（请在 Room 产物库打开后再试）' }
     }
-    deps.forward({ roomId: instance.roomId, message: buildAgentAskMessage(instance.title, op) })
+    deps.forward({
+      roomId: instance.roomId,
+      message: buildAgentAskMessage(instance.title, op),
+      displayMessage: buildAgentAskDisplayMessage(instance.title, op),
+    })
     return { ok: true }
   })
   agentAskWired = true

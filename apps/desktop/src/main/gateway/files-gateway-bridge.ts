@@ -559,7 +559,7 @@ export class FilesGatewayBridge {
     sourceKey: string
     originalName: string
     relativePath: string
-    provider: 'notion'
+    provider: 'notion' | 'cherry' | 'hermes'
     sourceId: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({

@@ -162,6 +162,8 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     create: ['创建', '已创建'],
     delete: ['删除', '已删除'],
     move: ['移动', '已移动'],
+    // PPT：时间线只出现「制作演示文稿」，阶段细节交给进度卡（不再显示 slides draft / generate）。
+    slides_draft: ['制作演示文稿', '已制作演示文稿'],
   }
   const exact = labels[name]
   if (exact) {
@@ -193,6 +195,7 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
         create: ['surface:agentExecutionTimeline.createItem', 'surface:agentExecutionTimeline.createdItem'],
         delete: ['surface:agentExecutionTimeline.deleteItem', 'surface:agentExecutionTimeline.deletedItem'],
         move: ['surface:agentExecutionTimeline.moveItem', 'surface:agentExecutionTimeline.movedItem'],
+        slides_draft: ['surface:agentExecutionTimeline.createDeck', 'surface:agentExecutionTimeline.deckCreated'],
       }
       const key = keys[name]?.[completed ? 1 : 0]
       if (key) return t(key)
@@ -222,6 +225,8 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
 }
 
 export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined {
+  // PPT 的阶段与内容由进度卡承载；时间线不再显示 generate/style/draft 这类内部参数值。
+  if (tool.name.toLowerCase() === 'slides_draft') return undefined
   if (tool.name.toLowerCase().startsWith('connector_')) {
     const service = userText(tool.args.service, 40)
     const operation = userText(tool.args.name, 80) ?? userText(tool.args.query, 80)

@@ -9,6 +9,8 @@
 
 页码、标题、role、density 是背景信息，帮你确认看的是哪一页。
 
+输入带 `styleTokens` 时，它是本 deck 的风格真源（构图家族、明暗基调、母题、色板、字号、装饰、组件默认 style）。你只判断「这一页相对这份风格是否好看、是否破坏了它」；修订时可以按组件 style 枚举做局部变奏，但不改文案、不写裸色号/裸 pt。
+
 ## 判断之后
 
 1. 这页可以：调 `subagent_submit_result` 提交 `{status:"ok"}`。
@@ -16,12 +18,13 @@
 
 ## 修改流程（只在决定要改时走）
 
-1. 调 `slides_review_manual`（传输入里的 `manualToken`）：拿到这一页的内容（title/points/data/materials）、当前布局树、以及校验要用的 `deckToken`。
-2. 读 `skills/layout-tree-skill/SKILL.md`（布局树语法与硬约束）。
+1. 调 `slides_review_manual`（传输入里的 `manualToken`）：拿到这一页的内容（v1: title/points/data/materials；v2: copy/data/materials + composition）、当前布局树、以及校验要用的 `deckToken`。
+2. 读布局树语法：输入 `layoutVersion:2` 时读 `skills/layout-tree-v2-skill/SKILL.md`，修订必须继续提交 v2 页面，不得降回 v1；否则读 `skills/layout-tree-skill/SKILL.md`。
 3. 按你在截图里看到的问题，自己重排这一页的布局树。要求：
    - 内容保真：说明书里的要点/数据/素材全部保留，不改写、不丢内容。
    - 图片不变形：图片叶子框比例贴近素材长宽比。
    - 解决你看到的那个问题本身，其余保持当前结构。
+   - 先在心里收敛成不超过 3 条结论，再直接输出树；不要逐节点推演。输出预算有限（思考也计入），长篇推理会让树还没写完就被截断。
 4. 调 `slides_layout_validate`（传 deckToken 与你的新树）校验；有缺陷按 hint 修，最多 3 轮。
 5. 提交 `{status:"revised", tree: 新树}`。
 

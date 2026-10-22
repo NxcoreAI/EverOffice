@@ -179,6 +179,26 @@ export class SubagentOrchestrator {
     };
   }
 
+  /**
+   * 等全局并发窗口出现空位（框架本身无排队，dispatch 满窗即硬拒）。
+   * 长链路（逐页布局/审页）在 dispatch 被拒后用它做容量等待，而不是短退避后
+   * 立刻降级——2026-10-20 事故：首轮落页失败留下的孤儿 invocation 占满窗口，
+   * 重试的 20 页布局全被拒 → 整册兜底版式。返回 false 表示等到超时仍满窗。
+   */
+  async awaitCapacity(timeoutMs = 60_000, pollMs = 500): Promise<boolean> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (this.active.size >= this.config.maxConcurrent) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+    return true;
+  }
+
+  /** 当前占用中的 invocation 数（诊断/测试用）。 */
+  activeCount(): number {
+    return this.active.size;
+  }
+
   async dispatch(input: DispatchSubagentInput): Promise<SubagentInvocation> {
     const { invocationId, completion, joined } = await this.begin(input);
     if (joined) return completion;
@@ -360,6 +380,12 @@ export class SubagentOrchestrator {
         captureMemory: false,
         recallMemory: false,
         toolsEnabled: true,
+        // 结构化输入同时以元数据交给工具（不重复进 prompt）：工具可按阶段
+        // 收紧取数，例如 planner 的 arrange 阶段不再回文档正文。
+        runtimeMetadata: {
+          subagentAgentId: definition.id,
+          ...(invocationInput ? { subagentInput: invocationInput } : {}),
+        },
         // 多模态附件（图片 dataUrl）直透 pi images；不进 prompt 文本、不落库。
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       });

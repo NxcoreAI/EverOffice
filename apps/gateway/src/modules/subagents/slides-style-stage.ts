@@ -61,6 +61,8 @@ export interface SlidesStyleStageInput {
   candidateIndex?: number;
   /** true = 用户明确不满意，累积反馈并重新生成；缺省 = 挑图未决时仅重新展示候选。 */
   regenerate?: boolean;
+  /** 参考 deck 的 reference-style/v1；有它时风格方向/定参以参考色板与密度为准。 */
+  referenceStyle?: Record<string, unknown>;
   signal?: AbortSignal;
   onUpdate?: (update: { content: string; details: Record<string, unknown> }) => void;
   /** tools.ts 提供：带并发重试与幂等键的 dispatch 包装。 */
@@ -214,8 +216,12 @@ async function runStyleImages(
     : null;
   let session: SlidesStyleSessionData;
   if (reusable && reusable.stage === "images_ready" && !input.regenerate) {
-    const payload = styleImagesPayload(reusable, input.title?.trim().slice(0, 120));
-    input.onUpdate?.({ content: JSON.stringify(payload), details: payload as unknown as Record<string, unknown> });
+    const payload: Record<string, unknown> = {
+      ...styleImagesPayload(reusable, input.title?.trim().slice(0, 120)),
+      updatedAt: Date.now(),
+      ...(reusable.draftDocumentId ? { documentId: reusable.draftDocumentId } : {}),
+    };
+    input.onUpdate?.({ content: JSON.stringify(payload), details: payload });
     return {
       content: JSON.stringify({
         status: "style_images_ready",
@@ -240,6 +246,16 @@ async function runStyleImages(
   }
   const title = input.title?.trim().slice(0, 120);
 
+  // 阶段一开始就广播（单张风格图可到百秒级）：加载不出来时至少知道在出图。
+  const generatingPayload: Record<string, unknown> = {
+    stage: "style_generating",
+    updatedAt: Date.now(),
+    styleSessionId: session.id,
+    ...(session.draftDocumentId ? { documentId: session.draftDocumentId } : {}),
+    ...(title ? { title } : {}),
+  };
+  input.onUpdate?.({ content: JSON.stringify(generatingPayload), details: generatingPayload });
+
   // 1. styler direction：凝 3 个互不相同的候选提示词（各绑一个构图家族；失败或不足退确定性变体）。
   let candidates: StyleCandidate[];
   const directionInput = {
@@ -254,7 +270,10 @@ async function runStyleImages(
     const invocation = await orchestrator.dispatch({
       agentId: "slides-styler",
       task: "纵览图生图提示词",
-      input: directionInput,
+      input: {
+        ...directionInput,
+        ...(input.referenceStyle ? { referenceStyle: input.referenceStyle } : {}),
+      },
       idempotencyKey: `${input.run.runId}:styler:direction:${session.generation}`,
       source: "primary_agent",
       parentSessionId: input.run.sessionId,
@@ -299,8 +318,12 @@ async function runStyleImages(
   });
   deps.sessions.patch(session.id, { overviewImages, stage: "images_ready" });
   const updated: SlidesStyleSessionData = { ...session, overviewImages, stage: "images_ready" };
-  const payload = styleImagesPayload(updated, title);
-  input.onUpdate?.({ content: JSON.stringify(payload), details: payload as unknown as Record<string, unknown> });
+  const payload: Record<string, unknown> = {
+    ...styleImagesPayload(updated, title),
+    updatedAt: Date.now(),
+    ...(updated.draftDocumentId ? { documentId: updated.draftDocumentId } : {}),
+  };
+  input.onUpdate?.({ content: JSON.stringify(payload), details: payload });
   return {
     content: JSON.stringify({
       status: "style_images_ready",
@@ -332,6 +355,16 @@ async function runStyleSelect(
   if (!Number.isInteger(index) || index < 1 || !candidate) {
     return failed("slides_style_candidate_invalid", `候选序号无效（共 ${String(session.overviewImages.length)} 张，1 起）。`);
   }
+
+  // 阶段一开始就广播：提取 + VLM + 演示页渲染是一段长等待。
+  const extractingPayload: Record<string, unknown> = {
+    stage: "style_extracting",
+    updatedAt: Date.now(),
+    styleSessionId: session.id,
+    ...(session.draftDocumentId ? { documentId: session.draftDocumentId } : {}),
+    ...(input.title?.trim() ? { title: input.title.trim().slice(0, 120) } : {}),
+  };
+  input.onUpdate?.({ content: JSON.stringify(extractingPayload), details: extractingPayload });
 
   // 1. 读回选定的纵览图字节。
   const bytes = await deps.readMaterialBytes(candidate.contentHash);
@@ -386,6 +419,7 @@ async function runStyleSelect(
         decorationReading: extraction.decoration,
         fontOptions: [...STYLE_FONT_OPTIONS],
         ...(outlineRoles ? { outlineRoles } : {}),
+        ...(input.referenceStyle ? { referenceStyle: input.referenceStyle } : {}),
       },
       idempotencyKey: `${input.run.runId}:styler:settle:${candidate.contentHash}`,
     });
@@ -430,8 +464,12 @@ async function runStyleSelect(
     stage: "card_ready",
   });
   const updated: SlidesStyleSessionData = { ...session, selectedImageHash: candidate.contentHash, styleParams: params, demoImageHash, stage: "card_ready" };
-  const payload = styleCardPayload(updated, input.title?.trim().slice(0, 120), { warnings });
-  input.onUpdate?.({ content: JSON.stringify(payload), details: payload as unknown as Record<string, unknown> });
+  const payload: Record<string, unknown> = {
+    ...styleCardPayload(updated, input.title?.trim().slice(0, 120), { warnings }),
+    updatedAt: Date.now(),
+    ...(updated.draftDocumentId ? { documentId: updated.draftDocumentId } : {}),
+  };
+  input.onUpdate?.({ content: JSON.stringify(payload), details: payload });
   return {
     content: JSON.stringify({
       status: "style_card_ready",
