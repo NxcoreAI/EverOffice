@@ -65,7 +65,8 @@ const DATA = {
       ],
       slot: { col: [9, 12], row: [2, 8] },
     },
-    { type: "text", token: "body", text: "2025 年增速 5.5%，居一线城市首位；口径不同，不做倍数换算。", slot: { col: [1, 8], row: [7, 7] } },
+    // 单网格行 = 60px：投影档正文 20pt 一行只放得下约 16 个汉字，超出会溢出（由闸门拦住）。
+    { type: "text", token: "body", text: "增速 5.5%，居一线城市首位", slot: { col: [1, 8], row: [7, 7] } },
     { type: "text", token: "caption", text: "数据来源：深圳市 2025 年统计公报。", tone: "muted", valign: "bottom", slot: { col: [1, 8], row: [8, 8] } },
   ],
 };
@@ -115,7 +116,10 @@ describe("layout tree v2", () => {
     expect(defects).toEqual([]);
     const image = result.spec.elements.find((element) => element.type === "image")!;
     expect(image).toMatchObject({ x: 0, y: 0, w: 1280, h: 720 });
-    const display = result.spec.elements.find((element) => element.type === "text" && element.paragraphs?.[0]?.runs[0]?.sizePt === 56)!;
+    // 字号不再写死：断言封面标题用的是契约里的 display 档（场景决定，风格卡不参与）
+    const display = result.spec.elements.find(
+      (element) => element.type === "text" && element.paragraphs?.[0]?.runs[0]?.sizePt === CONTRACT.theme.typeScale.display,
+    )!;
     expect(display).toBeTruthy();
     expect(result.stats.images).toBe(1);
   });
@@ -124,7 +128,7 @@ describe("layout tree v2", () => {
     const { result, defects } = compile(DATA);
     expect(defects).toEqual([]);
     const hero = result.spec.elements.find((element) => element.type === "text" && element.paragraphs?.[0]?.runs[0]?.text === "2.7")!;
-    expect(hero.type === "text" && hero.paragraphs?.[0]?.runs[0]?.sizePt).toBe(72);
+    expect(hero.type === "text" && hero.paragraphs?.[0]?.runs[0]?.sizePt).toBe(CONTRACT.theme.typeScale.hero);
     const statsValues = result.spec.elements
       .filter((element) => element.type === "text")
       .flatMap((element) => element.type === "text" ? element.paragraphs ?? [] : [])
@@ -145,7 +149,7 @@ describe("layout tree v2", () => {
     expect(serif).toBeTruthy();
   });
 
-  it("compiles a v1 flex group inside a v2 slot", () => {
+  it("compiles a native v2 group inside a v2 slot", () => {
     const tree = normalizeTree({
       version: 2,
       role: "content",
@@ -154,15 +158,13 @@ describe("layout tree v2", () => {
         type: "group",
         slot: { col: [1, 6], row: [2, 6] },
         panel: "tint",
-        tree: {
-          direction: "row",
-          weights: [1, 1],
-          gapScale: 1,
-          children: [
-            { type: "text", variant: "heading", text: "左栏" },
-            { type: "icon", icon: "bolt" },
-          ],
-        },
+        direction: "row",
+        weights: [1, 1],
+        gapScale: 1,
+        children: [
+          { type: "text", token: "h3", text: "左栏" },
+          { type: "icon", name: "bolt" },
+        ],
       }],
     });
     const result = compileTree(tree, CONTRACT);
@@ -311,17 +313,22 @@ describe("layout tree v2", () => {
     expect(() => normalizeTree({ ...COVER, nodes: [{ type: "text", token: "body", text: "x", slot: { col: [1, 2], row: [1, 1] } }].map((node) => ({ ...node, token: "xxl" })) })).toThrow(/V2_INVALID/);
   });
 
-  it("uses a theme typeScale override", () => {
-    const contract = contractFromStyleParams({ ...STYLE, typography: { typeScale: { ...STYLE.typography.typeScale, body: 18 } } });
+  it("风格卡的字号覆盖被忽略：字号只由场景决定", () => {
+    // 同一份风格卡里塞不同字号，编译结果必须一致——否则同一场景下每份 deck 字号各漂各的。
+    const withOverride = contractFromStyleParams({ ...STYLE, typography: { typeScale: { ...STYLE.typography.typeScale, body: 18 } } });
+    const plain = contractFromStyleParams(STYLE);
     const tree = normalizeTree({
       version: 2,
       role: "content",
       composition: "swiss",
       nodes: [{ type: "text", token: "body", text: "正文", slot: { col: [1, 4], row: [1, 2] } }],
     });
-    const result = compileTree(tree, contract);
-    const text = result.spec.elements.find((element) => element.type === "text")!;
-    expect(text.type === "text" && text.paragraphs?.[0]?.runs[0]?.sizePt).toBe(18);
+    const sizeOf = (contract: typeof plain) => {
+      const text = compileTree(tree, contract).spec.elements.find((element) => element.type === "text")!;
+      return text.type === "text" ? text.paragraphs?.[0]?.runs[0]?.sizePt : undefined;
+    };
+    expect(sizeOf(withOverride)).toBe(sizeOf(plain));
+    expect(sizeOf(plain)).not.toBe(18);
   });
 
   it("produces a stable v2 signature for similarity audit", () => {

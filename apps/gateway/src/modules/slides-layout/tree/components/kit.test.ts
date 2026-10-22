@@ -156,11 +156,13 @@ describe("skin typography and images", () => {
     expect(resolveComponentSkin({ numeral: "none" }, t).numeralRun("01", 20, "#000")).toBeUndefined();
   });
 
-  it("heading runs honor headingBold and typeScale honors the card", () => {
+  it("heading runs honor headingBold, and typeScale ignores the card", () => {
     const t = theme({ typography: { headingBold: false, typeScale: { hero: 88 } } });
     const skin = resolveComponentSkin({}, t);
     expect(skin.heading("标题", 20)[0]?.bold).toBeUndefined();
-    expect(skin.token("hero")).toBe(88);
+    // 字号阶梯来自场景：风格卡里的 hero=88 不生效，仍等于主题阶梯。
+    expect(skin.token("hero")).toBe(t.typeScale.hero);
+    expect(skin.token("hero")).not.toBe(88);
     expect(skin.imageFit).toBe("cover");
     const contain = resolveComponentSkin({}, theme({ decoration: { imageFit: "contain" } }));
     expect(contain.imageFit).toBe("contain");

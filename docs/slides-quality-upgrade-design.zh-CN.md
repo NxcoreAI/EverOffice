@@ -701,3 +701,9 @@ for page in layout.pages:
   assert nonBleedInk in [0.08, 0.30]
   assert emphasisAnchor(page) exists
 ```
+
+## 2026-10-21 单一产出路径
+
+- 同一套原子被四份文档抄写已经漂移：reviewer 的 v2 文档只写 27 个组件、缺 `group/connector/icon/path/table` 五节，而 layouter 正在产出这些节点。v2 语法升格为唯一技能，正文只在 `docs/slides-layout-tree-spec.zh-CN.md` 维护，两个 agent 的 `SKILL.md` 由脚本生成。
+- `group.tree` 是「预想栅格不够用，先留一条旧语法通道」：通道存在，模型就会用；用一次就得永远同时维护两套词表。因此删除 `tree`，`group` 只放 v2 原生子节点。
+- 兜底页原由 `fallbackTree` 产出 v1 树，这是 v1 技能存在的真实理由。兜底页改出 v2 页后，v1 只保留历史 deck 的读兼容，不再有写入路径。

@@ -65,10 +65,15 @@ describe("theme design tokens (style card → components)", () => {
     expect(dark.colors.primary).toBe(theme.colors.primary);
   });
 
-  it("derives typeScale from sizes and lets the card override it", () => {
-    const derived = resolveTheme({ typography: { sizes: { kpi: 60 } } });
-    expect(derived.typeScale.hero).toBe(60);
-    const overridden = resolveTheme({ typography: { typeScale: { hero: 88 } } });
-    expect(overridden.typeScale.hero).toBe(88);
+  it("字号只由场景决定：风格卡的 sizes / typeScale 一律忽略", () => {
+    // 同一场景下，风格卡塞什么字号都不该改变产物——否则每份 deck 的字号各漂各的。
+    const plain = resolveTheme({});
+    const withSizes = resolveTheme({ typography: { sizes: { kpi: 60 } } });
+    const withScale = resolveTheme({ typography: { typeScale: { hero: 88 } } });
+    expect(withSizes.typeScale).toEqual(plain.typeScale);
+    expect(withScale.typeScale).toEqual(plain.typeScale);
+    expect(withSizes.sizes).toEqual(plain.sizes);
+    // 场景仍然是唯一切换字号的旋钮。
+    expect(resolveTheme({}, "reading").typeScale.hero).toBeLessThan(plain.typeScale.hero);
   });
 });

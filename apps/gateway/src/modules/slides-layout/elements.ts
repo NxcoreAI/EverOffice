@@ -97,6 +97,10 @@ export interface ChartElement extends SpecBase {
     legendSizePt?: number;
     dataLabelColor?: string;
     dataLabelSizePt?: number;
+    /** 值轴主刻度步长（c:majorUnit）；不传则由引擎按绘图区自动推。 */
+    majorUnit?: number;
+    /** 隐藏值轴刻度标签（数据标签已直接标注时，值轴只剩噪音）。 */
+    hideValueAxis?: boolean;
   };
 }
 

@@ -458,8 +458,15 @@ describe("shrinkToFit", () => {
       ],
     });
     const shrunk = shrinkToFit(t, CONTRACT);
+    // 降档确实发生了（degraded），但字号下限抬高之后，超长文字不再能靠缩字号硬塞进去：
+    // 这是刻意的——过去正是"缩到 9pt 也要塞下"制造了满屏小字。装不下就该报错回给上游精简。
     expect(shrunk.degraded).toBe(true);
-    expect(shrunk.defects.filter((d) => d.type === "overflow")).toEqual([]);
+    const sizes = shrunk.result.spec.elements
+      .flatMap((element) => (element.type === "text" ? element.paragraphs ?? [] : []))
+      .flatMap((paragraph) => paragraph.runs ?? [])
+      .map((run) => run.sizePt ?? 0);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(16);
+    expect(shrunk.defects.some((d) => d.type === "overflow" || d.type === "font_floor")).toBe(true);
   });
 
   it("字号到下限仍装不下时报 font_floor 且不再降", () => {

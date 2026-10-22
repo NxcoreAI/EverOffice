@@ -101,14 +101,17 @@ describe("StyleParams → component elements", () => {
     expect(none.filter((el) => el.h === 1).length).toBe(0);
   });
 
-  it("typography.typeScale → component type roles (stats value = hero)", () => {
+  it("component type roles 取场景阶梯的 hero，风格卡的 typeScale 不参与", () => {
     const out = texts(compile({ ...STATS }));
     const valueRun = out.flatMap((el) => el.paragraphs).flatMap((p) => p.runs).find((run) => run.text === "2.83");
-    // display = clamp(hero × 1.55 × frameScale)；内容区高 540 → frameScale≈0.9375。
+    // value = 场景阶梯 hero × 1.55 × frameScale；内容区高 540 → frameScale≈0.9375。
     const frameScale = 540 / 576;
-    expect(valueRun?.sizePt).toBe(Math.round(64 * 1.55 * frameScale));
+    const contract = contractFromStyleParams(BASE);
+    expect(valueRun?.sizePt).toBe(Math.round(contract.theme.typeScale.hero * 1.55 * frameScale));
+    // 同一份风格卡改 typeScale：产物不变（字号不吃风格卡）。
     const bigger = texts(compile({ ...STATS }, { typography: { ...BASE.typography, typeScale: { hero: 56 } } }));
-    expect(bigger.flatMap((el) => el.paragraphs).flatMap((p) => p.runs).find((run) => run.text === "2.83")?.sizePt).toBe(Math.round(56 * 1.55 * frameScale));
+    expect(bigger.flatMap((el) => el.paragraphs).flatMap((p) => p.runs).find((run) => run.text === "2.83")?.sizePt)
+      .toBe(valueRun?.sizePt);
   });
 
   it("typography.fontHeading/fontBody + numeral variant → numeral font", () => {

@@ -5,6 +5,7 @@
 
 import type { Frame } from "../grid.js";
 import { CANVAS_W, CANVAS_H, CONTENT_TOP, CONTENT_BOTTOM, TITLE_Y, TITLE_MAX_BOTTOM, contentFrame } from "../grid.js";
+import { resolveScene } from "../scene.js";
 import { resolveTheme, type ResolvedTheme, type StyleParamsInput } from "../theme.js";
 
 export type TextVariant = "display" | "heading" | "subtitle" | "body" | "caption";
@@ -24,22 +25,20 @@ export interface LayoutContract {
   imageArTolerance: number;
 }
 
-const FONT_FLOORS: Record<TextVariant, number> = {
-  display: 28,
-  heading: 20,
-  subtitle: 14,
-  body: 12,
-  caption: 9,
-};
-
-export function contractFromStyleParams(styleParams?: StyleParamsInput | null): LayoutContract {
-  const theme = resolveTheme(styleParams);
+/**
+ * 字号下限由场景决定（见 slides-layout/scene.ts）：投影档 body 18 / caption 12，
+ * 研读档 body 14 / caption 10。旧的全局常量（caption 9）已废弃——它让降档兜底
+ * 一路掉到 9pt，是"满屏无意义小字"的直接来源。
+ */
+export function contractFromStyleParams(styleParams?: StyleParamsInput | null, scene?: string | null): LayoutContract {
+  const profile = resolveScene(scene);
+  const theme = resolveTheme(styleParams, scene);
   return {
     theme,
     canvas: { w: CANVAS_W, h: CANVAS_H },
     titleBand: { y: TITLE_Y, maxBottom: TITLE_MAX_BOTTOM },
     contentFrame: contentFrame(theme.spacing.margin),
-    fontFloors: FONT_FLOORS,
+    fontFloors: { ...profile.fontFloors },
     minLeaf: { w: 96, h: 64 },
     caps: { elements: 48, images: 8, paths: 4, children: 12 },
     imageArTolerance: 0.25,

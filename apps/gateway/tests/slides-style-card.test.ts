@@ -106,8 +106,10 @@ describe("checkDemoPage", () => {
   it("flags blank and wrong-background renders", async () => {
     const canvas = createCanvas(1280, 720);
     const context = canvas.getContext("2d");
-    // 纯红底：底色错、满页墨、无文字带、无强调色——四层全翻。
-    context.fillStyle = "#cc2222";
+    // 纯紫底：底色错、满页墨、无文字带、无强调色——四层全翻。
+    // 不用纯红：#cc2222 与缺省强调色（#b87e25）的逐通道均值距离只有 38（容差 40），
+    // 会被判成"强调色出现过"，让这条用例变成对色距公式的隐式断言而不是对四层的断言。
+    context.fillStyle = "#7a1fa2";
     context.fillRect(0, 0, 1280, 720);
     const report = await checkDemoPage(canvas.toBuffer("image/png"), params);
     expect(report.passed).toBe(false);

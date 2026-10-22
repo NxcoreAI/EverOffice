@@ -92,6 +92,8 @@ export interface V2ImageNode {
 export interface V2ShapeNode {
   type: "shape";
   shape?: string;
+  /** 语义色：分隔线/色块取主题色，避免 DSL 里出现裸色号（与 text.tone 同一套词表）。 */
+  tone?: string;
   fill?: string;
   gradient?: { stops: { pos: number; color: string }[]; angle: number };
   stroke?: { color: string; widthPt: number };
@@ -175,14 +177,68 @@ export interface V2PathNode {
   bleed?: V2Bleed;
 }
 
-export interface V2GroupNode {
+export type V2GroupDirection = "row" | "column" | "overlay";
+export type V2GroupPanel = "surface" | "tint" | "dark" | "outline";
+
+/** overlay 子节点在父分区内的矩形（父区域百分比 0~100，与 v1 place 同义）。 */
+export interface V2Place {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** group 的公共字段（页面级 group 与嵌套 group 共用）。 */
+interface V2GroupFields {
   type: "group";
-  /** v1 flex 子树：direction/weights/overlay/panel/children 全部沿用 v1 语法。 */
-  tree: Record<string, unknown>;
-  panel?: "surface" | "tint" | "dark" | "outline";
+  direction: V2GroupDirection;
+  /** 子区域比例（仅 row/column；个数须等于 children 数，缺省均分）。 */
+  weights?: number[];
+  /** 缝隙 = 主题 gutter（row）/ rowGutter（column）× gapScale。 */
+  gapScale?: number;
+  /** 帧内边距（px）：先扣内边距再分区。 */
+  pad?: number;
+  /** 仅 column：子区域划分不变，内容未铺满时整组按 start/center/end 平移。 */
+  justify?: "start" | "center" | "end";
+  /** 底板垫在所有子节点下面。 */
+  panel?: V2GroupPanel;
+  children: V2GroupChild[];
+}
+
+/**
+ * group 节点：v2 原生分区，不再内嵌 v1 flex 树。
+ * 子节点不带 slot/bleed——位置由父 group 的 weights（row/column）或 place（overlay）决定。
+ */
+export interface V2GroupNode extends V2GroupFields {
   slot: V2Slot;
   bleed?: V2Bleed;
 }
+
+/** 嵌套在 group 里的 group：同样不带 slot/bleed。 */
+export type V2ChildGroupNode = V2GroupFields;
+
+/** group 子节点的附加定位字段：row/column 用 weight，overlay 用 place。 */
+interface V2ChildPlacement {
+  weight?: number;
+  place?: V2Place;
+}
+
+export type V2GroupChild =
+  | (Omit<V2TextNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2ImageNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2ShapeNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2StatsNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2ChartNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2TableNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2ComponentNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2IconNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (Omit<V2PathNode, "slot" | "bleed"> & V2ChildPlacement)
+  | (V2ChildGroupNode & V2ChildPlacement);
+
+/** 归一产物：页面级节点补 slot/bleed，group 子节点不补（位置由父分区决定）。 */
+type MaybePlaced<T> = T extends unknown
+  ? Omit<T, "slot" | "bleed"> & { slot?: V2Slot; bleed?: V2Bleed }
+  : never;
 
 export interface V2ConnectorNode {
   type: "connector";
@@ -224,6 +280,10 @@ export interface V2Page {
 
 const DEFAULT_GRID: V2Grid = { cols: 12, rows: 8, gutter: 24, rowGutter: 16, margin: 64 };
 const NODE_TYPES = new Set(["text", "image", "shape", "stats", "chart", "table", "component", "icon", "path", "group", "connector"]);
+const MAX_GROUP_DEPTH = 3;
+const MAX_GROUP_CHILDREN = 12;
+/** 页面节点预算：group 子节点同样计入（与页面级 1~64 同口径）。 */
+const MAX_TOTAL_NODES = 64;
 const SHAPES = new Set(["rect", "roundRect", "ellipse", "line", "lineArrow"]);
 const CHART_KINDS = new Set(["bar", "barStacked", "line", "area", "waterfall", "pie", "doughnut", "scatter", "comboBarLine"]);
 
@@ -287,6 +347,54 @@ function normalizeBleed(value: unknown): V2Bleed | undefined {
   fail("bleed 必须是 boolean/方向/方向数组");
 }
 
+/** 归一上下文：子节点模式（不带 slot/bleed）与 group 嵌套深度。 */
+interface NodeContext {
+  /** true＝group 子节点：不写 slot、不写 bleed。 */
+  child?: boolean;
+  /** group 嵌套深度：页面级 group = 1。 */
+  groupDepth: number;
+}
+
+/**
+ * 位置字段归一：页面级节点写 slot（可选 bleed）；group 子节点的位置由父分区给出，
+ * 写了 slot/bleed 直接报错——否则模型会以为还能像页面节点那样自由摆位。
+ */
+function placementFields(
+  raw: Record<string, unknown>,
+  grid: V2Grid,
+  field: string,
+  ctx: NodeContext,
+): { slot?: V2Slot; bleed?: V2Bleed } {
+  if (ctx.child) {
+    if (raw.slot !== undefined) fail(`${field}.slot 不能写——group 子节点的位置由 direction/weights（overlay 用 place）决定`);
+    if (raw.bleed !== undefined) fail(`${field}.bleed 不能写——group 子节点只能占父分给它的区域，不能外溢到画布`);
+    return {};
+  }
+  return {
+    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
+    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+  };
+}
+
+/** overlay 子节点的百分比定位（与 v1 place 同义：x+w≤100、y+h≤100）。 */
+function normalizePlace(value: unknown, field: string): V2Place | undefined {
+  if (value === undefined) return undefined;
+  const raw = record(value);
+  if (!raw) fail(`${field} 必须是 {x,y,w,h}（父区域的百分比 0~100）`);
+  const [x, y, w, h] = (["x", "y", "w", "h"] as const).map((key) => {
+    const item = raw[key];
+    if (typeof item !== "number" || !Number.isFinite(item) || item < 0 || item > 100) {
+      fail(`${field}.${key} 必须是 0~100 的数字`);
+    }
+    return Math.round(item * 100) / 100;
+  }) as [number, number, number, number];
+  if (w <= 0 || h <= 0) fail(`${field} 的 w/h 必须大于 0`);
+  if (x + w > 100.01 || y + h > 100.01) {
+    fail(`${field} 越界：x+w=${Math.round((x + w) * 100) / 100}、y+h=${Math.round((y + h) * 100) / 100}，均不得超过 100`);
+  }
+  return { x, y, w, h };
+}
+
 function normalizeSlot(value: unknown, grid: V2Grid, field: string): V2Slot {
   const slot = record(value);
   if (!slot) fail(`${field} 缺失`);
@@ -340,8 +448,7 @@ function normalizeParagraph(value: unknown, nodeToken: TypeToken, index: number)
   };
 }
 
-function normalizeText(raw: Record<string, unknown>, grid: V2Grid, index: number): V2TextNode {
-  const field = `nodes[${index}]`;
+function normalizeText(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2TextNode> {
   const token = tokenField(raw.token, `${field}.token`);
   const paragraphs = Array.isArray(raw.paragraphs)
     ? raw.paragraphs.map((item, i) => normalizeParagraph(item, token, i))
@@ -366,13 +473,11 @@ function normalizeText(raw: Record<string, unknown>, grid: V2Grid, index: number
     ...(raw.fit === "shrink" || raw.fit === "ellipsis" ? { fit: raw.fit } : { fit: "none" }),
     ...(raw.maxLines !== undefined ? { maxLines: intField(raw.maxLines, `${field}.maxLines`, 1, 4, 2) } : {}),
     ...(raw.direction === "vertical" ? { direction: "vertical" } : {}),
-    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
-    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeImage(raw: Record<string, unknown>, grid: V2Grid, index: number): V2ImageNode {
-  const field = `nodes[${index}]`;
+function normalizeImage(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2ImageNode> {
   const url = stringField(raw.url, `${field}.url`, 500, true)!;
   if (!/^(https?:\/\/|everroom-material:\/\/)/i.test(url)) fail(`${field}.url 只接受 http(s) 或 everroom-material://`);
   const focusRaw = record(raw.focus);
@@ -399,13 +504,11 @@ function normalizeImage(raw: Record<string, unknown>, grid: V2Grid, index: numbe
       if (color && !/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color)) fail(`${field}.scrim.color 非法`);
       return { scrim: { ...(color ? { color } : {}), opacity } };
     })() : {}),
-    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
-    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeShape(raw: Record<string, unknown>, grid: V2Grid, index: number): V2ShapeNode {
-  const field = `nodes[${index}]`;
+function normalizeShape(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2ShapeNode> {
   const gradientRaw = record(raw.gradient);
   let gradient: V2ShapeNode["gradient"];
   if (gradientRaw) {
@@ -427,11 +530,15 @@ function normalizeShape(raw: Record<string, unknown>, grid: V2Grid, index: numbe
         widthPt: numberField(strokeRaw.widthPt ?? 1, `${field}.stroke.widthPt`, 0.25, 24, 1),
       }
     : undefined;
-  if (!gradient && !stringField(raw.fill, `${field}.fill`, 9) && !stroke) fail(`${field} 需要 fill/gradient/stroke 之一`);
+  const tone = toneField(raw.tone, `${field}.tone`);
+  if (!gradient && !stringField(raw.fill, `${field}.fill`, 9) && !stroke && !tone) {
+    fail(`${field} 需要 fill/gradient/stroke/tone 之一`);
+  }
   const shape = typeof raw.shape === "string" && SHAPES.has(raw.shape) ? raw.shape : "rect";
   return {
     type: "shape",
     shape,
+    ...(tone ? { tone: raw.tone as string } : {}),
     ...(stringField(raw.fill, `${field}.fill`, 9) ? { fill: raw.fill as string } : {}),
     ...(gradient ? { gradient } : {}),
     ...(stroke ? { stroke } : {}),
@@ -444,13 +551,11 @@ function normalizeShape(raw: Record<string, unknown>, grid: V2Grid, index: numbe
       if (color && !/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color)) fail(`${field}.scrim.color 非法`);
       return { scrim: { ...(color ? { color } : {}), opacity } };
     })() : {}),
-    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
-    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeStats(raw: Record<string, unknown>, grid: V2Grid, index: number): V2StatsNode {
-  const field = `nodes[${index}]`;
+function normalizeStats(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2StatsNode> {
   const itemsRaw = Array.isArray(raw.items) ? raw.items : [];
   if (itemsRaw.length < 2 || itemsRaw.length > 4) fail(`${field}.items 需要 2~4 条`);
   const items = itemsRaw.map((item, i) => {
@@ -465,13 +570,11 @@ function normalizeStats(raw: Record<string, unknown>, grid: V2Grid, index: numbe
   return {
     type: "stats",
     items,
-    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
-    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeChart(raw: Record<string, unknown>, grid: V2Grid, index: number): V2ChartNode {
-  const field = `nodes[${index}]`;
+function normalizeChart(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2ChartNode> {
   const kind = stringField(raw.kind, `${field}.kind`, 20, true)!;
   if (!CHART_KINDS.has(kind)) fail(`${field}.kind 非法 ${kind}`);
   const categories = Array.isArray(raw.categories) ? raw.categories.map((item) => String(item).slice(0, 40)) : [];
@@ -501,32 +604,26 @@ function normalizeChart(raw: Record<string, unknown>, grid: V2Grid, index: numbe
     ...(raw.dataLabels === true ? { dataLabels: true } : {}),
     ...(raw.legend === true ? { legend: true } : {}),
     ...(raw.gridlines === true ? { gridlines: true } : {}),
-    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
-    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeIcon(raw: Record<string, unknown>, grid: V2Grid, index: number): V2IconNode {
+function normalizeIcon(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2IconNode> {
   const name = typeof raw.name === "string" ? raw.name.trim().toLowerCase() : "";
   if (!ICON_NAMES.includes(name)) {
-    fail(`nodes[${index}].name 必须是引擎图标集内的名称（如 check-circle、bolt、users、rocket-launch）`);
+    fail(`${field}.name 必须是引擎图标集内的名称（如 check-circle、bolt、users、rocket-launch）`);
   }
-  const slot = normalizeSlot(raw.slot, grid, `nodes[${index}].slot`);
-  const bleed = raw.bleed !== undefined && raw.bleed !== false ? normalizeBleed(raw.bleed) : undefined;
   return {
     type: "icon",
     name,
     ...(typeof raw.tone === "string" ? { tone: raw.tone.slice(0, 24) } : {}),
-    slot,
-    ...(bleed !== undefined ? { bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizePath(raw: Record<string, unknown>, grid: V2Grid, index: number): V2PathNode {
+function normalizePath(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2PathNode> {
   const d = typeof raw.d === "string" ? raw.d.trim() : "";
-  if (d.length < 4 || d.length > 3000) fail(`nodes[${index}].d 长度非法`);
-  const slot = normalizeSlot(raw.slot, grid, `nodes[${index}].slot`);
-  const bleed = raw.bleed !== undefined && raw.bleed !== false ? normalizeBleed(raw.bleed) : undefined;
+  if (d.length < 4 || d.length > 3000) fail(`${field}.d 长度非法`);
   const stroke = record(raw.stroke);
   return {
     type: "path",
@@ -535,21 +632,20 @@ function normalizePath(raw: Record<string, unknown>, grid: V2Grid, index: number
     ...(stroke && typeof stroke.color === "string" && typeof stroke.widthPt === "number"
       ? { stroke: { color: stroke.color.slice(0, 24), widthPt: Math.min(12, Math.max(0.25, stroke.widthPt)) } }
       : {}),
-    slot,
-    ...(bleed !== undefined ? { bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeTable(raw: Record<string, unknown>, grid: V2Grid, index: number): V2TableNode {
+function normalizeTable(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2TableNode> {
   const rowsRaw = Array.isArray(raw.rows) ? raw.rows : null;
-  if (!rowsRaw || rowsRaw.length < 2 || rowsRaw.length > 12) fail(`nodes[${index}].rows 需要 2~12 行`);
+  if (!rowsRaw || rowsRaw.length < 2 || rowsRaw.length > 12) fail(`${field}.rows 需要 2~12 行`);
   let columns = 0;
   const rows = rowsRaw.map((row, rowIndex) => {
-    if (!Array.isArray(row) || row.length < 1 || row.length > 8) fail(`nodes[${index}].rows[${rowIndex}] 需要 1~8 列`);
+    if (!Array.isArray(row) || row.length < 1 || row.length > 8) fail(`${field}.rows[${rowIndex}] 需要 1~8 列`);
     const cells = row.map((cell, cellIndex): V2TableCell => {
       const object = record(cell);
       const text = typeof cell === "string" ? cell : object && typeof object.text === "string" ? object.text : null;
-      if (text === null || text.length === 0) fail(`nodes[${index}].rows[${rowIndex}][${cellIndex}].text 缺失`);
+      if (text === null || text.length === 0) fail(`${field}.rows[${rowIndex}][${cellIndex}].text 缺失`);
       return {
         text: text.slice(0, 120),
         ...(object?.bold === true ? { bold: true } : {}),
@@ -561,11 +657,9 @@ function normalizeTable(raw: Record<string, unknown>, grid: V2Grid, index: numbe
     });
     const span = cells.reduce((sum, cell) => sum + (cell.span ?? 1), 0);
     if (columns === 0) columns = span;
-    if (span !== columns) fail(`nodes[${index}].rows[${rowIndex}] 列数 ${span} 与首行 ${columns} 不一致`);
+    if (span !== columns) fail(`${field}.rows[${rowIndex}] 列数 ${span} 与首行 ${columns} 不一致`);
     return cells;
   });
-  const slot = normalizeSlot(raw.slot, grid, `nodes[${index}].slot`);
-  const bleed = raw.bleed !== undefined && raw.bleed !== false ? normalizeBleed(raw.bleed) : undefined;
   return {
     type: "table",
     ...(raw.header === false ? { header: false } : {}),
@@ -576,31 +670,102 @@ function normalizeTable(raw: Record<string, unknown>, grid: V2Grid, index: numbe
     ...(typeof raw.fontSize === "number" ? { fontSize: Math.min(20, Math.max(8, Math.round(raw.fontSize))) } : {}),
     ...(typeof raw.borderColor === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.borderColor) ? { borderColor: raw.borderColor } : {}),
     ...(raw.zebra === false ? { zebra: false } : {}),
-    slot,
-    ...(bleed !== undefined ? { bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeGroup(raw: Record<string, unknown>, grid: V2Grid, index: number): V2GroupNode {
-  const tree = record(raw.tree);
-  if (!tree) fail(`nodes[${index}].tree 必须是 v1 容器对象`);
-  const slot = normalizeSlot(raw.slot, grid, `nodes[${index}].slot`);
-  const bleed = raw.bleed !== undefined && raw.bleed !== false ? normalizeBleed(raw.bleed) : undefined;
+function normalizeWeights(value: unknown, count: number, field: string): number[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) fail(`${field}.weights 必须是数字数组`);
+  if (value.length !== count) {
+    fail(`${field}.weights 个数 ${value.length} 必须等于 children 数 ${count}（缺省均分）`);
+  }
+  return value.map((item, i) => {
+    if (typeof item !== "number" || !Number.isFinite(item) || item < 0.1 || item > 20) {
+      fail(`${field}.weights[${i}] 必须是 0.1~20 的数字`);
+    }
+    return Math.round(item * 100) / 100;
+  });
+}
+
+/** group 子节点：复用各类型归一函数，再补 weight（row/column）或 place（overlay）。 */
+function normalizeGroupChild(
+  value: unknown,
+  grid: V2Grid,
+  field: string,
+  ctx: NodeContext,
+  direction: V2GroupDirection,
+): V2GroupChild {
+  const raw = record(value);
+  if (!raw) fail(`${field} 必须是对象`);
+  if (raw.type === "connector") fail(`${field} 不允许 connector——group 子节点只放内容区块`);
+  // normalizeNode 已拦掉未知类型；child 模式已拦掉 slot/bleed。
+  const node = normalizeNode(raw, grid, field, ctx) as V2GroupChild;
+  if (direction === "overlay") {
+    if (raw.weight !== undefined) fail(`${field}.weight 只用于 row/column 分组——overlay 用 place 定位`);
+    const place = normalizePlace(raw.place, `${field}.place`);
+    if (!place) fail(`${field}.place 必填——overlay 分组的每个子节点都要用 place 指定百分比区域`);
+    return { ...node, place };
+  }
+  if (raw.place !== undefined) fail(`${field}.place 只用于 overlay 分组的子节点（row/column 用 weight 分比例）`);
+  if (raw.weight === undefined) return node;
+  return { ...node, weight: numberField(raw.weight, `${field}.weight`, 0.1, 20, 1) };
+}
+
+function normalizeGroup(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2GroupNode> {
+  if (raw.tree !== undefined) {
+    fail("group 不再接受 v1 树：把 tree 拆成 children 的 v2 节点，用 weight 表达比例");
+  }
+  const depth = (ctx.groupDepth ?? 0) + 1;
+  if (depth > MAX_GROUP_DEPTH) {
+    fail(`group 最多嵌套 ${MAX_GROUP_DEPTH} 层（${field} 已是第 ${depth} 层）——去掉一层 group，或把子内容提回页面级 slot`);
+  }
+  const direction = raw.direction;
+  if (direction !== "row" && direction !== "column" && direction !== "overlay") {
+    fail(`${field}.direction 必须是 row/column/overlay`);
+  }
+  const childrenRaw = Array.isArray(raw.children) ? raw.children : [];
+  if (childrenRaw.length < 1 || childrenRaw.length > MAX_GROUP_CHILDREN) {
+    fail(`${field}.children 数量 ${childrenRaw.length} 不在 1~${MAX_GROUP_CHILDREN}——合并子内容，或改用页面级 slot 排布`);
+  }
+  if (direction === "overlay") {
+    if (raw.weights !== undefined) fail(`${field}.weights 不支持 overlay 分组——叠层子节点各自用 place 定位`);
+    if (raw.gapScale !== undefined) fail(`${field}.gapScale 不支持 overlay 分组——子节点间距用 place 自行留出`);
+  }
+  let justify: "start" | "center" | "end" | undefined;
+  if (raw.justify !== undefined) {
+    if (raw.justify !== "start" && raw.justify !== "center" && raw.justify !== "end") {
+      fail(`${field}.justify 必须是 start/center/end`);
+    }
+    if (direction !== "column") fail(`${field}.justify 只用于 column 分组（row 用 weights 分比例，overlay 用 place 定位）`);
+    justify = raw.justify;
+  }
+  const children = childrenRaw.map((child, i) =>
+    normalizeGroupChild(child, grid, `${field}/children/${i}`, { child: true, groupDepth: depth }, direction));
+  const weights = direction === "overlay" ? undefined : normalizeWeights(raw.weights, children.length, field);
+  const gapScale = direction === "overlay" || raw.gapScale === undefined
+    ? undefined
+    : numberField(raw.gapScale, `${field}.gapScale`, 0, 4, 1);
+  const pad = raw.pad === undefined ? undefined : intField(raw.pad, `${field}.pad`, 0, 48, 0);
   const panel = raw.panel;
   return {
     type: "group",
-    tree,
+    direction,
+    ...(weights ? { weights } : {}),
+    ...(gapScale !== undefined ? { gapScale } : {}),
+    ...(pad !== undefined ? { pad } : {}),
+    ...(justify ? { justify } : {}),
     ...(panel === "surface" || panel === "tint" || panel === "dark" || panel === "outline" ? { panel } : {}),
-    slot,
-    ...(bleed !== undefined ? { bleed } : {}),
+    children,
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeConnector(raw: Record<string, unknown>, index: number): V2ConnectorNode {
+function normalizeConnector(raw: Record<string, unknown>, field: string): V2ConnectorNode {
   const point = (value: unknown, field: string): { x: number; y: number } => {
     const recordValue = record(value);
     if (!recordValue || typeof recordValue.x !== "number" || typeof recordValue.y !== "number") {
-      fail(`nodes[${index}].${field} 需要 {x,y}`);
+      fail(`${field} 需要 {x,y}`);
     }
     return { x: Math.max(0, Math.min(100, recordValue.x)), y: Math.max(0, Math.min(100, recordValue.y)) };
   };
@@ -614,8 +779,7 @@ function normalizeConnector(raw: Record<string, unknown>, index: number): V2Conn
   };
 }
 
-function normalizeComponentNode(raw: Record<string, unknown>, grid: V2Grid, index: number): V2ComponentNode {
-  const field = `nodes[${index}]`;
+function normalizeComponentNode(raw: Record<string, unknown>, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2ComponentNode> {
   let leaf: ComponentLeaf;
   try {
     leaf = normalizeComponentLeaf(raw, field);
@@ -628,29 +792,28 @@ function normalizeComponentNode(raw: Record<string, unknown>, grid: V2Grid, inde
     name: leaf.name,
     ...(leaf.style ? { style: leaf.style } : {}),
     component: leaf,
-    slot: normalizeSlot(raw.slot, grid, `${field}.slot`),
-    ...(raw.bleed !== undefined ? { bleed: normalizeBleed(raw.bleed) as V2Bleed } : {}),
+    ...placementFields(raw, grid, field, ctx),
   };
 }
 
-function normalizeNode(value: unknown, grid: V2Grid, index: number): V2Node {
+function normalizeNode(value: unknown, grid: V2Grid, field: string, ctx: NodeContext): MaybePlaced<V2Node> {
   const raw = record(value);
-  if (!raw) fail(`nodes[${index}] 必须是对象`);
+  if (!raw) fail(`${field} 必须是对象`);
   const type = raw.type;
-  if (typeof type !== "string" || !NODE_TYPES.has(type)) fail(`nodes[${index}].type 非法 ${String(type)}`);
+  if (typeof type !== "string" || !NODE_TYPES.has(type)) fail(`${field}.type 非法 ${String(type)}`);
   switch (type) {
-    case "text": return normalizeText(raw, grid, index);
-    case "image": return normalizeImage(raw, grid, index);
-    case "shape": return normalizeShape(raw, grid, index);
-    case "stats": return normalizeStats(raw, grid, index);
-    case "chart": return normalizeChart(raw, grid, index);
-    case "table": return normalizeTable(raw, grid, index);
-    case "icon": return normalizeIcon(raw, grid, index);
-    case "path": return normalizePath(raw, grid, index);
-    case "component": return normalizeComponentNode(raw, grid, index);
-    case "group": return normalizeGroup(raw, grid, index);
-    case "connector": return normalizeConnector(raw, index);
-    default: fail(`nodes[${index}].type 非法`);
+    case "text": return normalizeText(raw, grid, field, ctx);
+    case "image": return normalizeImage(raw, grid, field, ctx);
+    case "shape": return normalizeShape(raw, grid, field, ctx);
+    case "stats": return normalizeStats(raw, grid, field, ctx);
+    case "chart": return normalizeChart(raw, grid, field, ctx);
+    case "table": return normalizeTable(raw, grid, field, ctx);
+    case "icon": return normalizeIcon(raw, grid, field, ctx);
+    case "path": return normalizePath(raw, grid, field, ctx);
+    case "component": return normalizeComponentNode(raw, grid, field, ctx);
+    case "group": return normalizeGroup(raw, grid, field, ctx);
+    case "connector": return normalizeConnector(raw, field);
+    default: fail(`${field}.type 非法`);
   }
 }
 
@@ -672,12 +835,32 @@ function hasBleed(node: V2Node): boolean {
   return node.bleed === true || (Array.isArray(node.bleed) && node.bleed.length > 0) || (typeof node.bleed === "string");
 }
 
+/** 展平 group 子节点：composition 硬约束、节点预算都按递归后的全量算。 */
+function flattenNodes(nodes: ReadonlyArray<V2Node | V2GroupChild>): Array<V2Node | V2GroupChild> {
+  const out: Array<V2Node | V2GroupChild> = [];
+  for (const node of nodes) {
+    out.push(node);
+    if (node.type === "group") out.push(...flattenNodes(node.children));
+  }
+  return out;
+}
+
+function countChildNodes(nodes: ReadonlyArray<V2GroupChild>): number {
+  return nodes.reduce((sum, node) => sum + 1 + (node.type === "group" ? countChildNodes(node.children) : 0), 0);
+}
+
+function countNodes(nodes: ReadonlyArray<V2Node>): number {
+  return nodes.reduce((sum, node) => sum + 1 + (node.type === "group" ? countChildNodes(node.children) : 0), 0);
+}
+
 function validateRecipe(page: V2Page): void {
-  const textTokens = page.nodes.filter((node): node is V2TextNode => node.type === "text").map((node) => node.token);
-  const hasImage = page.nodes.some((node) => node.type === "image");
+  const all = flattenNodes(page.nodes);
+  const textTokens = all.flatMap((node) => (node.type === "text" ? [node.token] : []));
+  const hasImage = all.some((node) => node.type === "image");
+  // bleed 只存在于页面级节点（group 子节点不许 bleed），所以这一条只看 page.nodes。
   const hasBleedImage = page.nodes.some((node) => node.type === "image" && hasBleed(node));
-  const hasChart = page.nodes.some((node) => node.type === "chart");
-  const hasHero = textTokens.includes("hero") || page.nodes.some((node) => node.type === "text" && (node.token === "hero"));
+  const hasChart = all.some((node) => node.type === "chart");
+  const hasHero = textTokens.includes("hero");
   const hasHeading = textTokens.includes("h1") || textTokens.includes("h2");
   const hasDisplay = textTokens.includes("display");
   switch (page.composition) {
@@ -724,7 +907,14 @@ export function normalizeV2Page(raw: unknown): V2Page {
   const bounds: V2Grid = { ...DEFAULT_GRID, ...grid };
   const nodesRaw = Array.isArray(page.nodes) ? page.nodes : [];
   if (nodesRaw.length < 1 || nodesRaw.length > 64) fail(`nodes 数量 ${nodesRaw.length} 不在 1~64`);
-  const nodes = nodesRaw.map((node, index) => normalizeNode(node, bounds, index));
+  // 页面级节点一律带 slot（placementFields 在非 child 模式强制），故这里的断言是安全的。
+  const nodes = nodesRaw.map(
+    (node, index) => normalizeNode(node, bounds, `nodes[${index}]`, { groupDepth: 0 }) as V2Node,
+  );
+  const total = countNodes(nodes);
+  if (total > MAX_TOTAL_NODES) {
+    fail(`节点总数 ${total}（含 group 子节点）超过 ${MAX_TOTAL_NODES}——层级过碎，合并兄弟节点`);
+  }
   const footer = normalizeFooter(page.footer);
   const result: V2Page = {
     version: 2,

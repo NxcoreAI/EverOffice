@@ -3,7 +3,12 @@
  * agents/slides-styler/schemas/output.schema.json 为真源）→ 展开器直接可用的
  * 主题对象。styleParams 缺失时用与 layout 技能文档口径一致的缺省主题。
  * 坐标、字号、配色全部在这里定：预设描述符只管结构，不管取值。
+ *
+ * 字号不在这里做设计判断：**场景（scene）决定字号阶梯与硬下限**，风格卡
+ * 的字号字段（typography.sizes / typography.typeScale）一律忽略。见 scene.ts。
  */
+
+import { resolveScene, type SceneId } from "./scene.js";
 
 /** v2 排版口径：字号只从 token 取，不写裸 pt。 */
 export const TYPE_TOKENS = [
@@ -56,12 +61,16 @@ export interface StyleParamsInput {
   typography?: {
     fontHeading?: string;
     fontBody?: string;
+    /**
+     * @deprecated 字号只由场景决定（scene.ts）。字段保留只为兼容旧风格卡产物，
+     * 运行时**完全忽略**；slides-styler 已不再产出该字段。
+     */
     sizes?: Partial<Record<
       "coverTitle" | "sectionTitle" | "pageTitle" | "subtitle" | "body" | "caption" | "kpi" | "table",
       number
     >>;
     headingBold?: boolean;
-    /** v2 字号 token；缺省由 sizes 推导。 */
+    /** @deprecated 同 sizes：忽略。 */
     typeScale?: Partial<Record<TypeToken, number>>;
   };
   spacing?: Partial<{ margin: number; gutter: number; cardPadding: number; cornerRadius: number }>;
@@ -82,6 +91,8 @@ export interface StyleParamsInput {
 }
 
 export interface ResolvedTheme {
+  /** 本 deck 的场景（字号体系来源）。 */
+  scene: SceneId;
   colors: {
     background: string;
     surface: string;
@@ -236,32 +247,17 @@ export function deriveCardSurface(background: string): string {
   return luminance(mixed) - luminance(background) < 0.03 ? DEFAULTS.palette.surface.toLowerCase() : mixed;
 }
 
-const TYPE_SCALE_LIMITS: Record<TypeToken, [number, number]> = {
-  display: [40, 110],
-  hero: [28, 96],
-  h1: [28, 60],
-  h2: [20, 48],
-  h3: [18, 40],
-  lead: [14, 28],
-  body: [12, 24],
-  label: [10, 18],
-  kicker: [9, 16],
-  caption: [9, 16],
-};
-
-/** sizes → v2 字号阶梯：旧风格卡只给了 8 个词，v2 token 由它确定性推导。 */
-function deriveTypeScale(sizes: ResolvedTheme["sizes"]): Record<TypeToken, number> {
+/** v2 字号阶梯 → 旧的 8 个字号词（compile 的 VARIANT_SIZE_KEY 与组件读这一份）。 */
+function sizesFromTypeScale(typeScale: Record<TypeToken, number>): ResolvedTheme["sizes"] {
   return {
-    display: sizes.coverTitle,
-    hero: sizes.kpi,
-    h1: sizes.sectionTitle,
-    h2: sizes.pageTitle,
-    h3: Math.max(22, Math.round(sizes.pageTitle * 0.8)),
-    lead: sizes.subtitle,
-    body: Math.max(16, sizes.body),
-    label: sizes.caption + 2,
-    kicker: sizes.caption + 1,
-    caption: sizes.caption,
+    coverTitle: typeScale.display,
+    sectionTitle: typeScale.h1,
+    pageTitle: typeScale.h2,
+    subtitle: typeScale.lead,
+    body: typeScale.body,
+    caption: typeScale.caption,
+    kpi: typeScale.hero,
+    table: typeScale.body,
   };
 }
 
@@ -305,11 +301,12 @@ export function primaryFontFamily(value: string | undefined): string {
   return first.replace(/^["']|["']$/g, "").trim().slice(0, 80);
 }
 
-export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedTheme {
+export function resolveTheme(styleParams?: StyleParamsInput | null, sceneId?: string | null): ResolvedTheme {
   const palette = styleParams?.palette ?? {};
   const typography = styleParams?.typography ?? {};
   const spacing = styleParams?.spacing ?? {};
   const decoration = { ...DEFAULTS.decoration, ...(styleParams?.decoration ?? {}) };
+  const profile = resolveScene(sceneId);
 
   const background = normalizeHex(palette.background, DEFAULTS.palette.background);
   const primary = normalizeHex(palette.primary, DEFAULTS.palette.primary);
@@ -321,25 +318,9 @@ export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedThe
     .slice(0, 6)
     .map((hex) => normalizeHex(hex, primary));
 
-  const sizes = { ...DEFAULTS.sizes, ...(typography.sizes ?? {}) };
-  sizes.coverTitle = clamp(sizes.coverTitle, 40, 110);
-  sizes.sectionTitle = clamp(sizes.sectionTitle, 28, 60);
-  sizes.pageTitle = clamp(sizes.pageTitle, 20, 40);
-  sizes.subtitle = clamp(sizes.subtitle, 14, 24);
-  sizes.body = clamp(sizes.body, 12, 18);
-  sizes.caption = clamp(sizes.caption, 9, 13);
-  sizes.kpi = clamp(sizes.kpi, 28, 90);
-  sizes.table = clamp(sizes.table, 9, 24);
-
-  const derivedScale = deriveTypeScale(sizes);
-  const typeScaleInput = typography.typeScale ?? {};
-  const typeScale = Object.fromEntries(
-    TYPE_TOKENS.map((token) => {
-      const [min, max] = TYPE_SCALE_LIMITS[token];
-      const value = typeScaleInput[token] ?? derivedScale[token];
-      return [token, clamp(Math.round(value), min, max)];
-    }),
-  ) as Record<TypeToken, number>;
+  // 字号只由场景决定：typography.sizes / typography.typeScale 一律忽略（风格卡不提取字号）。
+  const typeScale: Record<TypeToken, number> = { ...profile.typeScale };
+  const sizes = sizesFromTypeScale(typeScale);
 
   const margin = clamp(Math.round(spacing.margin ?? DEFAULTS.spacing.margin), 32, 96);
   const gutter = clamp(Math.round(spacing.gutter ?? DEFAULTS.spacing.gutter), 8, 40);
@@ -361,6 +342,7 @@ export function resolveTheme(styleParams?: StyleParamsInput | null): ResolvedThe
         : "none";
 
   return {
+    scene: profile.id,
     colors: {
       background,
       surface: normalizeHex(palette.surface, deriveCardSurface(background)),

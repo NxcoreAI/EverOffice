@@ -541,8 +541,9 @@ export interface CompileOptions {
 }
 
 /**
- * v2 group 的 v1 flex 岛：在给定 frame 内编译一棵 v1 子树。
- * 复用 v1 的容器/weights/overlay/panel 能力，不参与整页标题带与背景。
+ * 在给定 frame 内编译一棵 v1 子树：复用 v1 的容器/weights/overlay/panel 能力，
+ * 不参与整页标题带与背景。v2 的 group 已改为 v2 原生分区、不再调用本函数，
+ * 保留它只为 v1 树的读兼容与其它调用方。
  */
 export function compileV1Subtree(
   tree: LayoutTree,
