@@ -1,6 +1,5 @@
 import type {
   AgentStatusSnapshot,
-  AgentWorkspaceRunStatus,
   AgentWorkspaceRunSummary,
   AgentWorkspaceState,
   AgentWorkspaceStatus,
@@ -8,8 +7,6 @@ import type {
 } from "@nxcore/agent-contract";
 import type { SubagentOrchestrator } from "../subagents/orchestrator.js";
 import type { AgentResolver, AgentRuntimeRunActivity } from "./resolver.js";
-
-const TERMINAL_ERRORS = new Set<AgentWorkspaceRunStatus>(["failed", "interrupted", "timed_out"]);
 
 function runtimeRun(run: AgentRuntimeRunActivity | null): AgentWorkspaceRunSummary | null {
   if (!run) return null;
@@ -35,9 +32,14 @@ function invocationRun(invocation: SubagentInvocation | null): AgentWorkspaceRun
   };
 }
 
-function state(activeRunCount: number, lastStatus: AgentWorkspaceRunStatus | null): AgentWorkspaceState {
+/**
+ * 运行一结束就回海：办公室只区分「运行中」和「待命」。
+ * 失败的运行已经落进「最近活动」（lastRun.status 仍是 failed），
+ * 不能再把 Agent 长期挂在 error 上、让鹈鹕一直停在路肩。
+ */
+function state(activeRunCount: number): AgentWorkspaceState {
   if (activeRunCount > 0) return "running";
-  return lastStatus && TERMINAL_ERRORS.has(lastStatus) ? "error" : "idle";
+  return "idle";
 }
 
 function runTimestamp(run: AgentWorkspaceRunSummary | null): string | null {
@@ -67,7 +69,7 @@ export class AgentStatusService {
           name: definition.name,
           description: definition.description,
           kind: definition.kind,
-          state: state(activeInvocations.length, lastRun?.status ?? null),
+          state: state(activeInvocations.length),
           activeRunCount: activeInvocations.length,
           workspace: {
             id: `agent://${definition.id}`,
@@ -88,7 +90,7 @@ export class AgentStatusService {
         name: definition.name,
         description: definition.description,
         kind: definition.kind,
-        state: state(activity.activeRuns.length, lastRun?.status ?? null),
+        state: state(activity.activeRuns.length),
         activeRunCount: activity.activeRuns.length,
         workspace: {
           id: `agent://${definition.id}`,

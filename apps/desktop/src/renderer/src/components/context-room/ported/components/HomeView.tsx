@@ -7,7 +7,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
 import type { ContextRoomRecord } from '../types';
@@ -18,7 +18,8 @@ import { RoomCard } from './RoomCard';
 import { RoomCreationStudio } from './RoomCreationStudio';
 import { RoomLifecycleDialogs } from './RoomDialogs';
 import { isMergeRecommendationCandidate, RoomDuplicateCenter } from './RoomDuplicateCenter';
-import { RoomGraphCanvas } from './RoomGraphCanvas';
+import { GraphFitButton } from './GraphFitButton';
+import { RoomGraphCanvas, type RoomGraphCanvasHandle } from './RoomGraphCanvas';
 import { RoomNodeInspector } from './RoomGraphInspector';
 import { RoomRelationInspector } from './RoomRelationControls';
 import { useRoomRelationGraph } from '../hooks/useRoomRelationGraph';
@@ -37,9 +38,11 @@ function RoomGraph({
   const { error, graph, loading, reload } = useRoomRelationGraph(null);
   const selected = rooms.find((room) => room.id === selectedId);
   const selectedRelation = (graph?.edges ?? []).find((edge) => edge.id === selectedRelationId) ?? null;
+  const graphRef = useRef<RoomGraphCanvasHandle>(null);
 
   // 首页图谱对齐原型：无工具栏（搜索/筛选/关系管理收进 Room 详情的关系面板），
-  // 只保留标题 + 画布 + 点选节点/关系出检查器。
+  // 只保留标题 + 画布 + 点选节点/关系出检查器；另加一颗常驻画布的自适应按钮，
+  // 因为视口能自由缩放平移，缩到最小或拖走后整张图会看不见。
   return (
     <section className="context-room-home-section context-room-home-graph-section">
       <div className="context-room-home-section-title context-room-graph-heading">
@@ -49,6 +52,7 @@ function RoomGraph({
         <div className="context-room-room-graph-canvas">
           {loading && !graph ? <div className="context-room-graph-state">{t('contextRoom:relations.loadingGraph')}</div> : (
             <RoomGraphCanvas
+              ref={graphRef}
               rooms={rooms}
               relations={graph?.edges ?? []}
               selectedId={selectedId}
@@ -58,6 +62,7 @@ function RoomGraph({
               onOpenRoom={onOpen}
             />
           )}
+          {graph ? <GraphFitButton onFit={() => void graphRef.current?.fitView()} /> : null}
           {error ? <div className="context-room-graph-degraded">{t('contextRoom:relations.degradedNoSyntheticEdges')}</div> : null}
         </div>
         {selectedRelation ? (

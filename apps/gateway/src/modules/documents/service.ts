@@ -12,6 +12,9 @@ import type {
   DocumentVersionSnapshot,
   DocumentDiffResult,
   ImportRoomDocumentInput,
+  MoveRoomDocumentInput,
+  MoveRoomDocumentsResult,
+  MovedRoomDocument,
   ResolveDocumentBlockReferencesInput,
   RoomDocument,
   SaveRoomDocumentInput,
@@ -42,6 +45,7 @@ import {
   DocumentLifecycleService,
   DocumentQueryService,
   DocumentRepository,
+  DocumentRoomMoveService,
   YjsHistoryService,
   type AtomicDocumentCreateInput,
   type AtomicDocumentCommitInput,
@@ -236,6 +240,7 @@ export class DocumentService {
   private readonly commitService: DocumentCommitService;
   private readonly queryService: DocumentQueryService;
   private readonly lifecycleService: DocumentLifecycleService;
+  private readonly moveService: DocumentRoomMoveService;
   private readonly yjsHistory: YjsHistoryService;
 
   /**
@@ -253,6 +258,14 @@ export class DocumentService {
    */
   resolveDocWriterDraft: DocWriterDraftResolver | null = null;
 
+  /**
+   * Room 产物移动完成后的知识侧同步钩子（create-server 装配注入）：
+   * 迁移 room_source_memberships / room_entity_mentions / room_entity_facts /
+   * route_decisions 投影，重排搜索索引并触发两房概览再生成。
+   * documents 模块不直接依赖 knowledge。
+   */
+  onDocumentMoved: ((moved: MovedRoomDocument) => void) | null = null;
+
   constructor(
     private readonly db: GatewayDatabase,
     readonly broker: DocumentEventBroker,
@@ -268,6 +281,7 @@ export class DocumentService {
     this.yjsHistory = new YjsHistoryService();
     this.commitService = new DocumentCommitService(db, this.repository, this.contentEngine, {}, this.yjsHistory);
     this.queryService = new DocumentQueryService(db, this.repository, this.contentEngine);
+    this.moveService = new DocumentRoomMoveService(db);
     this.lifecycleService = new DocumentLifecycleService(db, this.repository, {
       trashed: (document) => this.publish(
         document.roomId,
@@ -296,6 +310,48 @@ export class DocumentService {
 
   list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
     return this.queryService.list(roomId, trashed, origin);
+  }
+
+  /**
+   * 单个产物移动到其它 Room：改属归属链接后，向源房广播 document.moved
+   * （清单摘除）与向目标房广播 document.changed（清单新增），再交知识侧
+   * 钩子同步索引与记忆投影。
+   */
+  moveToRoom(documentId: string, input: MoveRoomDocumentInput): Promise<MovedRoomDocument> {
+    return this.queue.enqueue(() => {
+      const moved = this.moveService.move(documentId, input.fromRoomId, input.roomId);
+      this.publishMoved(moved);
+      return moved;
+    });
+  }
+
+  /** 批量移动（同源房多选 → 同一目标房）：逐条发事件，失败整体回滚到调用方提示。 */
+  moveManyToRoom(
+    documentIds: string[],
+    input: MoveRoomDocumentInput,
+  ): Promise<MoveRoomDocumentsResult> {
+    return this.queue.enqueue(() => {
+      const items = this.moveService.moveMany(documentIds, input.fromRoomId, input.roomId);
+      for (const moved of items) this.publishMoved(moved);
+      return { items };
+    });
+  }
+
+  private publishMoved(moved: MovedRoomDocument): void {
+    this.publish(moved.fromRoomId, moved.documentId, null, "document.moved", {
+      documentId: moved.documentId,
+      fromRoomId: moved.fromRoomId,
+      toRoomId: moved.toRoomId,
+      title: moved.title,
+    });
+    this.publish(moved.toRoomId, moved.documentId, null, "document.changed", {
+      document: moved.document,
+    });
+    try {
+      this.onDocumentMoved?.(moved);
+    } catch {
+      // 知识侧同步失败不回滚移动（清单归属已正确），索引在下次重排时自愈。
+    }
   }
 
   get(documentId: string): RoomDocument | null {

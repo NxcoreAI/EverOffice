@@ -14,6 +14,7 @@ import {
   ingestEvents,
   jobs,
   roomDocumentLinks,
+  roomEntityFacts,
   roomEntityMentions,
   roomSourceMemberships,
   roomWikis,
@@ -1081,6 +1082,141 @@ export class KnowledgeService {
     }, this.config.ingestDebounceMs);
     timer.unref();
     this.pendingSchedules.set(document.id, { timer, version: document.version });
+  }
+
+  /**
+   * 产物跨 Room 移动后的知识侧同步（documents 模块 document.moved 钩子）：
+   * 迁移来源成员关系、实体提及与事实投影，改写历史路由决策指向目标房（避免
+   * 启动回填把旧房归属复活），重算 Room 关系图、重排搜索索引并触发两房概览再生。
+   * 只做投影搬运，不复制文档本体。
+   */
+  handleDocumentMoved(input: { documentId: string; fromRoomId: string; toRoomId: string }): void {
+    const { documentId, fromRoomId, toRoomId } = input;
+    if (!documentId || !fromRoomId || !toRoomId || fromRoomId === toRoomId) return;
+    let movedMemberships = 0;
+    try {
+      this.db.transaction((tx) => {
+        const now = new Date();
+        // 1) 来源成员关系：目标已有则折叠版本/权重，否则整行改挂。
+        const sourceMemberships = tx.select().from(roomSourceMemberships).where(and(
+          eq(roomSourceMemberships.roomId, fromRoomId),
+          eq(roomSourceMemberships.sourceKind, "everroom-doc"),
+          eq(roomSourceMemberships.sourceId, documentId),
+        )).all();
+        const targetMembership = tx.select().from(roomSourceMemberships).where(and(
+          eq(roomSourceMemberships.roomId, toRoomId),
+          eq(roomSourceMemberships.sourceKind, "everroom-doc"),
+          eq(roomSourceMemberships.sourceId, documentId),
+        )).get();
+        for (const row of sourceMemberships) {
+          movedMemberships += 1;
+          if (targetMembership) {
+            tx.update(roomSourceMemberships).set({
+              sourceVersion: Math.max(targetMembership.sourceVersion, row.sourceVersion),
+              sourceTitle: row.sourceTitle ?? targetMembership.sourceTitle,
+              effectiveWeight: Math.max(targetMembership.effectiveWeight, row.effectiveWeight),
+              trusted: targetMembership.trusted || row.trusted,
+              entityIndexed: targetMembership.entityIndexed || row.entityIndexed,
+              updatedAt: now,
+            }).where(eq(roomSourceMemberships.id, targetMembership.id)).run();
+            tx.delete(roomSourceMemberships).where(eq(roomSourceMemberships.id, row.id)).run();
+          } else {
+            tx.update(roomSourceMemberships).set({ roomId: toRoomId, updatedAt: now })
+              .where(eq(roomSourceMemberships.id, row.id)).run();
+          }
+        }
+
+        // 2) 实体提及：按 (room, entity, source) 唯一键折叠。
+        for (const mention of tx.select().from(roomEntityMentions).where(and(
+          eq(roomEntityMentions.roomId, fromRoomId),
+          eq(roomEntityMentions.sourceKind, "everroom-doc"),
+          eq(roomEntityMentions.sourceId, documentId),
+        )).all()) {
+          const existing = tx.select().from(roomEntityMentions).where(and(
+            eq(roomEntityMentions.roomId, toRoomId),
+            eq(roomEntityMentions.entityId, mention.entityId),
+            eq(roomEntityMentions.sourceKind, "everroom-doc"),
+            eq(roomEntityMentions.sourceId, documentId),
+          )).get();
+          if (existing) {
+            tx.update(roomEntityMentions).set({
+              sourceVersion: Math.max(existing.sourceVersion, mention.sourceVersion),
+              salience: Math.max(existing.salience, mention.salience),
+              relevanceFactor: Math.max(existing.relevanceFactor, mention.relevanceFactor),
+              trusted: existing.trusted || mention.trusted,
+              evidence: existing.evidence ?? mention.evidence,
+              updatedAt: now,
+            }).where(eq(roomEntityMentions.id, existing.id)).run();
+            tx.delete(roomEntityMentions).where(eq(roomEntityMentions.id, mention.id)).run();
+          } else {
+            tx.update(roomEntityMentions).set({ roomId: toRoomId, updatedAt: now })
+              .where(eq(roomEntityMentions.id, mention.id)).run();
+          }
+        }
+
+        // 3) 事实记忆：按 (room, source, factId) 唯一键折叠。
+        for (const fact of tx.select().from(roomEntityFacts).where(and(
+          eq(roomEntityFacts.roomId, fromRoomId),
+          eq(roomEntityFacts.sourceKind, "everroom-doc"),
+          eq(roomEntityFacts.sourceId, documentId),
+        )).all()) {
+          const existing = tx.select().from(roomEntityFacts).where(and(
+            eq(roomEntityFacts.roomId, toRoomId),
+            eq(roomEntityFacts.sourceKind, "everroom-doc"),
+            eq(roomEntityFacts.sourceId, documentId),
+            eq(roomEntityFacts.factId, fact.factId),
+          )).get();
+          if (existing) {
+            tx.update(roomEntityFacts).set({
+              sourceVersion: Math.max(existing.sourceVersion, fact.sourceVersion),
+              updatedAt: now,
+            }).where(eq(roomEntityFacts.id, existing.id)).run();
+            tx.delete(roomEntityFacts).where(eq(roomEntityFacts.id, fact.id)).run();
+          } else {
+            tx.update(roomEntityFacts).set({ roomId: toRoomId, updatedAt: now })
+              .where(eq(roomEntityFacts.id, fact.id)).run();
+          }
+        }
+
+        // 4) 历史路由决策改指目标房：启动/实体合并后的 rebuildFromFacts 只认
+        //    最新决策，若仍记旧房会把已移动的文档重新投影回旧房（记忆复活）。
+        for (const decision of tx.select().from(routeDecisions).where(and(
+          eq(routeDecisions.sourceKind, "everroom-doc"),
+          eq(routeDecisions.sourceId, documentId),
+        )).all()) {
+          if (decision.status === "reverted") continue;
+          const evidence = decision.evidence && typeof decision.evidence === "object"
+            ? { ...(decision.evidence as Record<string, unknown>) }
+            : {};
+          evidence.rooms = [{ roomId: toRoomId }];
+          evidence.linkOnlyRooms = [];
+          tx.update(routeDecisions).set({
+            primaryRoomId: toRoomId,
+            linkedRoomIds: [],
+            evidence,
+            updatedAt: now,
+          }).where(eq(routeDecisions.id, decision.id)).run();
+        }
+      });
+    } catch (error) {
+      this.logger.warn(
+        { event: "knowledge.document-move.failed", documentId, fromRoomId, toRoomId, error },
+        "document move knowledge sync failed",
+      );
+    }
+
+    try {
+      if (movedMemberships === 0) this.relationRegistry.rebuildFromFacts();
+      else this.relationRegistry.recomputeAll();
+    } catch (error) {
+      this.logger.warn({ event: "knowledge.document-move.relations", documentId, error }, "relation recompute failed");
+    }
+    enqueueSearchIndex(this.db, { itemType: "document", refId: documentId, priority: "high" });
+    this.roomOverviewRefreshTrigger?.([fromRoomId, toRoomId], "document-moved");
+    this.logger.info(
+      { event: "knowledge.document-moved", documentId, fromRoomId, toRoomId, movedMemberships },
+      "document moved between rooms",
+    );
   }
 
   /** 手动"立即沉淀"入口（REST route/manual）：绕过防抖直接入队。 */

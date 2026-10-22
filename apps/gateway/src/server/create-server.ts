@@ -800,6 +800,15 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   contextRoomService.setDuplicateService(roomDuplicateService);
   knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
+  // 产物跨 Room 移动：documents 只改归属链接并广播事件，知识侧投影（成员关系/
+  // 实体提及/事实/路由决策）、搜索索引与两房概览在此跟随同步。
+  documentService.onDocumentMoved = (moved) => {
+    knowledgeService.handleDocumentMoved({
+      documentId: moved.documentId,
+      fromRoomId: moved.fromRoomId,
+      toRoomId: moved.toRoomId,
+    });
+  };
   // 知识涌现（思路板块）：漫步的四源投影，只读不写回基础图谱。
   // 聚焦模式由 RouteMindmapService（写作路线导图）承接。
   const emergenceService = new EmergenceService({
