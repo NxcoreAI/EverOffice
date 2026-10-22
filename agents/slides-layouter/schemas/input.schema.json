@@ -58,7 +58,7 @@
       "maxItems": 8
     },
     "data": {
-      "description": "v1 inline data string, or v2 structured data (chart/stats).",
+      "description": "Structured page data: stats [{value,unit,label}] and optional chart {kind,categories,series}.",
       "anyOf": [
         {
           "type": "string",
@@ -117,7 +117,7 @@
       "enum": [
         2
       ],
-      "description": "2 = design a v2 page (version/composition/slot nodes). Omit for v1 tree."
+      "description": "Always 2: the page you return is a v2 page (version/composition/slot nodes). There is no other layout format."
     },
     "composition": {
       "type": "string",
@@ -130,6 +130,32 @@
         "chapter"
       ],
       "description": "v2 only: composition recipe from storyboard."
+    },
+    "form": {
+      "type": "string",
+      "enum": [
+        "single-fact",
+        "contrast",
+        "sequence",
+        "hierarchy",
+        "breakdown",
+        "image-led",
+        "quotation",
+        "table",
+        "light-page"
+      ],
+      "description": "内容形态：这页靠什么证据成立。它已经决定了 composition，不要另选版式。image-led 表示页面主体是一个画面（图来自素材或生成都一样）。"
+    },
+    "units": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "description": "这页有几个单元（对照的方数、序列的步数、表格行数）。"
+    },
+    "skeleton": {
+      "type": "string",
+      "maxLength": 140,
+      "description": "骨架意图：本页该长什么样（几何指令，不是版式名）。按它安排分区、权重、留白与出血。"
     },
     "emphasis": {
       "type": "string",
@@ -235,6 +261,9 @@
           },
           "takeaway": {
             "type": "string"
+          },
+          "form": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -264,6 +293,10 @@
       "type": "string",
       "maxLength": 300,
       "description": "v2 only: gateway visual-richness gate feedback; add icons/path/table/chart/component or decorative shapes before resubmitting."
+    },
+    "currentTree": {
+      "type": "object",
+      "description": "自审模式：你刚写成的这一页 v2 页面。带它＝本次是回投审阅（附件是该页渲染图），不是重新设计。"
     }
   },
   "required": [

@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: slides-layouter
 name: Slides Layouter
-description: 每页一个的专职布局树设计代理——把单页内容（标题/要点/数据/素材）与 deck 布局契约，设计成递归嵌套的布局树（容器=方向+比例，叶子=文本/图片/卡/路径/图表/表格），经 slides_layout_validate 确定性校验环收敛后提交；只出结构与比例，永不输出像素坐标
+description: 每页一个的专职布局设计代理——把单页内容（copy/data/materials）与 deck 布局契约，设计成一页 v2 布局页面（composition + 12×8 slot + bleed + 37 个组件），经 slides_layout_validate 确定性校验环与 slides_page_preview 视觉闸门收敛后提交；只出结构与比例，永不输出像素坐标
 mode: dispatch_only
 enabled: true
 
@@ -9,7 +9,6 @@ systemPrompt: ./SYSTEM.md
 
 skills:
   - ./skills/layout-tree-skill
-  - ./skills/layout-tree-v2-skill
 
 mcp: []
 
@@ -18,8 +17,12 @@ outputSchema: ./schemas/output.schema.json
 
 policy:
   allowedCallers: [primary-agent]
-  maxConcurrency: 8
-  # 读技能 2~3 次 + validate ≤4 次（3 轮自纠 + 1 次确认）+ 提交 1 次。
-  # 24 覆盖「v1+v2 都读、同一批缺陷多试一轮」的实际用量（实测 17 轮 validate 打穿过 16）。
+  # 必须 ≥ 单册页级窗口（NXCORE_SLIDES_DECK_CONCURRENCY，缺省 16），且 ≤ slides 池容量
+  # （NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT，缺省 16）。两者不匹配时的表现：单页 dispatch 被
+  # subagent_concurrency_limit 秒拒 → 秒级退避耗尽 → 抛错 → 该页落 v2 兜底页并告警。
+  # 旧值 8 是改造前的页级窗口；页级窗口上调到 16 后这里必须同步放开，否则 >8 页的册会掉兜底页。
+  maxConcurrency: 16
+  # 读技能 1 次 + validate ≤4 次（3 轮自纠 + 1 次确认）+ 预览 1~2 次 + 提交 1 次。
+  # 24 保留余量（实测 17 轮 validate 打穿过 16）。
   maxToolCalls: 24
   timeoutSeconds: 480
