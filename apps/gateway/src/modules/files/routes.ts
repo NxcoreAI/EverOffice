@@ -1,10 +1,10 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import multipart from "@fastify/multipart";
 import { Type } from "@sinclair/typebox";
-import { isSupportedUploadFilename, type FileDeletionHooks, type FilesService, type UploadedFileRow } from "./service.js";
+import { isSupportedUploadFilename, type FilesService, type UploadedFileRow } from "./service.js";
 import { MAX_FORMAT_FILE_BYTES } from "./format-registry.js";
 
-/** 上传原件体积上限（与 knowledge file-convert 同源，唯一字节入口统一把关）。 */
+/** 上传原件体积上限：唯一字节入口统一把关。 */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 export type FileStoreErrorCode = "empty_file" | "too_large" | "unsupported_file_type";
@@ -107,10 +107,7 @@ function errorOf(code: string): { error: string } {
  * POST /v1/files 是全系统接收文件字节的唯一通道（multipart 或 JSON base64），
  * 幂等（闸1 同名同内容 deduped）；列表/详情/预览/本体路径/改名/删除级联。
  */
-export function filesRoutes(
-  service: FilesService,
-  deletionHooks?: FileDeletionHooks,
-): FastifyPluginAsyncTypebox {
+export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
   return async (app) => {
     await app.register(multipart, {
       // busboy 触达 fileSize 上限时是"静默截断"而非报错：上限必须高于任何
@@ -550,17 +547,11 @@ export function filesRoutes(
           tags: ["files"],
           querystring: Type.Object({ localSourceId: Type.String({ minLength: 1 }) }),
           response: {
-            200: Type.Object({
-              entries: Type.Integer(),
-              deletedMemoryDocuments: Type.Array(Type.String()),
-            }),
+            200: Type.Object({ entries: Type.Integer() }),
           },
         },
       },
-      async (request) => {
-        const result = await service.purgeLocalSource(request.query.localSourceId, deletionHooks);
-        return { entries: result.entries, deletedMemoryDocuments: result.memoryDeleted };
-      },
+      async (request) => service.purgeLocalSource(request.query.localSourceId),
     );
 
     app.delete(
@@ -572,8 +563,6 @@ export function filesRoutes(
           response: {
             200: Type.Object({
               deleted: Type.Boolean(),
-              knowledgeCleanup: Type.Boolean(),
-              deletedMemoryDocuments: Type.Array(Type.String()),
               blobCollected: Type.Boolean(),
             }),
             404: Type.Object({ error: Type.String() }),
@@ -582,15 +571,10 @@ export function filesRoutes(
       },
       async (request, reply) => {
         const result = service.isCatalogEntry(request.params.id)
-          ? await service.deleteCatalogEntry(request.params.id, deletionHooks)
-          : await service.deleteFile(request.params.id, deletionHooks);
+          ? await service.deleteCatalogEntry(request.params.id)
+          : await service.deleteFile(request.params.id);
         if (!result) return reply.code(404).send(errorOf("file_not_found"));
-        return {
-          deleted: true,
-          knowledgeCleanup: result.knowledgeCleanup,
-          deletedMemoryDocuments: result.deletedMemoryDocuments,
-          blobCollected: result.blobCollected,
-        };
+        return { deleted: true, blobCollected: result.blobCollected };
       },
     );
 

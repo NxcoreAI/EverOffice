@@ -59,15 +59,15 @@ function toolsReference(): string {
 
 - \`everroom_get_status\` — 连接与能力自述（常驻可见）
 - \`everroom_list_rooms\` { } — 授权范围内的 Room（revision/更新时间）[read_metadata]
-- \`everroom_search\` { query, kinds?: room|conversation|document|file|artifact|memory, limit?, offset? } [search]
+- \`everroom_search\` { query, kinds?: room|conversation|document|file|artifact, limit?, offset? } [search]
 - \`everroom_fetch\` { uri, basedOnVersion?, offset?, limit?, variant? } — 精读 everroom:// URI [按目标分能力]
 - \`everroom_read_file\` { fileId, variant?: markdown|content } [read_files]
-- \`everroom_get_rules\` { } — 本次规则（写作风格/偏好底料）[read_rules]
+- \`everroom_get_rules\` { } — 本次规则（连接授权范围）[read_rules]
 - \`everroom_register_file\` { filename, contentBase64, roomId? } [register_files]
 - \`everroom_submit\` { submissionId, items[] } — 幂等回写（session_increment/result_text/artifact_file/citation/candidate）[write_session|write_candidates]
 - \`everroom_submit_status\` { submissionId } — 查询提交结果（常驻可见）
 
-URI 空间：\`everroom://rooms/{id}\`、\`everroom://conversations/{sessionId}\`、\`everroom://documents/{id}\`、\`everroom://files/{id}\`、\`everroom://memory/{id}\`；人类可打开位置为 \`everroom://open/{kind}/{id}\`（桌面端注册后可用）。
+URI 空间：\`everroom://rooms/{id}\`、\`everroom://conversations/{sessionId}\`、\`everroom://documents/{id}\`、\`everroom://files/{id}\`；人类可打开位置为 \`everroom://open/{kind}/{id}\`（桌面端注册后可用）。
 `;
 }
 

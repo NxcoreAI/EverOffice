@@ -20,7 +20,6 @@ import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { normalizeDocumentContent, targetsOverlap } from '../src/modules/documents/content-model.js'
 import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
 import { DocumentOperationService } from '../src/modules/documents/operations/service.js'
-import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 import { DocumentService } from '../src/modules/documents/service.js'
 
 const temporaryDirectories: string[] = []
@@ -470,24 +469,19 @@ describe('document transactions', () => {
     expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(0)
   })
 
-  it('lists available Rooms and refuses to create a draft before the user selects one', async () => {
+  it('lists document Rooms from the run context and refuses to create a draft before the user selects one', async () => {
     const { db, service } = await createHarness()
-    const roomRegistry = new ContextRoomService(db)
-    roomRegistry.saveSnapshot({
-      rooms: [
-        { id: 'room-1', title: '产品规划', kind: '项目', data: { id: 'room-1', title: '产品规划' } },
-        { id: 'room-2', title: '后端进阶', kind: '主题', data: { id: 'room-2', title: '后端进阶' } },
-      ],
-      deletedRooms: [],
-    })
     const operations = new DocumentOperationService(db, service.broker)
-    const host = new DocumentMcpHost(service, roomRegistry, undefined, operations)
+    const host = new DocumentMcpHost(service, undefined, undefined, operations)
     disposables.push(() => host.close())
     const globalContext = {
       agentSessionId: 'session-1',
       runId: 'run-global',
       roomId: null,
-      availableRooms: [{ id: 'forged-room', title: '前端伪造 Room' }],
+      availableRooms: [
+        { id: 'room-1', title: '产品规划', kind: '项目' },
+        { id: 'room-2', title: '后端进阶', kind: '主题' },
+      ],
     }
 
     const listed = await host.callTool('context_room_list', {}, globalContext)
@@ -507,31 +501,12 @@ describe('document transactions', () => {
       selectionRequired: true,
       selectedRoomId: null,
     })
-    const created = await host.callTool('context_room_create', {
+    // Room 创建随 Context Room 模块退役：工具仍在，但网关不再提供 Room 服务，
+    // 明确报不可用而不是伪造创建成功。
+    await expect(host.callTool('context_room_create', {
       title: 'Campus Life',
       description: 'Campus activities and study notes',
-    }, globalContext)
-    const createdRoom = created.structuredContent.room as { id: string; title: string; kind: string }
-    expect(created.structuredContent).toMatchObject({
-      created: true,
-      room: { title: 'Campus Life', kind: '主题' },
-      navigation: {
-        pageId: 'rooms',
-        title: 'Campus Life',
-        action: 'created',
-        objectType: 'room',
-      },
-    })
-    expect(createdRoom.id).toMatch(/^room-/)
-    expect(created.structuredContent.room).not.toHaveProperty('data')
-    expect((await host.callTool('context_room_create', {
-      title: 'campus life',
-      description: 'Campus activities and study notes',
-    }, globalContext)).structuredContent).toMatchObject({
-      created: false,
-      room: { id: createdRoom.id, title: 'Campus Life' },
-      navigation: { action: 'opened', roomId: createdRoom.id },
-    })
+    }, globalContext)).rejects.toThrow('ROOM_SERVICE_UNAVAILABLE')
     // P0-2d：没有绑定 Room 时不再要求先选房，直接落到工作区级文稿。
     const workspaceStarted = await host.callTool('document_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
@@ -1382,7 +1357,6 @@ describe('document transactions', () => {
       'document_write_commit',
       'document_write_abort',
       'document_comment_add',
-      'route_mindmap_finalize',
       'document_delete',
     ])
     expect(result.tools?.find((tool) => tool.name === 'document_write_begin')?.description)
@@ -1428,7 +1402,7 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(15)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(14)
   })
 })
 

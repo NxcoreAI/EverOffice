@@ -7,20 +7,16 @@ import type { DocumentEvent, TiptapJsonContent } from '@nxcore/agent-contract'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   contextRooms,
+  externalDocumentBindings,
   jobs,
   roomDocumentLinks,
-  roomEntityFacts,
-  roomEntityMentions,
   rooms,
-  roomSourceMemberships,
-  routeDecisions,
   documents,
 } from '../src/infrastructure/database/schema.js'
 import Fastify from 'fastify'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { documentRoutes } from '../src/modules/documents/routes.js'
 import { DocumentService } from '../src/modules/documents/service.js'
-import { KnowledgeService, type KnowledgeServiceConfig } from '../src/modules/knowledge/service.js'
 
 const temporaryDirectories: string[] = []
 const disposables: Array<() => void | Promise<void>> = []
@@ -42,27 +38,6 @@ async function createHarness() {
   const service = new DocumentService(db, broker)
   const events: DocumentEvent[] = []
   broker.listen((event) => events.push(event))
-  const knowledge = new KnowledgeService(db, {
-    baseUrl: '',
-    serviceId: 'everroom',
-    teamId: 'everroom',
-    dataDir,
-    roomWikisEnabled: false,
-    ingestDebounceMs: 600_000,
-    routerEnabled: false,
-    entityPromoteScore: 2.4,
-    entityPromoteSources: 3,
-    mergeAutoDice: 0.75,
-    mergeJudgeDice: 0.6,
-    llm: null,
-    embeddingLlm: null,
-    embeddingModel: '',
-  } satisfies KnowledgeServiceConfig, { info: () => undefined, warn: () => undefined, error: () => undefined })
-  service.onDocumentMoved = (moved) => knowledge.handleDocumentMoved({
-    documentId: moved.documentId,
-    fromRoomId: moved.fromRoomId,
-    toRoomId: moved.toRoomId,
-  })
   disposables.push(() => {
     sqlite.close()
   })
@@ -102,7 +77,7 @@ describe('Room 产物移动到其他 Room', () => {
     expect((targetEvent?.payload as { document?: { roomId?: string } }).document?.roomId).toBe('room-2')
   })
 
-  it('同步迁移来源成员关系、实体提及、事实与路由决策', async () => {
+  it('同步迁移导入台账与外部投影绑定，并重排搜索索引', async () => {
     const { db, service } = await createHarness()
     const document = await service.import({
       id: 'doc-move-2',
@@ -111,82 +86,22 @@ describe('Room 产物移动到其他 Room', () => {
       contentJson,
       origin: 'native',
     })
-    db.insert(roomSourceMemberships).values({
-      id: 'membership-1',
+    db.insert(externalDocumentBindings).values({
+      documentId: document.id,
+      sourceKind: 'local-directory',
+      sourceId: 'src-1',
+      resourceId: `res-${document.id}`,
       roomId: 'room-1',
-      sourceKind: 'everroom-doc',
-      sourceId: document.id,
-      sourceVersion: document.version,
-      evidenceGroupKey: 'everroom-doc:doc-move-2',
-      role: 'entry',
-      effectiveWeight: 1,
-      qualityLevel: 'high',
-      trusted: true,
-      entityIndexed: true,
-    }).run()
-    db.insert(roomEntityMentions).values({
-      id: 'mention-1',
-      roomId: 'room-1',
-      entityId: 'entity-customer',
-      sourceKind: 'everroom-doc',
-      sourceId: document.id,
-      sourceVersion: document.version,
-      evidenceGroupKey: 'everroom-doc:doc-move-2',
-      salience: 0.9,
-      relevanceFactor: 1,
-      qualityLevel: 'high',
-      trusted: true,
-    }).run()
-    db.insert(roomEntityFacts).values({
-      id: 'fact-1',
-      roomId: 'room-1',
-      factId: 'fact-customer-renewal',
-      content: '客户计划续约',
-      type: '属性',
-      sourceKind: 'everroom-doc',
-      sourceId: document.id,
-      sourceVersion: document.version,
-      evidenceGroupKey: 'everroom-doc:doc-move-2',
-    }).run()
-    db.insert(routeDecisions).values({
-      id: 'decision-1',
-      sourceKind: 'everroom-doc',
-      sourceId: document.id,
-      sourceVersion: document.version,
-      primaryRoomId: 'room-1',
-      confidence: 1,
-      decidedBy: 'entry',
-      evidence: { rooms: [{ roomId: 'room-1' }] },
-      status: 'auto',
+      relativePath: 'notes/interview.md',
+      sourceHash: 'hash-1',
+      projectedMarkdown: '# 客户访谈纪要',
     }).run()
 
     await service.moveToRoom(document.id, { fromRoomId: 'room-1', roomId: 'room-2' })
 
-    const memberships = db.select().from(roomSourceMemberships)
-      .where(and(
-        eq(roomSourceMemberships.sourceKind, 'everroom-doc'),
-        eq(roomSourceMemberships.sourceId, document.id),
-      )).all()
-    expect(memberships.map((row) => row.roomId)).toEqual(['room-2'])
-
-    const mentions = db.select().from(roomEntityMentions)
-      .where(and(
-        eq(roomEntityMentions.sourceKind, 'everroom-doc'),
-        eq(roomEntityMentions.sourceId, document.id),
-      )).all()
-    expect(mentions.map((row) => row.roomId)).toEqual(['room-2'])
-
-    const facts = db.select().from(roomEntityFacts)
-      .where(and(
-        eq(roomEntityFacts.sourceKind, 'everroom-doc'),
-        eq(roomEntityFacts.sourceId, document.id),
-      )).all()
-    expect(facts.map((row) => row.roomId)).toEqual(['room-2'])
-
-    const decision = db.select().from(routeDecisions).where(eq(routeDecisions.id, 'decision-1')).get()
-    expect(decision?.primaryRoomId).toBe('room-2')
-    expect(decision?.linkedRoomIds ?? []).toEqual([])
-    expect((decision?.evidence as { rooms?: Array<{ roomId: string }> }).rooms).toEqual([{ roomId: 'room-2' }])
+    const binding = db.select().from(externalDocumentBindings)
+      .where(eq(externalDocumentBindings.documentId, document.id)).get()
+    expect(binding?.roomId).toBe('room-2')
 
     // 搜索索引重排入队（worker 从新归属重建 search_index_rooms）。
     const searchJobs = db.select().from(jobs).all()

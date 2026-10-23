@@ -15,7 +15,6 @@ export const BUILTIN_AGENT_IDS = {
   transcriptionSummary: "transcription-summary",
   diary: "diary",
   cursorCompletion: "cursor-completion",
-  knowledge: "knowledge",
   webSearch: "web-search",
   connectorMapper: "connector-mapper",
 } as const;

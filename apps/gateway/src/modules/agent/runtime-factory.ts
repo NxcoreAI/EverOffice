@@ -79,22 +79,22 @@ function withAgentDirectories(
 export function createAgentRuntime(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
-  knowledge?: AgentRuntimeIntegrationOptions,
+  integrations?: AgentRuntimeIntegrationOptions,
 ): AgentRuntime {
-  return createUserFacingRuntime(config, mcpHost, knowledge, BUILTIN_AGENT_IDS.primary, config.pi, true)
+  return createUserFacingRuntime(config, mcpHost, integrations, BUILTIN_AGENT_IDS.primary, config.pi, true)
     ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
 }
 
 /**
  * 用户档 runtime 统一装配（main / main-direct / main-lite 共用）：
- * 同一 primary 人设 bundle、同套工具（文档/连接器/联网搜索/knowledge），
+ * 同一 primary 人设 bundle、同套工具（文档/连接器/联网搜索/外部 MCP），
  * 差异仅在 pi 配置与 lite 委派工具。返回 null＝该 pi 未配置（调用方
  * 决定占位或跳过注册）。
  */
 function createUserFacingRuntime(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
-  knowledge: AgentRuntimeIntegrationOptions | undefined,
+  integrations: AgentRuntimeIntegrationOptions | undefined,
   agentId: string,
   pi: GatewayConfig["pi"],
   liteDelegate: boolean,
@@ -115,7 +115,7 @@ function createUserFacingRuntime(
     systemPrompt: bundle.systemPrompt,
   }, {
     tools: [
-      ...(knowledge?.tools ?? []),
+      ...(integrations?.tools ?? []),
       // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
       // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
@@ -128,23 +128,23 @@ function createUserFacingRuntime(
       // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
       // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
       ...(config.cliConnector?.baseUrl
-        ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls)
+        ? createOpenConnectorPiTools(config.cliConnector, undefined, integrations?.externalCalls)
         : []),
-      ...(config.webSearch && knowledge?.agentResolver
-        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
+      ...(config.webSearch && integrations?.agentResolver
+        ? createWebSearchPiTools(integrations.agentResolver, integrations.externalCalls)
         : []),
       // Smart 档专属：轻量模型可用时才暴露委派工具（primary/lite 档不挂）。
-      ...(liteDelegate && knowledge?.agentResolver && isPiRuntimeConfigured(config.litePi)
-        ? createLiteDelegatePiTools(knowledge.agentResolver)
+      ...(liteDelegate && integrations?.agentResolver && isPiRuntimeConfigured(config.litePi)
+        ? createLiteDelegatePiTools(integrations.agentResolver)
         : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
     onRunFinished: async (input, outcome) => {
       await mcpHost.finishAgentRun(input.sessionId, outcome, input.runId);
     },
-    ...(knowledge?.externalCalls
+    ...(integrations?.externalCalls
       ? {
-          executeMcpCall: (input, tool, invoke) => knowledge.externalCalls!.execute("MCP", tool, {
+          executeMcpCall: (input, tool, invoke) => integrations.externalCalls!.execute("MCP", tool, {
             source: "agent",
             runId: input.runId,
             correlationId: input.sessionId,
@@ -182,7 +182,7 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
 }
 
 
-/** 文稿版本摘要的隔离内部 runtime（无工具、无记忆/knowledge，单次调用）。
+/** 文稿版本摘要的隔离内部 runtime（无工具、单次调用）。
  *  原为写作风格定性层 runtime；风格提炼退役后由版本摘要接手（Phase 2d）。 */
 export function createVersionSummaryRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
@@ -309,31 +309,7 @@ export function createAgentResolver(config: GatewayConfig): AgentResolver {
   const resolver = new AgentResolver();
   // 工厂闭包读「活」config（applyRuntimeConfig 原地 patch 的同一对象），
   // 而不是捕获启动时快照——AgentResolver.reload 重跑工厂时才能拿到
-  // runtime config 热应用后的 knowledge.llm / webSearch。
-  const knowledgeLlm = config.knowledge?.llm;
-  if (knowledgeLlm) {
-    const id = BUILTIN_AGENT_IDS.knowledge;
-    const bundle = builtin(id);
-    const directories = agentDirectories(config, id);
-    resolver.register(definition(config, {
-      id,
-      name: bundle.name,
-      description: bundle.description,
-    }), () => {
-      const llm = config.knowledge?.llm;
-      if (!llm) return new UnconfiguredAgentRuntime(id);
-      return new OpenAiCompletionAgentRuntime({
-      runtimeId: id,
-      ...llm,
-      systemPrompt: bundle.systemPrompt,
-      skillPrompts: bundle.skillPrompts,
-      temperature: 0.1,
-      maxTokens: 4_096,
-      timeoutMs: 60_000,
-      ...directories,
-    });
-    });
-  }
+  // runtime config 热应用后的 webSearch。
   if (config.webSearch) {
     const bundle = builtin(BUILTIN_AGENT_IDS.webSearch);
     const directories = agentDirectories(config, BUILTIN_AGENT_IDS.webSearch);

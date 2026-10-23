@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRun, AgentSession, TrustedMcpSession } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
+import { contextRooms } from "../src/infrastructure/database/schema.js";
 
 const temporaryDirectories: string[] = [];
 if (!process.env.NXCORE_SECRET_STORE_KEY) process.env.NXCORE_SECRET_STORE_KEY = randomBytes(32).toString("base64url");
@@ -102,163 +103,27 @@ describe("gateway server", () => {
     else process.env.NXCORE_SECRET_STORE_KEY = previousKey;
   });
 
-  it("keeps memory routes enabled without a Pi runtime", async () => {
-    const config = await testConfig();
-    config.memory = {
-      baseUrl: "http://127.0.0.1:8420",
-      apiKey: "memory-key",
-      serviceId: "everroom",
-      teamId: "everroom",
-      agentId: "pi-agent",
-      userId: "local-user",
-      recallLimit: 5,
-      charBudget: 2_000,
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      code: 0,
-      message: "ok",
-      data: { items: [], total: 0 },
-    }), { headers: { "content-type": "application/json" } })));
-    const app = await createServer(config);
-
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/memory/atomic?limit=1&offset=0",
-      headers: { authorization: `Bearer ${config.authToken}` },
-    });
-    await app.close();
-
-    expect(config.pi).toBeNull();
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ items: [], total: 0 });
-  });
-
-  it("keeps env-backed memory config when runtime config default only has empty placeholders", async () => {
-    const config = await testConfig();
-    config.memory = {
-      baseUrl: "http://127.0.0.1:8420",
-      apiKey: "memory-key",
-      serviceId: "everroom",
-      teamId: "everroom",
-      agentId: "pi-agent",
-      userId: "local-user",
-      recallLimit: 5,
-      charBudget: 2_000,
-    };
-    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
-      const url = String(input);
-      const data = url.includes("/v2/pipeline/status")
-        ? { l1: {}, l2: {}, l3: {} }
-        : url.includes("/v3/core/read")
-          ? { content: null, version: 0, created_at: "", updated_at: "" }
-          : { total: 0 };
-      return new Response(JSON.stringify({ code: 0, message: "ok", data }), {
-        headers: { "content-type": "application/json" },
-      });
-    }));
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-
-    // 启动时 applyRuntimeConfig 会拿 runtime-config.default.json（全空串占位）
-    // 覆盖 config；空串若被当作有效值，baseUrl 会被清成 ""，fetch 将收到
-    // 相对路径 /v3/atomic/count 并抛 Failed to parse URL（memory_unreachable）。
-    expect(config.memory?.baseUrl).toBe("http://127.0.0.1:8420");
-    let response = await app.inject({
-      method: "GET",
-      url: "/v1/memory/overview",
-      headers,
-    });
-    expect(response.statusCode).toBe(200);
-
-    // 运行时配置里的 memory 段（BYOK 误填云端凭据）不得覆盖 env：
-    // 本地实例的 apiKey 由主进程每次启动随机轮换，外部值必然 401。
-    await app.inject({
-      method: "PUT",
-      url: "/v1/runtime-config/user",
-      headers,
-      payload: {
-        schemaVersion: 1,
-        memory: {
-          enabled: true,
-          baseUrl: "http://127.0.0.1:8420",
-          apiKey: "sk-mem-cloud-delivered-wrong-key",
-        },
-      },
-    });
-    expect(config.memory?.apiKey).toBe("memory-key");
-    response = await app.inject({
-      method: "GET",
-      url: "/v1/memory/overview",
-      headers,
-    });
-    await app.close();
-
-    expect(response.statusCode).toBe(200);
-  });
-
-  it("accepts runtime memory injection without persisting or resetting it", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const memory = {
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      apiKey: "runtime-memory-key",
-      serviceId: "service-from-saas",
-      teamId: "team-from-saas",
-      agentId: "agent-from-saas",
-      userId: "local-user",
-      recallLimit: 7,
-      charBudget: 4_000,
-    };
-
-    const injected = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
-    expect(injected.statusCode).toBe(200);
-    expect(injected.json()).toEqual({ enabled: true });
-    const persisted = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
-    expect(persisted.json<{ config: { memory?: { apiKey?: string } } }>().config.memory?.apiKey).toBe("");
-
-    // Runtime config persistence must not be used as the secret-bearing
-    // transport, and a later config event must leave the injected client live.
-    await app.inject({
-      method: "PUT",
-      url: "/v1/runtime-config/user",
-      headers,
-      payload: { schemaVersion: 1, memory: { serviceId: "service-from-config" } },
-    });
-    const stillEnabled = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
-    expect(stillEnabled.json()).toEqual({ enabled: true });
-
-    const disabled = await app.inject({ method: "DELETE", url: "/v1/memory/config", headers });
-    await app.close();
-    expect(disabled.statusCode).toBe(200);
-    expect(disabled.json()).toEqual({ enabled: false });
-  });
-
-  it("degrades manual file imports to the memory pipeline when the knowledge router is off", async () => {
-    // Packaged desktop injects NXCORE_KNOWLEDGE_* but never
-    // NXCORE_KNOWLEDGE_ROUTER_ENABLED; without the connector-style degrade
-    // every manual import is rejected whole by router_disabled.
+  it("imports a manual file through the files pipeline to ready", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
     const form = new FormData();
     form.append("metadata", JSON.stringify({
       sourceKind: "manual-upload",
-      sourceKey: "manual:router-off:1",
-      originalName: "router-off.md",
+      sourceKey: "manual:files-pipeline:1",
+      originalName: "manual-import.md",
     }));
-    form.append("file", new Blob(["# Router off\n\nmemory-only degrade"], { type: "text/markdown" }), "router-off.md");
+    form.append("file", new Blob(["# Manual import\n\nfiles-pipeline"], { type: "text/markdown" }), "manual-import.md");
     const accepted = await app.inject({ method: "POST", url: "/v1/file-imports", headers, payload: form });
     expect(accepted.statusCode).toBe(202);
 
-    // file.ingest 是异步 job；修复前终态 failed（router_disabled），修复后 ready。
+    // 解析登记是异步 job：轮询 catalog 直到 processingState 离开 processing。
     let entry: { processingState?: string } | undefined;
     for (let attempt = 0; attempt < 200 && (!entry || entry.processingState === "processing"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       const catalog = await app.inject({ url: "/v1/files/catalog", headers });
       entry = catalog.json<{ items: Array<{ originalName: string; processingState: string }> }>()
-        .items.find((item) => item.originalName === "router-off.md");
+        .items.find((item) => item.originalName === "manual-import.md");
     }
     expect(entry?.processingState).toBe("ready");
     await app.close();
@@ -397,126 +262,6 @@ describe("gateway server", () => {
     });
   });
 
-  it("persists and serves the complete Context Room snapshot", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const empty = await app.inject({ method: "GET", url: "/v1/context-rooms", headers });
-    const saved = await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{
-          id: "room-active",
-          title: "活动 Room",
-          kind: "项目",
-          data: { id: "room-active", title: "活动 Room", materials: [] },
-        }],
-        deletedRooms: [{
-          id: "room-deleted",
-          title: "回收站 Room",
-          kind: "主题",
-          data: { id: "room-deleted", title: "回收站 Room", materials: ["资料"] },
-        }],
-      },
-    });
-    const loaded = await app.inject({ method: "GET", url: "/v1/context-rooms", headers });
-    await app.close();
-
-    expect(empty.statusCode).toBe(200);
-    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null, duplicateOpenCount: 0 });
-    expect(saved.statusCode).toBe(200);
-    expect(loaded.json()).toMatchObject({
-      rooms: [{ id: "room-active", title: "活动 Room", kind: "项目" }],
-      deletedRooms: [{ id: "room-deleted", title: "回收站 Room", kind: "主题" }],
-      updatedAt: expect.any(String),
-    });
-  });
-
-  it("requires duplicate review before creation and runs a confirmed irreversible merge", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{ id: "room-existing", title: "校园生活", kind: "主题", data: { id: "room-existing", title: "校园生活" } }],
-        deletedRooms: [],
-      },
-    });
-
-    const review = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms/duplicate-check",
-      headers,
-      payload: { title: "校园生活", description: "校园资料" },
-    });
-    const blocked = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms",
-      headers,
-      payload: { title: "校园生活", description: "校园资料" },
-    });
-    const reviewBody = review.json<{ overrideToken: string; candidates: unknown[] }>();
-    const created = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms",
-      headers,
-      payload: { title: "校园生活", description: "校园资料", duplicateOverrideToken: reviewBody.overrideToken },
-    });
-    const createdRoomId = created.json<{ room: { id: string } }>().room.id;
-    const preview = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms/merge-preview",
-      headers,
-      payload: { sourceAId: createdRoomId, sourceBId: "room-existing" },
-    });
-    const previewHash = preview.json<{ previewHash: string }>().previewHash;
-    const started = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms/merge-operations",
-      headers,
-      payload: {
-        sourceAId: createdRoomId,
-        sourceBId: "room-existing",
-        title: "合并后的校园生活",
-        previewHash,
-        idempotencyKey: "server-merge-test",
-      },
-    });
-    const operationId = started.json<{ id: string }>().id;
-    let operation: { status: string; commitReached: boolean } = { status: "queued", commitReached: false };
-    for (let attempt = 0; attempt < 100 && operation.status !== "completed"; attempt += 1) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
-      operation = (await app.inject({
-        method: "GET",
-        url: `/v1/context-rooms/merge-operations/${operationId}`,
-        headers,
-      })).json<typeof operation>();
-    }
-    const snapshot = (await app.inject({ method: "GET", url: "/v1/context-rooms", headers })).json<{
-      rooms: Array<{ id: string }>;
-    }>();
-    await app.close();
-
-    expect(review.statusCode).toBe(200);
-    expect(reviewBody.candidates).toHaveLength(1);
-    expect(blocked.statusCode).toBe(409);
-    expect(blocked.json()).toMatchObject({ error: "duplicate_review_required" });
-    expect(created.statusCode).toBe(200);
-    expect(preview.statusCode).toBe(200);
-    expect(started.statusCode).toBe(200);
-    expect(operation).toMatchObject({ status: "completed", commitReached: true });
-    // 新建式合并：两个旧 Room 双双退役，快照只剩承载内容的新 Room。
-    const snapshotRoomIds = snapshot.rooms.map((room) => room.id);
-    expect(snapshotRoomIds).toHaveLength(1);
-    expect(snapshotRoomIds).not.toContain(createdRoomId);
-    expect(snapshotRoomIds).not.toContain("room-existing");
-  });
-
   it("supports the complete authenticated document CRUD lifecycle", async () => {
     const config = await testConfig();
     const app = await createServer(config);
@@ -653,15 +398,7 @@ describe("gateway server", () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
-    await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{ id: "room-test", title: "MCP Room", data: {} }],
-        deletedRooms: [],
-      },
-    });
+    app.db.insert(contextRooms).values({ id: "room-test", title: "MCP Room", data: {}, position: 0 }).run();
     const session = (await app.inject({
       method: "POST",
       url: "/v1/agent/sessions",
@@ -675,7 +412,7 @@ describe("gateway server", () => {
       payload: {
         prompt: "列出当前文档",
         idempotencyKey: "mcp-http-run",
-        context: { selectedRoomId: "room-test" },
+        context: { selectedRoomId: "room-test", rooms: [{ id: "room-test", title: "MCP Room" }] },
       },
     })).json<AgentRun>();
     const trusted = (await app.inject({
@@ -732,7 +469,6 @@ describe("gateway server", () => {
       "document_write_commit",
       "document_write_abort",
       "document_comment_add",
-      "route_mindmap_finalize",
       "document_delete",
       "context_room_task_start",
       "context_room_task_read",
@@ -747,15 +483,7 @@ describe("gateway server", () => {
     const app = await createServer(config);
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
     const headers = { authorization: `Bearer ${config.authToken}` };
-    await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{ id: "room-client-test", title: "Client Room", data: {} }],
-        deletedRooms: [],
-      },
-    });
+    app.db.insert(contextRooms).values({ id: "room-client-test", title: "Client Room", data: {}, position: 0 }).run();
     const session = (await app.inject({
       method: "POST",
       url: "/v1/agent/sessions",
@@ -769,7 +497,10 @@ describe("gateway server", () => {
       payload: {
         prompt: "列出当前文档",
         idempotencyKey: "mcp-client-run",
-        context: { selectedRoomId: "room-client-test" },
+        context: {
+          selectedRoomId: "room-client-test",
+          rooms: [{ id: "room-client-test", title: "Client Room" }],
+        },
       },
     })).json<AgentRun>();
     const trusted = (await app.inject({
@@ -801,7 +532,6 @@ describe("gateway server", () => {
         "document_write_commit",
         "document_write_abort",
         "document_comment_add",
-        "route_mindmap_finalize",
         "document_delete",
         "context_room_task_start",
         "context_room_task_read",

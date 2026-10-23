@@ -51,12 +51,6 @@ describe("AgentResolver", () => {
   it("registers model-backed built-ins with isolated config directories", () => {
     const dataDir = join(tmpdir(), "everroom-agent-resolver");
     const config = loadConfig(["--token", "0123456789abcdef", "--data-dir", dataDir], {
-      NXCORE_KNOWLEDGE_ENABLED: "true",
-      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
-      NXCORE_KNOWLEDGE_ROUTER_ENABLED: "true",
-      NXCORE_KNOWLEDGE_LLM_BASE_URL: "https://knowledge.example/v1",
-      NXCORE_KNOWLEDGE_LLM_API_KEY: "knowledge-key",
-      NXCORE_KNOWLEDGE_LLM_MODEL: "knowledge-model",
       NXCORE_AGENT_RUNTIME: "pi",
       NXCORE_AI_PROVIDER: "openai",
       NXCORE_AI_MODEL: "main-model",
@@ -67,10 +61,7 @@ describe("AgentResolver", () => {
     });
     const resolver = createAgentResolver(config);
 
-    expect(resolver.list().map(({ id }) => id).sort()).toEqual([
-      BUILTIN_AGENT_IDS.knowledge,
-      BUILTIN_AGENT_IDS.webSearch,
-    ].sort());
+    expect(resolver.list().map(({ id }) => id).sort()).toEqual([BUILTIN_AGENT_IDS.webSearch]);
     for (const agent of resolver.list()) {
       expect(agent.configDirectory).toBe(join(dataDir, "agent", "runtimes", agent.id, "config"));
     }

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { FilesService, type FileDeletionHooks } from "../src/modules/files/service.js";
+import { FilesService } from "../src/modules/files/service.js";
 import { filesRoutes } from "../src/modules/files/routes.js";
 import { contentHashOf, fileIdOf, storageRelPath } from "../src/modules/files/storage.js";
 
@@ -112,28 +112,15 @@ describe("统一上传（闸1/版本更新）", () => {
 });
 
 describe("删除级联与对象库 GC", () => {
-  it("删除：级联钩子触发、登记行随删、blob 与解析产物回收", async () => {
+  it("删除：登记行随删、blob 与解析产物回收", async () => {
     const test = await serviceForTest();
     const buffer = Buffer.from("# 要删的", "utf8");
     const uploaded = await test.service.upload({ filename: "待删.md", buffer });
     const parsedId = test.service.ensureParsed(uploaded.contentHash, "# 要删的");
     test.service.touchParsed(uploaded.fileId, parsedId);
 
-    const hookCalls: string[] = [];
-    const hooks: FileDeletionHooks = {
-      requestKnowledgeCleanup: (fileId) => hookCalls.push(`knowledge:${fileId}`),
-      deleteMemoryDocuments: async (fileId) => {
-        hookCalls.push(`memory:${fileId}`);
-        return ["doc-1"];
-      },
-    };
-    const result = await test.service.deleteFile(uploaded.fileId, hooks);
-    expect(result).toMatchObject({
-      knowledgeCleanup: true,
-      deletedMemoryDocuments: ["doc-1"],
-      blobCollected: true,
-    });
-    expect(hookCalls).toEqual([`knowledge:${uploaded.fileId}`, `memory:${uploaded.fileId}`]);
+    const result = await test.service.deleteFile(uploaded.fileId);
+    expect(result).toMatchObject({ fileId: uploaded.fileId, blobCollected: true });
     expect(test.service.get(uploaded.fileId)).toBeNull();
     await expect(test.exists(storageRelPath(uploaded.contentHash))).resolves.toBe(false);
     expect(test.sqlite.prepare("SELECT COUNT(*) c FROM parsed_contents").get())
@@ -315,26 +302,19 @@ describe("REST /v1/files", () => {
     test.sqlite.close();
   });
 
-  it("DELETE /v1/files 级联钩子生效（knowledge 入队 + memory 删文档）", async () => {
+  it("DELETE /v1/files 删除登记行并回收对象库 blob", async () => {
     const test = await serviceForTest();
     const uploaded = await test.service.upload({
       filename: "级联.md",
       buffer: Buffer.from("# 级联", "utf8"),
     });
     const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
-    const hookCalls: string[] = [];
-    await app.register(filesRoutes(test.service, {
-      requestKnowledgeCleanup: (fileId) => hookCalls.push(`k:${fileId}`),
-      deleteMemoryDocuments: async (fileId) => {
-        hookCalls.push(`m:${fileId}`);
-        return ["doc-x"];
-      },
-    }));
+    await app.register(filesRoutes(test.service));
     const removed = await app.inject({ method: "DELETE", url: `/v1/files/${uploaded.fileId}` });
     expect(removed.statusCode).toBe(200);
-    expect((removed.json() as { deletedMemoryDocuments: string[] }).deletedMemoryDocuments)
-      .toEqual(["doc-x"]);
-    expect(hookCalls).toEqual([`k:${uploaded.fileId}`, `m:${uploaded.fileId}`]);
+    expect(removed.json()).toEqual({ deleted: true, blobCollected: true });
+    expect(test.service.get(uploaded.fileId)).toBeNull();
+    await expect(test.exists(storageRelPath(uploaded.contentHash))).resolves.toBe(false);
     await app.close();
     test.sqlite.close();
   });
