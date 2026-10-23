@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -278,6 +278,30 @@ describe("agent 过滤闸（ingest 第一级）", () => {
     const reinstated = await service.reinstate(result.eventId);
     expect(reinstated?.filterStatus).toBe("passed");
     expect(submitEnvelope).toHaveBeenCalledTimes(1);
+
+    sqlite.close();
+  });
+
+  it("显式 Room 归属（roomId）：用户明确保存意图，跳过噪声过滤器直通扇出", async () => {
+    // 回归 2026-10-23：视觉理解关闭时导入 Room 的 jpg 只有占位正文，过滤器按
+    // 「空内容」拦下 9/14 张——文件已入库却在 Room 里静默消失。显式 roomId 与
+    // web-clipper 同为明确保存意图，不应交给噪声过滤器裁决。
+    const stub = filterStub({ verdicts: { "产品图": verdict(false, { category: "empty" }) } });
+    const { service, db, sqlite, submitEnvelope } = await harness({ filter: stub.service });
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-room-import-"));
+    temporaryDirectories.push(dataDir);
+    const path = join(dataDir, "产品图.md");
+    await writeFile(path, "# 产品图\n\n> 暂无 AI 描述（视觉模型不可用或调用失败）。", "utf8");
+
+    const result = await service.ingest({ source: { path }, roomId: "room-x" });
+
+    // 不过闸：无 pending/filtered 态，直接扇出并带 entryRoomId 进 Room
+    expect(result.filterStatus).toBeNull();
+    expect(submitEnvelope).toHaveBeenCalledTimes(1);
+    expect(submitEnvelope).toHaveBeenCalledWith(expect.objectContaining({ entryRoomId: "room-x" }));
+    expect((stub.service as unknown as { judgeBatch: ReturnType<typeof vi.fn> }).judgeBatch).not.toHaveBeenCalled();
+    const row = db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+    expect(row?.filterStatus).toBeNull();
 
     sqlite.close();
   });
