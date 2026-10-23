@@ -10,7 +10,7 @@ import type {
 /**
  * 文档 AI 审阅（评论建议）：一键按钮触发的罐头审阅 run。
  * 与补全 agent 的关键差异：不传 toolsEnabled（默认 true），agent 需要
- * context_room_document_read + context_room_document_comment_add 工具链；
+ * document_read + document_comment_add 工具链；
  * 完成检测轮询 getEvents（不用 agent.subscribe——它会顶掉聊天页的单会话订阅）。
  */
 

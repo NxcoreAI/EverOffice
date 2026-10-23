@@ -48,18 +48,18 @@ describe("office 工具：PPT / Excel 扩展", () => {
   it("插件暴露六个工具：word / slides 骨架 + 逐页填充 / sheets 生成 + slides 读 / 编辑", () => {
     const { tools } = createHarness();
     expect([...tools.keys()].sort()).toEqual([
-      "context_room_office_create",
-      "context_room_sheets_create",
-      "context_room_slides_create",
-      "context_room_slides_edit",
-      "context_room_slides_read",
-      "context_room_slides_set_page",
+      "office_create",
+      "sheets_create",
+      "slides_create",
+      "slides_edit",
+      "slides_read",
+      "slides_set_page",
     ]);
   });
 
   it("slides create：只落 1 页首页骨架（含演示标题与首页标题）、outline 原样回传作页序蓝图、format=pptx、幂等键前缀 agent-slides、nextAction=fill_pages", async () => {
     const { tools, generate } = createHarness();
-    const result = await tools.get("context_room_slides_create")!.execute(
+    const result = await tools.get("slides_create")!.execute(
       { title: "季度汇报", outline: ["封面", "营收", "展望"] },
       context,
     );
@@ -80,12 +80,12 @@ describe("office 工具：PPT / Excel 扩展", () => {
       outline: ["封面", "营收", "展望"],
       nextAction: "fill_pages",
     });
-    expect(result.structuredContent.hint).toContain("context_room_slides_set_page");
+    expect(result.structuredContent.hint).toContain("slides_set_page");
   });
 
   it("slides create：outline 非数组 / 空数组 / 非字符串项 → INVALID_REQUEST；fileName 扩展名校验", async () => {
     const { tools } = createHarness();
-    const slides = tools.get("context_room_slides_create")!;
+    const slides = tools.get("slides_create")!;
     await expect(slides.execute({ title: "t", outline: [] }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(slides.execute({ title: "t", outline: "nope" }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(slides.execute({ title: "t", outline: ["封面", 42] }, context)).rejects.toThrow("第 2 页");
@@ -95,7 +95,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
   it("slides set_page：spec 对象 stringify 下发、slideIndex 透传、成功 → nextAction=fill_next_page", async () => {
     const { tools, fillPage } = createHarness();
     const spec = { background: "#FFFFFF", elements: [{ type: "text", x: 80, y: 80, w: 400, h: 80, paragraphs: [{ runs: [{ text: "标题", sizePt: 44, bold: true }] }] }] };
-    const result = await tools.get("context_room_slides_set_page")!.execute(
+    const result = await tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 2, spec },
       context,
     );
@@ -112,7 +112,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
 
   it("slides set_page：非法入参 → INVALID_REQUEST（slideIndex / spec）", async () => {
     const { tools, fillPage } = createHarness();
-    const setPage = tools.get("context_room_slides_set_page")!;
+    const setPage = tools.get("slides_set_page")!;
     await expect(setPage.execute({ fileId: "fe-1", slideIndex: -1, spec: { elements: [] } }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(setPage.execute({ fileId: "fe-1", slideIndex: 1.5, spec: { elements: [] } }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(setPage.execute({ fileId: "fe-1", slideIndex: 0 }, context)).rejects.toThrow("INVALID_REQUEST");
@@ -128,7 +128,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
       failures: [{ index: 0, error: "page 3: the elements array is missing or empty" }],
       saved: true,
     });
-    const failed = await tools.get("context_room_slides_set_page")!.execute(
+    const failed = await tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 2, spec: { elements: [] } },
       context,
     );
@@ -138,7 +138,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
       nextAction: "fix_spec_and_retry",
     });
     fillPage.mockResolvedValueOnce({ ok: true, applied: true, warnings: [{ page: 3, messages: ["图片 URL 拉取失败"] }] });
-    const warned = await tools.get("context_room_slides_set_page")!.execute(
+    const warned = await tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 2, spec: { elements: [{ type: "text", paragraphs: [{ runs: [{ text: "x" }] }] }] } },
       context,
     );
@@ -148,7 +148,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
     });
     fillPage.mockResolvedValueOnce({ ok: false, error: "PPT 未在 Room 中打开" });
     await expect(
-      tools.get("context_room_slides_set_page")!.execute(
+      tools.get("slides_set_page")!.execute(
         { fileId: "fe-1", slideIndex: 0, spec: { elements: [{ type: "text", paragraphs: [{ runs: [{ text: "x" }] }] }] } },
         context,
       ),
@@ -157,7 +157,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
 
   it("sheets：rows 二维数组透传（数字/布尔保留）、format=xlsx、幂等键前缀 agent-sheets", async () => {
     const { tools, generate } = createHarness();
-    await tools.get("context_room_sheets_create")!.execute(
+    await tools.get("sheets_create")!.execute(
       {
         title: "预算",
         sheets: [{ name: "Q3", rows: [["项目", "金额"], ["咖啡", 12.5], ["启用", true]] }],
@@ -172,7 +172,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
 
   it("sheets：缺 rows / 行非数组 / 空 rows → INVALID_REQUEST；fileName 扩展名校验", async () => {
     const { tools } = createHarness();
-    const sheets = tools.get("context_room_sheets_create")!;
+    const sheets = tools.get("sheets_create")!;
     await expect(sheets.execute({ title: "t", sheets: [] }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(sheets.execute({ title: "t", sheets: [{ name: "x" }] }, context)).rejects.toThrow("rows");
     await expect(sheets.execute({ title: "t", sheets: [{ rows: ["nope"] }] }, context)).rejects.toThrow("不是数组");
@@ -181,7 +181,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
 
   it("word：原行为不变（缺省 docx + html 必填 + 幂等键前缀 agent-word）", async () => {
     const { tools, generate } = createHarness();
-    await tools.get("context_room_office_create")!.execute({ title: "报告", html: "<p>正文</p>" }, context);
+    await tools.get("office_create")!.execute({ title: "报告", html: "<p>正文</p>" }, context);
     const input = generate.mock.calls[0]![0];
     expect(input.format).toBeUndefined();
     expect(input.html).toBe("<p>正文</p>");
@@ -192,12 +192,12 @@ describe("office 工具：PPT / Excel 扩展", () => {
     const { tools } = createHarness();
     const noRoom = { ...context, roomId: null };
     const args: Record<string, Record<string, unknown>> = {
-      context_room_office_create: { title: "t", html: "<p>x</p>" },
-      context_room_slides_create: { title: "t", outline: ["封面"] },
-      context_room_slides_set_page: { fileId: "file-1", slideIndex: 0, spec: { elements: [] } },
-      context_room_sheets_create: { title: "t", sheets: [{ rows: [["a"]] }] },
-      context_room_slides_read: { fileId: "file-1" },
-      context_room_slides_edit: { fileId: "file-1", ops: [{ op: "setNotes" }] },
+      office_create: { title: "t", html: "<p>x</p>" },
+      slides_create: { title: "t", outline: ["封面"] },
+      slides_set_page: { fileId: "file-1", slideIndex: 0, spec: { elements: [] } },
+      sheets_create: { title: "t", sheets: [{ rows: [["a"]] }] },
+      slides_read: { fileId: "file-1" },
+      slides_edit: { fileId: "file-1", ops: [{ op: "setNotes" }] },
     };
     for (const [name, input] of Object.entries(args)) {
       await expect(tools.get(name)!.execute(input, noRoom)).rejects.toThrow("ROOM_SELECTION_REQUIRED");
@@ -208,7 +208,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
 describe("office 工具：PPT 编辑（slides read / edit）", () => {
   it("slides_read：转发 fileId，返回 outline + opVocabulary + nextAction=edit", async () => {
     const { tools, readDeck } = createHarness();
-    const result = await tools.get("context_room_slides_read")!.execute({ fileId: "file-9" }, context);
+    const result = await tools.get("slides_read")!.execute({ fileId: "file-9" }, context);
     expect(readDeck).toHaveBeenCalledWith("file-9");
     expect(result.structuredContent).toEqual({
       fileId: "file-9",
@@ -220,7 +220,7 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
 
   it("slides_read：省略 fileId → 'active'（当前打开的那个 PPT）", async () => {
     const { tools, readDeck } = createHarness();
-    const result = await tools.get("context_room_slides_read")!.execute({}, context);
+    const result = await tools.get("slides_read")!.execute({}, context);
     expect(readDeck).toHaveBeenCalledWith("active");
     expect(result.structuredContent).toMatchObject({ fileId: "active", nextAction: "edit" });
   });
@@ -228,7 +228,7 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
   it("slides_read：只读打开（editable:false）→ 透传标记 + nextAction=guide_reopen_editable", async () => {
     const { tools, readDeck } = createHarness();
     readDeck.mockResolvedValueOnce({ outline: "Page 1…", opVocabulary: "…", editable: false });
-    const result = await tools.get("context_room_slides_read")!.execute({ fileId: "file-9" }, context);
+    const result = await tools.get("slides_read")!.execute({ fileId: "file-9" }, context);
     expect(result.structuredContent).toMatchObject({
       editable: false,
       nextAction: "guide_reopen_editable",
@@ -239,14 +239,14 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
     const { tools, readDeck } = createHarness();
     readDeck.mockResolvedValueOnce({ outline: "", opVocabulary: "" });
     await expect(
-      tools.get("context_room_slides_read")!.execute({ fileId: "file-9" }, context),
+      tools.get("slides_read")!.execute({ fileId: "file-9" }, context),
     ).rejects.toThrow("OFFICE_EDIT_FAILED");
   });
 
   it("slides_edit：透传 ops/isolation/dryRun，返回事务结果与新 outline", async () => {
     const { tools, editDeck } = createHarness();
     const ops = [{ op: "setText", target: { id: "t1" }, text: "年度回顾" }];
-    const result = await tools.get("context_room_slides_edit")!.execute(
+    const result = await tools.get("slides_edit")!.execute(
       { fileId: "file-9", ops, isolation: "per_op", dryRun: false },
       context,
     );
@@ -264,7 +264,7 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
   it("slides_edit：不带 isolation/dryRun 时不下发这两个字段", async () => {
     const { tools, editDeck } = createHarness();
     const ops = [{ op: "deleteSlide", target: { slide: 1 } }];
-    await tools.get("context_room_slides_edit")!.execute({ fileId: "file-9", ops }, context);
+    await tools.get("slides_edit")!.execute({ fileId: "file-9", ops }, context);
     expect(editDeck).toHaveBeenCalledWith({ fileId: "file-9", ops });
   });
 
@@ -276,7 +276,7 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
       failures: [{ index: 0, error: "未知元素 id: tX（用法：…）" }],
       saved: true,
     });
-    const result = await tools.get("context_room_slides_edit")!.execute(
+    const result = await tools.get("slides_edit")!.execute(
       { fileId: "file-9", ops: [{ op: "setText" }] },
       context,
     );
@@ -291,13 +291,13 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
     const { tools, editDeck } = createHarness();
     editDeck.mockResolvedValueOnce({ ok: false, error: "PPT 未在 Room 中打开" });
     await expect(
-      tools.get("context_room_slides_edit")!.execute({ fileId: "file-9", ops: [{ op: "setNotes" }] }, context),
+      tools.get("slides_edit")!.execute({ fileId: "file-9", ops: [{ op: "setNotes" }] }, context),
     ).rejects.toThrow("OFFICE_EDIT_FAILED: PPT 未在 Room 中打开");
   });
 
   it("slides_edit：ops 非数组 / 空数组 → INVALID_REQUEST", async () => {
     const { tools, editDeck } = createHarness();
-    const edit = tools.get("context_room_slides_edit")!;
+    const edit = tools.get("slides_edit")!;
     await expect(edit.execute({ fileId: "file-9" }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(edit.execute({ fileId: "file-9", ops: [] }, context)).rejects.toThrow("INVALID_REQUEST");
     await expect(edit.execute({ fileId: "file-9", ops: "nope" }, context)).rejects.toThrow("INVALID_REQUEST");
@@ -307,12 +307,12 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
   it("slides_edit：未识别的 isolation 不下发，atomic/per_op 原样透传", async () => {
     const { tools, editDeck } = createHarness();
     const ops = [{ op: "setNotes", target: { slide: 0 }, text: "x" }];
-    await tools.get("context_room_slides_edit")!.execute(
+    await tools.get("slides_edit")!.execute(
       { fileId: "file-9", ops, isolation: "loose" },
       context,
     );
     expect(editDeck).toHaveBeenCalledWith({ fileId: "file-9", ops });
-    await tools.get("context_room_slides_edit")!.execute(
+    await tools.get("slides_edit")!.execute(
       { fileId: "file-9", ops, isolation: "atomic" },
       context,
     );
@@ -346,7 +346,7 @@ describe("office 工具：set_page 视觉复检接线", () => {
 
   it("复检通过：visualReview.status=pass、nextAction=fill_next_page、renderPage 被调用", async () => {
     const { tools, renderPage } = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: passVlm }) });
-    const result = await tools.get("context_room_slides_set_page")!.execute(
+    const result = await tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 0, spec },
       context,
     );
@@ -359,7 +359,7 @@ describe("office 工具：set_page 视觉复检接线", () => {
 
   it("复检不通过：issues 中文映射进返回、nextAction=revise_page_and_retry；同页第二次 → retriesExhausted → fill_next_page", async () => {
     const { tools } = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: failVlm }) });
-    const first = await tools.get("context_room_slides_set_page")!.execute(
+    const first = await tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 0, spec },
       context,
     );
@@ -371,7 +371,7 @@ describe("office 工具：set_page 视觉复检接线", () => {
       },
       nextAction: "revise_page_and_retry",
     });
-    const second = await tools.get("context_room_slides_set_page")!.execute(
+    const second = await tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 0, spec },
       context,
     );
@@ -383,7 +383,7 @@ describe("office 工具：set_page 视觉复检接线", () => {
 
   it("未注入 reviewer：无 visualReview 字段、renderPage 不被调用；注入 reviewer 时 spec 形态同样复检", async () => {
     const noReviewer = createHarness();
-    const plain = await noReviewer.tools.get("context_room_slides_set_page")!.execute(
+    const plain = await noReviewer.tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 0, spec },
       context,
     );
@@ -391,7 +391,7 @@ describe("office 工具：set_page 视觉复检接线", () => {
     expect(noReviewer.renderPage).not.toHaveBeenCalled();
 
     const withReviewer = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: passVlm }) });
-    await withReviewer.tools.get("context_room_slides_set_page")!.execute(
+    await withReviewer.tools.get("slides_set_page")!.execute(
       { fileId: "fe-1", slideIndex: 0, spec },
       context,
     );

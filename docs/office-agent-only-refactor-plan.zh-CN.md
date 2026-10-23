@@ -80,29 +80,31 @@
 
 ### P0-3 工具改名（25 个 `context_room_*`）
 
-| 旧名 | 新名 | 归属 | 定义位置（起点） |
-|---|---|---|---|
-| `context_room_list` | — 删除 | Room | query-plugin |
-| `context_room_create` | — 删除 | Room | create-plugin |
-| `context_room_document_list` | `document_list` | Office | query-plugin |
-| `context_room_document_read` | `document_read` | Office | query-plugin |
-| `context_room_document_delete` | `document_delete` | Office | delete-plugin.ts:20 |
-| `context_room_document_comment_add` | `document_comment_add` | Office | comment-plugin.ts:40 |
-| `context_room_write_begin` | `document_write_begin` | Office | create-plugin.ts:49 |
-| `context_room_write_append` | `document_write_append` | Office | create-plugin.ts:123 |
-| `context_room_write_commit` | `document_write_commit` | Office | create-plugin.ts:246 |
-| `context_room_write_abort` | `document_write_abort` | Office | create-plugin.ts:319 |
-| `context_room_patch_begin` | `document_patch_begin` | Office | review-plugins.ts:438 |
-| `context_room_patch_hunk` | `document_patch_hunk` | Office | review-plugins.ts:505 |
-| `context_room_patch_commit` | `document_patch_commit` | Office | review-plugins.ts:808 |
-| `context_room_patch_abort` | `document_patch_abort` | Office | review-plugins.ts:884 |
-| `context_room_office_create` | `office_create` | Office | office-plugin.ts:176 |
-| `context_room_slides_create` | `slides_create` | Office | office-plugin.ts:231 |
-| `context_room_slides_set_page` | `slides_set_page` | Office | office-plugin.ts:293 |
-| `context_room_slides_read` | `slides_read` | Office | office-plugin.ts:437 |
-| `context_room_slides_edit` | `slides_edit` | Office | office-plugin.ts `SLIDES_TOOL_NAMES` |
-| `context_room_sheets_create` | `sheets_create` | Office | office-plugin.ts:370 |
-| `context_room_task_start/read/update/clarify/attach` | — 删除 | Room 任务夹 | task-plugin.ts:213/268/328/386/462 |
+| 旧名 | 新名 | 归属 | 定义位置（起点） | 状态 |
+|---|---|---|---|---|
+| `context_room_list` | — 删除 | Room | query-plugin | 待 Phase 2 |
+| `context_room_create` | — 删除 | Room | create-plugin | 待 Phase 2 |
+| `context_room_document_list` | `document_list` | Office | query-plugin.ts:102 | ✅ 已改 |
+| `context_room_document_read` | `document_read` | Office | query-plugin.ts:127 | ✅ 已改 |
+| `context_room_document_delete` | `document_delete` | Office | delete-plugin.ts:20 | ✅ 已改 |
+| `context_room_document_comment_add` | `document_comment_add` | Office | comment-plugin.ts:40 | ✅ 已改 |
+| `context_room_write_begin` | `document_write_begin` | Office | create-plugin.ts:49 | ✅ 已改 |
+| `context_room_write_append` | `document_write_append` | Office | create-plugin.ts:123 | ✅ 已改 |
+| `context_room_write_commit` | `document_write_commit` | Office | create-plugin.ts:246 | ✅ 已改 |
+| `context_room_write_abort` | `document_write_abort` | Office | create-plugin.ts:319 | ✅ 已改 |
+| `context_room_patch_begin` | `document_patch_begin` | Office | review-plugins.ts:438 | ✅ 已改 |
+| `context_room_patch_hunk` | `document_patch_hunk` | Office | review-plugins.ts:505 | ✅ 已改 |
+| `context_room_patch_commit` | `document_patch_commit` | Office | review-plugins.ts:808 | ✅ 已改 |
+| `context_room_patch_abort` | `document_patch_abort` | Office | review-plugins.ts:884 | ✅ 已改 |
+| `context_room_office_create` | `office_create` | Office | office-plugin.ts:176 | ✅ 已改 |
+| `context_room_slides_create` | `slides_create` | Office | office-plugin.ts:231 | ✅ 已改 |
+| `context_room_slides_set_page` | `slides_set_page` | Office | office-plugin.ts:293 | ✅ 已改 |
+| `context_room_slides_read` | `slides_read` | Office | office-plugin.ts:437 | ✅ 已改 |
+| `context_room_slides_edit` | `slides_edit` | Office | office-plugin.ts `SLIDES_TOOL_NAMES` | ✅ 已改 |
+| `context_room_sheets_create` | `sheets_create` | Office | office-plugin.ts:370 | ✅ 已改 |
+| `context_room_task_start/read/update/clarify/attach` | — 删除 | Room 任务夹 | task-plugin.ts:213/268/328/386/462 | 待 Phase 2 |
+
+MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mcp-host.ts:348`）。
 
 **连带改名点**：`office-plugin.ts:39-44` 的 `SLIDES_TOOL_NAMES`、`runtime-factory.ts:13,144`、`subagents/slides-agent-tools.ts:5,39`、`pi-tools.ts:59/83/93/98/113`、MCP server name（`mcp-host.ts:348` `everroom-context-room` → `everroom-office`）、`mcp-routes.ts` 路径、i18n 文案、各 agent 的 `SYSTEM.md` 与 `schemas/*.json`。
 

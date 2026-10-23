@@ -976,7 +976,7 @@ export function createSubagentPiTools(
           task,
           instruction,
           // Room 透传：orchestrator 用它绑定子 run 的文档工具（pi-tools input.roomId），
-          // doc-writer 素材自取的 context_room_document_read 依赖该绑定，缺失即 409。
+          // doc-writer 素材自取的 document_read 依赖该绑定，缺失即 409。
           ...(roomId ? { roomId } : {}),
           ...(material ? { material } : {}),
           ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),

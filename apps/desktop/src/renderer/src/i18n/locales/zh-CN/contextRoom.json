@@ -65,7 +65,7 @@
   "aiReviewAgent.completedNone": "AI 审阅完成，没有需要补充的建议",
   "aiReviewAgent.failed": "AI 审阅失败，请稍后重试",
   "aiReviewAgent.pageLabel": "AI 审阅 · {name}",
-  "aiReviewAgent.prompt": "请审阅当前文档《{title}》：先调用 context_room_document_read 读取全文，然后找出 3-5 处最值得改进的具体位置（结构缺口、论证漏洞、缺少反例或数据支撑、事实性风险、表达歧义）。对每一处调用 context_room_document_comment_add 添加评论：quotedText 必须从正文逐字摘录一段纯文本原文（不带 Markdown 标记，约 20-80 字）用于锚定，能确定所在块时同时传 blockId；body 用一两句话说明问题和具体改进建议，每条评论只讲一处。单次审阅不超过 5 条。审阅时要结合已召回的 Room 记忆与用户背景：优先提出贴合用户目标、偏好与项目语境的建议；发现正文表述与记忆中的新事实、进展或决定冲突时，作为重点问题指出。全部添加完成后，用简短列表总结审阅结论。",
+  "aiReviewAgent.prompt": "请审阅当前文档《{title}》：先调用 document_read 读取全文，然后找出 3-5 处最值得改进的具体位置（结构缺口、论证漏洞、缺少反例或数据支撑、事实性风险、表达歧义）。对每一处调用 document_comment_add 添加评论：quotedText 必须从正文逐字摘录一段纯文本原文（不带 Markdown 标记，约 20-80 字）用于锚定，能确定所在块时同时传 blockId；body 用一两句话说明问题和具体改进建议，每条评论只讲一处。单次审阅不超过 5 条。审阅时要结合已召回的 Room 记忆与用户背景：优先提出贴合用户目标、偏好与项目语境的建议；发现正文表述与记忆中的新事实、进展或决定冲突时，作为重点问题指出。全部添加完成后，用简短列表总结审阅结论。",
   "allRooms.allCountRoomsDisplayed": "已显示全部 {count} 个 Room",
   "allRooms.allRooms": "全部 Room",
   "allRooms.back": "返回",

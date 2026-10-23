@@ -7,7 +7,7 @@ describe('notification MCP tool', () => {
     const guidelines = SEND_NOTIFICATION_TOOL.guidelines.join('\n')
     expect(guidelines).toContain('用户明确要求通知')
     expect(guidelines).toContain('documentChanged=true')
-    expect(guidelines).toContain('context_room_write_commit')
+    expect(guidelines).toContain('document_write_commit')
     expect(guidelines).toContain('长任务到达终态')
     expect(guidelines).toContain('5 轮以上工具调用')
     expect(guidelines).toContain('失败')

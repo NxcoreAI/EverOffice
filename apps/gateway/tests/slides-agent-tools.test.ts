@@ -36,9 +36,9 @@ const PLANNER_ROOM_TOOLS = [
 ];
 const PLANNER_DOCUMENT_TOOLS = [
   ...SLIDES_TOOL_NAMES.map(tool),
-  tool("context_room_list"), tool("context_room_document_list"), tool("context_room_document_read"),
-  tool("context_room_office_create"), tool("context_room_sheets_create"),
-  tool("context_room_write_begin"), tool("context_room_patch_begin"),
+  tool("context_room_list"), tool("document_list"), tool("document_read"),
+  tool("office_create"), tool("sheets_create"),
+  tool("document_write_begin"), tool("document_patch_begin"),
 ];
 
 describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
@@ -49,11 +49,12 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
       webSearchTools: [tool("web_search"), tool("agent_dispatch"), tool("agent_catalog"), tool("send_notification")],
       materialSearchTools: [tool("material_search"), tool("send_notification")],
     });
+    // 名字按字典序断言：改名后 document_* 排在 conversation_search 之后。
     expect(tools.map((item) => item.name).sort()).toEqual([
-      "context_room_document_list",
-      "context_room_document_read",
       "context_room_list",
       "conversation_search",
+      "document_list",
+      "document_read",
       "material_search",
       "memory_search",
       "room_context_get",
@@ -113,7 +114,7 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
 
   it("文档读取：draft 单次限 8k 字符，arrange 阶段直接拒读", async () => {
     const documentRead: PiAgentRuntimeTool = {
-      name: "context_room_document_read",
+      name: "document_read",
       label: "read",
       description: "read",
       parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -121,11 +122,11 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
     };
     const tools = createSlidesPlannerAgentTools({
       roomTools: [],
-      documentTools: [tool("context_room_list"), tool("context_room_document_list"), documentRead],
+      documentTools: [tool("context_room_list"), tool("document_list"), documentRead],
       webSearchTools: [],
       materialSearchTools: [],
     });
-    const wrapped = tools.find((item) => item.name === "context_room_document_read")!;
+    const wrapped = tools.find((item) => item.name === "document_read")!;
     const draft = JSON.parse((await wrapped.execute(runInput("draft"), { documentId: "doc-1", limit: 99_999 })).content) as {
       limit: number;
       offset: number;
@@ -145,10 +146,10 @@ describe("createSlidesBuilderAgentTools（slides-builder 工具面）", () => {
       documentTools: PLANNER_DOCUMENT_TOOLS,
     });
     expect(tools.map((item) => item.name).sort()).toEqual([
-      "context_room_slides_create",
-      "context_room_slides_edit",
-      "context_room_slides_read",
-      "context_room_slides_set_page",
+      "slides_create",
+      "slides_edit",
+      "slides_read",
+      "slides_set_page",
     ]);
   });
 

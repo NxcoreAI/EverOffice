@@ -1043,7 +1043,7 @@ export class PiAgentRuntime implements AgentRuntime {
               availableRoomDetails,
               "</available_rooms>",
             ].join("\n") : "本轮没有可写入的 Room。",
-            "只有存在明确且唯一的匹配时，才在 context_room_write_begin.roomId 中填写对应 ID 并直接创建。不得根据列表顺序、最近使用、宽泛词语或猜测选择 Room。",
+            "只有存在明确且唯一的匹配时，才在 document_write_begin.roomId 中填写对应 ID 并直接创建。不得根据列表顺序、最近使用、宽泛词语或猜测选择 Room。",
             "如果多个 Room 都可能相关或信息不足，调用 context_room_list，并用 candidateRoomIds 仅列出最可能相关的 2 至 5 个 Room；无法缩小范围时省略 candidateRoomIds。调用后停止创建，等待用户选择，不要只用文字追问。",
             "普通聊天不要主动提示 Room 选择。",
           ].join("\n")
@@ -1067,7 +1067,7 @@ export class PiAgentRuntime implements AgentRuntime {
               ? `仅在用户明确要求当前位置时可使用光标候选：块 ${input.activeDocument.cursorAnchorCandidate.blockId}，UTF-16 偏移 ${input.activeDocument.cursorAnchorCandidate.offset}。`
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
-        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 context_room_document_list 触发选择。";
+        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
       const runBoundary = input.toolsEnabled === false
         ? null
         : [

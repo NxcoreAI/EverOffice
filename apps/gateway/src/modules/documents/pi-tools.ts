@@ -56,7 +56,7 @@ export function createDocumentPiToolsWithRoomBindings(
           throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
         }
         let roomId = fixedRoomId;
-        if (definition.name === "context_room_write_begin" && !roomId) {
+        if (definition.name === "document_write_begin" && !roomId) {
           // availableRooms 是开跑快照：同一 run 内 context_room_create 新建的房间
           // 不在其中，须以实时注册表兜底，否则新建房间的首次写入被误拒。
           const roomKnown = input.availableRooms?.some((room) => room.id === requestedRoomId)
@@ -80,7 +80,7 @@ export function createDocumentPiToolsWithRoomBindings(
         // document_list 的 selectionRequired 是桌面端“选择要编辑的文档”卡片的唯一
         // 触发源；运行本身没有改/写文档诉求时（模型顺路列文档很常见）一律压掉，
         // 否则离开文档页后旧工具结果会把空卡片顶回智能区。
-        if (definition.name === "context_room_document_list" && result.structuredContent.selectionRequired === true) {
+        if (definition.name === "document_list" && result.structuredContent.selectionRequired === true) {
           const promptText = String(input.originalPrompt ?? input.prompt ?? "");
           if (!requestsDocumentModification(promptText)) {
             const payload = { ...result.structuredContent, selectionRequired: false };
@@ -90,12 +90,12 @@ export function createDocumentPiToolsWithRoomBindings(
             };
           }
         }
-        if (definition.name === "context_room_write_begin") {
+        if (definition.name === "document_write_begin") {
           const selectedRoomId = typeof result.structuredContent.roomId === "string"
             ? result.structuredContent.roomId
             : roomId;
           if (selectedRoomId) routedRoomByRun.set(input.runId, selectedRoomId);
-        } else if (definition.name === "context_room_write_commit" || definition.name === "context_room_write_abort") {
+        } else if (definition.name === "document_write_commit" || definition.name === "document_write_abort") {
           routedRoomByRun.delete(input.runId);
         }
         return toPiResult(result);

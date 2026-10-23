@@ -82,7 +82,7 @@ function resolveRunningOperation(
     "OPERATION_NOT_FOUND",
     "No active document patch exists in this Agent run",
     404,
-    { retryable: true, nextAction: "context_room_patch_begin" },
+    { retryable: true, nextAction: "document_patch_begin" },
   );
 }
 
@@ -99,7 +99,7 @@ function authoritativeDocument(backend: CapabilityBackend, operation: DocumentOp
       documentId: document.id,
       currentVersion: document.version,
       retryable: true,
-      nextAction: "context_room_document_read",
+      nextAction: "document_read",
     });
   }
   return document;
@@ -436,8 +436,8 @@ function beginTool(
   resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
 ): DocumentCapabilityTool {
   return {
-    name: "context_room_patch_begin", title: "开始准备文档修改建议",
-    description: "必须先在当前 run 调用 context_room_document_read；Gateway 会自动使用本轮读取凭证。重写、润色、扩写、替换或删除已有段落必须使用 kind=edit，并只覆盖用户要求修改的最小正文范围；kind=continue 只用于在原文后新增全新内容，不能用于改写已有内容。返回的 memoryIndex 是本 Room 归属记忆清单：直写模式给段落挂记忆索引标记时 memoryId 只能照抄 memoryIndex，写法 ^[短标题](everroom://memory/{roomId}/{memoryId})；文档来源标记的 blockId 只能来自本 run 对该来源文档的 document_read，禁止用宿主文档的块 id 或会话历史拼装。",
+    name: "document_patch_begin", title: "开始准备文档修改建议",
+    description: "必须先在当前 run 调用 document_read；Gateway 会自动使用本轮读取凭证。重写、润色、扩写、替换或删除已有段落必须使用 kind=edit，并只覆盖用户要求修改的最小正文范围；kind=continue 只用于在原文后新增全新内容，不能用于改写已有内容。返回的 memoryIndex 是本 Room 归属记忆清单：直写模式给段落挂记忆索引标记时 memoryId 只能照抄 memoryIndex，写法 ^[短标题](everroom://memory/{roomId}/{memoryId})；文档来源标记的 blockId 只能来自本 run 对该来源文档的 document_read，禁止用宿主文档的块 id 或会话历史拼装。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       documentId: { type: "string" }, baseVersion: { type: "integer", minimum: 0 },
       readReceipt: { type: "string", minLength: 1, description: "兼容字段；Gateway 默认使用当前 run 最近一次有效的文档读取。" },
@@ -458,7 +458,7 @@ function beginTool(
         documentId: document.id,
         currentVersion: document.version,
         retryable: true,
-        nextAction: "context_room_document_read",
+        nextAction: "document_read",
       });
       const readReceipt = typeof args.readReceipt === "string" ? args.readReceipt.trim() : "";
       const receipt = readReceipt
@@ -491,7 +491,7 @@ function beginTool(
       }
       return success({ operationId: operation.id, patchId: operation.id, state: operation.status, documentId: document.id,
         readReceiptResolved: !readReceipt, baseVersion, nextSequence: 1,
-        nextAction: "context_room_patch_hunk", expiresAt: expiresAt.toISOString(),
+        nextAction: "document_patch_hunk", expiresAt: expiresAt.toISOString(),
         ...(memoryIndex.length ? { memoryIndex, memoryIndexCount: memoryIndex.length } : {}) });
     },
   };
@@ -503,7 +503,7 @@ function hunkTool(
   reads: DocumentReadAuthority,
 ): DocumentCapabilityTool {
   return {
-    name: "context_room_patch_hunk", title: "追加可审阅的文档修改项",
+    name: "document_patch_hunk", title: "追加可审阅的文档修改项",
     description: "按严格连续 sequence 追加修改项。优先以引用方式转交：传 document_draft 返回的 invocationId 与 itemIndex（0 起，按顺序逐项），operation/target/markdown 由服务端从 doc-writer 结果转交，参数中不携带正文；显式 target/markdown 仅供无法引用 invocation 的调用方直写。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。块索引标记：文档来源标记的 blockId 只能取自本 run 对该来源文档的 document_read 返回（宿主文档自身的块 id 不可用作来源）；记忆标记的 memoryId 只能照抄 patch_begin 返回的 memoryIndex，禁止凭会话历史拼装。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
@@ -651,7 +651,7 @@ function hunkTool(
             currentVersion: document.version,
             invalidBlockIds: [blockId],
             retryable: true,
-            nextAction: "context_room_document_read",
+            nextAction: "document_read",
           });
         }
       }
@@ -699,7 +699,7 @@ function hunkTool(
           "EDIT_EMPTY_REPLACEMENT",
           "Replacement contains only context outside the selected target. Send the target's new content only.",
           409,
-          { operationId: id, patchId: id, retryable: true, nextAction: "context_room_patch_hunk",
+          { operationId: id, patchId: id, retryable: true, nextAction: "document_patch_hunk",
             expectedSequence: sequence, doNotRepeatPreviousArguments: true },
         );
       }
@@ -712,7 +712,7 @@ function hunkTool(
           "EDIT_NO_CHANGE",
           "Replacement is identical to the selected target after removing adjacent context. Send content that actually changes only the target.",
           409,
-          { operationId: id, patchId: id, retryable: true, nextAction: "context_room_patch_hunk",
+          { operationId: id, patchId: id, retryable: true, nextAction: "document_patch_hunk",
             expectedSequence: sequence, doNotRepeatPreviousArguments: true },
         );
       }
@@ -725,7 +725,7 @@ function hunkTool(
             "EDIT_NOT_SHORTER",
             `Replacement must be meaningfully shorter than the selected target (before=${beforeCharacters}, after=${afterCharacters}).`,
             409,
-            { operationId: id, patchId: id, retryable: true, nextAction: "context_room_patch_hunk",
+            { operationId: id, patchId: id, retryable: true, nextAction: "document_patch_hunk",
               expectedSequence: sequence, doNotRepeatPreviousArguments: true,
               requiredMaximumCharacters: beforeCharacters - requiredReduction,
               beforeCharacters, afterCharacters, fragmentReduced, adjacentContextStripped },
@@ -748,7 +748,7 @@ function hunkTool(
               operationId: id,
               patchId: id,
               retryable: true,
-              nextAction: "context_room_patch_hunk",
+              nextAction: "document_patch_hunk",
               expectedSequence: sequence,
               rejectedMarkdownBytes: sourceBytes,
               doNotRepeatPreviousArguments: true,
@@ -806,7 +806,7 @@ function hunkTool(
 
 function commitTool(backend: CapabilityBackend, operations?: DocumentOperationService): DocumentCapabilityTool {
   return {
-    name: "context_room_patch_commit", title: "提交文档修改建议供用户审阅",
+    name: "document_patch_commit", title: "提交文档修改建议供用户审阅",
     description: "完成所有修改项后仅转为待用户审阅，不会写入正文。例外：所有修改项均为段末追加索引标记且正文零改动时，网关直接自动应用并返回 state=completed/applied=true。工具成功只代表提案已处理；Agent 的最终回复必须以本工具返回的 state/applied/documentChanged 为准。state=awaiting_review 时必须说明仍需用户接受，不能声称文档已修改。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
@@ -882,7 +882,7 @@ function commitTool(backend: CapabilityBackend, operations?: DocumentOperationSe
 
 function abortTool(operations?: DocumentOperationService): DocumentCapabilityTool {
   return {
-    name: "context_room_patch_abort", title: "中止文档修改建议", description: "中止尚未提交审阅的文档修改操作。",
+    name: "document_patch_abort", title: "中止文档修改建议", description: "中止尚未提交审阅的文档修改操作。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
       patchId: { type: "string", description: "兼容旧 Agent 会话的别名；通常无需传入。" },

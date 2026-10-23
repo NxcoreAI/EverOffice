@@ -262,10 +262,10 @@ export function ArtifactLibraryPane({
   const dispatchOfficeCreate = (type: Exclude<CreateType, 'doc'>) => {
     const title = newDocumentTitle.trim() || t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
     const createInstruction = type === 'word'
-      ? `请用 context_room_office_create 新建`
+      ? `请用 office_create 新建`
       : type === 'ppt'
         ? `请用 slides_draft(task=draft) 新建`
-        : `请用 context_room_sheets_create 新建`;
+        : `请用 sheets_create 新建`;
     const kindLabel = t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
     // message 是内部指令（runtime 用）；displayMessage 是用户看得懂的人话（气泡/会话标题用）。
     const displayMessage = type === 'ppt'

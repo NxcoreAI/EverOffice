@@ -10,7 +10,7 @@ import { DocumentOperationService } from "../src/modules/documents/operations/se
 import { DocumentService } from "../src/modules/documents/service.js";
 import type { DocumentCapabilityRegistry } from "../src/modules/documents/capabilities/registry.js";
 
-const TOOL = "context_room_document_delete";
+const TOOL = "document_delete";
 
 const temporaryDirectories: string[] = [];
 const disposables: Array<() => void> = [];
@@ -64,7 +64,7 @@ function expectServiceError(promise: Promise<unknown> | unknown, code: string, d
   );
 }
 
-describe("context_room_document_delete", () => {
+describe("document_delete", () => {
   it("注册进 listTools 且 promptGuidelines 包含确认要求", async () => {
     const { registry } = await createHarness("delete-tool-register");
     expect(registry.listTools().map((tool) => tool.name)).toContain(TOOL);

@@ -345,7 +345,7 @@ export class DocumentMcpHost {
       context: structuredClone(context),
     };
     const server = new Server(
-      { name: "everroom-context-room", version: "2.0.0" },
+      { name: "everroom-office", version: "2.0.0" },
       { capabilities: { tools: {} }, instructions: this.instructions() },
     );
     holder.server = server;
@@ -418,7 +418,7 @@ export class DocumentMcpHost {
         && previous.lastFailureCode === failureCode
         ? previous.identicalFailureCount + 1
         : 1;
-      if (name === "context_room_patch_hunk"
+      if (name === "document_patch_hunk"
         && failureCode
         && NON_PROGRESS_PATCH_ERRORS.has(failureCode)
         && identicalFailureCount >= 2) {

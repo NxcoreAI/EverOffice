@@ -26,8 +26,8 @@ const SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST = new Set([
 
 const SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST = new Set([
   "context_room_list",
-  "context_room_document_list",
-  "context_room_document_read",
+  "document_list",
+  "document_read",
 ]);
 
 const SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST = new Set(["web_search"]);
@@ -68,7 +68,7 @@ function subagentPhase(input: StartRuntimeRunInput): string | null {
 function createPlannerRoomContextTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
   return {
     ...tool,
-    description: `${tool.description}（PPT 方案代理：文档只返回标题与预览，正文按需用 context_room_document_read 分页读取；编排阶段不返回文档正文。）`,
+    description: `${tool.description}（PPT 方案代理：文档只返回标题与预览，正文按需用 document_read 分页读取；编排阶段不返回文档正文。）`,
     execute: async (input, params, signal, onUpdate) => {
       const result = await tool.execute(input, params, signal, onUpdate);
       let payload: unknown;
@@ -107,7 +107,7 @@ function createPlannerRoomContextTool(tool: PiAgentRuntimeTool): PiAgentRuntimeT
           : {}),
         documents: compactDocuments,
         ...(phase === "arrange"
-          ? { documentsOmitted: "编排阶段输入 draftPages 已含全部页内容，这里不再返回文档正文；确需原文时用 context_room_document_read 按 offset/limit 分页读取。" }
+          ? { documentsOmitted: "编排阶段输入 draftPages 已含全部页内容，这里不再返回文档正文；确需原文时用 document_read 按 offset/limit 分页读取。" }
           : {}),
       };
       return { content: JSON.stringify(compact), details: result.details };
@@ -116,7 +116,7 @@ function createPlannerRoomContextTool(tool: PiAgentRuntimeTool): PiAgentRuntimeT
 }
 
 /**
- * planner 的 context_room_document_read：draft 阶段单次最多 8k 字符（分页用
+ * planner 的 document_read：draft 阶段单次最多 8k 字符（分页用
  * offset/limit）；arrange 阶段内容已在输入里，直接拒读，避免重复吃整篇。
  */
 function createPlannerDocumentReadTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
@@ -160,7 +160,7 @@ export function createSlidesPlannerAgentTools(deps: {
     ...filterTools(deps.roomTools, SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST)
       .map((tool) => (tool.name === "room_context_get" ? createPlannerRoomContextTool(tool) : tool)),
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
-      .map((tool) => (tool.name === "context_room_document_read" ? createPlannerDocumentReadTool(tool) : tool)),
+      .map((tool) => (tool.name === "document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
     ...filterTools(deps.materialSearchTools, SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST),
     // 配图预热：编排中生图入池（模块内 token 注册表寻址，装配无额外依赖）。

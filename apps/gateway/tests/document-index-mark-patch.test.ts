@@ -61,15 +61,15 @@ describe("patch hunk block index marks", () => {
     const sourceBlockId = documents.listBlocks(source.id)[0]!.blockId;
     const targetBlockId = documents.listBlocks(target.id)[0]!.blockId;
     const context = { agentSessionId: "session-mark", runId: "run-mark", roomId: "room-1" };
-    await registry.execute("context_room_document_read", { documentId: target.id }, context);
-    const begun = await registry.execute("context_room_patch_begin", {
+    await registry.execute("document_read", { documentId: target.id }, context);
+    const begun = await registry.execute("document_patch_begin", {
       documentId: target.id,
       baseVersion: target.version,
       kind: "edit",
       summary: "为段落追加来源索引标记",
     }, context);
     const operationId = String(begun.structuredContent.operationId);
-    await registry.execute("context_room_patch_hunk", {
+    await registry.execute("document_patch_hunk", {
       operationId,
       sequence: 1,
       operation: "replace",
@@ -78,7 +78,7 @@ describe("patch hunk block index marks", () => {
     }, context);
     const storedItem = operations.get(operationId)!.items[0]!;
     expect(JSON.stringify(storedItem.after)).toContain("blockIndexMark");
-    const committed = await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+    const committed = await registry.execute("document_patch_commit", { operationId, finalSequence: 1 }, context);
     // 正文零改动、仅段末追加索引标记的提案由 patch_commit 直接自动应用。
     expect(committed.structuredContent).toMatchObject({ state: "completed", applied: true, documentChanged: true });
     expect(operations.get(operationId)!.status).toBe("completed");
@@ -115,15 +115,15 @@ describe("patch hunk block index marks", () => {
     const sourceBlockId = documents.listBlocks(source.id)[0]!.blockId;
     const targetBlockId = documents.listBlocks(target.id)[0]!.blockId;
     const context = { agentSessionId: "session-mark-3", runId: "run-mark-3", roomId: "room-1" };
-    await registry.execute("context_room_document_read", { documentId: target.id }, context);
-    const begun = await registry.execute("context_room_patch_begin", {
+    await registry.execute("document_read", { documentId: target.id }, context);
+    const begun = await registry.execute("document_patch_begin", {
       documentId: target.id,
       baseVersion: target.version,
       kind: "edit",
       summary: "改写正文并附来源索引标记",
     }, context);
     const operationId = String(begun.structuredContent.operationId);
-    await registry.execute("context_room_patch_hunk", {
+    await registry.execute("document_patch_hunk", {
       operationId,
       sequence: 1,
       operation: "replace",
@@ -131,7 +131,7 @@ describe("patch hunk block index marks", () => {
       markdown: `PyTorch 是主流深度学习框架，以动态图与自动求导著称。^[来源文档](everroom://room/room-1/${source.id}/${sourceBlockId})`,
     }, context);
     const storedItem = operations.get(operationId)!.items[0]!;
-    const committed = await registry.execute("context_room_patch_commit", { operationId, finalSequence: 1 }, context);
+    const committed = await registry.execute("document_patch_commit", { operationId, finalSequence: 1 }, context);
     expect(committed.structuredContent).toMatchObject({ state: "awaiting_review" });
     expect(documents.get(target.id)!.version).toBe(target.version);
     // 用户在 UI 点接受后走 review.apply 真正写入。
@@ -165,15 +165,15 @@ describe("patch hunk block index marks", () => {
     const targetBlockId = documents.listBlocks(target.id)[0]!.blockId;
     const sourceBlockId = documents.listBlocks(source.id)[0]!.blockId;
     const context = { agentSessionId: "session-mark-2", runId: "run-mark-2", roomId: "room-1" };
-    await registry.execute("context_room_document_read", { documentId: target.id }, context);
-    const begun = await registry.execute("context_room_patch_begin", {
+    await registry.execute("document_read", { documentId: target.id }, context);
+    const begun = await registry.execute("document_patch_begin", {
       documentId: target.id,
       baseVersion: target.version,
       kind: "edit",
       summary: "为段落追加来源索引标记",
     }, context);
     const operationId = String(begun.structuredContent.operationId);
-    await expect(registry.execute("context_room_patch_hunk", {
+    await expect(registry.execute("document_patch_hunk", {
       operationId,
       sequence: 1,
       operation: "replace",
@@ -195,7 +195,7 @@ describe("patch hunk block index marks", () => {
       },
     });
     // 目标文档不存在同样拒绝。
-    await expect(registry.execute("context_room_patch_hunk", {
+    await expect(registry.execute("document_patch_hunk", {
       operationId,
       sequence: 1,
       operation: "replace",
@@ -219,8 +219,8 @@ describe("patch hunk block index marks", () => {
       contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: SOURCE_TEXT }] }] },
     });
     const context = { agentSessionId: "session-memory", runId: "run-memory", roomId: "room-1" };
-    await registry.execute("context_room_document_read", { documentId: target.id }, context);
-    const begun = await registry.execute("context_room_patch_begin", {
+    await registry.execute("document_read", { documentId: target.id }, context);
+    const begun = await registry.execute("document_patch_begin", {
       documentId: target.id,
       baseVersion: target.version,
       kind: "edit",
@@ -235,7 +235,7 @@ describe("patch hunk block index marks", () => {
     // 凭 memoryIndex 抄来的 memoryId 挂记忆标记可入提案（正文有改动 → 待审阅，
     // 用户接受后落库；memory 标记不做存在性拦截）。
     const targetBlockId = documents.listBlocks(target.id)[0]!.blockId;
-    await registry.execute("context_room_patch_hunk", {
+    await registry.execute("document_patch_hunk", {
       operationId: String(begun.structuredContent.operationId),
       sequence: 1,
       operation: "replace",
@@ -244,7 +244,7 @@ describe("patch hunk block index marks", () => {
     }, context);
     const storedItem = operations.get(String(begun.structuredContent.operationId))!.items[0]!;
     expect(JSON.stringify(storedItem.after)).toContain("blockIndexMark");
-    const committed = await registry.execute("context_room_patch_commit", {
+    const committed = await registry.execute("document_patch_commit", {
       operationId: String(begun.structuredContent.operationId),
       finalSequence: 1,
     }, context);
@@ -270,8 +270,8 @@ describe("patch hunk block index marks", () => {
       contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: SOURCE_TEXT }] }] },
     });
     const context = { agentSessionId: "session-bare", runId: "run-bare", roomId: "room-1" };
-    await bare.registry.execute("context_room_document_read", { documentId: target.id }, context);
-    const begun = await bare.registry.execute("context_room_patch_begin", {
+    await bare.registry.execute("document_read", { documentId: target.id }, context);
+    const begun = await bare.registry.execute("document_patch_begin", {
       documentId: target.id,
       baseVersion: target.version,
       kind: "edit",
@@ -287,8 +287,8 @@ describe("patch hunk block index marks", () => {
       contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: SOURCE_TEXT }] }] },
     });
     const context2 = { agentSessionId: "session-empty", runId: "run-empty", roomId: "room-1" };
-    await empty.registry.execute("context_room_document_read", { documentId: target2.id }, context2);
-    const begun2 = await empty.registry.execute("context_room_patch_begin", {
+    await empty.registry.execute("document_read", { documentId: target2.id }, context2);
+    const begun2 = await empty.registry.execute("document_patch_begin", {
       documentId: target2.id,
       baseVersion: target2.version,
       kind: "edit",

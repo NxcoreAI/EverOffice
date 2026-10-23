@@ -73,7 +73,7 @@ export class DocumentReadAuthority {
           documentId,
           currentVersion: version,
           retryable: true,
-          nextAction: "context_room_document_read",
+          nextAction: "document_read",
         },
       );
     }
@@ -102,7 +102,7 @@ export class DocumentReadAuthority {
           documentId,
           currentVersion: version,
           retryable: true,
-          nextAction: "context_room_document_read",
+          nextAction: "document_read",
         },
       );
     }
@@ -139,7 +139,7 @@ export class DocumentReadAuthority {
         currentVersion: receipt.version,
         invalidBlockIds,
         retryable: true,
-        nextAction: "context_room_document_read",
+        nextAction: "document_read",
       },
     );
   }

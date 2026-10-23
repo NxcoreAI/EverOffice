@@ -66,8 +66,8 @@ describe('document ai review agent', () => {
   it('prompt 包含文档标题、评论工具指令与记忆结合指引', () => {
     const prompt = buildDocumentAiReviewPrompt({ documentTitle: '汇编语言入门' })
     expect(prompt).toContain('汇编语言入门')
-    expect(prompt).toContain('context_room_document_comment_add')
-    expect(prompt).toContain('context_room_document_read')
+    expect(prompt).toContain('document_comment_add')
+    expect(prompt).toContain('document_read')
     expect(prompt).toContain('Room 记忆')
   })
 

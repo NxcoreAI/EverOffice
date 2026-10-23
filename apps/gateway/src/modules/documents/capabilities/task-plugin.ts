@@ -514,7 +514,7 @@ export function taskPlugin(
       + "（受众语气、版式模式、配色方向、信息密度偏好），收到作答后写入 profile 再推进；"
       + "弹表单后本轮立即收尾。",
       "PPT 产出进入 produce 阶段：先 context_room_task_update 把页面计划表填好（页序 = outline），"
-      + "再 context_room_slides_create 建骨架、逐页 set_page；每页生成完把该页 status 标 done。"
+      + "再 slides_create 建骨架、逐页 set_page；每页生成完把该页 status 标 done。"
       + "所有产物（PPT 文件、草稿文档）用 context_room_task_attach 归入任务夹。",
       "workplan.md 用户可以直接编辑表格——续做时先 context_room_task_read，以读到的内容为准，不要凭记忆改。",
     ],

@@ -11,7 +11,7 @@ import { DocumentService } from "../src/modules/documents/service.js";
 import { DocumentCommentService } from "../src/modules/documents/comments.js";
 import type { DocumentCapabilityRegistry } from "../src/modules/documents/capabilities/registry.js";
 
-const TOOL = "context_room_document_comment_add";
+const TOOL = "document_comment_add";
 
 const temporaryDirectories: string[] = [];
 const disposables: Array<() => void> = [];
@@ -68,7 +68,7 @@ function expectServiceError(promise: Promise<unknown> | unknown, code: string, d
   );
 }
 
-describe("context_room_document_comment_add", () => {
+describe("document_comment_add", () => {
   it("注册进 listTools 且 promptGuidelines 包含审阅工作流", async () => {
     const { registry } = await createHarness("comment-tool-register");
     expect(registry.listTools().map((tool) => tool.name)).toContain(TOOL);
@@ -109,7 +109,7 @@ describe("context_room_document_comment_add", () => {
       quotedText: "**Alpha 参考正文段落**",
     }, { agentSessionId: "s2", runId: "run-md", roomId: "room-1" }), "COMMENT_QUOTE_NOT_FOUND", {
       retryable: true,
-      nextAction: "context_room_document_read",
+      nextAction: "document_read",
     });
     expect(comments.list(document.id)).toHaveLength(0);
   });

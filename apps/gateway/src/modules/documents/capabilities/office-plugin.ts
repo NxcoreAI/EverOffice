@@ -22,7 +22,7 @@ import {
  *   slideIndex<页数原地替换，=页数末尾追加——文件页数随生成进度增长，失败不留空壳；
  *   实时重绘、每页独立失败重试）。单次输出一页，避免长输出结构漂移与黑盒等待。
  * - Excel：主进程直接拼标准 OOXML（jszip，inline string）。
- * 编辑：PPT 走 context_room_slides_read/edit（文件需在 Room 产物库打开为可编辑
+ * 编辑：PPT 走 slides_read/edit（文件需在 Room 产物库打开为可编辑
  * 实例；编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
  * Word/Excel 的编辑与离屏编辑留待后续迭代。
  */
@@ -37,10 +37,10 @@ const MAX_CELL_LENGTH = 3000;
 
 /** slides-builder 子代理独占的 4 个 PPT 工具名：主 Agent 工具面按此剔除（单一事实源）。 */
 export const SLIDES_TOOL_NAMES = [
-  "context_room_slides_create",
-  "context_room_slides_set_page",
-  "context_room_slides_read",
-  "context_room_slides_edit",
+  "slides_create",
+  "slides_set_page",
+  "slides_read",
+  "slides_edit",
 ] as const;
 
 const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签："
@@ -173,7 +173,7 @@ export function officePlugin(
   visualReviewer?: SlidesVisualReviewer | null,
 ): DocumentCapabilityPlugin {
   const officeCreate: DocumentCapabilityTool = {
-    name: "context_room_office_create",
+    name: "office_create",
     title: "生成 Word 文档入 Room",
     description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前 Room（产物库 Office 产物 + 文件库），"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
@@ -228,12 +228,12 @@ export function officePlugin(
   };
 
   const slidesCreate: DocumentCapabilityTool = {
-    name: "context_room_slides_create",
+    name: "slides_create",
     title: "创建 PPT 入 Room",
     description: "创建一份新 .pptx 演示文稿并加入当前 Room（产物库 Office 产物 + 文件库），"
       + "适合汇报、提案、培训等演示场景。只传 outline（每页一个标题，是页序蓝图：数组顺序即页序、"
       + `长度即页数上限，共 1~${MAX_SLIDES_PAGES} 页）；创建的文件初始只有 1 页骨架，页数随后续逐页生成增长。`
-      + "第二步必须用 context_room_slides_set_page 一页一页生成——slideIndex=0 替换骨架页，"
+      + "第二步必须用 slides_set_page 一页一页生成——slideIndex=0 替换骨架页，"
       + "此后 slideIndex=当前页数 时自动在末尾追加新页；生成到第几页，文件就有几页完整成形的页，中途失败不会留空壳页。"
       + "title 用作默认文件名（<title>.pptx，可用 fileName 覆盖）。"
       + "不要在本工具里写任何页面内容——内容全部通过逐页生成完成。",
@@ -284,17 +284,17 @@ export function officePlugin(
         roomRoutingRequested: result.roomRequested,
         nextAction: "fill_pages",
         ...(visualReviewer ? { visualReview: "enabled" } : {}),
-        hint: `文件已创建并正在自动打开（初始只有 1 页骨架）；接下来用 context_room_slides_set_page（fileId=${result.fileEntryId} 或 \"active\"）一页一页生成：先填 slideIndex=0（替换骨架页），此后每页 slideIndex=当前页数，会自动在末尾追加新页；每页成功再继续下一页。`,
+        hint: `文件已创建并正在自动打开（初始只有 1 页骨架）；接下来用 slides_set_page（fileId=${result.fileEntryId} 或 \"active\"）一页一页生成：先填 slideIndex=0（替换骨架页），此后每页 slideIndex=当前页数，会自动在末尾追加新页；每页成功再继续下一页。`,
       });
     },
   };
 
   const slidesSetPage: DocumentCapabilityTool = {
-    name: "context_room_slides_set_page",
+    name: "slides_set_page",
     title: "逐页生成 PPT",
     description: "生成已打开 PPT 的一页（spec 形态：整页 PageSpec 直填）：slideIndex 小于当前页数时原地替换该页（旧内容整体丢弃）；"
       + "slideIndex 等于当前页数时在末尾追加新页（页数 +1）。"
-      + "这是 PPT 生成的第二步：context_room_slides_create 建好文件（1 页骨架）后，用本工具一页一页生成——"
+      + "这是 PPT 生成的第二步：slides_create 建好文件（1 页骨架）后，用本工具一页一页生成——"
       + "从 slideIndex=0 起按 0、1、2… 顺序推进，每页等成功结果（用户实时看到该页成形）再继续下一页；"
       + "某页失败只需重试该页，不影响已完成的页；生成到第几页，文件就有几页。"
       + `${PAGESPEC_GUIDE}`
@@ -367,7 +367,7 @@ export function officePlugin(
   };
 
   const sheetsCreate: DocumentCapabilityTool = {
-    name: "context_room_sheets_create",
+    name: "sheets_create",
     title: "生成 Excel 表格入 Room",
     description: "生成本地排版的一份新 .xlsx 电子表格并加入当前 Room（产物库 Office 产物 + 文件库），"
       + "适合数据清单、预算、对比表、统计汇总等结构化数据。title 用作默认文件名（<title>.xlsx，可用 fileName 覆盖）。"
@@ -434,12 +434,12 @@ export function officePlugin(
   };
 
   const slidesRead: DocumentCapabilityTool = {
-    name: "context_room_slides_read",
+    name: "slides_read",
     title: "读取 PPT 大纲与操作词汇",
     description: "读取一份 Room 产物库中的 .pptx 产物的大纲与可编辑操作词汇表。"
       + "fileId 缺省（或 \"active\"）= 用户当前打开的那个 PPT；传显式 fileEntryId 时未打开的 PPT 会自动以可编辑方式打开（应用重启后同会话也能继续改）。"
       + "大纲列出每页的元素（id | 类型 | 文本摘要），是编辑时定位元素的唯一依据；"
-      + "opVocabulary 列出 context_room_slides_edit 可用的全部操作及其签名。"
+      + "opVocabulary 列出 slides_edit 可用的全部操作及其签名。"
       + "文件不存在会报错并列出当前打开的 Office 文件；editable=false 表示只读打开（能读大纲，"
       + "要编辑需用户在产物库重新以可编辑方式打开）。"
       + "编辑前先读本工具，之后按大纲里的元素 id 发编辑事务。",
@@ -469,13 +469,13 @@ export function officePlugin(
   };
 
   const slidesEdit: DocumentCapabilityTool = {
-    name: "context_room_slides_edit",
+    name: "slides_edit",
     title: "编辑已打开的 PPT",
     description: "向一份 Room 产物库中的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
       + "fileId 可用 \"active\"（当前打开的那个）或显式 fileEntryId（未打开会自动以可编辑方式打开）。"
       + "常用操作：setText/setFont/setFill 改已有元素，addElement/addSlideWithLayout 新增，"
       + "deleteElement/deleteSlide 删除，moveSlide 调序，findReplace 全稿替换，setNotes 备注页；"
-      + "完整词汇与签名见 context_room_slides_read 返回的 opVocabulary（每项自带用法，失败信息也会带用法提示）。"
+      + "完整词汇与签名见 slides_read 返回的 opVocabulary（每项自带用法，失败信息也会带用法提示）。"
       + "元素用 read 大纲里的 id 定位（target.slide 从 0 计）；一次事务 1~50 个 op。"
       + "编辑会实时显示在打开的视图上并自动保存（版本链 +1）。返回新 outline，可直接链式编辑。",
     inputSchema: {
@@ -528,8 +528,8 @@ export function officePlugin(
   return {
     manifest: manifest("office.create", "mutation", null, null, true, false),
     promptGuidelines: [
-      "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 context_room_office_create，"
-      + "数据表格用 context_room_sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides 子代理（create 先方案后落页，edit 直改）完成；"
+      "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 office_create，"
+      + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides 子代理（create 先方案后落页，edit 直改）完成；"
       + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",

@@ -203,7 +203,7 @@ function driveStorm(fast: boolean) {
 
   emit('run.accepted', { prompt: '压力测试：查邮件并汇总要点，多调用一些工具。' })
   emit('run.started', {})
-  const names = ['context_room_list', 'context_room_document_read', 'web_search']
+  const names = ['context_room_list', 'document_read', 'web_search']
   for (let t = 0; t < STORM_TOOLS; t += 1) {
     const toolCallId = `${runId}-t${t}`
     const name = names[t % names.length]

@@ -20,10 +20,10 @@ describe("createDocWriterAgentTools（doc-writer 素材自取工具面）", () =
         tool("room_task_create"), tool("room_schedule_create"),
       ],
       documentTools: [
-        tool("context_room_list"), tool("context_room_document_list"), tool("context_room_document_read"),
+        tool("context_room_list"), tool("document_list"), tool("document_read"),
         tool("context_room_document_intent"),
-        tool("context_room_write_begin"), tool("context_room_write_append"), tool("context_room_write_commit"),
-        tool("context_room_patch_begin"), tool("context_room_patch_hunk"), tool("context_room_patch_commit"),
+        tool("document_write_begin"), tool("document_write_append"), tool("document_write_commit"),
+        tool("document_patch_begin"), tool("document_patch_hunk"), tool("document_patch_commit"),
         tool("context_room_create"),
       ],
       analysisTools: [
@@ -32,12 +32,13 @@ describe("createDocWriterAgentTools（doc-writer 素材自取工具面）", () =
       ],
       webSearchTools: [tool("web_search"), tool("send_notification")],
     });
+    // 名字按字典序断言：改名后 document_* 排在 conversation_search 之后。
     expect(tools.map((item) => item.name).sort()).toEqual([
       "content_analysis",
-      "context_room_document_list",
-      "context_room_document_read",
       "context_room_list",
       "conversation_search",
+      "document_list",
+      "document_read",
       "memory_search",
       "room_analysis",
       "room_context_get",
