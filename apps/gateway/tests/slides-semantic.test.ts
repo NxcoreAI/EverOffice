@@ -140,6 +140,32 @@ describe("semantic content contract", () => {
       summary: "完成",
       pages: [{ title: "页面", density: "sparse", role: "content", message: "页面结论", content }],
     })).toBe(true);
+    // 精简 schema 后仍保留 arrange 的页级必填：density/content 缺一不可。
+    expect(validate({
+      phase: "arrange",
+      title: "标题",
+      summary: "完成",
+      pages: [{ title: "页面", content }],
+    })).toBe(false);
+    expect(validate({
+      phase: "arrange",
+      title: "标题",
+      summary: "完成",
+      pages: [{ title: "页面", density: "sparse" }],
+    })).toBe(false);
+    // draft 只要求 title：points/data/notes 均为可选。
+    expect(validate({
+      phase: "draft",
+      title: "标题",
+      summary: "完成",
+      pages: [{ title: "封面", points: ["一句话"] }, { title: "数据页", data: "营收 1 亿" }],
+    })).toBe(true);
+    expect(validate({
+      phase: "draft",
+      title: "标题",
+      summary: "完成",
+      pages: [{ points: ["缺少标题"] }],
+    })).toBe(false);
   });
 
   it("accepts full semantic drafts and enforces semantic arrange/repair input", () => {
@@ -149,6 +175,25 @@ describe("semantic content contract", () => {
     const draftPages = [{ title: "标题", points: Array(12).fill("完整内容") }];
     // draft 阶段不带语义字段：宽松 draftPages 合法。
     expect(validate({ instruction: "生成", roomId: "room", phase: "draft", draftPages })).toBe(true);
+    // 网关预取的文档正文随 draft 输入下发（sourceDocuments），必须过输入 schema。
+    expect(validate({
+      instruction: "生成",
+      roomId: "room",
+      phase: "draft",
+      sourceDocuments: [{
+        documentId: "doc-1",
+        title: "27 页大纲",
+        version: 2,
+        markdown: "## 封面\n- 标题",
+        markdownTotalCharacters: 2,
+      }],
+    })).toBe(true);
+    expect(validate({
+      instruction: "生成",
+      roomId: "room",
+      phase: "draft",
+      sourceDocuments: [{ documentId: "doc-1", title: "x", version: 2 }],
+    })).toBe(false);
     // arrange 阶段必带 contentMode+sources（唯一内容路径，无回退）。
     expect(validate({ instruction: "生成", roomId: "room", phase: "arrange", draftPages })).toBe(false);
     expect(validate({ instruction: "生成", roomId: "room", phase: "arrange", draftPages, contentMode: "semantic-v3", sources: assignContentSources(draftPages, "d") })).toBe(true);

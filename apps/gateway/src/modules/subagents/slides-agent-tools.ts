@@ -154,10 +154,29 @@ function compactPlannerDocumentRead(content: string): string {
   return JSON.stringify(compact);
 }
 
+/**
+ * 输入里已由网关预取**完整**正文的文档 ID（sourceDocuments，且未被预算截断）：
+ * 再调 document_read 只会把同一篇正文重复塞回上下文，直接回 skipped 提示模型
+ * 使用输入。被截断的文档不拦——planner 还需要用 offset/limit 读剩余部分。
+ */
+function prefetchedSourceDocumentIds(input: StartRuntimeRunInput): Set<string> {
+  const structured = input.runtimeMetadata?.subagentInput;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) return new Set();
+  const documents = (structured as Record<string, unknown>).sourceDocuments;
+  if (!Array.isArray(documents)) return new Set();
+  const ids = documents
+    .filter((document) => document !== null && typeof document === "object"
+      && (document as Record<string, unknown>).truncated !== true)
+    .map((document) => (document as Record<string, unknown>).documentId)
+    .filter((documentId): documentId is string => typeof documentId === "string" && documentId.length > 0)
+    .map((documentId) => documentId.toLowerCase());
+  return new Set(ids);
+}
+
 function createPlannerDocumentReadTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
   return {
     ...tool,
-    description: `${tool.description}（PPT 方案代理：只返回正文与分页元数据，不含 block 索引/编辑契约；单次最多 ${PLANNER_DOCUMENT_READ_LIMIT} 字符，用返回的 nextOffset 连续读取，不要重复读已覆盖区间；编排阶段内容已由输入给出，不需要再读。）`,
+    description: `${tool.description}（PPT 方案代理：只返回正文与分页元数据，不含 block 索引/编辑契约；单次最多 ${PLANNER_DOCUMENT_READ_LIMIT} 字符，用返回的 nextOffset 连续读取，不要重复读已覆盖区间；编排阶段内容已由输入给出，不需要再读；正文已在输入 sourceDocuments 里的文档不要重复读取。）`,
     execute: async (input, params, signal, onUpdate) => {
       const phase = subagentPhase(input);
       if (phase === "arrange") {
@@ -176,6 +195,16 @@ function createPlannerDocumentReadTool(tool: PiAgentRuntimeTool): PiAgentRuntime
       const offset = typeof params.offset === "number" && Number.isFinite(params.offset) && params.offset >= 0
         ? Math.floor(params.offset)
         : 0;
+      const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
+      if (documentId && prefetchedSourceDocumentIds(input).has(documentId.toLowerCase())) {
+        return {
+          content: JSON.stringify({
+            skipped: true,
+            reason: "该文档正文已由网关预取在输入的 sourceDocuments 里，直接使用，不要重复读取；需要更多内容时从输入读取。",
+          }),
+          details: { skipped: true, documentId },
+        };
+      }
       const result = await tool.execute(input, { ...params, offset, limit }, signal, onUpdate);
       return { ...result, content: compactPlannerDocumentRead(result.content) };
     },
@@ -375,6 +404,7 @@ export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
  */
 export function createSlidesTreeResultValidator(): SubagentResultValidator {
   return (invocationInput, result) => {
+    if (result.status === "blocked") return;
     const tree = result !== null && typeof result === "object" && !Array.isArray(result)
       ? (result as Record<string, unknown>).tree
       : undefined;

@@ -56,4 +56,6 @@
 
 ## 无法完成
 
-必需图片缺失、必留内容超出引擎容量，或硬要求互相冲突且无法通过合法重排解决时，向主 Agent 报告具体阻塞、已尝试的调整及所需补充或内容决策。仅在契约可满足时提交正式结果；`done` 不用于伪装内容缺失。
+必需图片缺失、必留内容超出引擎容量，或硬要求互相冲突且无法通过合法重排解决时，调用 `subagent_submit_result` 提交 `{status:"blocked", reason, attempts, requestedAction}`。`reason` 说明具体阻塞，`attempts` 列出已尝试的调整，`requestedAction` 说明上游需要补充的素材或内容决策。此分支省略 `tree`。提交成功即结束，由上游处理阻塞。
+
+可满足内容与布局契约时，提交 `status:"done"` 与完整布局树。

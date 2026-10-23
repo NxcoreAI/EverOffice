@@ -115,12 +115,21 @@ describe("shipped slides-planner bundle", () => {
     expect(planner!.revision.policy).toMatchObject({
       timeoutMs: 900_000,
       maxToolCalls: 80,
-      model: { reasoning: "off", maxTokens: 65_536 },
+      model: { reasoning: "off", maxTokens: 32_768 },
     });
     // arrange 的素材命中由网关预取、长 deck 由网关分批：输入契约必须接住两者。
     const inputSchema = planner!.revision.inputSchema as { properties?: Record<string, unknown> } | null;
     expect(inputSchema?.properties).toHaveProperty("materialHits");
     expect(inputSchema?.properties).toHaveProperty("arrangeBatch");
+    // 布局代理与主 Agent 同底座（主模型）：输出上限显式给 32k；思考档按 bundle 配置。
+    // 工具调用不设硬上限——长链路「读资料 → 多轮校验/提交」不能半路被预算 abort。
+    const layouter = registry.get("slides-layouter");
+    expect(layouter).not.toBeNull();
+    expect(layouter!.revision.policy).toMatchObject({
+      timeoutMs: 1_000_000,
+      model: { reasoning: "low", maxTokens: 32_768 },
+    });
+    expect(layouter!.revision.policy.maxToolCalls).toBeUndefined();
   });
 });
 
@@ -743,6 +752,7 @@ describe("filesystem subagent framework", () => {
             }
             if (scenario !== "forged") await submit.execute({ ...input, runtimeSessionRef: null }, { answer: "validated answer" });
             if (scenario === "cancel-before") controller.abort();
+            yield { type: "context.usage", payload: { runUsage: { input: 100, output: 20 } } };
             yield { type: "tool.completed", payload: { name: "subagent_submit_result", result: { details: { accepted: true } } } };
             closingRequest = true;
             yield { type: scenario === "cancel-before" ? "run.cancelled" : "run.failed", payload: { message: "unnecessary closing request" } };
@@ -756,11 +766,14 @@ describe("filesystem subagent framework", () => {
       }
       const manager = new SubmittedManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
       const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
-      const invocation = await orchestrator.dispatch({ agentId: "researcher", task: "Submit", input: {}, idempotencyKey: scenario, source: "primary_agent", parentRunId: "parent", signal: controller.signal });
+      const observedUsage: unknown[] = [];
+      const invocation = await orchestrator.dispatch({ agentId: "researcher", task: "Submit", input: {}, idempotencyKey: scenario, source: "primary_agent", parentRunId: "parent", signal: controller.signal,
+        onUsage: (_id, usage) => observedUsage.push(usage) });
       if (scenario === "valid" || scenario === "repair") {
         expect(invocation).toMatchObject({ status: "completed", result: { structuredOutput: { answer: "validated answer" } } });
         expect(closingRequest).toBe(false);
         expect(stops).toBe(1);
+        expect(observedUsage).toEqual([{ input: 100, output: 20 }]);
       } else {
         expect(invocation).toMatchObject({ status: scenario === "forged" ? "failed" : "cancelled", result: null });
       }

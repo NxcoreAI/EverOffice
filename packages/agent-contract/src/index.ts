@@ -282,6 +282,91 @@ export interface SubagentInvocationEvent {
   occurredAt: string;
 }
 
+// ── Agent 调试页（独立浏览器调试台的只读数据契约） ──
+// Gateway 侧在 runtime 边界记录所有 Agent 的 run 事件（内存环形缓冲），
+// 通过 /v1/agent-debug/* 暴露给本地调试页；不落库、不参与产品链路。
+
+/** 调试页里 Agent 的三类来源：内置、dispatch-only 子 Agent、本机 CLI Agent。 */
+export type AgentDebugAgentKind = "builtin" | "developer" | "local";
+
+export type AgentDebugAgentState = "idle" | "running" | "error";
+
+export type AgentDebugRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "timed_out";
+
+export interface AgentDebugAgent {
+  id: string;
+  name: string;
+  description: string;
+  kind: AgentDebugAgentKind;
+  state: AgentDebugAgentState;
+  activeRunCount: number;
+  /** 最近一次 run 开始/完成时间；无历史为 null（调试页展示静默 Agent）。 */
+  lastRunAt: string | null;
+}
+
+export interface AgentDebugRun {
+  runId: string;
+  agentId: string;
+  agentName: string;
+  agentKind: AgentDebugAgentKind;
+  /** runtime.id，如 pi:main / pi:subagent:slides-planner / acp:codex；未知为 null。 */
+  runtimeId: string | null;
+  sessionId: string | null;
+  pageLabel: string | null;
+  task: string;
+  status: AgentDebugRunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  /** 缓冲中保留的事件条数。 */
+  eventCount: number;
+  /** 环形缓冲淘汰掉的事件条数（事件过多时 >0）。 */
+  droppedEvents: number;
+  toolCallCount: number;
+  /** 累计思考（reasoning.delta）字符数。 */
+  reasoningChars: number;
+  /** 最近一次事件时间，调试页按活跃度排序。 */
+  lastEventAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface AgentDebugEvent {
+  /** 该 run 内严格递增的序号，从 1 开始。 */
+  seq: number;
+  type: AgentEventType;
+  occurredAt: string;
+  payload: unknown;
+  /** payload 超过单条上限被截断时，记录原始序列化字节数。 */
+  truncatedBytes?: number;
+}
+
+export interface AgentDebugSnapshot {
+  generatedAt: string;
+  agents: AgentDebugAgent[];
+  /** 最近 run，按 startedAt 倒序；运行中的 run 永远在缓冲最前。 */
+  runs: AgentDebugRun[];
+  /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数。 */
+  droppedRuns: number;
+}
+
+export interface AgentDebugRunEvents {
+  run: AgentDebugRun;
+  /**
+   * 增量事件。除 seq > afterSeq 的事件外，可能额外带回一条 seq <= afterSeq 的
+   * 尾部可合并事件（相邻 reasoning.delta / message.delta 在服务端合并累计、seq
+   * 不变，不带回来客户端永远看不到后续 token）。客户端必须按 seq **upsert**
+   * （替换同 seq 事件），而不是只追加。
+   */
+  events: AgentDebugEvent[];
+  /** 当前缓冲内的最大 seq（客户端下次增量拉取用 afterSeq 对齐）。 */
+  latestSeq: number;
+}
+
 export interface CreateAgentSessionInput {
   pageLabel: string;
   /** Legacy input accepted for compatibility; ignored for user sessions. */

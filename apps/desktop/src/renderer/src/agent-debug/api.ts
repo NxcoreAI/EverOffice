@@ -1,0 +1,112 @@
+/**
+ * 调试页到 Gateway 的 HTTP 客户端：全部走同源 Vite 代理 `/@agent-debug/*`，
+ * Bearer token 只存在于 dev server 的 Node 进程里。
+ */
+import type { AgentDebugRunEvents, AgentDebugSnapshot } from '@nxcore/agent-contract'
+
+export interface DebugSource {
+  id: string
+  label: string
+  baseUrl: string
+  version: string
+}
+
+export interface SourcesResult {
+  sources: DebugSource[]
+  /** manifest 缺失/无效时 dev server 通过响应头带回来的可读提示（无则 null）。 */
+  warning: string | null
+}
+
+const DEBUG_ROOT = '/@agent-debug'
+
+function errorDetail(body: unknown): string {
+  if (body && typeof body === 'object') {
+    const record = body as Record<string, unknown>
+    const message = record.message
+    if (typeof message === 'string' && message.trim()) return message
+    const error = record.error
+    if (typeof error === 'string' && error.trim()) return error
+  }
+  return ''
+}
+
+async function responseError(response: Response): Promise<Error> {
+  let detail = ''
+  try {
+    const body: unknown = await response.json()
+    detail = errorDetail(body)
+  } catch {
+    // 非 JSON 响应（例如上游返回 HTML 错误页）只保留状态码。
+  }
+  return new Error(`${response.status} ${response.statusText}${detail ? ` · ${detail}` : ''}`)
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  if (!response.ok) throw await responseError(response)
+  return (await response.json()) as T
+}
+
+export function gatewayBase(sourceId: string): string {
+  return `${DEBUG_ROOT}/gateway/${encodeURIComponent(sourceId)}`
+}
+
+export async function loadSources(): Promise<SourcesResult> {
+  const response = await fetch(`${DEBUG_ROOT}/sources`, { cache: 'no-store' })
+  if (!response.ok) throw await responseError(response)
+  const data: unknown = await response.json()
+  const sources = Array.isArray(data)
+    ? data.flatMap((item): DebugSource[] => {
+      if (!item || typeof item !== 'object') return []
+      const record = item as Record<string, unknown>
+      if (typeof record.id !== 'string' || typeof record.baseUrl !== 'string') return []
+      return [{
+        id: record.id,
+        label: typeof record.label === 'string' && record.label ? record.label : record.id,
+        baseUrl: record.baseUrl,
+        version: typeof record.version === 'string' ? record.version : '',
+      }]
+    })
+    : []
+  const rawWarning = response.headers.get('x-agent-debug-warning')
+  let warning: string | null = null
+  if (rawWarning) {
+    try {
+      warning = decodeURIComponent(rawWarning)
+    } catch {
+      warning = rawWarning
+    }
+  }
+  return { sources, warning }
+}
+
+export async function loadSnapshot(sourceId: string): Promise<AgentDebugSnapshot> {
+  const response = await fetch(
+    `${gatewayBase(sourceId)}/v1/agent-debug/snapshot?runs=150`,
+    { cache: 'no-store' },
+  )
+  return readJson<AgentDebugSnapshot>(response)
+}
+
+export async function loadRunEvents(
+  sourceId: string,
+  runId: string,
+  afterSeq: number,
+  limit = 1000,
+): Promise<AgentDebugRunEvents> {
+  const query = new URLSearchParams({ afterSeq: String(afterSeq), limit: String(limit) })
+  const response = await fetch(
+    `${gatewayBase(sourceId)}/v1/agent-debug/runs/${encodeURIComponent(runId)}/events?${query.toString()}`,
+    { cache: 'no-store' },
+  )
+  return readJson<AgentDebugRunEvents>(response)
+}
+
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}

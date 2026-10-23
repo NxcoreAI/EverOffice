@@ -1,3 +1,4 @@
+import { abortableDelay } from "./slides-generation-budget.js";
 import { randomUUID } from "node:crypto";
 import type {
   AgentContextUsage,
@@ -40,6 +41,8 @@ export interface DispatchSubagentInput {
    * 用于分批链路（如 arrange 单批 8 页）——单批卡死时不必占满整册预算。
    */
   timeoutMs?: number;
+  /** Cumulative model usage, including failed/cancelled runs when provided by the runtime. */
+  onUsage?: (invocationId: string, usage: Record<string, unknown>) => void;
   /**
    * invocationId 生成即回调（幂等命中时回传既有 id）：供调用方在子 run 开跑前
    * 以该 id 注册跨模块运行时状态（如 PPT 逐页审阅闸门 arm）。
@@ -310,12 +313,13 @@ export class SubagentOrchestrator {
    * 立刻降级——2026-10-20 事故：首轮落页失败留下的孤儿 invocation 占满窗口，
    * 重试的 20 页布局全被拒 → 整册兜底版式。返回 false 表示等到超时仍满窗。
    */
-  async awaitCapacity(timeoutMs = 60_000, pollMs = 500, agentId?: string): Promise<boolean> {
+  async awaitCapacity(timeoutMs = 60_000, pollMs = 500, agentId?: string, signal?: AbortSignal): Promise<boolean> {
     const pool = poolOf(agentId ?? "");
     const deadline = Date.now() + Math.max(0, timeoutMs);
+    signal?.throwIfAborted();
     while (!this.hasCapacity(pool)) {
       if (Date.now() >= deadline) return false;
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      await abortableDelay(pollMs, signal);
     }
     return true;
   }
@@ -326,6 +330,7 @@ export class SubagentOrchestrator {
   }
 
   async dispatch(input: DispatchSubagentInput): Promise<SubagentInvocation> {
+    input.signal?.throwIfAborted();
     const { invocationId, completion, joined } = await this.begin(input);
     if (joined) return completion;
     const cancelFromParent = () => {
@@ -346,6 +351,7 @@ export class SubagentOrchestrator {
    * 不等待终态。调用方通过 GET /v1/subagent-invocations/:id 轮询结果。
    */
   async startDetached(input: DispatchSubagentInput): Promise<string> {
+    input.signal?.throwIfAborted();
     const { invocationId, completion, joined } = await this.begin(input);
     if (joined) return invocationId;
     const cancelFromParent = () => {
@@ -424,7 +430,7 @@ export class SubagentOrchestrator {
       invocationId,
       input.input ?? null,
     );
-    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments, input.timeoutMs);
+    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments, input.timeoutMs, input.onUsage);
     this.active.set(invocationId, { runtime, promise, cancellationRequested: false, agentDefinitionId: definition.id });
     return { invocationId, completion: promise, joined: false };
   }
@@ -478,6 +484,7 @@ export class SubagentOrchestrator {
     runtime: AgentRuntime,
     attachments?: RuntimeAttachment[],
     timeoutMsOverride?: number,
+    onUsage?: DispatchSubagentInput["onUsage"],
   ): Promise<SubagentInvocation> {
     const startedAt = new Date();
     // 调用方只能收紧预算，不能突破 agent 定义的 policy；分批链路用更短的单批上限。
@@ -536,6 +543,11 @@ export class SubagentOrchestrator {
       this.db.update(subagentInvocations).set({ runtimeSessionRef: runtimeRun.runtimeSessionRef })
         .where(eq(subagentInvocations.id, invocationId)).run();
       const consume = this.consumeEvents(invocationId, runtimeRun.events, (event) => {
+        if (onUsage && (event.type === "context.usage" || event.type === "message.completed")) {
+          const payload = event.payload as { runUsage?: Record<string, unknown>; usage?: Record<string, unknown> };
+          const usage = payload.runUsage ?? payload.usage;
+          if (usage) onUsage(invocationId, usage);
+        }
         if (definition.revision.outputSchema && event.type === "tool.completed"
           && (event.payload as { name?: unknown }).name === "subagent_submit_result"
           && (event.payload as { result?: { details?: { accepted?: boolean } } }).result?.details?.accepted === true

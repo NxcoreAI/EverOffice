@@ -206,6 +206,76 @@ function tailArgs(plan: Record<string, unknown>, harness: Harness) {
 }
 
 describe("runLayouterTail", () => {
+  it("does not create a deck or dispatch when already cancelled", async () => {
+    const harness = makeHarness([QUOTE_TREE]);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runLayouterTail(harness.deps, { ...tailArgs(planOf([QUOTE_TREE]), harness), signal: controller.signal });
+    expect(JSON.parse(result.content).status).toBe("cancelled");
+    expect(harness.bridge.generate).not.toHaveBeenCalled();
+    expect(harness.dispatches).toHaveLength(0);
+    expect(harness.trashed).toEqual([]);
+  });
+
+  it("cancels queued writes, preserves the in-flight successful page and resumes only the missing page", async () => {
+    const harness = makeHarness([QUOTE_TREE, QUOTE_TREE]);
+    const controller = new AbortController();
+    const checkpoints: NonNullable<Parameters<typeof runLayouterTail>[1]["existingDeck"]>[] = [];
+    harness.bridge.fillPage.mockImplementationOnce(async () => {
+      // Cancellation arrives while the bridge is writing. This write finishes,
+      // while the next queued write must never start.
+      controller.abort();
+      return { ok: true, applied: true };
+    });
+    const plan = planOf([QUOTE_TREE, QUOTE_TREE]);
+    const result = await runLayouterTail(harness.deps, { ...tailArgs(plan, harness), signal: controller.signal,
+      onCheckpoint: deck => checkpoints.push(deck) });
+    expect(JSON.parse(result.content)).toMatchObject({ status: "cancelled", appliedPages: [0] });
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
+    expect(harness.trashed).toEqual([]);
+    expect(harness.settled).toEqual([]);
+    expect(harness.bridge.completeDeck.mock.calls.every(([args]) => args.completed === false)).toBe(true);
+    expect(checkpoints.at(-1)).toMatchObject({ appliedPages: [0] });
+
+    const resumed = makeHarness([QUOTE_TREE]);
+    const resumedResult = await runLayouterTail(resumed.deps, { ...tailArgs(plan, resumed), existingDeck: checkpoints.at(-1)! });
+    expect(JSON.parse(resumedResult.content).status).toBe("completed");
+    expect(resumed.bridge.generate).not.toHaveBeenCalled();
+    expect(resumed.bridge.fillPage).toHaveBeenCalledTimes(1);
+    expect(resumed.bridge.fillPage.mock.calls[0]![0].slideIndex).toBe(1);
+    expect(resumed.dispatches.every(call => call.input.pageIndex === 1)).toBe(true);
+  });
+
+  it("cancels a stream that never supplies its first page", async () => {
+    const harness = makeHarness([QUOTE_TREE]);
+    const controller = new AbortController();
+    let reading!: () => void;
+    const started = new Promise<void>(resolve => { reading = resolve; });
+    const pages: NonNullable<Parameters<typeof runLayouterTail>[1]["stream"]>["pages"] = {
+      [Symbol.asyncIterator]: () => ({ next: () => { reading(); return new Promise(() => {}); } }),
+    };
+    const resultPromise = runLayouterTail(harness.deps, { ...tailArgs(planOf([QUOTE_TREE]), harness), signal: controller.signal,
+      stream: { totalPages: 1, outline: ["第一页"], pages } });
+    await started;
+    controller.abort();
+    expect(JSON.parse((await resultPromise).content).status).toBe("cancelled");
+    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    expect(harness.trashed).toEqual([]);
+  });
+
+  it("returns blocked without retry, placeholder replacement or archiving", async () => {
+    const harness = makeHarness([]);
+    const dispatch = vi.fn(async () => ({ status: "completed", result: { structuredOutput: {
+      status: "blocked", reason: "缺少数据", attempts: ["检查已有来源"], requestedAction: "提供原始表格",
+    } } } as unknown as SubagentInvocation));
+    harness.deps.dispatchPage = dispatch;
+    const result = await runLayouterTail(harness.deps, tailArgs(planOf([QUOTE_TREE]), harness));
+    expect(JSON.parse(result.content)).toMatchObject({ status: "blocked", blockedPages: [{ pageIndex: 0, requestedAction: "提供原始表格" }] });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    expect(harness.trashed).toEqual([]);
+  });
+
   it("semantic mode accepts simple text and identical adjacent layouts without richness or diversity rerolls", async () => {
     const page = semanticCases[0]!.page;
     const harness = makeHarness([]);
@@ -252,7 +322,7 @@ describe("runLayouterTail", () => {
     expect(harness.trashed).toEqual([]);
   });
 
-  it("renders the exact revised semantic tree again before landing", async () => {
+  it("先落首版、自审修正后补落同一页，且补落的就是重新渲染过的修正树", async () => {
     const png = createCanvas(320, 180).toBuffer("image/png");
     vi.mocked(pptxToPng).mockResolvedValueOnce(png).mockResolvedValueOnce(png);
     const page = semanticCases[0]!.page;
@@ -270,7 +340,10 @@ describe("runLayouterTail", () => {
     expect(result.visualValidation).toEqual(["revised-rendered"]);
     const bridge = harness.deps.bridge as any;
     expect(bridge.renderPptx).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(bridge.renderPptx.mock.calls[1][0].pages[0])).toEqual(JSON.parse(harness.bridge.fillPage.mock.calls[0]![0].specJson));
+    // 首版先落（用户先看到页），自审修正后再补落同一页：两次都是 slideIndex 0。
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(2);
+    expect(harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([0, 0]);
+    expect(JSON.parse(bridge.renderPptx.mock.calls[1][0].pages[0])).toEqual(JSON.parse(harness.bridge.fillPage.mock.calls[1]![0].specJson));
   });
 
   it("三页直落：占位页一次建满、按页序替换、逐页进度、回收草稿与落定风格", async () => {
@@ -778,10 +851,11 @@ describe("runLayouterTail", () => {
     expect(tokens!.decoration).toMatchObject({ divider: "none", imageFit: "contain" });
   });
 
-  // 自审（2026-10-22）：审页代理已砍——每页写完立刻把**自己的渲染图**投回同一个
-  // 布局代理（视觉档模型）自查，修正后的树才去落页。这里验两件事：
-  // ①每页都回投过且附件是图片；②回投发生在该页落页之前（写完即审，不是整册审完再回头改）。
-  it("自审回投：每页写完带着渲染图回投，且在该页落页之前", async () => {
+  // 自审（2026-10-22，2026-10-24 调整为落页后）：审页代理已砍——每页写完立刻把
+  // **自己的渲染图**投回同一个布局代理（视觉档模型）自查。落页优先：先落首版让用户看到页，
+  // 修正后的树再补落同一页。这里验两件事：
+  // ①每页都回投过且附件是图片；②回投发生在该页首版落定之后（先交付，后提质）。
+  it("先落页、后自审：每页带着渲染图回投，且在该页落页之后", async () => {
     const harness = makeHarness([CONTENT_TREE, CHART_TREE]);
     const events: string[] = [];
     harness.bridge.fillPage.mockImplementation(async ({ slideIndex }: { slideIndex: number }) => {
@@ -804,9 +878,52 @@ describe("runLayouterTail", () => {
       // 回投必须带上"当前这棵树"，否则模型没有要审的对象。
       expect((review.input.currentTree as { version?: number }).version).toBe(2);
     }
-    // 第 1 页：自审先于落页。
-    expect(events.indexOf("self-review:0")).toBeGreaterThanOrEqual(0);
-    expect(events.indexOf("self-review:0")).toBeLessThan(events.indexOf("land:0"));
+    // 第 1 页：先落页，再回投自审（落页优先，自审只提质）。
+    expect(events.indexOf("land:0")).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf("self-review:0")).toBeGreaterThan(events.indexOf("land:0"));
+  });
+
+  it("deck 未打开导致落页失败：明确 not_open 原因与可重试标记", async () => {
+    const harness = makeHarness([CONTENT_TREE]);
+    harness.bridge.fillPage.mockImplementation(async () => {
+      throw new Error("该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。");
+    });
+    const updates: Array<Record<string, unknown>> = [];
+    const plan = planOf([CONTENT_TREE]);
+    const result = JSON.parse((await runLayouterTail(harness.deps, {
+      ...tailArgs(plan, harness),
+      onUpdate: (update) => updates.push(update.details as Record<string, unknown>),
+    })).content);
+    expect(result.status).toBe("failed");
+    expect(result.errorCode).toBe("slides_layout_apply_failed");
+    expect(result.landingBlocked).toBe("deck_not_open");
+    expect(String(result.message)).toContain("not_open");
+    expect(updates.at(-1)).toMatchObject({ landingBlocked: "deck_not_open" });
+    const warnings = (updates.at(-1)?.warnings as string[] | undefined) ?? [];
+    expect(warnings.join("；")).toContain("not_open");
+  });
+
+  it("existingDeck：复用同一个 deck 续落，只补未落定的页", async () => {
+    const harness = makeHarness([CONTENT_TREE, CHART_TREE]);
+    const plan = planOf([CONTENT_TREE, CHART_TREE]);
+    const first = JSON.parse((await runLayouterTail(harness.deps, tailArgs(plan, harness))).content);
+    expect(first.status).toBe("completed");
+    expect(first.appliedPages).toEqual([0, 1]);
+    expect(harness.bridge.generate).toHaveBeenCalledTimes(1);
+    harness.dispatches.length = 0;
+
+    const second = JSON.parse((await runLayouterTail(harness.deps, {
+      ...tailArgs(plan, harness),
+      runId: "run-2",
+      existingDeck: { fileEntryId: "file-1", originalName: "deck.pptx", appliedPages: [0], totalPages: 2 },
+    })).content);
+    expect(second.status).toBe("completed");
+    expect(second.appliedPages).toEqual([0, 1]);
+    // 不再建第二个 deck；只补第 2 页的布局与落页。
+    expect(harness.bridge.generate).toHaveBeenCalledTimes(1);
+    expect(harness.dispatches).toHaveLength(1);
+    const lastFill = harness.bridge.fillPage.mock.calls.at(-1)![0] as { fileId: string; slideIndex: number };
+    expect(lastFill).toMatchObject({ fileId: "file-1", slideIndex: 1 });
   });
 
   // 2026-10-20 事故回归：遗留 invocation 占满全局子代理并发窗口，整册页全部拿不到

@@ -65,13 +65,6 @@ const RawConfigSchema = Type.Object(
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
     aiTranscriptionModel: Type.String(),
-    aiSlidesReviewerModel: Type.String(),
-    /** 审页档独立预算：视觉模型输出上限/窗口/思考档（缺省沿用主模型档）。 */
-    aiSlidesReviewerMaxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
-    aiSlidesReviewerContextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
-    aiSlidesReviewerReasoning: Type.Optional(AiReasoningSchema),
-    /** 布局代理的视觉模型来源：slot＝SaaS 下发的 vlm 槽（默认）；background＝主模型（它自己就是多模态时用）。 */
-    aiSlidesVisionSource: Type.Union([Type.Literal("slot"), Type.Literal("background")], { default: "slot" }),
     aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
@@ -341,18 +334,6 @@ export interface GatewayConfig {
   transcriptionSummaryPi: PiRuntimeConfig | null;
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
-  /** 视觉档（slides-layouter 自审用，需多模态模型）；未配置＝回退 backgroundPi。 */
-  /**
-   * 视觉档（SaaS 下发的 vlm 模型槽）：slides-layouter 直接跑在这个视觉模型上，
-   * 自己看渲染图自查。留 null 时子代理回退 backgroundPi（主模型多模态时仍可用）。
-   */
-  slidesVisionPi?: PiRuntimeConfig | null;
-  /**
-   * 布局代理的视觉模型来源：
-   * - "slot"（默认）＝SaaS 下发的 vlm 槽模型（slidesVisionPi）
-   * - "background"＝主模型档（主模型本身多模态时，少一个模型槽更省事）
-   */
-  slidesVisionSource?: "slot" | "background" | undefined;
   diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
@@ -700,18 +681,6 @@ export function loadConfig(
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
     aiTranscriptionModel: env.NXCORE_AI_TRANSCRIPTION_MODEL?.trim() || "",
-    aiSlidesReviewerModel: env.NXCORE_AI_SLIDES_REVIEWER_MODEL?.trim() || "",
-    aiSlidesReviewerMaxTokens: env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS?.trim()
-      ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS", env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS)
-      : undefined,
-    aiSlidesReviewerContextWindow: env.NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW?.trim()
-      ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW", env.NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW)
-      : undefined,
-    aiSlidesReviewerReasoning: parseAiReasoning(
-      "NXCORE_AI_SLIDES_REVIEWER_REASONING",
-      env.NXCORE_AI_SLIDES_REVIEWER_REASONING,
-    ),
-    aiSlidesVisionSource: env.NXCORE_SUBAGENT_SLIDES_VISION_SOURCE === "background" ? "background" : "slot",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
@@ -1244,27 +1213,9 @@ export function loadConfig(
           maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
-    // 视觉档（多模态）：model 可来自 env 专用键（NXCORE_AI_SLIDES_REVIEWER_MODEL），
-    // 也可由 runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
-    // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
-    // 输出上限/窗口/思考档支持独立 env 键：视觉模型常是 qwen 系，
-    // 输出上限远小于主模型；沿用主模型档会让长思考把输出预算吃满（2026-10 实测）。
-    slidesVisionSource: rawConfig.aiSlidesVisionSource,
-    slidesVisionPi: pi
-      ? {
-          ...pi,
-          model: rawConfig.aiSlidesReviewerModel,
-          ...(rawConfig.aiSlidesReviewerMaxTokens === undefined
-            ? {}
-            : { maxTokens: rawConfig.aiSlidesReviewerMaxTokens }),
-          ...(rawConfig.aiSlidesReviewerContextWindow === undefined
-            ? {}
-            : { contextWindow: rawConfig.aiSlidesReviewerContextWindow }),
-          ...(rawConfig.aiSlidesReviewerReasoning === undefined
-            ? {}
-            : { reasoning: rawConfig.aiSlidesReviewerReasoning }),
-        }
-      : null,
+    // 布局代理（slides-layouter）直接用主模型：主模型已具备视觉能力，自审直接看
+    // 渲染图，不再需要独立的多模态视觉档（vlm 槽仍供给 perception / 视觉复检等
+    // 其他链路，见 config.vlm）。
     subagents: {
       enabled: rawConfig.subagentsEnabled,
       definitionsDir: resolve(rawConfig.subagentsDir || bundledAgentDefinitionsDir()),

@@ -25,7 +25,9 @@ policy:
   maxToolCalls: 80
   timeoutSeconds: 900
   model:
-    # planner 是「整册长文一次成稿」：思考档固定关掉，输出上限显式给足（27 页约 1~2 万 token）。
+    # planner 是「整册长文一次成稿」：思考档固定关掉，输出上限显式给足。
+    # 27 页实测 submit 参数约 7k token、32 页按 1~2 万 token 估算，32768 足够覆盖整册；
+    # 再高（如 65k）会与 128k 上下文窗口和 pi 的 16k 压缩预留互相挤压。
     # 不写这两项会继承 background 档：用户槽位只存 model 时容易回落到 8192 输出上限。
     reasoning: "off"
-    maxTokens: 65536
+    maxTokens: 32768

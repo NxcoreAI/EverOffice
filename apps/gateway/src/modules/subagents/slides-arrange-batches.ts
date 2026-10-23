@@ -280,6 +280,7 @@ export function arrangeBatchCheckpointKey(fingerprint: {
   deckStyle?: unknown;
   referenceStyle?: unknown;
   batchSize: number;
+  generation?: unknown;
 }): string {
   const stable = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(stable);
@@ -298,6 +299,7 @@ export function arrangeBatchCheckpointKey(fingerprint: {
       deckStyle: fingerprint.deckStyle ?? null,
       referenceStyle: fingerprint.referenceStyle ?? null,
       batchSize: fingerprint.batchSize,
+      generation: fingerprint.generation ?? null,
     })))
     .digest("hex");
 }

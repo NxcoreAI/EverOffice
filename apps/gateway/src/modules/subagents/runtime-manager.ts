@@ -7,6 +7,8 @@ import { Type } from "@sinclair/typebox";
 import { Ajv, type ValidateFunction } from "ajv";
 import type { GatewayConfig, PiRuntimeConfig, SubagentFrameworkConfig } from "../../config.js";
 import { isPiRuntimeConfigured } from "../agent/runtime-factory.js";
+import { traceRuntime } from "../agent-debug/instrument.js";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import type { LoadedSubagentRevision } from "./types.js";
 import type { ExternalCallBudgetService } from "../external-calls/service.js";
 
@@ -174,23 +176,18 @@ export function resolveSubagentReasoning(input: {
 /**
  * 子代理用哪个模型底座。
  *
- * 布局代理跑视觉档（model 来自 env 专用键或 vlm 槽＝SaaS 下发的视觉模型）——它要
- * 自己看渲染图自查，所以必须是多模态模型；其余子代理仍走 background。视觉档 model
- * 仍空＝未配置，回退 background（主模型多模态时照旧可用），不让布局因为没配视觉槽而停摆。
+ * 布局代理跑主模型：主模型（deepseek 系）已具备视觉能力，布局自审直接看渲染图，
+ * 不再单独下发 vlm 槽模型——避免布局与主 Agent 两套模型、两套生成参数口径。
+ * 其余子代理仍走 background（成本档），缺失时回退主模型。
  */
 export function resolveSubagentRuntimeBase(input: {
   agentId: string;
-  /** "slot"＝用 SaaS 下发的 vlm 槽模型；"background"＝直接用主模型（主模型自己多模态时）。 */
-  visionSource?: "slot" | "background" | undefined;
-  visionPi?: PiRuntimeConfig | null | undefined;
   backgroundPi?: PiRuntimeConfig | null | undefined;
   pi?: PiRuntimeConfig | null | undefined;
 }): PiRuntimeConfig | null {
-  const useVisionSlot = (input.visionSource ?? "slot") === "slot";
-  const vision = useVisionSlot && input.agentId === "slides-layouter" && input.visionPi?.model
-    ? input.visionPi
-    : null;
-  return vision ?? input.backgroundPi ?? input.pi ?? null;
+  // 布局代理与主 Agent 同底座；backgroundPi 是成本档，只在主模型缺失时兜底。
+  if (input.agentId === "slides-layouter") return input.pi ?? input.backgroundPi ?? null;
+  return input.backgroundPi ?? input.pi ?? null;
 }
 
 export class SubagentRuntimeManager {
@@ -203,14 +200,30 @@ export class SubagentRuntimeManager {
     private readonly gatewayConfig: GatewayConfig,
     private readonly config: SubagentFrameworkConfig,
     private readonly externalCalls?: ExternalCallBudgetService,
+    private readonly agentDebugStore?: AgentDebugTraceStore,
   ) {}
 
   acquire(revision: LoadedSubagentRevision): AgentRuntime {
     const cached = this.runtimes.get(revision.id);
     if (cached) return cached;
-    const runtime = this.createRuntime(revision);
+    const runtime = this.trace(this.createRuntime(revision), revision);
     this.runtimes.set(revision.id, runtime);
     return runtime;
+  }
+
+  /**
+   * dispatch-only 子 Agent 的 trace 接入点（agentKind=developer）。
+   * 其 runtime 也可能被 AgentResolver 以 developer 定义注册，那边跳过 trace
+   * 避免同一 run 双记，所以埋点必须在这里完成。
+   */
+  private trace(runtime: AgentRuntime, revision: LoadedSubagentRevision): AgentRuntime {
+    if (!this.agentDebugStore) return runtime;
+    return traceRuntime(runtime, this.agentDebugStore, {
+      agentId: revision.manifest.id,
+      agentName: revision.manifest.name,
+      agentKind: "developer",
+      description: revision.manifest.description,
+    });
   }
 
   /** Register Gateway-owned tools for one dispatch-only Agent identity. */
@@ -255,8 +268,6 @@ export class SubagentRuntimeManager {
     if (this.gatewayConfig.agentRuntime === "fake") return new FakeAgentRuntime();
     const base = resolveSubagentRuntimeBase({
       agentId: revision.manifest.id,
-      visionSource: this.gatewayConfig.slidesVisionSource,
-      visionPi: this.gatewayConfig.slidesVisionPi,
       backgroundPi: this.gatewayConfig.backgroundPi,
       pi: this.gatewayConfig.pi,
     });
@@ -326,7 +337,10 @@ export class SubagentRuntimeManager {
       skillsEnabled: revision.manifest.skills.length > 0,
       builtinTools: [],
       includeBashTool: false,
-      maxToolCallsPerRun: revision.policy.maxToolCalls,
+      // 不声明工具预算＝不注入上限：布局类长链路由 timeoutMs / 输出预算兜底。
+      ...(revision.policy.maxToolCalls === undefined
+        ? {}
+        : { maxToolCallsPerRun: revision.policy.maxToolCalls }),
       maxToolResultChars: SUBAGENT_TOOL_RESULT_MAX_CHARS,
       runContextGuard: {
         triggerTokens: Math.max(8_000, Math.floor(contextWindow * SUBAGENT_CONTEXT_GUARD_TRIGGER_RATIO)),

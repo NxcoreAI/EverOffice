@@ -22,6 +22,12 @@ policy:
   # subagent_concurrency_limit 秒拒 → 秒级退避耗尽 → 抛错 → 该页落 v2 兜底页并告警。
   # 旧值 8 是改造前的页级窗口；页级窗口上调到 16 后这里必须同步放开，否则 >8 页的册会掉兜底页。
   maxConcurrency: 16
-  # 包含基础语法、按需参考、布局校验与结果提交的工具预算。
-  maxToolCalls: 24
-  timeoutSeconds: 480
+  # 不设工具调用上限：单页是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
+  # abort 会把已收敛的树一起丢掉；run 仍受 timeoutSeconds 与输出预算约束。
+  timeoutSeconds: 1000
+  model:
+    # 与主 Agent 同底座（主模型，deepseek 系；已具备视觉能力，自审直接看渲染图）。
+    # 输出预算 32768 覆盖「整页 v2 树 + 校验修复轮」；思考档位按 A/B 结论调整
+    # （DeepSeek 系 reasoning:"off" 会显式发 thinking:disabled，不再烧输出预算）。
+    reasoning: "low"
+    maxTokens: 32768

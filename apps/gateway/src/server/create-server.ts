@@ -104,6 +104,7 @@ import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
+import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
@@ -201,6 +202,8 @@ import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-co
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
+import { AgentDebugTraceStore } from "../modules/agent-debug/trace-store.js";
+import { agentDebugRoutes, debugAgentsFromStatusSnapshot } from "../modules/agent-debug/routes.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
 import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.js";
@@ -285,10 +288,6 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   } else {
     apply(config.vlm as unknown as Record<string, unknown> | null, runtime.vlm);
   }
-  // 视觉档（slides-layouter 自审用）同样吃 vlm 槽：SaaS 套餐下发的视觉模型（或内置
-  // 默认/BYOK）直接作为布局模型的底座。vlm 槽自带连接（中转重写或 BYOK 继承）时一并
-  // 补齐；空连接时视觉档保留从 pi 继承的连接。model 未变化时 apply 不触碰。
-  apply(config.slidesVisionPi as unknown as Record<string, unknown> | null, runtime.vlm);
   // ASR（仅 aliyun provider）：runtime 标量 + OSS 必填项齐全可直接构造
   // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
   // 仅标量齐全时保持补丁行为，env 配置的 OSS 保留。
@@ -772,7 +771,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentMcpHost.capabilities,
   );
   await documentMcpHost.capabilities.recover();
-  const agentResolver = createAgentResolver(config);
+  // Agent 调试页（独立浏览器调试台）的内存 trace：不落库、不参与业务链路，
+  // 仅在 runtime 边界旁路记录，供 /v1/agent-debug/* 只读查询。
+  const agentDebugStore = new AgentDebugTraceStore();
+  const agentResolver = createAgentResolver(config, agentDebugStore);
   // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
   const knowledgeService = new KnowledgeService(
     db,
@@ -795,6 +797,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     },
     app.log,
     agentResolver,
+    { agentDebugStore },
   );
   const roomDuplicateService = new RoomDuplicateService(db, {
     judgeIdentity: (a, b) => knowledgeService.judgeRoomIdentity(a, b),
@@ -852,7 +855,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   await subagentRegistry.initialize();
-  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
+  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls, agentDebugStore);
   // context-room 子 Agent 的网关只读工具：记忆检索 + Room 文档上下文。
   // registerAgentTools 必须发生在任何 acquire 之前（首次 dispatch 前）。
   subagentRuntimeManager.registerAgentTools(
@@ -1094,6 +1097,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       return channelMcpHost.mcpServersForRun(input);
     },
     (input) => isChannelAgentSession(input.sessionId),
+    agentDebugStore,
   );
   const localAgentDispatchStore = new LocalAgentDispatchStore(db);
   // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
@@ -1183,6 +1187,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             },
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
+            slidesCheckpoints: new SlidesGenerationCheckpointStore(db),
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
             // slides 语义内容链路（storyboard/v3）：内容契约装配——storyboard 落库 + 实验隔离 hash。
@@ -1190,7 +1195,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
               ? {
                   store: new SlidesStoryboardStore(db), active: true,
                   generationConfig: () => ({
-                    models: [config.backgroundPi, config.slidesVisionPi].map(model => model ? {
+                    // 内容链路实际用到的模型：planner/editor 走 background，layouter 走主模型。
+                    models: [config.backgroundPi, config.pi].map(model => model ? {
                       provider: model.provider, model: model.model, baseUrl: model.baseUrl,
                       api: model.api, reasoning: model.reasoning, maxTokens: model.maxTokens,
                       contextWindow: model.contextWindow, temperature: model.temperature,
@@ -1678,11 +1684,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgePreferences.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
+    agentDebugStore.dispose();
     await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore));
+  const agentStatusService = new AgentStatusService(agentResolver, subagentOrchestrator);
+  await app.register(agentRoutes(agentService, agentStatusService, localAgentDispatchStore));
+  // 调试页 Agent 目录复用同一份 status 快照；store 观测到的本机 CLI Agent 由路由合并。
+  await app.register(agentDebugRoutes(
+    agentDebugStore,
+    () => debugAgentsFromStatusSnapshot(agentStatusService.snapshot()),
+  ));
   await app.register(subagentRoutes(subagentOrchestrator));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);

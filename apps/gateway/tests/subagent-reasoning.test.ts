@@ -46,41 +46,29 @@ describe("resolveSubagentReasoning", () => {
 });
 
 /**
- * 模型底座解算：布局代理必须跑在视觉档（SaaS 下发的 vlm 槽模型）上——它要自己看
- * 渲染图自查；审页代理已砍，别再让布局停在纯文本的 background 上。
+ * 模型底座解算：布局代理与主 Agent 共用主模型——主模型已具备视觉能力，布局自审
+ * 直接看渲染图；不再有独立的 vlm 槽。其余子代理仍走 background（成本档）。
  */
 describe("resolveSubagentRuntimeBase", () => {
   const pi = { provider: "openai", model: "text-main", baseUrl: "http://relay/v1", apiKey: "k", api: "openai-completions" } as never;
   const backgroundPi = { provider: "openai", model: "text-bg", baseUrl: "http://relay/v1", apiKey: "k", api: "openai-completions" } as never;
-  const visionPi = { provider: "qwen", model: "qwen3.8-flash", baseUrl: "http://relay/v1", apiKey: "k", api: "openai-completions" } as never;
 
-  it("布局代理拿视觉档（vlm 槽模型），不是 background", () => {
-    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", visionPi, backgroundPi, pi })).toBe(visionPi);
+  it("布局代理使用主模型，与主 Agent 同底座", () => {
+    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", backgroundPi, pi })).toBe(pi);
   });
 
-  it("其余子代理仍走 background，不被视觉档串味", () => {
-    expect(resolveSubagentRuntimeBase({ agentId: "slides-planner", visionPi, backgroundPi, pi })).toBe(backgroundPi);
-    expect(resolveSubagentRuntimeBase({ agentId: "context-room", visionPi, backgroundPi, pi })).toBe(backgroundPi);
+  it("其余子代理仍走 background，不被布局口径串味", () => {
+    expect(resolveSubagentRuntimeBase({ agentId: "slides-planner", backgroundPi, pi })).toBe(backgroundPi);
+    expect(resolveSubagentRuntimeBase({ agentId: "context-room", backgroundPi, pi })).toBe(backgroundPi);
   });
 
-  it("视觉来源切成 background 时布局直接用主模型（主模型自己多模态的场景）", () => {
-    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", visionSource: "background", visionPi, backgroundPi, pi })).toBe(backgroundPi);
-    // 不设来源＝默认走槽，行为与改造前一致。
-    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", visionSource: "slot", visionPi, backgroundPi, pi })).toBe(visionPi);
+  it("主模型缺失时布局回退 background；background 缺失时其余子代理回退主模型", () => {
+    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", backgroundPi })).toBe(backgroundPi);
+    expect(resolveSubagentRuntimeBase({ agentId: "slides-planner", pi })).toBe(pi);
   });
 
-  it("视觉档未配置（model 为空）时回退 background，布局不因缺槽停摆", () => {
-    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", visionPi: null, backgroundPi, pi })).toBe(backgroundPi);
-    expect(resolveSubagentRuntimeBase({
-      agentId: "slides-layouter",
-      visionPi: { provider: "qwen", model: "", baseUrl: "http://relay/v1", apiKey: "k", api: "openai-completions" } as never,
-      backgroundPi,
-      pi,
-    })).toBe(backgroundPi);
-  });
-
-  it("background 也缺时退到全局 pi；全缺返回 null（交给调用方报错）", () => {
-    expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter", backgroundPi: null, pi })).toBe(pi);
+  it("全缺返回 null（交给调用方报错）", () => {
     expect(resolveSubagentRuntimeBase({ agentId: "slides-layouter" })).toBeNull();
+    expect(resolveSubagentRuntimeBase({ agentId: "slides-planner" })).toBeNull();
   });
 });

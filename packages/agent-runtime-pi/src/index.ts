@@ -1145,7 +1145,9 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active || active.terminal) return;
 
-    if (event.type === "turn_end" && event.message.role === "assistant") {
+    // Account before tools execute: structured submission can stop the consumer
+    // before turn_end, including on the very first model request.
+    if (event.type === "message_end" && event.message.role === "assistant") {
       active.stopReason = event.message.stopReason;
       const usage = (event.message as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }).usage;
       if (usage) {
@@ -1254,13 +1256,13 @@ export class PiAgentRuntime implements AgentRuntime {
   /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */
   private emitContextUsage(active: ActivePiRun): void {
     const usage = active.handle.session.getContextUsage();
-    if (!usage) return;
     active.queue.push({
       type: "context.usage",
       payload: {
-        tokens: usage.tokens,
-        contextWindow: usage.contextWindow,
-        percent: usage.percent,
+        tokens: usage?.tokens ?? null,
+        contextWindow: usage?.contextWindow ?? this.config.contextWindow,
+        percent: usage?.percent ?? null,
+        runUsage: { ...active.usage },
         segments: this.estimateContextSegments(active),
       },
     });

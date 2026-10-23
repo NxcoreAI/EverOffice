@@ -9,6 +9,8 @@ import { agentRoutes } from "../modules/agent/routes.js";
 import { createAgentResolver, registerCursorCompletionAgent } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { AgentService } from "../modules/agent/service.js";
+import { AgentDebugTraceStore } from "../modules/agent-debug/trace-store.js";
+import { agentDebugRoutes, debugAgentsFromResolver } from "../modules/agent-debug/routes.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import { systemRoutes } from "../modules/system/routes.js";
@@ -53,7 +55,8 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
   await app.register(auth, { token: config.authToken });
   await app.register(systemRoutes);
 
-  const agentResolver = createAgentResolver(config);
+  const agentDebugStore = new AgentDebugTraceStore();
+  const agentResolver = createAgentResolver(config, agentDebugStore);
   registerCursorCompletionAgent(agentResolver, config);
   const runtime = agentResolver.resolve(BUILTIN_AGENT_IDS.cursorCompletion);
   app.log.info(
@@ -86,10 +89,14 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
   app.addHook("onClose", async () => {
     await agentService.dispose();
     await agentResolver.dispose();
+    agentDebugStore.dispose();
     sqlite.close();
     await gatewayLogger.close();
   });
   await app.register(agentRoutes(agentService));
+  // 补全网关没有 status service：调试页 Agent 目录从 resolver 定义 + activity 推导，
+  // 本机 CLI Agent 由 store 观测结果合并。
+  await app.register(agentDebugRoutes(agentDebugStore, () => debugAgentsFromResolver(agentResolver)));
 
   return app;
 }
