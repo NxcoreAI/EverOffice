@@ -7,8 +7,7 @@ import type {
 } from "@nxcore/connector-contract";
 import type { ConnectorExecutor } from "./types.js";
 import { ConnectorDocumentStore } from "./document-store.js";
-import { calendarEventToMarkdown, mailToMarkdown } from "./connector-memory.js";
-import { isEmptyMailShell, type ConnectorDomainProjection } from "./domain-projection.js";
+import type { ConnectorDomainProjection } from "./domain-projection.js";
 import { ConnectorRepository } from "./repository.js";
 import { syncProviderOf } from "./sync-providers/index.js";
 import { SyncEngine } from "./sync-engine.js";
@@ -17,21 +16,12 @@ export class ConnectorManager {
   private readonly active = new Map<string, Promise<void>>();
   private readonly cancelled = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
-  /** 同步数据入库记忆的扇出（create-server 注入 MemoryService）；失败不阻塞同步本身。 */
-  private memorySink:
-    | ((input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string; domainRowId?: string }) => Promise<void>)
-    | null = null;
   /**
-   * 域投影（阶段一）：归一化记录落主库 connector_* 域表，先于 memorySink。
+   * 域投影（阶段一）：归一化记录落主库 connector_* 域表。
    * 第一版软失败（记 sync_failures 计数，不阻断 ingest）；soak 后升硬失败。
    */
   private domainProjection: ConnectorDomainProjection | null = null;
 
-  setMemorySink(
-    sink: (input: { kind: "document" | "mail" | "calendar"; provider: string; connectionId: string; documentId: string; title: string; markdown: string; calendarId?: string; domainRowId?: string }) => Promise<void>,
-  ) {
-    this.memorySink = sink;
-  }
   setDomainProjection(projection: ConnectorDomainProjection | null) {
     this.domainProjection = projection;
   }
@@ -204,65 +194,20 @@ export class ConnectorManager {
         yieldedPages += 1;
         this.repository.applyPage(scope.id, run.id, fence, page.changes);
         this.repository.applyCalendarPage(scope.id, run.id, fence, page.calendarChanges ?? []);
-        // 域投影先于 memorySink（M4）：投影返回行 id 随 memorySink 透传，
-        // ingest 的 sourceId 直接用域行 id（对齐 CLI 路径；connector ref 仅存量遗留）。
-        const projectedRowIds = new Map<string, string>();
+        // 域投影：投影返回行 id 供后续 ingest 归属使用（Phase 2 起不再扇出记忆）。
         for (const change of page.changes) {
           project(() => {
-            const result = this.domainProjection!.projectMail(connection.provider, connection.id, change);
-            if (change.kind === "upsert" && result.id) projectedRowIds.set(change.message.providerMessageId, result.id);
+            this.domainProjection!.projectMail(connection.provider, connection.id, change);
           });
         }
         for (const change of page.calendarChanges ?? []) {
           project(() => {
-            const result = this.domainProjection!.projectCalendar(connection.provider, connection.id, change);
-            if (change.kind === "upsert" && result.id) projectedRowIds.set(change.event.providerEventId, result.id);
+            this.domainProjection!.projectCalendar(connection.provider, connection.id, change);
           });
-        }
-        for (const change of page.changes) {
-          if (change.kind !== "upsert" || !this.memorySink) continue;
-          // 空壳邮件不投影也不进知识库（domain-projection 同判，见 isEmptyMailShell）。
-          if (isEmptyMailShell(change.message)) continue;
-          await this.memorySink({
-            kind: "mail",
-            provider: connection.provider,
-            connectionId: connection.id,
-            documentId: change.message.providerMessageId,
-            title: change.message.subject?.trim() || "（无主题）",
-            markdown: mailToMarkdown(change.message),
-            ...(projectedRowIds.get(change.message.providerMessageId)
-              ? { domainRowId: projectedRowIds.get(change.message.providerMessageId)! }
-              : {}),
-          }).catch(() => {});
-        }
-        for (const change of page.calendarChanges ?? []) {
-          if (change.kind !== "upsert" || !this.memorySink) continue;
-          await this.memorySink({
-            kind: "calendar",
-            provider: connection.provider,
-            connectionId: connection.id,
-            documentId: change.event.providerEventId,
-            title: change.event.title.trim() || "（无标题）",
-            markdown: calendarEventToMarkdown(change.event),
-            // scope 按"每个日历"建立：providerScopeId 即日历 id，进规则信号做日历级归因
-            calendarId: scope.providerScopeId,
-            ...(projectedRowIds.get(change.event.providerEventId)
-              ? { domainRowId: projectedRowIds.get(change.event.providerEventId)! }
-              : {}),
-          }).catch(() => {});
         }
         for (const document of page.documents ?? []) {
           if (!this.documentStore) throw new Error("connector_document_store_unavailable");
           await this.documentStore.write(connection.provider, connection.id, document);
-          if (this.memorySink)
-            await this.memorySink({
-              kind: "document",
-              provider: connection.provider,
-              connectionId: connection.id,
-              documentId: document.providerDocumentId,
-              title: document.title,
-              markdown: document.markdown,
-            }).catch(() => {});
         }
         this.repository.incrementRunProcessed(run.id, page.documents?.length ?? 0);
         if (page.terminalCursor)

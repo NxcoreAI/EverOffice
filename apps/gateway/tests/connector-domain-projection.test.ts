@@ -5,20 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createConnectorDatabase } from "../src/infrastructure/connectors/client.js";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import {
-  connectorCalendarEvents,
-  connectorEmails,
-  entityDocLinks,
-  routeDecisions,
-  roomSourceMemberships,
-} from "../src/infrastructure/database/schema.js";
+import { connectorCalendarEvents, connectorEmails } from "../src/infrastructure/database/schema.js";
 import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
 import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import {
   ConnectorDomainProjection,
   backfillDomainProjection,
   parseConnectorSourceRef,
-  rewriteConnectorRefIdentities,
 } from "@nxcore/connectors-module/domain-projection.js";
 
 const dirs: string[] = [];
@@ -231,7 +224,7 @@ describe("parseConnectorSourceRef", () => {
 });
 
 describe("manager domain projection wiring", () => {
-  it("projects synced mail (including tombstones) into the main database while keeping the memory sink", async () => {
+  it("projects synced mail (including tombstones) into the main database", async () => {
     const { connectors, main } = await setupBoth();
     const repo = new ConnectorRepository(connectors.sqlite);
     const connection = repo.registerConnection({ provider: "gmail", service: "g", connectionName: "nango-c" });
@@ -248,13 +241,10 @@ describe("manager domain projection wiring", () => {
     } as any;
     const manager = new ConnectorManager(repo, executor);
     manager.setDomainProjection(new ConnectorDomainProjection(main.db, "local-user"));
-    const seen: unknown[] = [];
-    manager.setMemorySink(async (input) => { seen.push(input); });
     const run = manager.trigger(scope.id, "full");
     await manager.dispose();
     expect(repo.getRun(run.id)).toMatchObject({ status: "completed" });
-    // memorySink 语义不变：upsert 进、tombstone 不进。
-    expect(seen).toHaveLength(1);
+    // upsert 投影成域行，tombstone 只做软删（不再有记忆扇出）。
     const row = main.db.select().from(connectorEmails).get();
     expect(row).toMatchObject({ service: "gmail", connectionName: connection.id, sourceRecordId: "msg-1", subject: "季度总结" });
     expect(row?.deletedAt).toBeNull();
@@ -272,12 +262,9 @@ describe("manager domain projection wiring", () => {
       projectMail: () => { throw new Error("projection down"); },
       projectCalendar: () => { throw new Error("projection down"); },
     } as any);
-    const seen: unknown[] = [];
-    manager.setMemorySink(async (input) => { seen.push(input); });
     const run = manager.trigger(scope.id, "full");
     await manager.dispose();
     expect(repo.getRun(run.id)).toMatchObject({ status: "completed" });
-    expect(seen).toHaveLength(1);
     // listFailures 将 kind 列别名为 category 返回（better-sqlite3 返回 unknown[]）。
     const failures = repo.listFailures() as Array<{ category: string; runId: string }>;
     expect(failures.some((failure) => failure.category === "domain_projection" && failure.runId === run.id)).toBe(true);
@@ -313,49 +300,3 @@ function clientclose(connectors: { sqlite: { close: () => void } }, main: { sqli
   connectors.sqlite.close();
   main.sqlite.close();
 }
-
-describe("M4 identity rewrite", () => {
-  it("rewrites connector refs to domain row ids across identity tables and dedupes", async () => {
-    const { client } = await setupMain();
-    const projection = new ConnectorDomainProjection(client.db, "local-user");
-    const result = projection.projectMail("gmail", "conn-1", mailChange);
-    const rowId = result.id!;
-    const ref = "connector:gmail:conn-1:mail:msg-1";
-    const now = new Date();
-    const earlier = new Date(now.getTime() - 60_000);
-    // memberships：ref 行 + 既有同 id 的 CLI 行（撞车场景）。
-    client.db.insert(roomSourceMemberships).values([
-      { id: "m-ref", roomId: "room-1", sourceKind: "mail", sourceId: ref, sourceVersion: 1, role: "primary", evidenceGroupKey: ref, updatedAt: earlier },
-      { id: "m-cli", roomId: "room-1", sourceKind: "mail", sourceId: rowId, sourceVersion: 1, role: "primary", evidenceGroupKey: rowId, updatedAt: now },
-    ]).run();
-    client.db.insert(routeDecisions).values({
-      id: "d-ref", sourceKind: "mail", sourceId: ref, sourceVersion: 1,
-      sourceTitle: "季度总结", confidence: 1, status: "linked", decidedBy: "resolution", createdAt: now,
-    }).run();
-    client.db.insert(entityDocLinks).values({
-      id: "l-ref", entityId: "ent-1", sourceKind: "mail", sourceId: ref, sourceVersion: 1,
-      role: "mention", salience: 1, evidence: "ref link", evidenceGroupKey: "ref", decidedBy: "resolution", updatedAt: now,
-    }).run();
-    const summary = rewriteConnectorRefIdentities(client.db);
-    // 同一 ref 出现在三张表：按字符串去重计数（refs=1），一次改写覆盖全部表。
-    expect(summary).toMatchObject({ refs: 1, rewritten: 1, unresolved: 0, deduped: { memberships: 1, entityLinks: 0 } });
-    // 六表改写后：决策与链接都指向域行 id；membership 撞车保留最新（CLI 行）。
-    expect(client.db.select().from(routeDecisions).all().every((row) => row.sourceId === rowId)).toBe(true);
-    expect(client.db.select().from(entityDocLinks).all().every((row) => row.sourceId === rowId)).toBe(true);
-    expect(client.db.select().from(roomSourceMemberships).all()).toEqual([
-      expect.objectContaining({ id: "m-cli", sourceId: rowId }),
-    ]);
-    // 幂等：再跑一次为 no-op（refs 归零）。
-    expect(rewriteConnectorRefIdentities(client.db).refs).toBe(0);
-    // 不可解析的 ref 计 unresolved、原地不动。
-    client.db.insert(routeDecisions).values({
-      id: "d-bad", sourceKind: "mail", sourceId: "connector:gmail:gone:mail:missing", sourceVersion: 1,
-      sourceTitle: "x", confidence: 0, status: "awaiting_review", decidedBy: "resolution", createdAt: now,
-    }).run();
-    const second = rewriteConnectorRefIdentities(client.db);
-    expect(second).toMatchObject({ refs: 1, rewritten: 0, unresolved: 1 });
-    expect(client.db.select().from(routeDecisions).where(eq(routeDecisions.id, "d-bad")).get()?.sourceId)
-      .toBe("connector:gmail:gone:mail:missing");
-    client.sqlite.close();
-  });
-});

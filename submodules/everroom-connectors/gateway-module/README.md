@@ -18,8 +18,7 @@ fences) stays isolated per path.
 - Route entry point: `nangoConnectorRoutes`
 - Main implementation: `manager.ts`, `repository.ts`, `nango-*.ts`,
   `sync-providers/*` (provider registry — adding a source means one file plus
-  one registry line), `format-mapper-port.ts`, `connector-memory.ts`, and
-  `document-store.ts`
+  one registry line), `format-mapper-port.ts`, and `document-store.ts`
 - Persistence: the isolated `connectors.sqlite` database for sync state and
   raw normalized records (`connector_records`); projected content lives in the
   shared `connector_*` domain tables in `gateway.sqlite`

@@ -174,7 +174,7 @@ import "./types.js";
 import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
 import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
 import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
-import { ConnectorDomainProjection, backfillDomainProjection, rewriteConnectorRefIdentities } from "@nxcore/connectors-module/domain-projection.js";
+import { ConnectorDomainProjection, backfillDomainProjection } from "@nxcore/connectors-module/domain-projection.js";
 import { SYNC_PROVIDERS, assertSyncProvidersValid } from "@nxcore/connectors-module/sync-providers/index.js";
 import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
 import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
@@ -507,11 +507,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         const summary = backfillDomainProjection(db, nangoConnectorManager.repository, connectorDomainOwner);
         if (summary.mail + summary.calendar + summary.failures > 0)
           app.log.info({ module: "connector-domain-backfill", ...summary }, "Connector domain backfill applied");
-        // M4：回填保证域行存在后，把六张身份表的 connector ref 原地改写为域行 id
-        // （幂等；解析失败的 ref 留给读侧兜底通道，只计数）。
-        const rewrite = rewriteConnectorRefIdentities(db);
-        if (rewrite.refs > 0)
-          app.log.info({ module: "connector-identity-rewrite", ...rewrite }, "Connector identity rewrite applied");
       } catch (error) {
         app.log.warn(
           { module: "connector-domain-backfill", error: error instanceof Error ? error.message : String(error) },
@@ -1967,27 +1962,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       pipelines: { room: false, wiki: false, memory: memoryService.enabled },
     });
   });
-  // 连接器同步到的文档/邮件/日程接入统一 ingest 引擎（台账幂等 + 记忆/Room/wiki 三链路扇出）。
-  // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖 router）。
-  // 日历事件走独立 sourceKind "calendar-event"（与 CLI 引用路径同词表），
-  // 否则 room 路由投影里的来源标签/关联记忆都会把它当邮件。
-  nangoConnectorManager.setMemorySink((input) =>
-    ingestService.ingestConnector({
-      kind: input.kind === "document" ? "cloud-doc" : input.kind === "calendar" ? "calendar-event" : "mail",
-      // M4 身份规范化：mail/calendar 的 sourceId = 域行 id（读侧直查域表）；
-      // document 无域行，保持 connector ref。
-      sourceId: input.domainRowId ?? `connector:${input.provider}:${input.connectionId}:${input.kind === "document" ? "" : `${input.kind}:`}${input.documentId}`,
-      dataType: input.kind,
-      title: input.title,
-      markdown: input.markdown,
-      // 连接级 sourceTag 进 ②b 规则信号：规则可把整个连接（如学校日历）确定性归到 Room。
-      // 日历同步额外带 calendarId（scope 的 providerScopeId）：同一条连接里可只归因某个日历。
-      entrySignals: {
-        sourceTag: `connector:${input.provider}:${input.connectionId}`,
-        ...(input.calendarId ? { calendarId: input.calendarId } : {}),
-      },
-      ...(config.knowledge?.routerEnabled ? {} : { pipelines: { room: false, wiki: false, memory: true } }),
-    }).then(() => undefined));
   documentOutboxWorker = new DocumentOutboxWorker(
     db,
     ingestService,
