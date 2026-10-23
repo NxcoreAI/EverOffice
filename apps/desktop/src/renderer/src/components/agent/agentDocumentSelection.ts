@@ -2,7 +2,8 @@ import type { AgentActiveDocumentContext, RoomDocument } from '@nxcore/agent-con
 
 export interface AgentDocumentSelectionItem {
   documentId: string
-  roomId: string
+  /** null = 工作区级文稿（无 Room 归属）。 */
+  roomId: string | null
   title: string
   version?: number
   status?: string
@@ -167,6 +168,7 @@ export function buildAgentDocumentSelectionRunRequest(
   return {
     prompt: originalPrompt.trim(),
     activeDocument: {
+      // 工作区级文稿的 activeDocument.roomId 为 null。
       roomId: document.roomId,
       documentId: document.id,
       title: document.title,
