@@ -2159,7 +2159,7 @@ button.mem-search-item:hover {
   font-size: 12px;
 }
 
-/* 记忆时间轴（原型 mem-timeline 移植）：分桶分组 + 左侧节点线。 */
+/* 记忆时间轴（H 气泡对话式）：时间在左、气泡卡片在右，中间节点短横线连接。 */
 .mem-timeline {
   display: flex;
   flex-direction: column;
@@ -2196,38 +2196,68 @@ button.mem-search-item:hover {
 }
 
 .mem-tl-list {
-  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
-  padding: 2px 0 2px 18px;
-  border-left: 2px solid var(--cr-border, var(--border));
+  padding: 0;
   list-style: none;
 }
 
+/* 一行 = [时间 | 连接件 | 气泡卡片] 三列网格 */
 .mem-tl-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px 16px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+/* 中列：短横线 + 节点圆点（垂直居中于时间文字行） */
+.mem-tl-link {
   position: relative;
 }
 
-.mem-tl-item::before {
+.mem-tl-link::before {
   position: absolute;
   top: 14px;
-  left: -23px;
-  width: 8px;
-  height: 8px;
-  border: 2px solid var(--cr-blue, var(--accent));
-  border-radius: 50%;
-  background: var(--cr-surface, var(--surface));
+  right: 0;
+  left: 0;
+  height: 1.5px;
+  background: var(--cr-border, var(--border));
   content: "";
 }
 
+.mem-tl-link::after {
+  position: absolute;
+  top: 10.5px;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  border-radius: 50%;
+  background: var(--cr-blue, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue, var(--accent)) 14%, transparent);
+  content: "";
+}
+
+/* 时间列：右对齐，与节点同一水平线 */
 .mem-tl-time {
-  display: block;
-  margin-bottom: 3px;
+  padding-top: 7px;
   color: var(--cr-muted, var(--muted));
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 气泡卡片：复用原摘要卡样式，只加气泡圆角的不对称切角 */
+.mem-tl-item .mem-atomic-summary {
+  border-radius: 4px 10px 10px 10px;
+}
+
+/* 展开 详情面板：跨到气泡列对齐（不压连接件） */
+.mem-tl-item .mem-atomic-detail {
+  grid-column: 3;
 }
 
 .mem-tl-item .mem-atomic-item {

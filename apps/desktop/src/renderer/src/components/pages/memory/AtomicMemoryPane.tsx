@@ -539,6 +539,7 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
                 {group.items.map((item) => (
                   <li key={item.id} className="mem-atomic-item mem-tl-item" data-memory-id={item.id}>
                     <time className="mem-tl-time">{formatDate(item.updatedAt, locale)}</time>
+                    <span className="mem-tl-link" aria-hidden="true" />
                     <button
                       type="button"
                       className="mem-atomic-summary"
