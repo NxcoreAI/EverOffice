@@ -48,17 +48,16 @@
 
 **验证结果**：`tsc --noEmit` 与基线完全一致（10 个错误，全部是 `detail-panels/ThoughtsPane.tsx` 的存量错误）；编辑器相关 41 个测试文件、298 个用例中，3 个失败（`document-image-assets`、`document-comments-panel`、`document-comments-anchor-marks`）经 stash 对比确认**为基线既有失败**，与本次搬移无关。
 
-**P0-1 后续（并入 P0-2 / Phase 1 处理）**：`office-editor` 仍反向依赖 Room 树，共 12 个模块。
+**P0-1 后续（已完成的部分，2026-10-23）**：
 
-| 反向依赖 | 处理方式 |
-|---|---|
-| `@/components/context-room/operations/*`（`index`、`DocumentOperationReviewExtension`、`DocumentOperationReviewToolbar`、`DocumentContinuationExtension`、`DocumentContinuationToolbar`、`documentReviewState`） | 文档操作审阅属 Office → 整体迁到 `office-editor/operations/` |
-| `@/components/context-room/ported/components/shared`（`ActionConfirmDialog`） | 迁到 `office-editor/shared.tsx` |
-| `@/components/context-room/ported/components/detail-panels/MarkdownBody` | 迁到 `office-editor/` |
-| `@/components/context-room/ported/adapters`（`uiText`、i18n 兜底） | 迁到 `office-editor/`，同时清理 `contextRoom:` i18n 命名空间 |
-| `@/components/context-room/ported/types`（`ContextRoomRecord` / `ContextRoomResource` / `ContextRoomMemoryItem`） | 按语义拆分：文稿记录类型进 `office-editor/types.ts`；`ContextRoomMemoryItem` 随记忆删除 |
-| `@/components/context-room/RoomDocumentsProvider` | P0-2 用工作区维度文稿库 Provider 替换 |
-| `@/components/context-room/ported/components/MoveDocumentToRoomDialog` | 随 Room 删除（`TiptapDocumentActions` 的「移动到 Room」入口一并去掉） |
+| 反向依赖 | 处理 | 状态 |
+|---|---|---|
+| `context-room/operations/*`（文档操作中心 / 审阅 / 续写，18 文件） | 迁到 `office-editor/operations/` | 已完成 |
+| `ported/types.ts`、`ported/adapters.ts` | 迁到 `office-editor/`（`ContextRoom*` 类型改名留到 P0-3） | 已完成 |
+| `ported/components/shared.tsx` | 迁到 `office-editor/shared.tsx` | 已完成 |
+| `ported/components/detail-panels/MarkdownBody(.test).tsx` | 迁到 `office-editor/` | 已完成 |
+| `ported/components/MoveDocumentToRoomDialog` | 从 `TiptapDocumentActions` 摘除菜单项/状态/对话框 | 已完成 |
+| `@/components/context-room/RoomDocumentsProvider` | P0-2 用工作区维度文稿库 Provider 替换 | **待做（P0-2 第一件事）** |
 
 另注：`office-editor` 内 34 个文件仍含 `context-room-*` CSS 类名与 `contextRoom:` i18n key（纯样式/文案，不影响编译），在 Phase 2 收尾时统一改名，避免与 `styles.css` 大改混在同一次提交里。
 
@@ -242,8 +241,9 @@
 | 时间 | 阶段 | 内容 | 状态 |
 |---|---|---|---|
 | 2026-10-23 | P0-1 | Office 编辑器 71 个文件迁至 `components/office-editor/`，改写 44 个文件的引用，旧路径 0 残留 | 完成（typecheck / 测试与基线一致） |
-| 2026-10-23 | P0-1 后续 | `operations/*`、`shared`、`MarkdownBody`、`adapters`、`types` 迁出 + `RoomDocumentsProvider` 替换 | 待做（并入 P0-2） |
-| — | P0-2 | 文档域去 roomId | 未开始 |
+| 2026-10-23 | P0-1 收尾 | `operations/`（18 文件）、`types`、`adapters`、`shared`、`MarkdownBody` 迁出；改写 83 个文件引用 | 完成（office-editor→context-room 反向依赖 12 → 1） |
+| 2026-10-23 | P0-1 收尾 | 移除文稿「移动到另一个 Room」入口 | 完成（46 用例全绿） |
+| — | P0-2 | 文档域去 roomId（含 `RoomDocumentsProvider` → 工作区文稿库） | 未开始（约 690 处引用待收敛） |
 | — | P0-3 | 25 个工具改名 | 未开始 |
 | — | P0-4 | Agent 运行时工具面重建 | 未开始 |
 | — | Phase 1 | 断耦合 | 未开始 |
