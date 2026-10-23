@@ -9,7 +9,6 @@ import {
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { DocumentServiceError } from "../errors.js";
-import { enqueueDocumentIngest } from "../integration-outbox.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
 import { YjsHistoryService } from "./yjs-history-service.js";
@@ -160,12 +159,6 @@ export class DocumentCommitService {
         source: input.sourceTransactionId ?? null,
         now,
       });
-      enqueueDocumentIngest(tx, {
-        documentId: input.documentId,
-        roomId: input.roomId,
-        version: input.version,
-        sourceTransactionId: input.sourceTransactionId ?? null,
-      }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);
@@ -268,12 +261,6 @@ export class DocumentCommitService {
         source: input.sourceTransactionId ?? null,
         now,
       });
-      enqueueDocumentIngest(tx, {
-        documentId: input.documentId,
-        roomId: input.roomId,
-        version: input.version,
-        sourceTransactionId: input.sourceTransactionId ?? null,
-      }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);

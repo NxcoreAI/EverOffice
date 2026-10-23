@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { documents, jobs } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
-import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE, enqueueDocumentDelete } from "../integration-outbox.js";
+import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE } from "../integration-outbox.js";
 import { enqueueSearchIndex } from "../../search/jobs.js";
 import { DocumentRepository } from "./repository.js";
 
@@ -55,7 +55,6 @@ export class DocumentLifecycleService {
     const now = new Date();
     this.db.transaction((tx) => {
       this.removeHistoryBackfillJob(tx, current.id);
-      enqueueDocumentDelete(tx, { documentId: current.id, roomId: current.roomId }, now);
       tx.delete(documents).where(eq(documents.id, documentId)).run();
     });
     this.hooks.deleted?.(current);
@@ -68,7 +67,6 @@ export class DocumentLifecycleService {
     this.db.transaction((tx) => {
       for (const document of trashed) {
         this.removeHistoryBackfillJob(tx, document.id);
-        enqueueDocumentDelete(tx, { documentId: document.id, roomId: document.roomId }, new Date());
         tx.delete(documents).where(eq(documents.id, document.id)).run();
       }
     });

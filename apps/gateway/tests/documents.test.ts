@@ -427,9 +427,8 @@ describe('document transactions', () => {
     expect(db.select().from(documents).all()).toEqual([])
     expect(db.select().from(roomDocumentLinks).all()).toEqual([])
     expect(db.select().from(documentVersions).all()).toEqual([])
-    expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toEqual([
-      expect.objectContaining({ status: 'pending', payload: expect.objectContaining({ documentId: imported.id }) }),
-    ])
+    // Phase 2：删除不再入队 document.delete（理解引擎已退役），只清历史回填作业。
+    expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toEqual([])
     expect(db.select().from(jobs).all().some((job) => job.id === `document-history-backfill:${imported.id}`)).toBe(false)
     const events = frames.map((frame) => JSON.parse(frame))
     expect(events).toContainEqual(expect.objectContaining({
@@ -468,7 +467,7 @@ describe('document transactions', () => {
     expect(db.select().from(documents).all()).toEqual([])
     expect(db.select().from(roomDocumentLinks).all()).toEqual([])
     expect(db.select().from(documentVersions).all()).toEqual([])
-    expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(2)
+    expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(0)
   })
 
   it('lists available Rooms and refuses to create a draft before the user selects one', async () => {

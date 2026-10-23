@@ -129,7 +129,6 @@ import { IngestService } from "../modules/ingest/service.js";
 import { IngestFilterService } from "../modules/ingest/filter-agent.js";
 import { FilterRulesStore } from "../modules/ingest/rules.js";
 import { FilterInsightJob } from "../modules/ingest/rules-insight.js";
-import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
@@ -1574,7 +1573,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       "knowledge entity-room routing enabled",
     );
   }
-  let documentOutboxWorker: DocumentOutboxWorker | null = null;
   let documentListSyncWorker: DocumentListSyncWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   let writingStyleWorker: WritingStyleWorker | null = null;
@@ -1594,7 +1592,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     slidesProgress.dispose();
     await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
-    await documentOutboxWorker?.dispose();
     await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
     await writingStyleWorker?.dispose();
@@ -1962,17 +1959,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       pipelines: { room: false, wiki: false, memory: memoryService.enabled },
     });
   });
-  documentOutboxWorker = new DocumentOutboxWorker(
-    db,
-    ingestService,
-    knowledgeService,
-    memoryService,
-    app.log,
-    {
-      debounceMs: knowledgeService.enabled ? config.knowledge?.ingestDebounceMs ?? 600_000 : 0,
-    },
-  );
-  documentOutboxWorker.start();
   // 文档列举后台增量同步（15 分钟 delta + 每日全量对账）：只处理已有缓存行的
   // 连接，连接断开等预期失败在 worker 内静默跳过。
   documentListSyncWorker = new DocumentListSyncWorker(db, documentImportService, app.log);
