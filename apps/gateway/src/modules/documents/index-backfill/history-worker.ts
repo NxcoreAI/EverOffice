@@ -1,11 +1,11 @@
 import { and, asc, eq, gt } from "drizzle-orm";
-import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { documentVersions, documentYjsVersions, documents, jobs } from "../../infrastructure/database/schema.js";
+import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
+import { documentVersions, documentYjsVersions, documents, jobs } from "../../../infrastructure/database/schema.js";
 import {
   DOCUMENT_HISTORY_BACKFILL_JOB_TYPE,
   enqueueDocumentHistoryBackfill,
   type DocumentHistoryBackfillJobPayload,
-} from "../documents/integration-outbox.js";
+} from "../integration-outbox.js";
 
 const MAX_ATTEMPTS = 5;
 const BACKFILL_BATCH_SIZE = 50;
