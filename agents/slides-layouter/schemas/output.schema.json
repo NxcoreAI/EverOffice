@@ -1,13 +1,58 @@
 {
   "type": "object",
   "properties": {
-    "status": { "type": "string", "enum": ["done"] },
+    "status": {
+      "type": "string",
+      "enum": [
+        "done"
+      ]
+    },
     "tree": {
       "type": "object",
-      "description": "LayoutTree root: role/title?/dark?/direction/weights?/gapScale?/pad?/children. Grammar is enforced by slides_layout_validate (normalizeTree); passing validation before submitting is mandatory."
+      "description": "完整 v2 页面：version:2 + role + composition + nodes；合法字段见布局技能。提交最后校验的树。"
     },
-    "notes": { "type": "string", "maxLength": 500 }
+    "notes": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "交付状态或限制，包括无需修改、强制收口与未解决缺陷；演讲备注保存在 tree.notes。"
+    },
+    "designIntent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "bindings": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "properties": {
+          "blockId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "pattern": "^nodes/\\d+(?:/children/\\d+)*$"
+            }
+          }
+        },
+        "required": [
+          "blockId",
+          "paths"
+        ],
+        "additionalProperties": false
+      }
+    }
   },
-  "required": ["status", "tree"],
+  "required": [
+    "status",
+    "tree"
+  ],
   "additionalProperties": false
 }

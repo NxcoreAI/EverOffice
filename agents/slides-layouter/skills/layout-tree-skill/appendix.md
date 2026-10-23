@@ -1,24 +1,17 @@
-<!-- description: 幻灯片布局语法——v2 是唯一写入格式：version 2 / composition / 12×8 slot / bleed / type token / text / image / icon / path / table / stats / chart / shape / connector / group 分区 / 37 个组件参数 / 内容纪律与硬约束；只设计单页，坐标由引擎计算 -->
+<!-- description: 单页 v2 布局语法。设计和自审时查阅节点、几何约束与校验缺陷；使用 component 时继续读取 components.md 中的参数。 -->
 
-# 缺陷自纠手册
+## 校验缺陷参考
 
-validate 与预览返回的每条缺陷都带 `path` 与 `hint`。按 `path` 定位节点，按 `hint` 改一处，再重交整页。
+以本轮 `slides_layout_validate` 返回的 `path`、`hint` 和缺陷清单为依据；修正范围包括解决根因所需的关联区域。
 
-## 常见缺陷与改法
-
-| 缺陷 | 典型改法 |
+| 缺陷 | 调整方向 |
 |---|---|
-| `schema`（含 `V2_INVALID`） | 字段名、枚举、必填项写错，或写了自造字段。照权威正文改字段名与取值。 |
-| `overflow`（文字超出 slot） | 精简文案；加大该节点的 slot 行区间；把一个大 text 拆成两个 text。`fit: "shrink"` 只用在标题类节点上。 |
-| `min_size`（区域过小） | 缩小相邻 slot、减少同页节点数，或把内容挪进 `group` 用 `weight` 分比例。 |
-| `element_cap`（元素/图片/路径超限） | 删装饰 path，合并碎卡，把多个 icon 换成一个 `component`。 |
-| `image_ar`（图片比例失真） | 让图片 slot 贴近素材长宽比；或改 `fit: "contain"`。 |
-| `contrast`（压图文字不可读） | 给图片节点加 `scrim`（`opacity` 0.6~0.8），压图文字改 `tone: "inverse"`。 |
-| `emoji` | 删除 emoji。装饰用 `path`，图标用 `icon`。 |
-| 预览 major（weak_hierarchy / flat_background / no_visual_anchor / text_wall / cramped / empty_space） | 按名改树：补视觉锚点（icon/path/shape/table/chart/component）、拉开层级（token 降档）、拆文字墙、给空白区补内容或收窄 slot。 |
+| `schema`（含 `V2_INVALID`） | 按语法修正字段名、枚举、必填项或版本。 |
+| `overflow` | 扩大内容区域、重新分配空间，或拆分文本节点；保留原文和数据。标题需要缩放时可用 `fit:"shrink"`，同时检查可读性。 |
+| `min_size` | 调整相邻区域或用 group 比例重分配空间，合并过碎结构。 |
+| `element_cap` | 减少装饰、合并重复结构；按编译后元素数评估组件，而非只看树节点数。 |
+| `image_ar` | 调整图片区域比例，或在内容契约允许时改用 contain。 |
+| `contrast` | 调整语义 tone、底板或压图 scrim，保证文字与背景的对比。 |
+| `emoji` | 使用合法 icon/path 表达相同的视觉意图。 |
 
-## 顺序
-
-1. 先修 `schema` 与硬约束，再修 `overflow`、`min_size`。
-2. 一次只改被指出的节点，其余结构不动。
-3. 3 轮修不完就简化整页：减节点、减层级、减 group 嵌套。朴素优先于破碎。
+内容、表格或图片超过某组件的容量时，选择能完整承载它的节点结构；组件中标注「超出丢弃」的字段尤其需要核对。无法保留必留信息时按 SYSTEM.md 的阻塞流程报告。

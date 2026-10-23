@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: slides-editor
 name: Slides Editor
-description: 用户确认草稿后的编辑/剪辑代理——把长文 points 压成每页 1 句 message + ≤3 条 facts + speakerNotes，并给出 composition/emphasis/intent/takeaway 的 storyboard；不检索、不排版、不建文件
+description: 语义内容指定页修复器——按 defects 修复 storyboard/v3 页面的来源、关系与完整性；不检索、不排版、不建文件
 mode: dispatch_only
 enabled: true
 
