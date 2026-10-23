@@ -410,6 +410,8 @@
   "timeline.last7days": "Last 7 days",
   "timeline.last30days": "Last 30 days",
   "timeline.featured": "Featured",
+  "timeline.expandFeatured": "Show all",
+  "timeline.collapseFeatured": "Collapse",
   "timeline.dismissFeatured": "Dismiss featured",
   "timeline.matches": "Match {score}",
   "timeline.detail": "Details",

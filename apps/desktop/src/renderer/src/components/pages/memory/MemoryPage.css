@@ -2262,7 +2262,9 @@ button.mem-search-item:hover {
 .mem-featured-card {
   position: relative;
   display: flex;
-  align-items: flex-start;
+  /* 不写死高度：正文固定占三行 → 收起时卡片恒等于「最小三行状态」；
+     点「展开」看全文时卡片自然长高（超出三行的部分默认折叠）。 */
+  align-items: center;
   gap: 10px;
   margin-bottom: 14px;
   padding: 12px 14px;
@@ -2290,8 +2292,10 @@ button.mem-search-item:hover {
 .mem-featured-body {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex: 1;
   flex-direction: column;
+  justify-content: center;
   gap: 5px;
 }
 
@@ -2299,6 +2303,8 @@ button.mem-search-item:hover {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .mem-featured-tags time {
@@ -2325,9 +2331,20 @@ button.mem-search-item:hover {
 
 .mem-featured-content {
   margin: 0;
+  /* 三行占位：内容不足三行也按三行算，卡片尺寸稳定在「最小三行状态」 */
+  min-height: calc(1.6em * 3);
   color: var(--cr-text, var(--text));
   font-size: 12.5px;
   line-height: 1.6;
+}
+
+/* 展开：解除三行截断，显示全文（卡片随内容长高） */
+.mem-featured-content[data-expanded] {
+  display: block;
+  min-height: 0;
+  overflow: visible;
+  -webkit-box-orient: initial;
+  -webkit-line-clamp: unset;
 }
 
 .mem-featured-dismiss {
@@ -2495,9 +2512,50 @@ button.mem-search-item:hover {
   z-index: 1;
 }
 
-.mem-featured-scope {
+.mem-featured-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 与「展开」按钮同高：有没有展开入口，这一行的高度都一致 → 卡片收起态恒为三行高度 */
+  min-height: 20px;
   color: var(--cr-muted, var(--muted));
   font-size: 10px;
+}
+
+/* 展开/收起：轻量文字按钮，不抢精选视觉 */
+.mem-featured-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--cr-blue, var(--accent)) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cr-blue, var(--accent)) 8%, transparent);
+  color: var(--cr-blue, var(--accent));
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.mem-featured-toggle:hover {
+  background: color-mix(in srgb, var(--cr-blue, var(--accent)) 16%, transparent);
+}
+
+.mem-featured-toggle[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--cr-blue, var(--accent)) 22%, transparent);
+  background: transparent;
+  color: var(--cr-muted, var(--muted));
+}
+
+.mem-featured-scope {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cr-muted, var(--muted));
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 长内容截断：摘要两行，展开（AtomicDetail）看全文。 */
