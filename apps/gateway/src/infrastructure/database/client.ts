@@ -72,61 +72,6 @@ function runAdditiveMigrationIdempotently(
 }
 
 /**
- * writing_style_user_content 在未发布的 0044 迭代中新增 user_edited /
- * generated_from_cursor 两列。0044 以 CREATE TABLE IF NOT EXISTS 幂等重建，
- * 已按旧形态建过表的开发库不会再收到 ALTER（Drizzle 视 CREATE 为已应用）。
- * 按 PRAGMA 探测补列，语义与其他 additive 修复一致。
- */
-function repairWritingStyleUserContentColumns(sqlite: Database.Database): void {
-  const hasTable = Boolean(sqlite.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'writing_style_user_content' LIMIT 1",
-  ).get());
-  if (!hasTable) return;
-  const columns = new Set(
-    (sqlite.prepare("PRAGMA table_info(writing_style_user_content)").all() as Array<{ name: string }>).map((row) => row.name),
-  );
-  if (!columns.has("user_edited")) {
-    sqlite.exec('ALTER TABLE `writing_style_user_content` ADD `user_edited` integer DEFAULT false NOT NULL;');
-  }
-  if (!columns.has("generated_from_cursor")) {
-    sqlite.exec('ALTER TABLE `writing_style_user_content` ADD `generated_from_cursor` text;');
-  }
-}
-
-/**
- * 单一画像模型之前的 writing_style_user_directives 表：早期开发库可能残留
- * 用户存过的指令。有数据且画像文本为空时迁移为画像正文（用户手写 → 视为接管），
- * 然后 DROP 旧表。幂等：表不存在或已迁移即 no-op。
- */
-function migrateLegacyWritingStyleDirectives(sqlite: Database.Database): void {
-  const hasLegacyTable = Boolean(sqlite.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'writing_style_user_directives' LIMIT 1",
-  ).get());
-  if (!hasLegacyTable) return;
-  const directives = sqlite.prepare(
-    "SELECT content FROM writing_style_user_directives WHERE owner_id = 'local-user' AND enabled = 1 ORDER BY sort_order ASC, created_at ASC",
-  ).all() as Array<{ content: string }>;
-  const migrated = directives.map((row) => row.content.trim()).filter((content) => content.length > 0);
-  const hasContentTable = Boolean(sqlite.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'writing_style_user_content' LIMIT 1",
-  ).get());
-  if (migrated.length > 0 && hasContentTable) {
-    const existing = sqlite.prepare(
-      "SELECT content FROM writing_style_user_content WHERE owner_id = 'local-user' LIMIT 1",
-    ).get() as { content: string } | undefined;
-    if (!existing || existing.content.trim().length === 0) {
-      const content = migrated.join("\n").slice(0, 2_000);
-      sqlite.prepare(`
-        INSERT INTO writing_style_user_content (owner_id, content, user_edited, updated_at)
-        VALUES ('local-user', ?, 1, ?)
-        ON CONFLICT(owner_id) DO UPDATE SET content = excluded.content, user_edited = 1, updated_at = excluded.updated_at
-      `).run(content, Date.now());
-    }
-  }
-  sqlite.exec("DROP TABLE IF EXISTS writing_style_user_directives;");
-}
-
-/**
  * The connector branch shipped migrations 0010-0012 with later timestamps than
  * the main branch's document migrations. On an upgraded install Drizzle would
  * therefore skip the document/knowledge migrations and only retry 0015. Move
@@ -275,80 +220,6 @@ function adoptPreReleaseConnectorMarkdownMigrations(
   })();
 }
 
-/** Repair installs whose migration cursor advanced past the room duplicate
- * migration even though that additive migration was only partially applied. */
-function repairIncompleteRoomDuplicateMigration(
-  sqlite: Database.Database,
-  migrationsDir: string,
-): void {
-  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
-  ).get(type, name));
-  if (!hasObject("table", "__drizzle_migrations")) return;
-
-  const entry = readMigrationJournal(migrationsDir).find((item) => item.tag === "0031_room_duplicates");
-  if (!entry?.tag || typeof entry.when !== "number") return;
-  const latest = sqlite.prepare(
-    "SELECT MAX(created_at) AS created_at FROM __drizzle_migrations",
-  ).get() as { created_at?: number | null } | undefined;
-  if (typeof latest?.created_at !== "number" || latest.created_at < entry.when) return;
-
-  const requiredTableColumns: Record<string, string[]> = {
-    room_duplicate_candidates: [
-      "id", "room_a_id", "room_b_id", "name_score", "centroid_score", "content_overlap",
-      "entity_overlap", "duplicate_score", "confidence", "llm_verdict", "reasons", "status",
-      "evidence_revision", "scoring_version", "created_at", "updated_at",
-    ],
-    room_merge_operations: [
-      "id", "source_room_id", "target_room_id", "idempotency_key", "preview_hash", "status",
-      "stage", "progress", "commit_reached", "impact", "error", "confirmed_at", "completed_at",
-      "created_at", "updated_at",
-    ],
-    room_merge_items: [
-      "id", "operation_id", "resource_type", "resource_id", "before_room_id", "after_room_id",
-      "before_value", "fingerprint", "status", "created_at", "updated_at",
-    ],
-    room_memory_attributions: [
-      "id", "room_id", "memory_id", "source_kind", "source_id", "confidence", "created_at", "updated_at",
-    ],
-  };
-  const requiredBaseColumns: Record<string, string[]> = {
-    agent_runs: ["room_id"],
-    context_rooms: ["lifecycle", "merged_into_room_id", "merged_at"],
-    rooms: ["lifecycle", "merged_into_room_id", "merged_at"],
-  };
-  if (!Object.keys(requiredBaseColumns).every((table) => hasObject("table", table))) return;
-
-  const columnsOf = (table: string) => new Set(
-    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
-  );
-  const tablesComplete = Object.entries(requiredTableColumns).every(([table, columns]) =>
-    hasObject("table", table) && columns.every((column) => columnsOf(table).has(column))
-  );
-  const baseColumnsComplete = Object.entries(requiredBaseColumns).every(([table, columns]) =>
-    columns.every((column) => columnsOf(table).has(column))
-  );
-  const indexesComplete = [
-    "room_duplicate_candidates_pair_idx",
-    "room_duplicate_candidates_status_idx",
-    "room_duplicate_candidates_room_a_idx",
-    "room_duplicate_candidates_room_b_idx",
-    "room_memory_attributions_memory_idx",
-    "room_memory_attributions_room_idx",
-    "room_merge_items_operation_resource_idx",
-    "room_merge_items_operation_idx",
-    "room_merge_operations_idempotency_idx",
-    "room_merge_operations_rooms_idx",
-    "room_merge_operations_status_idx",
-  ].every((index) => hasObject("index", index));
-  if (tablesComplete && baseColumnsComplete && indexesComplete) return;
-
-  sqlite.transaction(() => {
-    runAdditiveMigrationIdempotently(sqlite, migrationsDir, entry.tag!);
-    recordMigration(sqlite, migrationsDir, entry);
-  })();
-}
-
 /** Adopt late development migrations when their complete schema was already
  * applied under a discarded migration cursor. This prevents duplicate ALTER
  * statements while still allowing partially upgraded databases to migrate. */
@@ -361,21 +232,18 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
   ).has(column);
   const entries = readMigrationJournal(migrationsDir);
-  let latestMainMigrationsEnsured = false;
-  const ensureLatestMainMigrations = () => {
-    if (latestMainMigrationsEnsured) return;
-    latestMainMigrationsEnsured = true;
-    const tags = [
-      "0033_room_entity_facts",
-      "0034_room_overviews_and_corrections",
-      "0035_eager_hannibal_king",
-    ];
+  let connectorTodosEnsured = false;
+  // 0033_room_entity_facts / 0034_room_overviews_and_corrections 建的表已随 0084 删除
+  // （room_overviews 由 canonical 链保证，早期库的形态修复见 context-room-compatibility），
+  // 因此这里不再整体重放 0033-0035，只补仍然存活的 connector_todos。
+  const ensureConnectorTodosMigration = () => {
+    if (connectorTodosEnsured) return;
+    connectorTodosEnsured = true;
+    const tag = "0035_eager_hannibal_king";
     sqlite.transaction(() => {
-      for (const tag of tags) runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
-      for (const tag of tags) {
-        const entry = entries.find((item) => item.tag === tag);
-        if (entry) recordMigration(sqlite, migrationsDir, entry);
-      }
+      runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+      const entry = entries.find((item) => item.tag === tag);
+      if (entry) recordMigration(sqlite, migrationsDir, entry);
     })();
   };
   const record = (tag: string) => {
@@ -387,124 +255,16 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
       .run(createHash("sha256").update(migrationSql).digest("hex"), entry.when);
   };
 
-  if (hasTable("clipper_artifacts")
-    && ["visual_status", "visual_kind", "visual_summary", "visual_ocr_text", "visual_key_points",
-      "visual_entities", "visual_relevance", "visual_quality", "visual_model", "visual_prompt_version",
-      "cover_score"].every((column) => hasColumn("clipper_assets", column))) {
-    ensureLatestMainMigrations();
-    record("0036_odd_cardiac");
-  }
-  if (hasColumn("clipper_assets", "visual_content_role")
-    && hasColumn("clipper_assets", "visual_noise_reason")) {
-    ensureLatestMainMigrations();
-    record("0037_acoustic_doctor_spectrum");
-  }
-  if (hasColumn("clipper_captures", "favorited_at")) {
-    ensureLatestMainMigrations();
-    record("0038_clipper_favorites");
-  }
+  // 0036/0037/0038（clipper_*）与 0043（room_local_actions）的探测随 0084 一并退役：
+  // 这些表已删，重放对应迁移只会把空表建回来。
   if (hasTable("agent_session_participants")
     && hasColumn("agent_sessions", "active_agent_id")
     && hasColumn("agent_runs", "agent_id")
     && hasColumn("agent_runs", "invocation_mode")
     && hasColumn("agent_messages", "author_agent_id")) {
-    ensureLatestMainMigrations();
+    ensureConnectorTodosMigration();
     record("0039_multi_agent_conversations");
   }
-  if (hasTable("room_local_actions")
-    && hasColumn("room_local_actions", "created_via_run_id")
-    && hasColumn("room_local_actions", "completed_at")) {
-    // Renumbered from 0042 to 0043 (new when) after the electron migration
-    // branch claimed 0042; adopt installs that applied it under the old tag.
-    record("0043_stale_vargas");
-  }
-}
-
-/** Reconcile databases created by feat/contextroom before its migration chain
- * was rebased after main's 0026-0029 migrations. */
-function adoptPreMergeContextRoomMigrations(sqlite: Database.Database, migrationsDir: string): void {
-  const hasObject = (type: "table" | "index", name: string) => Boolean(sqlite.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1",
-  ).get(type, name));
-  if (!hasObject("table", "__drizzle_migrations")) return;
-
-  const columnsOf = (table: string) => new Set(
-    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
-  );
-  if (!hasObject("table", "entities") || !hasObject("table", "entity_doc_links")) return;
-  if (!["eligible_source_count", "trusted_source_count", "strong_source_count", "readiness_path", "scoring_version"]
-    .every((column) => columnsOf("entities").has(column))) return;
-  if (!["evidence_group_key", "role_weight", "source_weight", "quality_factor", "relevance_factor",
-    "effective_weight", "quality_level", "trusted", "strong", "score_reasons", "scoring_version"]
-    .every((column) => columnsOf("entity_doc_links").has(column))) return;
-
-  const requiredTables: Record<string, string[]> = {
-    room_source_memberships: [
-      "id", "room_id", "source_kind", "source_id", "source_version", "evidence_group_key",
-      "role", "effective_weight", "quality_level", "trusted", "scoring_version", "entity_indexed",
-    ],
-    room_entity_mentions: [
-      "id", "room_id", "entity_id", "source_kind", "source_id", "source_version",
-      "evidence_group_key", "salience", "relevance_factor", "quality_level", "trusted",
-    ],
-    room_relations: [
-      "id", "room_a_id", "room_b_id", "auto_score", "auto_type", "strength",
-      "shared_source_count", "shared_entity_count", "direct_mention_count", "scoring_version",
-      "pinned", "hidden", "manual_type", "manual_from_room_id", "manual_to_room_id",
-    ],
-  };
-  for (const [table, expectedColumns] of Object.entries(requiredTables)) {
-    if (!hasObject("table", table)) return;
-    if (!expectedColumns.every((column) => columnsOf(table).has(column))) return;
-  }
-  for (const index of [
-    "room_source_memberships_room_source_idx",
-    "room_source_memberships_source_idx",
-    "room_source_memberships_group_idx",
-    "room_source_memberships_room_idx",
-    "room_entity_mentions_room_entity_source_idx",
-    "room_entity_mentions_entity_idx",
-    "room_entity_mentions_room_idx",
-    "room_entity_mentions_source_idx",
-    "room_relations_pair_idx",
-    "room_relations_room_a_idx",
-    "room_relations_room_b_idx",
-    "room_relations_updated_idx",
-  ]) if (!hasObject("index", index)) return;
-
-  const journal = readMigrationJournal(migrationsDir);
-  const additiveMainTags = [
-    "0026_redundant_gertrude_yorkes",
-    "0027_low_mockingbird",
-    "0028_mighty_baron_strucker",
-  ];
-  sqlite.transaction(() => {
-    for (const tag of additiveMainTags) runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
-    for (const tag of [...additiveMainTags, "0029_long_ikaris", "0030_room_relations_and_scoring"]) {
-      const entry = journal.find((item) => item.tag === tag);
-      if (entry) recordMigration(sqlite, migrationsDir, entry);
-    }
-    const duplicateSchemaPresent = [
-      "room_duplicate_candidates",
-      "room_merge_operations",
-      "room_merge_items",
-      "room_memory_attributions",
-    ].every((table) => hasObject("table", table))
-      && ["lifecycle", "merged_into_room_id", "merged_at"].every((column) => columnsOf("context_rooms").has(column))
-      && ["lifecycle", "merged_into_room_id", "merged_at"].every((column) => columnsOf("rooms").has(column))
-      && columnsOf("agent_runs").has("room_id")
-      && [
-        "room_duplicate_candidates_pair_idx",
-        "room_duplicate_candidates_status_idx",
-        "room_merge_operations_idempotency_idx",
-        "room_merge_items_operation_resource_idx",
-        "room_memory_attributions_memory_idx",
-      ].every((index) => hasObject("index", index));
-    if (duplicateSchemaPresent) {
-      const entry = journal.find((item) => item.tag === "0031_room_duplicates");
-      if (entry) recordMigration(sqlite, migrationsDir, entry);
-    }
-  })();
 }
 
 /** Repair installs whose migration cursor advanced across the diary/perception
@@ -531,9 +291,21 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
       sqlite.exec(statement);
     }
   };
-  if (!hasObject("table", "diary_days")) runMigrationStatements("0018_living_secret_warriors");
-  if (hasObject("table", "diary_version_sources") && !hasColumn("diary_version_sources", "ended_at")) {
-    runMigrationStatements("0019_free_charles_xavier");
+  // 0018_living_secret_warriors 的日记/感知/视觉表已随 0084 删除，不能整条重放；
+  // 这里只补它给 uploaded_files 加的四列（早期开发库可能因 0018 与连接器分支
+  // 时间戳冲突而被 Drizzle 跳过）。
+  if (hasObject("table", "uploaded_files")) {
+    const uploadedFileColumns: Array<[string, string]> = [
+      ["asset_kind", "text DEFAULT 'document' NOT NULL"],
+      ["origin_channel", "text DEFAULT 'upload' NOT NULL"],
+      ["visibility", "text DEFAULT 'private' NOT NULL"],
+      ["captured_at", "integer"],
+    ];
+    for (const [column, definition] of uploadedFileColumns) {
+      if (!hasColumn("uploaded_files", column)) {
+        sqlite.exec(`ALTER TABLE \`uploaded_files\` ADD \`${column}\` ${definition}`);
+      }
+    }
   }
   if (hasObject("table", "ingest_events") && !hasColumn("ingest_events", "deleted_at")) {
     sqlite.exec("ALTER TABLE `ingest_events` ADD `deleted_at` integer");
@@ -569,11 +341,8 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   repairLegacyMigrationCursor(sqlite, migrationsDir);
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
-  repairIncompleteRoomDuplicateMigration(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
-  adoptPreMergeContextRoomMigrations(sqlite, migrationsDir);
   repairContextRoomSchema(sqlite);
-  repairWritingStyleUserContentColumns(sqlite);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.
@@ -602,9 +371,6 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   }
   const db = drizzle(sqlite, { schema });
   migrate(db, { migrationsFolder: migrationsDir });
-  // 指令表迁移须在 migrate 之后：老库的 writing_style_user_content 由
-  // migrate 创建，先迁移会把旧指令丢进不存在的表。
-  migrateLegacyWritingStyleDirectives(sqlite);
   sqlite.exec("CREATE INDEX IF NOT EXISTS jobs_type_status_created_idx ON jobs (type, status, created_at)");
   // Preserve canonical migration markers when a pre-release branch inserted
   // later timestamps before the main branch was adopted.
