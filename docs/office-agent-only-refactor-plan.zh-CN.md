@@ -243,7 +243,9 @@
 | 2026-10-23 | P0-1 | Office 编辑器 71 个文件迁至 `components/office-editor/`，改写 44 个文件的引用，旧路径 0 残留 | 完成（typecheck / 测试与基线一致） |
 | 2026-10-23 | P0-1 收尾 | `operations/`（18 文件）、`types`、`adapters`、`shared`、`MarkdownBody` 迁出；改写 83 个文件引用 | 完成（office-editor→context-room 反向依赖 12 → 1） |
 | 2026-10-23 | P0-1 收尾 | 移除文稿「移动到另一个 Room」入口 | 完成（46 用例全绿） |
-| — | P0-2 | 文档域去 roomId（含 `RoomDocumentsProvider` → 工作区文稿库） | 未开始（约 690 处引用待收敛） |
+| 2026-10-23 | P0-2a | 契约 `RoomDocument.roomId` / `DocumentEvent.roomId` / `AgentActiveDocumentContext.roomId` / `ImportRoomDocumentInput.roomId` 改 `string \| null`；新增 `WORKSPACE_DOCUMENT_CHANNEL`；网关文档内核（repository GET 改 LEFT JOIN、list(null) 全工作区、无归属不再写 `room_doc_links`、content-engine/event-broker/lifecycle/service/commit 全链路接受 null、新增 `room-scope.ts` 归一旧管线 scope） | 完成（tsc 与基线一致；document-* 329 用例全绿） |
+| 2026-10-23 | P0-2b | 桌面主进程桥接与 preload：`list/listTrash/emptyTrash` 支持空 roomId，`subscribe` 落到工作区频道；回收站路由与渲染层空归属适配 | 完成（tsc 与基线一致；bridge 新增 2 用例） |
+| — | P0-2c | 渲染层：`RoomDocumentsProvider` → 工作区文稿库 Provider，`DocsPage` 改为唯一文稿入口 | 未开始 |
 | — | P0-3 | 25 个工具改名 | 未开始 |
 | — | P0-4 | Agent 运行时工具面重建 | 未开始 |
 | — | Phase 1 | 断耦合 | 未开始 |
