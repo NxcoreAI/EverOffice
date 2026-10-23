@@ -32,7 +32,8 @@ export interface DocumentCommitHooks {
 
 export interface CommitDocumentInput {
   documentId: string;
-  roomId: string;
+  /** null = 工作区级文稿，不写入 room_doc_links。 */
+  roomId: string | null;
   title: string;
   content: TiptapJsonContent;
   version: number;
@@ -53,7 +54,8 @@ export type AtomicDocumentCommitInput = Pick<
 
 export interface AtomicDocumentCreateInput {
   documentId: string;
-  roomId: string;
+  /** null = 工作区级文稿。 */
+  roomId: string | null;
   title: string;
   content: TiptapJsonContent;
 }
@@ -140,11 +142,13 @@ export class DocumentCommitService {
         createdAt: now,
         updatedAt: now,
       }).run();
-    tx.insert(roomDocumentLinks).values({
-      roomId: input.roomId,
-      documentId: input.documentId,
-      linkedAt: now,
-    }).run();
+    if (input.roomId) {
+      tx.insert(roomDocumentLinks).values({
+        roomId: input.roomId,
+        documentId: input.documentId,
+        linkedAt: now,
+      }).run();
+    }
     enqueueSearchIndex(tx, { itemType: "document", refId: input.documentId, priority: "high" });
     if (input.writeVersion !== false && input.version > 0) {
       this.insertVersion(tx, input, normalized, now);

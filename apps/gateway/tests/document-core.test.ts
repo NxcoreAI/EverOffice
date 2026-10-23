@@ -10,6 +10,7 @@ import {
   documents,
   documentVersions,
   jobs,
+  roomDocumentLinks,
 } from "../src/infrastructure/database/schema.js";
 import {
   DocumentCommitService,
@@ -577,6 +578,49 @@ describe("document core", () => {
     expect(result?.blocks).toHaveLength(1_001);
   });
 
+  it("creates workspace-level documents with no Room link (P0-2)", async () => {
+    const { db, commits, repository } = await createCore();
+    const created = commits.create({
+      documentId: "doc-workspace",
+      roomId: null,
+      title: "工作区文稿",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+
+    expect(created.roomId).toBeNull();
+    const links = db.select().from(roomDocumentLinks).all();
+    expect(links).toHaveLength(0);
+    expect(repository.get("doc-workspace")?.roomId).toBeNull();
+    expect(repository.list(null).map((document) => document.id)).toEqual(["doc-workspace"]);
+    // 传具体 roomId 时仍按 Room 过滤，工作区文稿不混入。
+    expect(repository.list("room-core")).toHaveLength(0);
+  });
+
+  it("keeps Room-scoped documents visible through the workspace-wide listing", async () => {
+    const { commits, repository } = await createCore();
+    commits.create({
+      documentId: "doc-in-room",
+      roomId: "room-core",
+      title: "房内文稿",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+    commits.create({
+      documentId: "doc-workspace-only",
+      roomId: null,
+      title: "工作区文稿",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+
+    const workspaceWide = repository.list(null).map((document) => [document.id, document.roomId]);
+    expect(workspaceWide).toEqual([
+      ["doc-in-room", "room-core"],
+      ["doc-workspace-only", null],
+    ]);
+  });
+
   it("registers committed versions in the document outbox but skips version-zero drafts", async () => {
     const { db, commits } = await createCore();
     commits.create({
@@ -595,10 +639,12 @@ describe("document core", () => {
       version: 1,
     });
 
+    // 每次写库都会入队 search.index；已提交版本额外入队 document.ingest 与
+    // writing-style.extract，version-0 草稿只有 search.index。这里只关心摄取作业。
     const queued = db.select().from(jobs).all();
-    expect(queued).toHaveLength(1);
-    expect(queued[0]).toMatchObject({
-      type: "document.ingest",
+    const ingestJobs = queued.filter((job) => job.type === "document.ingest");
+    expect(ingestJobs).toHaveLength(1);
+    expect(ingestJobs[0]).toMatchObject({
       status: "pending",
       payload: expect.objectContaining({ documentId: "doc-committed", roomId: "room-core", version: 1 }),
     });

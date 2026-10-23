@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
+import { roomScopeId } from "../documents/room-scope.js";
 import {
   DOC_WRITER_AGENT_ID,
   DOC_WRITER_TASK_LABELS,
@@ -485,7 +486,7 @@ export function createSubagentPiTools(
     /** Room 材料共享投影（方案 §4.2 B2）：room_analysis 网关侧组装 content 的数据源。 */
     resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
-    resolveDocumentForDraft?: (documentId: string, roomId: string) => DocumentDraftSnapshot;
+    resolveDocumentForDraft?: (documentId: string, roomId: string | null) => DocumentDraftSnapshot;
     /** 实时房间存在性查询：run.availableRooms 是开跑快照，校验显式 roomId 时兜底。 */
     roomExists?: (roomId: string) => boolean;
     /** 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex。 */
@@ -1133,7 +1134,7 @@ export function createSubagentPiTools(
           }
           if (options.issueDraftReadReceipt) {
             const receipt = options.issueDraftReadReceipt(
-              { agentSessionId: run.sessionId, runId: run.runId, roomId: snapshot.document.roomId },
+              { agentSessionId: run.sessionId, runId: run.runId, roomId: roomScopeId(snapshot.document.roomId) },
               snapshot.document.id,
               snapshot.document.version,
               fresh.blocks.filter((block) => block.depth === 0).map((block) => block.blockId),

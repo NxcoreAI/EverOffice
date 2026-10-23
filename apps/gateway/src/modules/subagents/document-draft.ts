@@ -11,7 +11,7 @@ export type DocWriterTask = "draft-create" | "draft-edit" | "draft-continue" | "
 
 /** document_draft 的文档快照数据源（DocumentService.readDocumentForAgent 的结构化投影）。 */
 export interface DocumentDraftSnapshot {
-  document: { id: string; title: string; version: number; roomId: string };
+  document: { id: string; title: string; version: number; roomId: string | null };
   blocks: Array<{ blockId: string; type: string; ordinal: number; depth: number; textPreview: string }>;
   markdown: string;
 }

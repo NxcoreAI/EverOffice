@@ -31,7 +31,7 @@ export class DocumentQueryService {
     readonly yjsHistory: YjsHistoryService = new YjsHistoryService(),
   ) {}
 
-  list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
+  list(roomId: string | null, trashed = false, origin?: "native" | "import"): RoomDocument[] {
     return this.repository.list(roomId, trashed, origin);
   }
 

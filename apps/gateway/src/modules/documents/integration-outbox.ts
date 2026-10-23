@@ -9,7 +9,8 @@ export const DOCUMENT_HISTORY_BACKFILL_JOB_TYPE = "document.history.backfill";
 
 export interface DocumentIngestJobPayload {
   documentId: string;
-  roomId: string;
+  /** null = 工作区级文稿。 */
+  roomId: string | null;
   version: number;
   sourceTransactionId: string | null;
   attempts: number;
@@ -17,7 +18,8 @@ export interface DocumentIngestJobPayload {
 
 export interface DocumentDeleteJobPayload {
   documentId: string;
-  roomId: string;
+  /** null = 工作区级文稿。 */
+  roomId: string | null;
   attempts: number;
 }
 
