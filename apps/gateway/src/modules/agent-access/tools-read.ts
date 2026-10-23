@@ -8,7 +8,6 @@ import {
   roomMemoryAttributions,
   roomOverviews,
   roomSourceMemberships,
-  writingStyleSettings,
 } from "../../infrastructure/database/schema.js";
 import type {
   AgentAccessCapability,
@@ -576,12 +575,11 @@ export function createReadTools(
     name: "everroom_get_rules",
     title: "获取本次规则",
     description:
-      "获取本次任务适用的规则：连接授权范围摘要 + 当前生效的写作风格与整理偏好底料（含版本与开关）。统一技能/偏好/模板库上线后返回完整规则集。",
+      "获取本次任务适用的规则：连接授权范围摘要 + 当前生效的整理偏好底料（含版本与开关）。统一技能/偏好/模板库上线后返回完整规则集。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     capabilities: ["read_rules"],
     execute: async () => {
-      const writing = deps.db.select().from(writingStyleSettings).get();
       const organizing = deps.db.select().from(knowledgePreferenceSettings).get();
       const preference = deps.db.select().from(knowledgePreferences).get();
       return state("ok", {
@@ -591,14 +589,6 @@ export function createReadTools(
           writebackRoomId: connection.scopes.writebackRoomId,
         },
         rules: [
-          writing
-            ? {
-                type: "writing_style",
-                enabled: writing.generationEnabled || writing.completionEnabled,
-                version: `v${writing.configVersion}`,
-                updatedAt: writing.updatedAt.toISOString(),
-              }
-            : { type: "writing_style", enabled: false, version: null, updatedAt: null },
           organizing
             ? {
                 type: "organizing_preference",

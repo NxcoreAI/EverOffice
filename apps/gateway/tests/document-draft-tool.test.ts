@@ -136,7 +136,7 @@ describe("createSubagentPiTools document_draft", () => {
       .map((tool) => tool.name)).not.toContain("document_draft");
   });
 
-  it("draft-create：组装 instruction/material/writingStyle 并返回 title 与摘要（M3/V2：正文不回传）", async () => {
+  it("draft-create：组装 instruction/material 并返回 title 与摘要（M3/V2：正文不回传）", async () => {
     const orchestrator = orchestratorReturning({
       result: {
         text: "",
@@ -149,7 +149,6 @@ describe("createSubagentPiTools document_draft", () => {
       },
     });
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
-      writingStyleProvider: { getGenerationPromptSection: () => "<writing_style>\n短句收尾。\n</writing_style>" },
     });
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
     const result = await tool.execute(baseRun as never, {
@@ -170,7 +169,8 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input.task).toBe("draft-create");
     expect(input.instruction).toBe("起草接口设计文档");
     expect(input.material).toBe("素材摘录");
-    expect(input.writingStyle).toContain("短句收尾");
+    // 写作风格注入随写作风格提炼退役（Phase 2d）：不再向 doc-writer 附 writingStyle。
+    expect(input.writingStyle).toBeUndefined();
 
     const payload = JSON.parse((result as { content: string }).content);
     expect(payload).toMatchObject({
@@ -293,7 +293,6 @@ describe("createSubagentPiTools document_draft", () => {
         issued.push({ context, documentId, version, blockIds });
         return { readReceipt: "receipt-1", expiresAt: "2026-09-02T00:00:00.000Z" };
       },
-      writingStyleProvider: { getGenerationPromptSection: () => null },
     });
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
     const result = await tool.execute(baseRun as never, {

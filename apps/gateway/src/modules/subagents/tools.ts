@@ -509,8 +509,6 @@ export function createSubagentPiTools(
     ) => { readReceipt: string; expiresAt: string };
     /** dispatch 期"agent 修改中"软租约：占用文档（编辑器只读、保存被拒），patch_begin 接管前清除。 */
     setDocumentModificationLease?: (documentId: string, value: string | null) => void;
-    /** 写作风格生成段（§7 迁移）：对 doc-writer 全部 task 无条件附加，provider 自查开关。 */
-    writingStyleProvider?: { getGenerationPromptSection(): string | null };
     /** room_correction_draft 的组装数据源：读权威总览投影的 claims。 */
     resolveRoomCorrectionContext?: (roomId: string) => {
       claims: Array<{
@@ -874,7 +872,6 @@ export function createSubagentPiTools(
           }))
           : [];
 
-        const writingStyle = options.writingStyleProvider?.getGenerationPromptSection() ?? null;
         const roomTitle = roomId ? run.availableRooms?.find((room) => room.id === roomId) : undefined;
         const topLevelBlocks = snapshot
           ? snapshot.blocks.filter((block) => block.depth === 0)
@@ -955,7 +952,6 @@ export function createSubagentPiTools(
             : {}),
           ...(responseLanguage ? { responseLanguage } : {}),
           ...(previousDraft ? { previousInvocationId, previousDraft } : {}),
-          ...(writingStyle ? { writingStyle } : {}),
         };
         if (task === "rewrite" && typeof input.selectedText !== "string") {
           throw new Error("document_draft_selected_text_required");

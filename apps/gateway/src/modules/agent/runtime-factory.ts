@@ -182,8 +182,9 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
 }
 
 
-/** 写作风格定性层的隔离内部 runtime（无工具、无记忆/knowledge，ingest-filter 同款）。 */
-export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime | null {
+/** 文稿版本摘要的隔离内部 runtime（无工具、无记忆/knowledge，单次调用）。
+ *  原为写作风格定性层 runtime；风格提炼退役后由版本摘要接手（Phase 2d）。 */
+export function createVersionSummaryRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
   const { mcp: _mcp, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
@@ -192,9 +193,9 @@ export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime |
     builtinTools: [],
     maxToolCallsPerRun: 1,
     runtimeRole: "internal",
-    sessionsDir: join(pi.sessionsDir, "writing-style"),
-    workingDirectory: join(pi.workingDirectory, "writing-style"),
-    agentDirectory: join(pi.agentDirectory, "writing-style"),
+    sessionsDir: join(pi.sessionsDir, "version-summary"),
+    workingDirectory: join(pi.workingDirectory, "version-summary"),
+    agentDirectory: join(pi.agentDirectory, "version-summary"),
   });
 }
 
