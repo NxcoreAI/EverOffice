@@ -254,7 +254,8 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | Phase 1a | 断耦合（迁出 + 调度器）：`perception/vlm-client` + `reality/insight-tags` 迁至 `modules/vision/`（20 个引用点）；`diary` 运行时工厂从 `modules/agent` 挪进 `modules/diary`；时区换算迁至 `infrastructure/time/zone-time`；`agent-scheduler` 移除 `diary.daily` 内置槽位与 DiaryService 依赖（routes 死分支、schema 注释同步清理；create/update 时钟与 tick 统一） | 完成（gateway tsc 干净；全量套件 10 个失败 = 基线：190 文件 / 1963 用例） |
 | 2026-10-23 | Phase 1b | 断耦合（聚类 + Room 材料）：删除 `files/clustering-service.ts`（图片聚类/embedding）与 `PATCH /v1/file-clusters/:id`、`FilesService.versionClassifier` 钩子及 create-server 装配；删除子 Agent 工具 `room_analysis` 与 `resolveRoomContext` 选项（保留纯投喂的 `content_analysis`） | 完成（tsc 干净；`subagent-tools` 48 / `room-context-digest` 8 全绿；`file-catalog` 仅基线 1 失败） |
 | 2026-10-23 | Phase 1c | 断耦合（图片描述 + 连接级联）：删除 `files/image-describe.ts` 与 VLM 描述链路（ingest 改为图片占位 markdown，图片仍是一等格式）；`connection-purge` 去掉 memory/knowledge 两步清理与 `memoryDeleted` | 完成（tsc 干净；全量套件 10 个失败 = 基线：189 文件 / 1955 用例） |
-| — | Phase 1d（剩余） | `data-migrations` 去 `memoryService`（memory_index 作业/会话检索/状态门）+ 桌面 `main/knowledge/llm-env.ts`、`shared/knowledge.ts`、`main/screenshot/*`；反向依赖已从 18 个文件收敛到 4 个（另加组合根 `create-server.ts`，其 45 处装配随 Phase 2 模块删除一次性收敛） | 进行中 |
+| 2026-10-23 | Phase 1d | `data-migrations` 去 `memoryService`：`JobType` 只剩 `source_gc`、幂等门简化为内容 hash、删除 `indexMemory`/`afterJob`/记忆检索补全/GC 记忆清理，导入后运行直接完成（`phase` 由 `memory` 改 `finalizing`） | 完成（tsc 干净；套件维持基线 10 个失败；两个迁移测试文件 10 用例全绿，重启恢复用例改为真实崩溃路径） |
+| 2026-10-23 | Phase 1 闸门 | 网关「存活模块 → 将删模块」反向依赖 **18 → 0**（`data-migrations` 是最后一个）。剩余命中全部属于 Phase 2 范围：`create-server.ts` 40 处装配（§3 表逐行处理）+ 桌面 3 个自身即将删除的文件（`main/knowledge/llm-env.ts`、`shared/knowledge.ts`、`main/screenshot/window-screenshot-service.ts`，依赖方向均为将删→将删） | Phase 1 完成 |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 3 | 外围清理 | 未开始 |
