@@ -12,8 +12,6 @@ import {
 import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store.js";
 import { ConnectorDomainProjection } from "@nxcore/connectors-module/domain-projection.js";
 import { purgeConnectorConnectionCascade } from "../src/modules/connectors/connection-purge.js";
-import type { MemoryService } from "../src/modules/memory/service.js";
-import type { KnowledgeService } from "../src/modules/knowledge/service.js";
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -46,23 +44,6 @@ async function setup() {
   const projection = new ConnectorDomainProjection(client.db, "local-user");
   const documentStore = new ConnectorDocumentStore(join(dir, "connector-documents"));
 
-  const memoryCalls: Array<{ refs: string[]; prefix?: string }> = [];
-  let memoryError: Error | null = null;
-  const memory = {
-    deleteDocumentsByCallerRefs: async (target: { refs: string[]; prefix?: string }) => {
-      if (memoryError) throw memoryError;
-      memoryCalls.push(target);
-      return [];
-    },
-  } as unknown as MemoryService;
-
-  const cleanupItems: Array<{ sourceKind: string; sourceId: string }> = [];
-  const knowledge = {
-    requestSourceCleanups: (items: Array<{ sourceKind: string; sourceId: string }>) => {
-      cleanupItems.push(...items);
-    },
-  } as unknown as KnowledgeService;
-
   const ledgerInsert = (sourceKind: string, sourceId: string) =>
     client.db.insert(ingestEvents).values({
       id: `ing-${sourceId}`,
@@ -78,16 +59,13 @@ async function setup() {
     }).run();
 
   return {
-    client, projection, documentStore, memoryCalls, cleanupItems, ledgerInsert,
-    setMemoryError: (error: Error | null) => (memoryError = error),
-    memory: memory as MemoryService,
-    knowledge: knowledge as KnowledgeService,
+    client, projection, documentStore, ledgerInsert,
     log: { info: () => {}, warn: () => {} },
   };
 }
 
 describe("purgeConnectorConnectionCascade", () => {
-  it("清域行/记忆/台账/knowledge/落盘文档，且不影响他连接", async () => {
+  it("清域行/台账/落盘文档，且不影响他连接", async () => {
     const s = await setup();
     const keep = { id: "conn-keep", provider: "gmail" as const };
     const drop = { id: "conn-drop", provider: "gmail" as const };
@@ -104,18 +82,11 @@ describe("purgeConnectorConnectionCascade", () => {
     await s.documentStore.write("gmail", drop.id, { providerDocumentId: "doc-1", title: "文档", markdown: "# 文档" });
 
     const summary = await purgeConnectorConnectionCascade(
-      { db: s.client.db, memory: s.memory, knowledge: s.knowledge, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
+      { db: s.client.db, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
       drop,
     );
 
-    expect(summary).toEqual({ mailRows: 2, calendarRows: 1, memoryDeleted: 0, ledgerRows: 4 });
-    // 记忆批量删除：exact 域行 id + connector ref 前缀一次调用
-    expect(s.memoryCalls).toHaveLength(1);
-    const memoryCall = s.memoryCalls[0]!;
-    expect(new Set(memoryCall.refs)).toEqual(new Set([dropMail1.id, dropMail2.id, dropEvent.id]));
-    expect(memoryCall.prefix).toBe(`connector:gmail:${drop.id}:`);
-    // knowledge 批量清理：4 条命中（含 cloud-doc 前缀命中），他连接的台账不进
-    expect(s.cleanupItems).toHaveLength(4);
+    expect(summary).toEqual({ mailRows: 2, calendarRows: 1, ledgerRows: 4 });
     // 域行清空、他连接保留
     expect(s.client.db.select().from(connectorEmails).all().map((row) => row.connectionName)).toEqual([keep.id]);
     expect(s.client.db.select().from(connectorCalendarEvents).all()).toEqual([]);
@@ -131,27 +102,14 @@ describe("purgeConnectorConnectionCascade", () => {
     const connection = { id: "conn-1", provider: "gmail" as const };
     s.projection.projectMail("gmail", connection.id, mailChange("m1"));
     await purgeConnectorConnectionCascade(
-      { db: s.client.db, memory: s.memory, knowledge: s.knowledge, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
+      { db: s.client.db, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
       connection,
     );
     const second = await purgeConnectorConnectionCascade(
-      { db: s.client.db, memory: s.memory, knowledge: s.knowledge, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
+      { db: s.client.db, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
       connection,
     );
-    expect(second).toEqual({ mailRows: 0, calendarRows: 0, memoryDeleted: 0, ledgerRows: 0 });
-    expect(s.cleanupItems).toHaveLength(0);
+    expect(second).toEqual({ mailRows: 0, calendarRows: 0, ledgerRows: 0 });
   });
 
-  it("记忆删除失败向上抛（路由 500、连接保留、可重试）", async () => {
-    const s = await setup();
-    s.setMemoryError(new Error("memorycore down"));
-    const connection = { id: "conn-1", provider: "gmail" as const };
-    s.projection.projectMail("gmail", connection.id, mailChange("m1"));
-    await expect(purgeConnectorConnectionCascade(
-      { db: s.client.db, memory: s.memory, knowledge: s.knowledge, documentStore: s.documentStore, ownerId: "local-user", log: s.log },
-      connection,
-    )).rejects.toThrow("memorycore down");
-    // 域行未被删除（后续步骤未执行）
-    expect(s.client.db.select().from(connectorEmails).all()).toHaveLength(1);
-  });
 });
