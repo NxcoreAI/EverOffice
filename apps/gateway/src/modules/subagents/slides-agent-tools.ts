@@ -32,7 +32,6 @@ const SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST = new Set([
 
 const SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST = new Set(["web_search"]);
 
-const SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST = new Set(["material_search"]);
 
 const SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST = new Set(["slides_image_prewarm"]);
 
@@ -153,8 +152,6 @@ export function createSlidesPlannerAgentTools(deps: {
   documentTools: PiAgentRuntimeTool[];
   /** createWebSearchPiTools 的产物（未配置时传空数组）。 */
   webSearchTools: PiAgentRuntimeTool[];
-  /** createMaterialSearchPiTools 的产物（本地素材检索，PPT 配图主通道）。 */
-  materialSearchTools: PiAgentRuntimeTool[];
 }): PiAgentRuntimeTool[] {
   return [
     ...filterTools(deps.roomTools, SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST)
@@ -162,7 +159,6 @@ export function createSlidesPlannerAgentTools(deps: {
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
       .map((tool) => (tool.name === "document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
-    ...filterTools(deps.materialSearchTools, SLIDES_PLANNER_MATERIAL_TOOL_ALLOWLIST),
     // 配图预热：编排中生图入池（模块内 token 注册表寻址，装配无额外依赖）。
     ...filterTools(createSlidesImagePrewarmTools(), SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST),
   ];

@@ -115,9 +115,8 @@ import { SearchBackfill } from "../modules/search/backfill.js";
 import { searchRoutes } from "../modules/search/routes.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
 import { filesRoutes } from "../modules/files/routes.js";
-import { materialsRoutes } from "../modules/materials/routes.js";
-import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
-import { MaterialsService } from "../modules/materials/service.js";
+import { SlideImageStore } from "../modules/slides-style/image-store.js";
+import { slideImageRoutes } from "../modules/slides-style/image-routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { EmbeddingClient } from "../modules/knowledge/embedding.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
@@ -862,7 +861,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
-    materialSearchTools: createMaterialSearchPiTools(materialsService),
   }));
   subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
     documentTools: createDocumentPiTools(documentMcpHost),
@@ -1080,7 +1078,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   };
   // diaryService 在其后构造，用晚绑定引用注入标脏回调。
   const screenMemoryMarkDiaryStaleRef: { current: ((at: Date) => void) | null } = { current: null };
-  const screenMemoryMaterialsRef: { current: MaterialsService | null } = { current: null };
+  const screenMemoryMaterialsRef: { current: SlideImageStore | null } = { current: null };
   const screenMemoryService = new ScreenMemoryService(db, app.log, agentResolver, undefined, (at) => screenMemoryMarkDiaryStaleRef.current?.(at), (buffer, mime) => {
     const materials = screenMemoryMaterialsRef.current;
     if (!materials) throw new Error("materials_service_unavailable");
@@ -1165,7 +1163,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
                   bridge: officeBridgeClient,
                   visualReviewer: slidesVisualReviewer,
                   readMaterialBlob: async (hash) => {
-                    const content = await materialsService.readByHash(hash).catch(() => null);
+                    const content = await slideImageStore.readByHash(hash).catch(() => null);
                     return content ? new Uint8Array(content.buffer) : null;
                   },
                   fetchImageHead: async (url) => {
@@ -1392,10 +1390,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     orchestrator: subagentOrchestrator,
     officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
   });
-  // 本地素材库（PPT 配图）：检索走结构化表（perception/剪藏/文档内嵌图），
-  // 取图按内容哈希回源本地字节。slides-planner 专属工具 + /v1/materials/:hash。
-  const materialsService = new MaterialsService(db, config.dataDir);
-  screenMemoryMaterialsRef.current = materialsService;
+  // 幻灯片图片对象库（原素材库的字节存取部分）：生图产物与文档内嵌图按内容哈希
+  // 寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。
+  const slideImageStore = new SlideImageStore(db, config.dataDir);
+  screenMemoryMaterialsRef.current = slideImageStore;
   filesService.initializeCatalog();
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
@@ -1405,9 +1403,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const pageImageRunner = new SlidesPageImageRunner();
   slidesStyleDepsRef.current = {
     sessions: new SlidesStyleSessionStore(db),
-    images: new SlidesStyleImageGenerator(aiRelaySessions, materialsService),
+    images: new SlidesStyleImageGenerator(aiRelaySessions, slideImageStore),
     vlm: createVlmProvider(config),
-    readMaterialBytes: (hash) => materialsService.readByHash(hash),
+    readMaterialBytes: (hash) => slideImageStore.readByHash(hash),
     demoRenderer: slidesStyleOfficeClient
       ? {
         renderPptx: async (title, pages) => slidesStyleOfficeClient.renderPptx({
@@ -1420,7 +1418,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           throw new Error("office_bridge_unavailable");
         },
       },
-    saveDemoPng: async (png) => materialsService.saveImageBlob(png, "image/png"),
+    saveDemoPng: async (png) => slideImageStore.saveImageBlob(png, "image/png"),
     pageImageSessions: pageImageSessionsStore,
     pageImageRunner: pageImageRunner,
     // settle 的 outlineRoles 来源：按风格会话绑定的草稿读回页结构（读取失败时省略该输入）。
@@ -1724,7 +1722,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(agentDocumentExportRoutes(agentDocumentExportService));
   await app.register(asrRoutes(asrService));
   await app.register(memoryRoutes(memoryService));
-  await app.register(materialsRoutes(materialsService));
+  await app.register(slideImageRoutes(slideImageStore));
   await app.register(slidesPageImagesRoutes(pageImageSessionsStore));
   await app.register(thesisFormatRoutes(thesisFormatService));
   await app.register(dataMigrationRoutes(dataMigrationService));
