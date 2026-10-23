@@ -3277,6 +3277,24 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #b4552d;
 }
 
+/* 子代理行内联圆环：紧跟名字、不占按钮 hover/展开态，尺寸随行高收紧。 */
+.agent-context-ring--inline {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin-left: 0;
+  cursor: default;
+}
+
+.agent-context-ring--inline:hover {
+  background: transparent;
+}
+
+.agent-context-ring--inline svg {
+  width: 13px;
+  height: 13px;
+}
+
 /* 压缩中：圆环呼吸。 */
 .agent-context-ring--compacting {
   animation: agent-ring-breathe 1.1s ease-in-out infinite;

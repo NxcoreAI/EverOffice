@@ -48,6 +48,10 @@ export interface AgentSubagentStep {
   startedAt: string | null
   completedAt: string | null
   errorMessage: string | null
+  /** 子代理自己的上下文用量快照（context.usage；缺省=未知，不渲染圆环）。 */
+  contextUsage?: AgentContextUsage | null
+  /** 子代理上下文压缩中（圆环呼吸）。 */
+  contextCompacting?: boolean
 }
 
 export type TimelineRow =
@@ -711,6 +715,8 @@ export function buildTimelineRows(
         startedAt: invocation.startedAt,
         completedAt: invocation.completedAt,
         errorMessage: invocation.errorMessage ?? (invocation.errorCode ? `错误码 ${invocation.errorCode}` : null),
+        contextUsage: invocation.contextUsage ?? null,
+        contextCompacting: invocation.contextCompacting === true,
       },
     })
   }

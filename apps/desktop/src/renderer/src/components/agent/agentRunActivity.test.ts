@@ -461,6 +461,8 @@ describe('subagent timeline rows', () => {
         agentName: 'Document Writer',
         status: 'running',
         completedAt: null,
+        contextUsage: { tokens: 41_200, contextWindow: 128_000, percent: 32.2 },
+        contextCompacting: true,
       }),
     ]
     const rows = buildTimelineRows(steps, invocations, 'run-1')
@@ -471,6 +473,9 @@ describe('subagent timeline rows', () => {
     if (parentRow.kind === 'subagent') {
       expect(parentRow.subagent.label).toBe('Document Writer')
       expect(parentRow.subagent.status).toBe('running')
+      // 子代理自己的上下文用量/压缩态透传给时间线行（圆环据此渲染）。
+      expect(parentRow.subagent.contextUsage).toEqual({ tokens: 41_200, contextWindow: 128_000, percent: 32.2 })
+      expect(parentRow.subagent.contextCompacting).toBe(true)
     }
     const nestedRow = rows[2]!
     expect(nestedRow.kind).toBe('subagent')

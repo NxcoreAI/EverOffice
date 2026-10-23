@@ -34,6 +34,7 @@ import {
   type DisplayAgentToolCall,
   type TimelineRow,
 } from './agentRunActivity'
+import { ContextUsageRing } from './contextUsageRing'
 import { LocalAgentDispatchCard } from './LocalAgentDispatchCard'
 import { useRunSubagentInvocations } from './useRunSubagentInvocations'
 import { useSubagentInvocationTools } from './useSubagentInvocationTools'
@@ -326,6 +327,16 @@ function SubagentRow({ sub, now, sessionId }: {
     const invocationId = dispatchedInvocationId(tool)
     return !invocationId || !childIds.has(invocationId)
   })
+  // 子代理自己的上下文圆环：数字收在 title 里，与对话区 composer 同一套文案。
+  const contextTitle = sub.contextCompacting
+    ? t('surface:agentComposer.contextCompacting')
+    : sub.contextUsage?.contextWindow
+      ? t('surface:agentComposer.contextUsageTitle', {
+        used: sub.contextUsage.tokens === null ? '—' : sub.contextUsage.tokens.toLocaleString(),
+        total: sub.contextUsage.contextWindow.toLocaleString(),
+        percent: sub.contextUsage.percent === null ? '—' : Math.round(sub.contextUsage.percent),
+      })
+      : undefined
 
   return (
     <div className="agent-tool-step" data-status={sub.status}>
@@ -344,6 +355,12 @@ function SubagentRow({ sub, now, sessionId }: {
           <span className="agent-tool-rail" aria-hidden="true"><Bot aria-hidden="true" /></span>
           <span className="agent-tool-command-text">
             <strong>{sub.label}</strong>
+            <ContextUsageRing
+              usage={sub.contextUsage}
+              compacting={sub.contextCompacting}
+              title={contextTitle}
+              inline
+            />
             {running
               ? taskPreview ? <span>{taskPreview}</span> : null
               : duration !== null ? <span>{formatDuration(duration, t)}</span> : null}
