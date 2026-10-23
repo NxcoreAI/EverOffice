@@ -1455,7 +1455,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       }
     },
   };
-  const dataMigrationService = new DataMigrationService(db, sqlite, memoryService);
+  const dataMigrationService = new DataMigrationService(db, sqlite);
   const searchService = new SearchService(db, sqlite);
   await app.register(searchRoutes(searchService));
   dataMigrationService.setFilesService(filesService);
