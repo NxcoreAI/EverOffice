@@ -47,7 +47,6 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
       roomTools: PLANNER_ROOM_TOOLS,
       documentTools: PLANNER_DOCUMENT_TOOLS,
       webSearchTools: [tool("web_search"), tool("agent_dispatch"), tool("agent_catalog"), tool("send_notification")],
-      materialSearchTools: [tool("material_search"), tool("send_notification")],
     });
     // 名字按字典序断言：改名后 document_* 排在 conversation_search 之后。
     expect(tools.map((item) => item.name).sort()).toEqual([
@@ -55,7 +54,6 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
       "conversation_search",
       "document_list",
       "document_read",
-      "material_search",
       "memory_search",
       "room_context_get",
       "slides_image_prewarm",
@@ -64,7 +62,7 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
   });
 
   it("空依赖时只含配图预热（token 注册表寻址，装配零依赖）", () => {
-    expect(createSlidesPlannerAgentTools({ roomTools: [], documentTools: [], webSearchTools: [], materialSearchTools: [] })
+    expect(createSlidesPlannerAgentTools({ roomTools: [], documentTools: [], webSearchTools: [] })
       .map((item) => item.name)).toEqual(["slides_image_prewarm"]);
   });
 
@@ -91,7 +89,6 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
       roomTools: [roomContext],
       documentTools: [],
       webSearchTools: [],
-      materialSearchTools: [],
     });
     const wrapped = tools.find((item) => item.name === "room_context_get")!;
     const draft = JSON.parse((await wrapped.execute(runInput("draft"), { roomId: "room-1" })).content) as {
@@ -124,7 +121,6 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
       roomTools: [],
       documentTools: [tool("context_room_list"), tool("document_list"), documentRead],
       webSearchTools: [],
-      materialSearchTools: [],
     });
     const wrapped = tools.find((item) => item.name === "document_read")!;
     const draft = JSON.parse((await wrapped.execute(runInput("draft"), { documentId: "doc-1", limit: 99_999 })).content) as {
