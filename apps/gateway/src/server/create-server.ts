@@ -109,26 +109,15 @@ import { ConversationSuggestionService } from "../modules/processing/conversatio
 import { processingRoutes } from "../modules/processing/routes.js";
 import { SessionTitleService } from "../modules/processing/session-title.js";
 import { TranscriptionSummaryService } from "../modules/processing/service.js";
-import { RealityError } from "../modules/reality/errors.js";
-import { realityRoutes } from "../modules/reality/routes.js";
-import { RealityService } from "../modules/reality/service.js";
-import { perceptionRoutes } from "../modules/perception/routes.js";
-import { PerceptionService } from "../modules/perception/service.js";
-import { screenMemoryRoutes } from "../modules/screen-memory/routes.js";
-import { ScreenMemoryService } from "../modules/screen-memory/service.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
 import {
   createDocumentAnalysisResultValidator,
   createDocumentUnderstandingTools,
 } from "../modules/document-understanding/tools.js";
-import { diaryRoutes } from "../modules/diary/routes.js";
-import { registerDiaryAgent } from "../modules/diary/agent-runtime.js";
-import { DiaryService } from "../modules/diary/service.js";
 import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
 import { agentSchedulerRoutes } from "../modules/agent-scheduler/routes.js";
 import { agentSchedulerMcpRoutes } from "../modules/agent-scheduler/mcp-routes.js";
-import { DiaryAgentGenerator } from "../modules/diary/agent-generator.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -452,14 +441,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
-    if (error instanceof RealityError) {
-      await reply.code(error.statusCode).send({
-        error: error.code,
-        message: redactText(error.message),
-        requestId: request.id,
-      });
-      return;
-    }
     if (error instanceof DocumentServiceError) {
       await reply.code(error.statusCode).send({
         error: error.code,
@@ -751,15 +732,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
-  // diaryService 在其后构造，用晚绑定引用注入标脏回调。
-  const screenMemoryMarkDiaryStaleRef: { current: ((at: Date) => void) | null } = { current: null };
-  const screenMemoryMaterialsRef: { current: SlideImageStore | null } = { current: null };
-  const screenMemoryService = new ScreenMemoryService(db, app.log, agentResolver, undefined, (at) => screenMemoryMarkDiaryStaleRef.current?.(at), (buffer, mime) => {
-    const materials = screenMemoryMaterialsRef.current;
-    if (!materials) throw new Error("materials_service_unavailable");
-    return materials.saveImageBlob(buffer, mime);
-  }, config.dataDir);
-  screenMemoryService.initialize();
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
     tools: [
@@ -994,7 +966,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 幻灯片图片对象库（原素材库的字节存取部分）：生图产物与文档内嵌图按内容哈希
   // 寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。
   const slideImageStore = new SlideImageStore(db, config.dataDir);
-  screenMemoryMaterialsRef.current = slideImageStore;
   filesService.initializeCatalog();
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
@@ -1075,43 +1046,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "multimodal-document-parser",
     createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
-  const diaryGenerator = config.agentRuntime !== "fake" && config.backgroundPi
-    ? new DiaryAgentGenerator(config.backgroundPi.model || "diary-agent", app.log)
-    : null;
-  if (diaryGenerator) {
-    registerDiaryAgent(agentResolver, config, diaryGenerator);
-    diaryGenerator.attachRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.diary));
-  }
-  const diaryService = new DiaryService(db, {
-    logger: app.log,
-    scheduleManagedExternally: true,
-    ...(diaryGenerator ? { generator: diaryGenerator } : {}),
-  });
-  if (diaryGenerator) {
-    runtimeConfigManager.onChange(() => {
-      if (!agentResolver.has(BUILTIN_AGENT_IDS.diary)) return;
-      const { current } = agentResolver.reload(BUILTIN_AGENT_IDS.diary);
-      // replaceRuntime 的 dispose 链可能 reject；onChange 回调是 fire-and-forget，
-      // 漏接即未处理拒绝、直接杀死网关进程（2026-10-17 排障）。
-      diaryGenerator.replaceRuntime(current).catch((error: unknown) => {
-        app.log.error({ error: error instanceof Error ? error.message : String(error) }, "diary generator runtime replace failed");
-      });
-    });
-  }
   const agentSchedulerService = new AgentSchedulerService(db, agentService);
   agentSchedulerService.initialize();
-  diaryService.initialize();
-  screenMemoryMarkDiaryStaleRef.current = (at) => diaryService.markStaleAt(at);
-  const perceptionService = new PerceptionService(db, filesService, createVlmProvider(config), app.log, (at) => diaryService.markStaleAt(at));
-  runtimeConfigManager.onChange(() => perceptionService.replaceVlm(createVlmProvider(config)));
   const purgedUnsupportedFiles = await filesService.purgeUnsupportedFiles();
   if (purgedUnsupportedFiles > 0) {
     app.log.info({ purgedUnsupportedFiles }, "purged unsupported JSON file records");
-  }
-  const realityService = new RealityService(db, config.asrInputDir, app.log);
-  const recoveredCaptures = realityService.recoverInterruptedCaptures();
-  if (recoveredCaptures > 0) {
-    app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
   }
   let documentListSyncWorker: DocumentListSyncWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
@@ -1132,9 +1071,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
     await documentIndexBackfillWorker?.dispose();
-    await perceptionService.dispose();
     await agentSchedulerService.dispose();
-    await diaryService.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
     await notificationMcpHost.close();
@@ -1348,10 +1285,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService, conversationSuggestionService));
-  await app.register(realityRoutes(realityService));
-  await app.register(perceptionRoutes(perceptionService));
-  await app.register(screenMemoryRoutes(screenMemoryService));
-  await app.register(diaryRoutes(diaryService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
   await app.register(nangoConnectorRoutes(
