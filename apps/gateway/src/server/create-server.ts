@@ -131,7 +131,7 @@ import { FilterRulesStore } from "../modules/ingest/rules.js";
 import { FilterInsightJob } from "../modules/ingest/rules-insight.js";
 import { DocumentOutboxWorker } from "../modules/ingest/document-outbox-worker.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
-import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-history-backfill-worker.js";
+import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
