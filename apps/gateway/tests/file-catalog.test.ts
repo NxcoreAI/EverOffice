@@ -10,7 +10,6 @@ import { createDatabase } from "../src/infrastructure/database/client.js";
 import { FilesService } from "../src/modules/files/service.js";
 import { storageRelPath } from "../src/modules/files/storage.js";
 import { filesRoutes } from "../src/modules/files/routes.js";
-import { FileClusteringService } from "../src/modules/files/clustering-service.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -152,39 +151,6 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
-  it("clusters exact content deterministically and lets users pin the shared title", async () => {
-    const test = await catalogForTest();
-    const clustering = new FileClusteringService(test.db, null, null, null);
-    test.service.setVersionClassifier((entryId, versionId) => clustering.enqueue(entryId, versionId));
-    clustering.initialize();
-    const buffer = Buffer.from("# Launch plan\n\nMilestones", "utf8");
-    const first = await test.service.importFile({
-      sourceKind: "manual-upload", sourceKey: "manual:cluster-a", originalName: "plan.md", buffer,
-    });
-    const parsedId = test.service.ensureParsed(first.contentHash, buffer.toString("utf8"), "markdown@1");
-    test.service.touchVersionParsed(first.fileEntryId, first.fileVersionId, parsedId, "event-a");
-    await waitFor(() => Boolean(test.service.listCatalog().items[0]?.clusterId));
-
-    const copyPath = join(test.dataDir, "copy.md");
-    await writeFile(copyPath, buffer);
-    const second = await test.service.importLocalFileReference({
-      sourceKind: "local-folder", sourceKey: "local:cluster-b", originalName: "copy.md", sourcePath: copyPath,
-      contentHash: createHash("sha256").update(buffer).digest("hex"), byteSize: buffer.byteLength,
-      localSourceId: "cluster", localItemId: "copy",
-    });
-    test.service.touchVersionParsed(second.fileEntryId, second.fileVersionId, parsedId, "event-b");
-    await waitFor(() => test.service.listCatalog().items.every((item) => Boolean(item.clusterId)));
-    const catalog = test.service.listCatalog().items;
-    expect(new Set(catalog.map((item) => item.clusterId)).size).toBe(1);
-    const clusterId = catalog[0]!.clusterId!;
-    expect(clustering.pinTitle(clusterId, "2026 Launch Plan")).toMatchObject({
-      canonicalTitle: "2026 Launch Plan", titlePinned: true, titleSource: "user",
-    });
-    expect(test.service.listCatalog().items.every((item) => item.sharedTitle === "2026 Launch Plan")).toBe(true);
-    await clustering.dispose();
-    await test.service.dispose();
-    test.sqlite.close();
-  });
 
   it("accepts artifact-imported office uploads as a first-class source kind", async () => {
     const test = await catalogForTest();

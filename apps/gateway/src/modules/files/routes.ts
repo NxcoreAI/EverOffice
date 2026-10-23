@@ -3,7 +3,6 @@ import multipart from "@fastify/multipart";
 import { Type } from "@sinclair/typebox";
 import { isSupportedUploadFilename, type FileDeletionHooks, type FilesService, type UploadedFileRow } from "./service.js";
 import { MAX_FORMAT_FILE_BYTES } from "./format-registry.js";
-import type { FileClusteringService } from "./clustering-service.js";
 
 /** 上传原件体积上限（与 knowledge file-convert 同源，唯一字节入口统一把关）。 */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -111,7 +110,6 @@ function errorOf(code: string): { error: string } {
 export function filesRoutes(
   service: FilesService,
   deletionHooks?: FileDeletionHooks,
-  clustering?: FileClusteringService,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     await app.register(multipart, {
@@ -140,26 +138,6 @@ export function filesRoutes(
         },
       },
       async () => ({ items: [...service.capabilities()] }),
-    );
-
-    app.patch(
-      "/v1/file-clusters/:id",
-      {
-        schema: {
-          tags: ["files"],
-          params: FileIdParams,
-          body: Type.Object({ sharedTitle: Type.String({ minLength: 1, maxLength: 200 }) }),
-          response: {
-            200: Type.Object({ id: Type.String(), canonicalTitle: Type.String(), titlePinned: Type.Boolean() }),
-            404: Type.Object({ error: Type.String() }),
-          },
-        },
-      },
-      async (request, reply) => {
-        const cluster = clustering?.pinTitle(request.params.id, request.body.sharedTitle) ?? null;
-        if (!cluster) return reply.code(404).send(errorOf("cluster_not_found"));
-        return { id: cluster.id, canonicalTitle: cluster.canonicalTitle, titlePinned: cluster.titlePinned };
-      },
     );
 
     app.patch(
