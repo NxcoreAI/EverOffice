@@ -90,7 +90,6 @@ function setup() {
       },
       status: () => ({ indexed: 1 }),
     },
-    memory: null,
     documents: {
       get: (id) => id === "doc-1"
         ? { id: "doc-1", roomId: "room-b", title: "文档一", version: 2, deletedAt: null }

@@ -123,9 +123,6 @@ type VersionIngestor = (input: {
   pipelines?: FileImportInput["pipelines"];
   roomId?: string;
 }) => Promise<VersionIngestResult>;
-/** 显式 roomId 导入的同步归属钩子（create-server 注入 knowledge 落入口决策）。 */
-type RoomEntrySink = (input: { fileEntryId: string; roomId: string; sourceTitle: string }) => void;
-
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
   fileId: string;
@@ -137,37 +134,19 @@ export interface FileUploadResult {
   originalName: string;
 }
 
-/** 删除级联钩子（create-server 注入；files 模块不反向依赖 knowledge/memory）。 */
-export interface FileDeletionHooks {
-  /** Room/wiki 链路清理（enqueueCleanup 同款异步 job）。 */
-  requestKnowledgeCleanup?(fileId: string): void;
-  /** 记忆链路：按 caller_ref 删 MemoryCore 文档；返回删除的 documentId 列表。 */
-  deleteMemoryDocuments?(fileId: string): Promise<string[]>;
-  /** 批量版（整源清理用）：一次扫描删多 caller_ref，避免逐文件全量扫描。 */
-  deleteMemoryDocumentsBatch?(fileEntryIds: string[]): Promise<string[]>;
-  /** 批量台账/knowledge 清理（ingest.cleanupSources 同语义）。 */
-  cleanupIngestSources?(fileEntryIds: string[]): void;
-}
-
 export interface FileDeletionResult {
   fileId: string;
-  /** Room/wiki 侧是否已入队清理 job。 */
-  knowledgeCleanup: boolean;
-  /** 记忆侧实际删除的 documentId（MemoryCore 未启用/无文档为空）。 */
-  deletedMemoryDocuments: string[];
   /** 对象库 blob 是否被物理回收（被其他文件共享的内容不回收）。 */
   blobCollected: boolean;
 }
 
 /**
  * 文件管理中心（unified-ingest-plan §8/U9）：对象库 + uploaded_files +
- * parsed_contents 的唯一所有者。knowledge/memory/ingest 的一切字节存取
- * 都经它——上传（闸1 判重）、解析产物（闸2 幂等）、预览、改名、删除级联
- * 与对象库 GC。表与磁盘结构沿用 knowledge 时期的设计，零迁移。
+ * parsed_contents 的唯一所有者。一切字节存取都经它——上传（闸1 判重）、
+ * 解析产物（闸2 幂等）、预览、改名、删除级联与对象库 GC。
  */
 export class FilesService {
   private versionIngestor: VersionIngestor | null = null;
-  private roomEntrySink: RoomEntrySink | null = null;
   private fileJobWorker: Promise<void> | null = null;
   private disposed = false;
 
@@ -224,10 +203,6 @@ export class FilesService {
     if (this.disposed) throw new Error("FilesService 已关闭");
     this.versionIngestor = ingestor;
     this.kickFileJobs();
-  }
-
-  setRoomEntrySink(sink: RoomEntrySink): void {
-    this.roomEntrySink = sink;
   }
 
   async importFile(input: FileImportInput): Promise<FileImportResult> {
@@ -374,7 +349,6 @@ export class FilesService {
         versionDeduped: true,
       };
       if (shouldEnqueue) this.kickFileJobs();
-      this.emitRoomEntry(input, fileEntryId);
       return result;
     }
 
@@ -456,20 +430,9 @@ export class FilesService {
     });
     entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!input.deferIngest) this.kickFileJobs();
-    this.emitRoomEntry(input, fileEntryId);
     // 统一搜索：登记即建 meta（正文等解析完成后再入队补齐）。
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
-  }
-
-  /** 归属保底失败不阻断导入：异步路由链路（file.ingest → route job）仍会补齐。 */
-  private emitRoomEntry(input: { roomId?: string | undefined; originalName: string }, fileEntryId: string): void {
-    if (!input.roomId || !this.roomEntrySink) return;
-    try {
-      this.roomEntrySink({ fileEntryId, roomId: input.roomId, sourceTitle: input.originalName });
-    } catch {
-      // 见上：sink 抛错仅丢失同步保底，导入本身继续
-    }
   }
 
   getVersionContext(fileEntryId: string, fileVersionId: string): {
@@ -628,10 +591,9 @@ export class FilesService {
   /**
    * 整源级联清理（桌面端「清空数据源数据」）：按 localSourceId（local-folder/
    * obsidian）或 connector+connectionId（GitHub/GDocs/Notion 导出）锚点收集该源
-   * 全部 catalog 条目，记忆批量删 + 台账/knowledge 批量清 + 逐条目录/对象回收。
-   * 记忆删除失败抛错（整体保留、可重试）；其余步骤幂等。
+   * 全部 catalog 条目，逐条目录/对象回收。全步骤幂等。
    */
-  async purgeLocalSource(localSourceId: string, hooks?: FileDeletionHooks): Promise<{ entries: number; memoryDeleted: string[] }> {
+  async purgeLocalSource(localSourceId: string): Promise<{ entries: number }> {
     const entries = this.db.select({ id: fileEntries.id }).from(fileEntries)
       .where(and(
         isNull(fileEntries.deletedAt),
@@ -641,12 +603,10 @@ export class FilesService {
         ),
       ))
       .all();
-    if (entries.length === 0) return { entries: 0, memoryDeleted: [] };
+    if (entries.length === 0) return { entries: 0 };
     const ids = entries.map((row) => row.id);
-    const memoryDeleted = hooks?.deleteMemoryDocumentsBatch ? await hooks.deleteMemoryDocumentsBatch(ids) : [];
-    hooks?.cleanupIngestSources?.(ids);
     for (const id of ids) await this.deleteCatalogEntry(id);
-    return { entries: ids.length, memoryDeleted };
+    return { entries: ids.length };
   }
 
   renameCatalogEntry(fileEntryId: string, displayName: string): CatalogFileDto | null {
@@ -658,7 +618,7 @@ export class FilesService {
     return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
   }
 
-  async deleteCatalogEntry(fileEntryId: string, hooks?: FileDeletionHooks): Promise<FileDeletionResult | null> {
+  async deleteCatalogEntry(fileEntryId: string): Promise<FileDeletionResult | null> {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!entry || entry.sourceKind === "legacy-upload") return null;
     const versions = this.db.select().from(fileVersions).where(eq(fileVersions.fileEntryId, fileEntryId)).all();
@@ -668,10 +628,6 @@ export class FilesService {
       .flatMap(({ contentHash }) => contentHash ? [contentHash] : []);
     const membership = this.db.select().from(fileClusterMemberships)
       .where(eq(fileClusterMemberships.fileEntryId, fileEntryId)).get();
-    // Keep the local clipping available for retry if its external memory cleanup fails.
-    let deletedMemoryDocuments = entry.sourceKind === "web-clipper" && hooks?.deleteMemoryDocuments
-      ? await hooks.deleteMemoryDocuments(fileEntryId)
-      : [];
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
     // 源行已删：worker 重读时移除索引行。
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
@@ -679,14 +635,6 @@ export class FilesService {
       const remaining = this.db.select({ id: fileClusterMemberships.fileEntryId }).from(fileClusterMemberships)
         .where(eq(fileClusterMemberships.clusterId, membership.clusterId)).limit(1).get();
       if (!remaining) this.db.delete(fileClusters).where(eq(fileClusters.id, membership.clusterId)).run();
-    }
-    let knowledgeCleanup = false;
-    if (hooks?.requestKnowledgeCleanup) {
-      hooks.requestKnowledgeCleanup(fileEntryId);
-      knowledgeCleanup = true;
-    }
-    if (entry.sourceKind !== "web-clipper" && hooks?.deleteMemoryDocuments) {
-      deletedMemoryDocuments = await hooks.deleteMemoryDocuments(fileEntryId);
     }
     let blobCollected = false;
     for (const version of versions) {
@@ -729,7 +677,7 @@ export class FilesService {
         await this.collectLocalMirror(version.contentHash);
       }
     }
-    return { fileId: fileEntryId, knowledgeCleanup, deletedMemoryDocuments, blobCollected };
+    return { fileId: fileEntryId, blobCollected };
   }
 
   private fileJobId(fileVersionId: string, parserId: string, parserVersion: number): string {
@@ -963,7 +911,7 @@ export class FilesService {
 
   /**
    * 闸2：解析产物幂等入库，(hash, parser_version) 已有则直接复用。
-   * 引擎归一化后调用；knowledge/memory 的既有导入路径同样经此落解析。
+   * 引擎归一化后调用；各类导入路径同样经此落解析。
    */
   ensureParsed(contentHash: string, markdown: string, parserVersion = MARKDOWN_PARSER_VERSION): string {
     const existing = this.db.select().from(parsedContents)
@@ -1019,25 +967,12 @@ export class FilesService {
   }
 
   /**
-   * 删除 + 级联清理（§8.2）：knowledge 走 enqueueCleanup（wiki raw/rm +
-   * 决策回退），memory 按 caller_ref 删文档，登记行随删；parsed_contents
-   * 与对象库 blob 仅当无其他 uploaded_files 行引用同一 hash 时物理回收
-   * （内容寻址天然共享）。
+   * 删除 + 级联清理（§8.2）：登记行随删；parsed_contents 与对象库 blob 仅当
+   * 无其他 uploaded_files 行引用同一 hash 时物理回收（内容寻址天然共享）。
    */
-  async deleteFile(fileId: string, hooks?: FileDeletionHooks): Promise<FileDeletionResult | null> {
+  async deleteFile(fileId: string): Promise<FileDeletionResult | null> {
     const file = this.get(fileId);
     if (!file) return null;
-
-    hooks?.requestKnowledgeCleanup?.(fileId);
-    let deletedMemoryDocuments: string[] = [];
-    if (hooks?.deleteMemoryDocuments) {
-      try {
-        deletedMemoryDocuments = await hooks.deleteMemoryDocuments(fileId);
-      } catch {
-        // 记忆侧清理是 best-effort：登记行照删，失败留给手动 GC/重试
-        deletedMemoryDocuments = [];
-      }
-    }
 
     this.db.delete(uploadedFiles).where(eq(uploadedFiles.id, fileId)).run();
 
@@ -1056,12 +991,7 @@ export class FilesService {
       }
     }
 
-    return {
-      fileId,
-      knowledgeCleanup: Boolean(hooks?.requestKnowledgeCleanup),
-      deletedMemoryDocuments,
-      blobCollected,
-    };
+    return { fileId, blobCollected };
   }
 
   /**

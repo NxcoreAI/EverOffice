@@ -14,15 +14,12 @@ import { createDatabase } from "../infrastructure/database/client.js";
 import { agentSessions } from "../infrastructure/database/schema.js";
 import { eq } from "drizzle-orm";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
-import { KnowledgeServiceClient, createKnowledgeTools } from "@nxcore/agent-runtime-pi";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
 import { McpConfigManager, mcpRoutes } from "../modules/agent/mcp-routes.js";
 import {
   ChannelMcpHost,
-  channelToolsFromPiTools,
-  channelToolsFromRuntimeTools,
 } from "../modules/agent/channel-mcp-host.js";
 import { channelMcpRoutes } from "../modules/agent/channel-mcp-routes.js";
 import { AgentAccessMcpHost } from "../modules/agent-access/mcp-host.js";
@@ -81,31 +78,18 @@ import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
 import { connectorSessionRoutes } from "../modules/connectors/session-routes.js";
 import { FormatMappingService } from "../modules/connectors/format-mapping-service.js";
-import { loadBuiltinAgentBundle } from "../modules/agent/builtin-bundles.js";
-import { OpenAiCompletionAgentRuntime } from "../modules/agent/openai-completion-runtime.js";
-import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
+import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
-import { contextRoomRoutes } from "../modules/context-rooms/routes.js";
-import { RoomDuplicateService } from "../modules/context-rooms/duplicate-service.js";
-import { ContextRoomService } from "../modules/context-rooms/service.js";
-import { ContextRoomAgentDispatcher } from "../modules/context-rooms/room-agent.js";
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
-import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
-import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
-import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
 import { AsrService } from "../modules/asr/service.js";
 import type { AsrProvider } from "../modules/asr/types.js";
-import { MemoryGatewayError } from "../modules/memory/errors.js";
-import { memoryRoutes } from "../modules/memory/routes.js";
-import { MemoryService } from "../modules/memory/service.js";
-import { RoomMemoryDeriveWorker } from "../modules/memory/room-derive-worker.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
@@ -118,17 +102,8 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { SlideImageStore } from "../modules/slides-style/image-store.js";
 import { slideImageRoutes } from "../modules/slides-style/image-routes.js";
 import { FilesService } from "../modules/files/service.js";
-import { EmbeddingClient } from "../modules/knowledge/embedding.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
-import { knowledgeRoutes } from "../modules/knowledge/routes.js";
-import { KnowledgeService } from "../modules/knowledge/service.js";
-import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
-import { KnowledgeLlm } from "../modules/knowledge/llm.js";
-import { EmergenceService } from "../modules/knowledge/emergence-service.js";
-import { emergenceRoutes } from "../modules/knowledge/emergence-routes.js";
-import { RouteMindmapService } from "../modules/knowledge/route-mindmap-service.js";
-import { routeMindmapRoutes } from "../modules/knowledge/route-mindmap-routes.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
 import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
 import { ConversationSuggestionService } from "../modules/processing/conversation-suggestion.js";
@@ -155,7 +130,6 @@ import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
 import { agentSchedulerRoutes } from "../modules/agent-scheduler/routes.js";
 import { agentSchedulerMcpRoutes } from "../modules/agent-scheduler/mcp-routes.js";
 import { DiaryAgentGenerator } from "../modules/diary/agent-generator.js";
-import type { DiarySource } from "../modules/diary/types.js";
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
@@ -204,9 +178,8 @@ import { ExternalCallBudgetService } from "../modules/external-calls/service.js"
 import { externalCallRoutes } from "../modules/external-calls/routes.js";
 
 function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void {
-  // runtime config（尤其默认文件）里的 "" 是「未配置」占位，不是「清空」指令；
-  // 空串直接覆盖会把 env 兜底（如 NXCORE_MEMORY_BASE_URL）打掉，导致
-  // MemoryCoreClient baseUrl 为空、fetch 相对路径报 Failed to parse URL。
+  // runtime config（尤其默认文件）里的 "" 是「未配置」占位，不是「清空」指令：
+  // 空串直接覆盖会把 env 兜底打掉。
   const apply = (target: Record<string, unknown> | null | undefined, source: unknown) => {
     if (!target || !source || typeof source !== "object") return;
     const value = source as Record<string, unknown>;
@@ -291,40 +264,6 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
       if (asrText(key)) (config.asr as unknown as Record<string, unknown>)[key] = asrText(key);
     }
   }
-  // memory / knowledge 不参与 runtime config 覆盖：桌面端两者都是主进程
-  // supervisor 托管的本地服务（baseUrl 127.0.0.1，apiKey 每次启动随机轮换），
-  // 云端下发的凭据必然对不上本地实例（401）；NXCORE_MEMORY_*/NXCORE_KNOWLEDGE_*
-  // env 由桌面主进程在 spawn gateway 时注入，永远比云端值准确。
-  // 唯一例外：knowledge.embedding 四要素齐全时覆盖 env 消歧/聚类的
-  // embedding 端点——它指向外部 LLM 服务（非托管本地实例），与 env 语义
-  // 完全一致（NXCORE_KNOWLEDGE_EMBEDDING_* 的 runtime-config 版本）。
-  const embedding = runtime.knowledge?.embedding as Record<string, unknown> | undefined;
-  if (embedding && config.knowledge) {
-    const embeddingText = (key: string): string =>
-      typeof embedding[key] === "string" ? (embedding[key] as string).trim() : "";
-    const baseUrl = embeddingText("baseUrl");
-    const apiKey = embeddingText("apiKey");
-    const model = embeddingText("model");
-    if (baseUrl && apiKey && model) {
-      config.knowledge.embeddingLlm = { baseUrl, apiKey, model };
-      config.knowledge.embeddingModel = model;
-    }
-  }
-  // 抽取 LLM（knowledge.llm）：runtime 四要素齐全时覆盖；未配置时回退
-  // runtime primary——env 时代 NXCORE_KNOWLEDGE_LLM_* 缺省回退 NXCORE_AI_*
-  // （config.ts ⑤ 段）的 runtime-config 等价物，否则 env 清理后 wiki 抽取
-  // 会静默降级为启发式聚类。
-  if (config.knowledge) {
-    const runtimeKnowledgeLlm = runtime.knowledge?.llm as Record<string, unknown> | undefined;
-    const llmText = (source: Record<string, unknown> | undefined, key: string): string =>
-      source && typeof source[key] === "string" ? (source[key] as string).trim() : "";
-    const llmBaseUrl = llmText(runtimeKnowledgeLlm, "baseUrl") || llmText(runtime.primary as Record<string, unknown> | undefined, "baseUrl");
-    const llmApiKey = llmText(runtimeKnowledgeLlm, "apiKey") || llmText(runtime.primary as Record<string, unknown> | undefined, "apiKey");
-    const llmModel = llmText(runtimeKnowledgeLlm, "model") || llmText(runtime.primary as Record<string, unknown> | undefined, "model");
-    if (llmBaseUrl && llmApiKey && llmModel) {
-      config.knowledge.llm = { baseUrl: llmBaseUrl, apiKey: llmApiKey, model: llmModel };
-    }
-  }
 }
 
 /**
@@ -341,16 +280,6 @@ function inheritPrimaryDefaults(
   for (const key of ["provider", "model", "baseUrl", "apiKey"] as const) {
     if (!target[key] && primary[key]) target[key] = primary[key];
   }
-}
-
-/** 从 GatewayConfig 构造 gateway 侧 embedding 客户端（未配置返回 null）。 */
-function embeddingFromConfig(
-  config: GatewayConfig,
-): { client: EmbeddingClient; model: string } | null {
-  const llm = config.knowledge?.embeddingLlm;
-  const model = config.knowledge?.embeddingModel;
-  if (!llm || !model) return null;
-  return { client: new EmbeddingClient(llm, model), model };
 }
 
 function createVlmProvider(config: GatewayConfig): OpenAiCompatibleVlmClient | null {
@@ -390,8 +319,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     loggerInstance: gatewayLogger.logger,
     logController: new LogController({ disableRequestLogging }),
     routerOptions: {
-      // knowledge 文件路由的 id 可能是 caller_ref（如 connector:provider:<uuid>:<docId>），
-      // URL 编码后超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
+      // 路径参数上限放宽到 500：外部来源的引用型 id（caller_ref 等）URL 编码后
+      // 会超 Fastify 默认 100 上限被拒。500 覆盖最长组合。
       maxParamLength: 500,
     },
   }).withTypeProvider<TypeBoxTypeProvider>();
@@ -427,8 +356,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     availableSources: initialRuntimeSnapshot.availableSources,
     configVersion: initialRuntimeSnapshot.configVersion,
     primaryConfigured: isRuntimePrimaryConfigured(initialRuntimeSnapshot.config),
-    memoryConfigured: Boolean(config.memory),
-    knowledgeConfigured: Boolean(config.knowledge),
     configJson: JSON.stringify(redactedRuntimeSnapshot.config),
   }, "runtime config selected");
   const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000, providerConfigKeys:{} };
@@ -526,7 +453,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
       return;
     }
-    if (error instanceof MemoryGatewayError || error instanceof RealityError) {
+    if (error instanceof RealityError) {
       await reply.code(error.statusCode).send({
         error: error.code,
         message: redactText(error.message),
@@ -580,65 +507,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(systemRoutes);
   await app.register(runtimeConfigRoutes(runtimeConfigManager));
   await app.register(aiRelayRoutes({ sessions: aiRelaySessions, runtimeConfigManager }));
-  const contextRoomService = new ContextRoomService(db);
-  const memoryService = new MemoryService(config.memory, app.log, { db, dataDir: config.dataDir }, contextRoomService);
-  // 参考型文档存量记忆清退（幂等；MemoryCore 由桌面端启动后注入连接，故周期
-  // 重试直至完成打标——见 MemoryService.purgeReferenceMemoryDocuments）。
-  const runReferenceDocPurge = (): void => {
-    void memoryService.purgeReferenceMemoryDocuments()
-      .then((summary) => {
-        if (!summary) return;
-        clearInterval(referenceDocPurgeTimer);
-        app.log.info(
-          { module: "memory-reference-purge", purged: summary.purged },
-          "reference-type memory documents purged (state/reference split)",
-        );
-      })
-      .catch((error: unknown) => {
-        app.log.warn(
-          { module: "memory-reference-purge", error: error instanceof Error ? error.message : String(error) },
-          "reference memory purge attempt failed; will retry",
-        );
-      });
-  };
-  const referenceDocPurgeTimer = setInterval(runReferenceDocPurge, 60_000);
-  referenceDocPurgeTimer.unref?.();
-  setTimeout(runReferenceDocPurge, 10_000).unref?.();
-  const roomOverviewService = new RoomOverviewService(db, contextRoomService);
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
-  // 写作路线导图服务依赖 orchestrator，在下方构造；对话链路空正文 commit 的
-  // 自动开流钩子在此先挂引用、构造后绑定（聚焦改版 2026-09）。
-  const routeMindmapServiceRef: { current: RouteMindmapService | null } = { current: null };
   // 任务管线：澄清意图签发器——AgentService 在下方构造，经 getter 惰性取用。
   const agentServiceRef: { current: AgentService | null } = { current: null };
   // 任务夹服务（task pipeline）：room_folders 的 CRUD/归夹，注册表与 REST 路由共用。
   const taskFolderService = new TaskFolderService(db);
-  const documentService = new DocumentService(db, documentEventBroker, (document) => {
-    void memoryService.captureDocumentCreation(document).catch((error: unknown) => {
-      app.log.warn({ err: error, documentId: document.documentId }, "document memory capture failed");
-    });
-    if (!document.markdown.trim()) {
-      void routeMindmapServiceRef.current?.start(document.roomId, {
-        documentId: document.documentId,
-        requestVersion: 0,
-      }).catch((error: unknown) => {
-        app.log.warn({ err: error, documentId: document.documentId }, "route mindmap auto start failed");
-      });
-    }
-  }, (patch) => {
-    if (!patch.roomId) return;
-    void memoryService.captureSelectionRewrite({
-      roomId: patch.roomId,
-      documentId: patch.documentId,
-      documentTitle: patch.title,
-      instruction: patch.instruction,
-      originalText: patch.originalText,
-      replacementText: patch.replacementText,
-    }).catch((error: unknown) => {
-      app.log.warn({ err: error, operationId: patch.operationId }, "document rewrite memory capture failed");
-    });
-  }, (documentId, currentVersion) => (
+  const documentService = new DocumentService(db, documentEventBroker,
+    undefined, undefined, (documentId, currentVersion) => (
     documentOperationService.prepareExternalVersionAdvance(documentId, currentVersion)
   ), (error, documentId, currentVersion) => {
     app.log.warn({ err: error, documentId, currentVersion }, "document after-commit observer failed");
@@ -702,18 +578,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
     documentService,
-    contextRoomService,
+    undefined,
     createBuiltinDocumentCapabilityRegistry(
       documentService,
-      contextRoomService,
+      undefined,
       documentOperationService,
       documentReadAuthority,
       documentCommentService,
       (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
       officeBridgeClient,
-      // 写作路线拍板工具：服务在 orchestrator 之后构造，getter 惰性取用。
-      () => routeMindmapServiceRef.current,
       // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。
       taskFolderService,
       () => agentServiceRef.current,
@@ -740,71 +614,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   await documentMcpHost.capabilities.recover();
   const agentResolver = createAgentResolver(config);
-  // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
-  const knowledgeService = new KnowledgeService(
-    db,
-    {
-      baseUrl: config.knowledge?.baseUrl ?? "",
-      serviceId: config.knowledge?.serviceId ?? "everroom",
-      teamId: config.knowledge?.teamId ?? "everroom",
-      dataDir: config.dataDir,
-      roomWikisEnabled: config.knowledge?.roomWikisEnabled ?? false,
-      ingestDebounceMs: config.knowledge?.ingestDebounceMs ?? 600_000,
-      routerEnabled: config.knowledge?.routerEnabled ?? false,
-      entityPromoteScore: config.knowledge?.entityPromoteScore ?? 2.4,
-      entityPromoteSources: config.knowledge?.entityPromoteSources ?? 3,
-      roomRelationMinScore: config.knowledge?.roomRelationMinScore ?? 1,
-      mergeAutoDice: config.knowledge?.mergeAutoDice ?? 0.75,
-      mergeJudgeDice: config.knowledge?.mergeJudgeDice ?? 0.6,
-      llm: config.knowledge?.llm ?? null,
-      embeddingLlm: config.knowledge?.embeddingLlm ?? null,
-      embeddingModel: config.knowledge?.embeddingModel ?? "",
-    },
-    app.log,
-    agentResolver,
-  );
-  const roomDuplicateService = new RoomDuplicateService(db, {
-    judgeIdentity: (a, b) => knowledgeService.judgeRoomIdentity(a, b),
-    mergeKnowledge: (sourceRoomId, targetRoomId) => knowledgeService.mergeRoomKnowledge(sourceRoomId, targetRoomId),
-    rebuildRelations: () => knowledgeService.rebuildRoomRelations(),
-    wikiFileCount: (roomId) => knowledgeService.roomWikiFileCount(roomId),
-    // M2-B：合并完成 → 新 Room 占位简报自动再生成（守卫在 refreshBriefIfPlaceholder 内）。
-    onMergeCompleted: (newRoomId) => contextRoomService.refreshBriefIfPlaceholder(newRoomId),
-  });
-  contextRoomService.setDuplicateService(roomDuplicateService);
-  knowledgeService.setRoomDuplicateIndexTrigger(() => roomDuplicateService.requestRebuild());
-  // 产物跨 Room 移动：documents 只改归属链接并广播事件，知识侧投影（成员关系/
-  // 实体提及/事实/路由决策）、搜索索引与两房概览在此跟随同步。
-  documentService.onDocumentMoved = (moved) => {
-    knowledgeService.handleDocumentMoved({
-      documentId: moved.documentId,
-      fromRoomId: moved.fromRoomId,
-      toRoomId: moved.toRoomId,
-    });
-  };
-  // 知识涌现（思路板块）：漫步的四源投影，只读不写回基础图谱。
-  // 聚焦模式由 RouteMindmapService（写作路线导图）承接。
-  const emergenceService = new EmergenceService({
-    db,
-    knowledge: knowledgeService,
-    contextRooms: contextRoomService,
-    log: app.log,
-  });
-  // M3 知识整理偏好：统计（确定性）+ 洞察（LLM 修订式，失败保旧）+ 建议性注入
-  // （extract/judgeEntityIdentity；开关关闭=不注入）。job 延迟 3 分钟首跑。
-  const knowledgePreferences = new KnowledgePreferences(
-    db,
-    () => knowledgeService.currentLlm(),
-    app.log,
-  );
-  knowledgeService.setKnowledgePreferences(knowledgePreferences);
-  knowledgePreferences.start();
-  // 手动建 Room：enrich 实体回写时认领到本 Room，使后续资料路由能命中（与推荐晋升同语义）
-  contextRoomService.setRoomEntityClaimer((roomId, entities) =>
-    knowledgeService.claimRoomEntities(roomId, entities));
-  // 记忆条目确认晋升：经合成会话交 MemoryCore 蒸馏（worker room-memory: 链回填归属）。
-  contextRoomService.setMemoryPromoter((input) => memoryService.captureRoomMemoryItem(input));
-  roomDuplicateService.initialize();
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
   registerConnectorMapperAgent(agentResolver, config, formatMappingService);
   if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
@@ -825,19 +634,13 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   );
   await subagentRegistry.initialize();
   const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
-  // context-room 子 Agent 的网关只读工具：记忆检索 + Room 文档上下文。
-  // registerAgentTools 必须发生在任何 acquire 之前（首次 dispatch 前）。
-  subagentRuntimeManager.registerAgentTools(
-    "context-room",
-    () => createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
-  );
   // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
   // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
   // doc-writer 研究工具面（用户决策：与主 Agent 同等的工具使用）——检索/读取/
   // 分析类全给，写入/调度/通知类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("doc-writer", () => createDocWriterAgentTools({
-    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    roomTools: [],
     documentTools: createDocumentPiTools(documentMcpHost),
     analysisTools: subagentConfig.enabled
       ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
@@ -852,7 +655,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
   // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
-    roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
+    roomTools: [],
     documentTools: createDocumentPiTools(documentMcpHost),
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
@@ -870,30 +673,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
   subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
   subagentRuntimeManager.registerAgentResultValidator("slides-reviewer", createSlidesTreeResultValidator());
-  // room-corrector 输出校验：edits 的 targetClaimId 必须来自网关组装的 claims 快照
-  //（服务端 applyCitations 还有二次强校验，这里提前拒绝省一次转发）。
-  subagentRuntimeManager.registerAgentResultValidator("room-corrector", (invocationInput, result) => {
-    const input = invocationInput !== null && typeof invocationInput === "object" && !Array.isArray(invocationInput)
-      ? invocationInput as Record<string, unknown>
-      : {};
-    const known = new Set(
-      Array.isArray(input.claims)
-        ? input.claims
-          .filter((entry): entry is Record<string, unknown> =>
-            entry !== null && typeof entry === "object" && !Array.isArray(entry))
-          .map((entry) => String(entry.claimId ?? ""))
-          .filter(Boolean)
-        : [],
-    );
-    const edits = Array.isArray(result.edits) ? result.edits : [];
-    for (const edit of edits) {
-      if (edit === null || typeof edit !== "object" || Array.isArray(edit)) continue;
-      const claimId = (edit as Record<string, unknown>).targetClaimId;
-      if (typeof claimId === "string" && claimId && known.size > 0 && !known.has(claimId)) {
-        throw new Error(`room_corrector_target_claim_not_in_snapshot: ${claimId}`);
-      }
-    }
-  });
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -919,55 +698,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // let + 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让速览/
   // 章节预览在首次登录后一直 503（下方 onChange 重建）。
   let documentOverviewRuntime = createDocumentOverviewRuntime(config);
-  const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
-  // 写作路线导图（聚焦改版 2026-09）：新文档创建时 route-planner 逐层出
-  // 路线选项，拍板后 doc-writer 照路线写正文；依赖 orchestrator，须在上方构造。
-  const routeMindmapService = new RouteMindmapService({
-    db,
-    orchestrator: subagentOrchestrator,
-    emergence: emergenceService,
-    documents: documentService,
-    log: app.log,
-  });
-  routeMindmapServiceRef.current = routeMindmapService;
-  // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
-  // rewrite task。写作风格注入随写作风格提炼退役（Phase 2d）。
-  const docWriterDispatcher = new DocWriterAgentDispatcher(subagentOrchestrator);
-  contextRoomService.setRoomAgentDispatcher(contextRoomAgentDispatcher, (bindings, message) => {
-    app.log.warn(bindings, message);
-  });
-  roomOverviewService.setRoomAgentDispatcher(contextRoomAgentDispatcher);
-  // room-overview 后台自动再生（connector 路由/文档落库 → 去抖 + 每 Room 1h 冷却；
-  // 新建 Room 初始一次）。子 Agent 未启用时不接线，保持纯手动 regenerate 语义。
-  let roomOverviewScheduler: RoomOverviewScheduler | null = null;
-  if (subagentConfig.enabled) {
-    roomOverviewScheduler = new RoomOverviewScheduler(app.log);
-    roomOverviewScheduler.setRegenerate((roomId) => roomOverviewService.regenerate(roomId));
-    knowledgeService.setRoomOverviewRefreshTrigger((roomIds, reason) =>
-      roomOverviewScheduler!.notifySourcesChanged(roomIds, reason));
-    contextRoomService.setRoomOverviewKickoff((roomId) => roomOverviewScheduler!.notifyRoomCreated(roomId));
-    // 初始扫描：从未成功合成过（仍显示 fallback 简报）的存量 Room 补一次再生成。
-    // boot 后 30s 起逐房错峰 10s；runtime config 变更（如 SaaS 登录 AI 才就绪）时
-    // 重跑——已合成的房间被查询本身排除，不会重复烧。
-    const scheduleInitialOverviewSweep = () => {
-      const scheduler = roomOverviewScheduler;
-      if (!scheduler) return;
-      const roomIds = roomOverviewService.roomIdsNeedingInitialSynthesis();
-      if (roomIds.length === 0) return;
-      app.log.info(
-        { event: "room_overview.initial_sweep_scheduled", count: roomIds.length },
-        "scheduling initial room-overview synthesis for rooms without one",
-      );
-      roomIds.forEach((roomId, index) => {
-        scheduler.notifySourcesChanged([roomId], "initial-sweep", {
-          delayMs: 30_000 + index * 10_000,
-          ignoreFailureCooldown: true,
-        });
-      });
-    };
-    scheduleInitialOverviewSweep();
-    runtimeConfigManager.onChange(() => scheduleInitialOverviewSweep());
-  }
   // 改写信任收口（agent-architecture-optimization-plan §3）：documents 插件经
   // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
   // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
@@ -994,8 +724,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
   // 渠道会话（Claude Code / Codex 整段锁定）的 EverRoom 工具 MCP host：
-  // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 context_room_* 读写，
-  // 检索类工具 = Room 记忆/对话/上下文工具 + wiki 知识库工具。
+  // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 context_room_* 读写。
   const gatewayLoopbackHost = ["0.0.0.0", "::"].includes(config.host) ? "127.0.0.1" : config.host;
   // 渠道 MCP 注入 URL 必须用 listen 后的实际绑定地址：桌面 main 以 --port 0 拉起网关，
   // 构造期的 config.port 是 0，注入 http://127.0.0.1:0 会让 CLI 连接失败并静默丢弃该 MCP 服务器。
@@ -1006,38 +735,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
     return `http://${gatewayLoopbackHost}:${config.port}`;
   };
-  // config.knowledge 是网关侧 KnowledgeGatewayConfig（无 searchLimit/wikiId），
-  // 这里显式映射成 pi 侧 KnowledgeRuntimeConfig；与 config.ts 组装 pi runtime 的口径一致。
-  const channelKnowledgeClient = config.knowledge
-    ? new KnowledgeServiceClient({
-        baseUrl: config.knowledge.baseUrl,
-        serviceId: config.knowledge.serviceId,
-        teamId: config.knowledge.teamId,
-        searchLimit: 5,
-      })
-    : null;
-  const channelRoomTools = createContextRoomAgentTools({
-    db,
-    memory: memoryService,
-    overview: roomOverviewService,
-  });
   const channelMcpHost = new ChannelMcpHost(
     documentMcpHost.capabilities,
     channelMcpBaseUrl,
-    (scope) => {
-      if (!channelKnowledgeClient) return channelToolsFromRuntimeTools(channelRoomTools, scope);
-      // Room 级 wiki：会话锁定 Room 时解析该 Room 的 wiki；未命中回退配置默认集。
-      const roomWikiId = scope.roomId && config.knowledge?.roomWikisEnabled
-        ? knowledgeService.resolveRoomWikiId(scope.roomId)
-        : null;
-      const wikiIds = roomWikiId ? [roomWikiId] : channelKnowledgeClient.defaultWikiIds;
-      return [
-        ...channelToolsFromRuntimeTools(channelRoomTools, scope),
-        ...channelToolsFromPiTools(
-          createKnowledgeTools(channelKnowledgeClient, () => ({ wikiIds })),
-        ),
-      ];
-    },
     (level, event, fields) => app.log[level](fields ?? {}, event),
   );
   // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
@@ -1088,11 +788,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
               documentService.setAgentModificationLease(documentId, value),
-            // 块索引标记：Room 记忆项由 gateway 注入 memoryIndex，主 Agent 不经手记忆 id。
-            // 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex；
-            // 主 agent 以自由文本 material 引用 Room 文档却没传 materialSources 时，
-            // 从本 run 的 document_read 台账兜底推断来源块（确定性注入，不依赖主 agent 自觉）。
-            resolveRoomMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
             inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
               documentReadAuthority,
               (documentId, docRoomId) => {
@@ -1108,29 +803,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             ),
             issueDraftReadReceipt: (context, documentId, version, blockIds) =>
               documentReadAuthority.issue(context, documentId, version, blockIds),
-            // room_correction_draft 的组装数据源：总览投影的 claims 快照（主 Agent 不再
-            // 经 context_get 携带全量总览；引用/模糊纠正的计算归 room-corrector 子 Agent）。
-            resolveRoomCorrectionContext: (roomId) => {
-              try {
-                const projection = roomOverviewService.get(roomId);
-                const claims = (["overview", "status", "nextSteps", "timeline", "entities"] as const)
-                  .flatMap((key) => projection[key].map((claim) => ({
-                    claimId: claim.id,
-                    section: key === "nextSteps" ? "next_steps" as const : key,
-                    text: claim.text,
-                    origin: claim.origin,
-                    corrected: claim.corrected,
-                    evidence: claim.evidence.slice(0, 3).map((item) => ({
-                      sourceKind: item.sourceKind,
-                      sourceId: item.sourceId,
-                      sourceTitle: item.sourceTitle ?? null,
-                    })),
-                  })));
-                return { claims };
-              } catch {
-                return null;
-              }
-            },
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
@@ -1220,7 +892,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     agentRuntime,
     new AgentEventBroker(),
     app.log,
-    contextRoomService,
+    undefined,
     documentService,
     documentMcpHost,
     false,
@@ -1270,12 +942,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       configVersion: snapshot.configVersion,
       primaryConfigured: isRuntimePrimaryConfigured(snapshot.config),
       runtimeSections: Object.keys(snapshot.config).filter((key) =>
-        ["primary", "background", "cursorCompletion", "asr", "vlm", "webSearch", "memory", "knowledge"].includes(key)),
+        ["primary", "background", "cursorCompletion", "asr", "vlm", "webSearch"].includes(key)),
     }, "runtime config selected");
     applyRuntimeConfig(config, snapshot.config);
-    // embedding 端点热替换（runtime knowledge.embedding 覆盖 env）。
-    const embedding = embeddingFromConfig(config);
-    knowledgeService.replaceEmbedding(embedding ? { client: embedding.client, model: embedding.model } : null);
     asrProvider = createAsrProvider(config, app.log);
     asrService.replaceProvider(asrProvider);
     // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。
@@ -1285,41 +954,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     // main-lite：boot 时 litePi 未配置、runtime config 保存 lite 段后注册。
     if (registerLiteAgentIfMissing(agentResolver, config, documentMcpHost, primaryIntegrations)) {
       app.log.info("lite tier agent registered from runtime config");
-    }
-    // knowledge agent：boot 时 env 未配 knowledge.llm、runtime config
-    // （或 primary 回退）补齐后注册。
-    if (config.knowledge?.llm && !agentResolver.has(BUILTIN_AGENT_IDS.knowledge)) {
-      const id = BUILTIN_AGENT_IDS.knowledge;
-      const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
-      const directories = join(config.dataDir, "agent", "runtimes", id);
-      agentResolver.register({
-        id,
-        name: bundle.name,
-        description: bundle.description,
-        configDirectory: join(directories, "config"),
-        kind: "builtin",
-      }, () => {
-        const llm = config.knowledge?.llm;
-        if (!llm) return new UnconfiguredAgentRuntime(id);
-        return new OpenAiCompletionAgentRuntime({
-          runtimeId: id,
-          ...llm,
-          systemPrompt: bundle.systemPrompt,
-          skillPrompts: bundle.skillPrompts,
-          temperature: 0.1,
-          maxTokens: 4_096,
-          timeoutMs: 60_000,
-          sessionsDir: join(directories, "sessions"),
-          workingDirectory: join(directories, "workspace"),
-          agentDirectory: join(directories, "config"),
-        });
-      });
-      app.log.info("knowledge agent registered from runtime config");
-    }
-    // 抽取/判定 LLM 同步热替换：KnowledgeService 构造于 runtime config 到达
-    // 之前，boot 时 llm 冻结为 null——不替换的话路由永远走「未识别」出口。
-    if (config.knowledge?.llm) {
-      knowledgeService.replaceLlm(config.knowledge.llm);
     }
     void hotReloadAgentRuntimes();
   });
@@ -1346,7 +980,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       }
       const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
       await transcriptionSummaryService.replaceRuntime(background.current);
-      for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch, BUILTIN_AGENT_IDS.knowledge]) {
+      for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch]) {
         if (!agentResolver.has(agentId)) continue;
         const { previous } = agentResolver.reload(agentId);
         await previous?.dispose();
@@ -1363,8 +997,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       app.log.error({ error: error instanceof Error ? error.message : String(error) }, "runtime config reload failed");
     }
   }
-  // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
-  // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
+  // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
   // 论文排版管线：模版解析与装订映射走子代理，渲染走桌面 office-bridge。
   const thesisFormatService = new ThesisFormatService({
@@ -1464,37 +1097,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     registerDiaryAgent(agentResolver, config, diaryGenerator);
     diaryGenerator.attachRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.diary));
   }
-  const diaryMemory = {
-    query: async ({ start, end }: { start: Date; end: Date }): Promise<DiarySource[]> => {
-      if (!memoryService.enabled) return [];
-      const items: Awaited<ReturnType<typeof memoryService.listAtomic>>["items"] = [];
-      // Keep the diary manifest bounded. A large imported memory set can
-      // otherwise exhaust the Agent context before it returns JSON.
-      const page = await memoryService.listAtomic({
-        // MemoryCore caps atomic pagination at 100.
-        limit: 30,
-        offset: 0,
-        timeStart: start.toISOString(),
-        timeEnd: end.toISOString(),
-      });
-      items.push(...page.items);
-      return items.map((item) => ({
-        sourceId: `memory:${item.id}`,
-        kind: "memory" as const,
-        version: item.updatedAt,
-        occurredAt: item.createdAt,
-        timeBasis: "memory_created",
-        fingerprint: JSON.stringify([item.id, item.updatedAt, item.content, item.background]),
-        evidenceSummary: item.content.slice(0, 500),
-        content: [item.content, item.background].filter(Boolean).join("\n\n"),
-      }));
-    },
-  };
   const diaryService = new DiaryService(db, {
     logger: app.log,
     scheduleManagedExternally: true,
     ...(diaryGenerator ? { generator: diaryGenerator } : {}),
-    memory: diaryMemory,
   });
   if (diaryGenerator) {
     runtimeConfigManager.onChange(() => {
@@ -1522,21 +1128,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (recoveredCaptures > 0) {
     app.log.info({ recoveredCaptures }, "interrupted reality captures recovered");
   }
-  // Knowledge consumes durable jobs; document commits enter Ingest through the outbox worker.
-  if (config.knowledge?.roomWikisEnabled) {
-    knowledgeService.start();
-    app.log.info(
-      {
-        debounceMs: config.knowledge.ingestDebounceMs,
-        router: config.knowledge.routerEnabled,
-        embedding: Boolean(config.knowledge.embeddingModel),
-      },
-      "knowledge entity-room routing enabled",
-    );
-  }
   let documentListSyncWorker: DocumentListSyncWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
-  let roomMemoryDeriveWorker: RoomMemoryDeriveWorker | null = null;
   let documentIndexBackfillWorker: DocumentIndexBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
@@ -1553,15 +1146,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentMcpHost.close();
     await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
-    await roomMemoryDeriveWorker?.dispose();
     await documentIndexBackfillWorker?.dispose();
     await perceptionService.dispose();
     await agentSchedulerService.dispose();
     await diaryService.dispose();
-    roomDuplicateService.dispose();
-    roomOverviewScheduler?.dispose();
-    await knowledgeService.dispose();
-    knowledgePreferences.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
     await notificationMcpHost.close();
@@ -1588,12 +1176,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     return { cleared: true };
   });
   await app.register(externalCallRoutes(externalCalls));
-  await app.register(contextRoomRoutes(
-    contextRoomService,
-    roomDuplicateService,
-    subagentConfig.enabled ? docWriterDispatcher : undefined,
-    roomOverviewService,
-  ));
   await app.register(documentMcpRoutes(documentMcpHost));
   await app.register(channelMcpRoutes(channelMcpHost));
   // 外部 Agent 访问（PRD 0.2.0 第 7 章 L2.5）：持久连接 token + 范围过滤的对外
@@ -1631,7 +1213,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       {
         db,
         search: searchService,
-        memory: memoryService,
         documents: documentService,
         files: filesService,
         agent: agentService,
@@ -1702,21 +1283,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(documentImportRoutes(documentImportService));
   await app.register(agentDocumentExportRoutes(agentDocumentExportService));
   await app.register(asrRoutes(asrService));
-  await app.register(memoryRoutes(memoryService));
   await app.register(slideImageRoutes(slideImageStore));
   await app.register(slidesPageImagesRoutes(pageImageSessionsStore));
   await app.register(thesisFormatRoutes(thesisFormatService));
   await app.register(dataMigrationRoutes(dataMigrationService));
-  await app.register(filesRoutes(filesService, {
-    // 删除级联（§8.2）：Room/wiki 走 knowledge cleanup job，记忆按 caller_ref 删文档
-    requestKnowledgeCleanup: (fileId) => {
-      if (config.knowledge?.roomWikisEnabled) knowledgeService.requestFileCleanup(fileId);
-    },
-    deleteMemoryDocuments: (fileId) => memoryService.deleteDocumentsByCallerRef(fileId),
-    // 整源清理级联（桌面「清空数据源」→ DELETE /v1/local-file-references）：
-    // 记忆一次批量扫描；台账软删 + knowledge 批量清理由 ingest 统一收口。
-    deleteMemoryDocumentsBatch: (fileEntryIds) => memoryService.deleteDocumentsByCallerRefs({ refs: fileEntryIds }),
-  }));
+  await app.register(filesRoutes(filesService));
   await app.register(documentUnderstandingRoutes(documentUnderstandingService));
   // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
   // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
@@ -1744,7 +1315,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       : createIndexBackfillRuntime(config);
     documentIndexBackfillWorker?.replaceLlm(backfillRuntime ? new IndexBackfillLlm(backfillRuntime) : null);
   });
-  filesService.setRoomEntrySink((input) => knowledgeService.recordImportRoomDecision(input));
   // 版本导入只做解析产物登记（Phase 2 起不再扇出统一理解引擎三链路）。
   filesService.setVersionIngestor(async (input) => {
     const parsed = await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
@@ -1764,18 +1334,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   searchService.start();
   const searchBackfill = new SearchBackfill(db);
   searchBackfill.schedule();
-  // 新记忆自动绑定 Room（推导 worker）：构造不以 config.memory 为前提——runtime
-  // config 可事后热注入，drain 内自查 memory.enabled 兜底。
-  if (config.memoryRoomDerive?.enabled !== false) {
-    roomMemoryDeriveWorker = new RoomMemoryDeriveWorker(db, memoryService, app.log, {
-      intervalMs: config.memoryRoomDerive?.intervalMs ?? 300_000,
-    });
-    roomMemoryDeriveWorker.start();
-    app.log.info(
-      { intervalMs: config.memoryRoomDerive?.intervalMs ?? 300_000 },
-      "memory room derive worker enabled",
-    );
-  }
   // 文档索引回溯（blockIndexMark）：确定性匹配 + LLM 兜底给存量文档补挂来源索引；
   // 安静窗避开用户编辑，零新增标记不写库，未配置 AI 时只跑确定性。
   if (config.documentIndexBackfill?.enabled !== false) {
@@ -1791,18 +1349,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         scanIntervalMs: config.documentIndexBackfill?.scanIntervalMs ?? 60_000,
         quietWindowMs: config.documentIndexBackfill?.quietWindowMs ?? 300_000,
         rescanMs: config.documentIndexBackfill?.rescanMs ?? 24 * 60 * 60_000,
-        listMemoryItems: (roomId) => memoryService.listRoomAttributedMemories(roomId),
-        // 复检存在性 = 归属 ∪ 快照条目（禁用 shadow / legacy id 的已挂标记不误摘）；
-        // 归属在前（漂移探针用最新快照内容），候选生成仍只走 listMemoryItems。
-        listAllMemoryItems: (roomId) => {
-          const attributed = memoryService.listRoomAttributedMemories(roomId);
-          const attributedIds = new Set(attributed.map((item) => item.id));
-          return [
-            ...attributed,
-            ...contextRoomService.listSnapshotMemoryItems(roomId)
-              .filter((item) => !attributedIds.has(item.id)),
-          ];
-        },
       },
     );
     documentIndexBackfillWorker.start();
@@ -1882,9 +1428,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     }
     reply.code(404).send({ error: "not_found", path: request.url });
   });
-  if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
-  if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
-  if (config.knowledge) await app.register(routeMindmapRoutes(routeMindmapService));
 
   return app;
 }

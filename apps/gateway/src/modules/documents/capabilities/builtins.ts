@@ -10,7 +10,6 @@ import { queryPlugins } from "./query-plugin.js";
 import { DocumentCapabilityRegistry } from "./registry.js";
 import { DocumentReadAuthority } from "./read-authority.js";
 import { reviewPlugins } from "./review-plugins.js";
-import { routeMindmapPlugin } from "./route-mindmap-plugin.js";
 import { selectionRewritePlugin } from "./selection-rewrite-plugin.js";
 import type { CapabilityBackend } from "./shared.js";
 import type { DocumentRoomRegistry, SlidesPageProgressReporter } from "./types.js";
@@ -31,14 +30,6 @@ export function createBuiltinDocumentCapabilityRegistry(
   publishDocumentEvent?: (event: DocumentEvent) => void,
   /** Office 生成桥（agent 写 Word）：传入则启用 office_create 等工具。 */
   officeBridge?: OfficeBridgeClient | null,
-  /** 写作路线导图拍板（聚焦改版）：服务晚于注册表构造，经 getter 惰性取用。 */
-  routeMindmapFinalize?: () => {
-    finalize(roomId: string, input: { documentId: string; requestVersion: number }): Promise<{
-      status: string;
-      writing: boolean;
-      error: string | null;
-    }>;
-  } | null,
   /** 任务管线：任务夹服务（常驻，直接传入）。 */
   taskFolders?: TaskFolderService,
   /** 任务管线：澄清意图签发器（AgentService 晚于注册表构造，经 getter 惰性取用）。 */
@@ -57,7 +48,6 @@ export function createBuiltinDocumentCapabilityRegistry(
   registry.register(createPlugin(backend, operations));
   registry.register(selectionRewritePlugin(backend));
   registry.register(commentPlugin(backend, comments, publishDocumentEvent));
-  registry.register(routeMindmapPlugin(backend, routeMindmapFinalize ?? (() => null)));
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
   // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。服务齐备才注册。
