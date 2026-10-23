@@ -5,6 +5,7 @@ import { BLOCK_INDEX_MARK_NODE } from "../block-index-mark.js";
 import { applyDocumentMutation, findBlockPath, mutationTargetBlockIds, targetsOverlap, tiptapText } from "../content-model.js";
 import { DocumentContentEngine } from "../core/index.js";
 import { DocumentServiceError } from "../errors.js";
+import { roomScopeId } from "../room-scope.js";
 import type { DocumentOperationCommandMutation, DocumentOperationService } from "../operations/service.js";
 import type { DocumentReadAuthority } from "./read-authority.js";
 import { PATCH_TARGET_SCHEMA } from "./schemas.js";
@@ -138,7 +139,7 @@ function replacementMarkdownMap(command: DocumentOperationCommandInput): Map<str
 
 function validatedReplacementMarkdown(
   backend: CapabilityBackend,
-  document: { id: string; roomId: string },
+  document: { id: string; roomId: string | null },
   source: string,
 ): TiptapJsonContent[] {
   if (!source.trim()) {
@@ -147,7 +148,7 @@ function validatedReplacementMarkdown(
   if (Buffer.byteLength(source, "utf8") > CHUNK_MAX_BYTES) {
     throw new DocumentServiceError("SIZE_LIMIT", "Replacement Markdown exceeds 64 KiB");
   }
-  const content = parseFragment(backend, document.id, document.roomId, source);
+  const content = parseFragment(backend, document.id, roomScopeId(document.roomId), source);
   if (!content.length) {
     throw new DocumentServiceError("EMPTY_REPLACEMENT_MARKDOWN", "Replacement Markdown cannot be empty");
   }
@@ -658,7 +659,7 @@ function hunkTool(
         && current.items.some((item) => item.target && targetsOverlap(document.contentJson, item.target, normalized.target))) {
         throw new DocumentServiceError("PATCH_HUNK_OVERLAP", "Operation items must be independently applicable", 409);
       }
-      let after = kind === "delete" ? [] : parseFragment(backend, document.id, document.roomId, source);
+      let after = kind === "delete" ? [] : parseFragment(backend, document.id, roomScopeId(document.roomId), source);
       const continuationProposal = continuation
         ? [...current.items.flatMap((item) => item.after), ...after]
         : after;
@@ -704,7 +705,7 @@ function hunkTool(
       }
       // 块索引标记的目标必须是本 Room 内真实存在的块（id 照抄 document_read）。
       // Agent 手写/截短的 id 在此被拒绝并给出可重试的明确原因，而不是落成悬空标记。
-      validateIndexMarkTargets(backend, document.roomId, after);
+      validateIndexMarkTargets(backend, roomScopeId(document.roomId), after);
       const applied = applyDocumentMutation(proposedContent(document.contentJson, current.items), kind, normalized.target, after);
       if (!continuation && kind === "replace" && equivalentContent(applied.before, after)) {
         throw new DocumentServiceError(

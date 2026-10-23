@@ -15,6 +15,7 @@ import {
   roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
+import { roomScopeId } from "../room-scope.js";
 import {
   DOCUMENT_INDEX_BACKFILL_JOB_TYPE,
   enqueueDocumentIndexBackfill,
@@ -268,7 +269,7 @@ export class DocumentIndexBackfillWorker {
     if (removal) return removal;
 
     const candidates = this.collectCandidates(document);
-    const memories = this.collectMemoryCandidates(document.roomId);
+    const memories = this.collectMemoryCandidates(roomScopeId(document.roomId));
     const allCandidates: IndexCandidate[] = [...candidates, ...memories];
     const targets = collectParagraphTargets(document.contentJson);
     if (!targets.length) return { marks: 0 };
@@ -393,7 +394,7 @@ export class DocumentIndexBackfillWorker {
     const driftEntries: VerifyEntry[] = [];
     const driftMarks: ExistingIndexMark[] = [];
     // null = 无法读取（不判定，保留记忆标记）；[] = 确认没有任何记忆项。
-    const memoryItems = this.readMemoryItems(document.roomId);
+    const memoryItems = this.readMemoryItems(roomScopeId(document.roomId));
 
     for (const mark of existingMarks) {
       if (mark.kind === "memory") {
@@ -533,7 +534,7 @@ export class DocumentIndexBackfillWorker {
   }
 
   private collectCandidates(document: RoomDocument): IndexSourceCandidate[] {
-    const sourceDocuments = this.documents.list(document.roomId)
+    const sourceDocuments = this.documents.list(roomScopeId(document.roomId))
       .filter((candidate) =>
         candidate.id !== document.id
         && !candidate.deletedAt
@@ -553,7 +554,7 @@ export class DocumentIndexBackfillWorker {
         const probe = buildIndexProbe(block.textPreview);
         if (!probe) continue;
         candidates.push({
-          roomId: source.roomId,
+          roomId: roomScopeId(source.roomId),
           documentId: source.id,
           blockId: block.blockId,
           documentTitle: source.title,

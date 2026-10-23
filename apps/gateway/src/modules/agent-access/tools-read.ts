@@ -61,16 +61,16 @@ export interface AgentAccessToolDeps {
   documents: {
     get(documentId: string): {
       id: string;
-      roomId: string;
+      roomId: string | null;
       title: string;
       version: number;
       deletedAt?: string | null;
     } | null;
     readDocumentForAgent(
       documentId: string,
-      roomId: string,
+      roomId: string | null,
     ): {
-      document: { id: string; roomId: string; title: string; version: number };
+      document: { id: string; roomId: string | null; title: string; version: number };
       blocks: Array<{ blockId: string; type: string; textPreview: string }>;
       markdown: string;
     };

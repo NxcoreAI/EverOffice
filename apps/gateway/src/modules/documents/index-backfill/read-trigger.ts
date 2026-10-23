@@ -1,5 +1,6 @@
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { enqueueDocumentIndexBackfill } from "./jobs.js";
+import { roomScopeId } from "../room-scope.js";
 
 interface IndexBackfillReadTriggerLogger {
   warn(bindings: Record<string, unknown>, message: string): void;
@@ -19,7 +20,7 @@ export class DocumentIndexBackfillReadTrigger {
     private readonly cooldownMs: number,
   ) {}
 
-  trigger(document: { id: string; roomId: string; version: number }): void {
+  trigger(document: { id: string; roomId: string | null; version: number }): void {
     const now = Date.now();
     const last = this.lastTriggerAt.get(document.id);
     if (last != null && now - last < Math.max(0, this.cooldownMs)) return;
@@ -27,7 +28,7 @@ export class DocumentIndexBackfillReadTrigger {
     try {
       enqueueDocumentIndexBackfill(this.db, {
         documentId: document.id,
-        roomId: document.roomId,
+        roomId: roomScopeId(document.roomId),
         version: document.version,
       }, new Date());
     } catch (error) {

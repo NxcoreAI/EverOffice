@@ -38,6 +38,7 @@ import {
 } from "./content-model.js";
 import { DocumentEventBroker } from "./event-broker.js";
 import { DocumentServiceError } from "./errors.js";
+import { roomScopeId } from "./room-scope.js";
 import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE } from "./integration-outbox.js";
 import {
   DocumentCommitService,
@@ -308,7 +309,8 @@ export class DocumentService {
     this.normalizeStoredDocuments();
   }
 
-  list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
+  /** roomId 传 null 时列出全部工作区级文稿（P0-2）。 */
+  list(roomId: string | null, trashed = false, origin?: "native" | "import"): RoomDocument[] {
     return this.queryService.list(roomId, trashed, origin);
   }
 
@@ -834,7 +836,7 @@ export class DocumentService {
     };
   }
 
-  readDocumentForAgent(documentId: string, roomId: string): {
+  readDocumentForAgent(documentId: string, roomId: string | null): {
     document: RoomDocument;
     blocks: DocumentBlockSummary[];
     markdown: string;
@@ -882,7 +884,7 @@ export class DocumentService {
 
   syncExternalMarkdown(input: {
     documentId: string;
-    roomId: string;
+    roomId: string | null;
     title: string;
     markdown: string;
     /** 任务产物（workplan.md 等）标 native：出现在 Room 文档列表且可编辑。 */
@@ -992,7 +994,7 @@ export class DocumentService {
 
   prepareAgentDocumentDraft(input: {
     documentId: string;
-    roomId: string;
+    roomId: string | null;
     title: string;
     markdown: string;
   }): AtomicDocumentCreateInput {
@@ -1053,7 +1055,7 @@ export class DocumentService {
   prepareAgentDocumentFinalize(input: {
     operationId: string;
     documentId: string;
-    roomId: string;
+    roomId: string | null;
     title: string;
     markdown: string;
     sessionId: string;
@@ -1086,7 +1088,8 @@ export class DocumentService {
         if (!document) return;
         this.onDocumentCommitted?.({
           sessionId: input.sessionId,
-          roomId: input.roomId,
+          // 下游 handler（知识/记忆投影）以非空 scope 为分区键；这两个模块随 Phase 2 删除。
+          roomId: roomScopeId(input.roomId),
           runId: input.runId,
           documentId: input.documentId,
           title: document.title,
@@ -1118,7 +1121,8 @@ export class DocumentService {
     });
   }
 
-  emptyTrash(roomId: string): Promise<void> {
+  /** roomId 传 null 时清空整个工作区回收站（P0-2）。 */
+  emptyTrash(roomId: string | null): Promise<void> {
     return this.queue.enqueue(() => {
       this.lifecycleService.emptyTrash(roomId);
     });
@@ -1176,7 +1180,7 @@ export class DocumentService {
   }
 
   private publish(
-    roomId: string,
+    roomId: string | null,
     documentId: string,
     operationId: string | null,
     type: DocumentEvent["type"],
@@ -1200,7 +1204,7 @@ export class DocumentService {
   }
 
   private createEvent(
-    roomId: string,
+    roomId: string | null,
     documentId: string,
     operationId: string | null,
     type: DocumentEvent["type"],

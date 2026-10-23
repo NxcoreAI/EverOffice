@@ -16,11 +16,12 @@ import {
   roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
+import { roomScopeId } from "../room-scope.js";
 
 export type DocumentRow = typeof documents.$inferSelect;
 export type DocumentVersionRow = typeof documentVersions.$inferSelect;
 
-export function toRoomDocument(row: DocumentRow, roomId: string): RoomDocument {
+export function toRoomDocument(row: DocumentRow, roomId: string | null): RoomDocument {
   return {
     id: row.id,
     roomId,
@@ -40,19 +41,28 @@ export function toRoomDocument(row: DocumentRow, roomId: string): RoomDocument {
 export class DocumentRepository {
   constructor(readonly db: GatewayDatabase) {}
 
-  list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
-    const conditions = [
-      eq(roomDocumentLinks.roomId, roomId),
-      trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt),
-    ];
+  /**
+   * `roomId` 为 null 时列出全部工作区级文稿（含仍归属某 Room 的文稿），
+   * 不做 room_doc_links 关联；此时返回的 `roomId` 取自链接表，无链接即 null。
+   */
+  list(roomId: string | null, trashed = false, origin?: "native" | "import"): RoomDocument[] {
+    const conditions = [trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt)];
     if (origin) conditions.push(eq(documents.origin, origin));
-    const rows = this.db.select({ document: documents })
-      .from(roomDocumentLinks)
-      .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-      .where(and(...conditions))
-      .orderBy(asc(roomDocumentLinks.linkedAt))
-      .all()
-      .map(({ document }) => toRoomDocument(document, roomId));
+    const rows = roomId === null
+      ? this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
+        .from(documents)
+        .leftJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
+        .where(and(...conditions))
+        .orderBy(asc(documents.createdAt))
+        .all()
+        .map(({ document, roomId: linkedRoomId }) => toRoomDocument(document, linkedRoomId ?? null))
+      : this.db.select({ document: documents })
+        .from(roomDocumentLinks)
+        .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
+        .where(and(eq(roomDocumentLinks.roomId, roomId), ...conditions))
+        .orderBy(asc(roomDocumentLinks.linkedAt))
+        .all()
+        .map(({ document }) => toRoomDocument(document, roomId));
     // 外部更新候选是版本面板导入历史的临时物化，不作为普通文档出现在 Room
     // 文档列表（应用/未应用均隐藏；diff 与内容查看走导入历史和文档直取）。
     const candidateIds = new Set(
@@ -67,13 +77,14 @@ export class DocumentRepository {
       : rows;
   }
 
+  /** 左连接链接表：未归属任何 Room 的文稿 roomId 为 null，不再不可见。 */
   get(documentId: string): RoomDocument | null {
     const result = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
       .from(documents)
-      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
+      .leftJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .where(eq(documents.id, documentId))
       .get();
-    return result ? toRoomDocument(result.document, result.roomId) : null;
+    return result ? toRoomDocument(result.document, result.roomId ?? null) : null;
   }
 
   updateVersionChangeSummary(
@@ -201,7 +212,7 @@ export class DocumentRepository {
       .map((row) => ({
         blockId: row.blockId,
         documentId: document.id,
-        roomId: document.roomId,
+        roomId: roomScopeId(document.roomId),
         parentBlockId: row.parentBlockId,
         rootBlockId: row.rootBlockId,
         type: row.type,

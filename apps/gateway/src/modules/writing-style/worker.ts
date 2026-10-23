@@ -8,6 +8,7 @@ import {
   type WritingStyleExtractJobPayload,
 } from "./jobs.js";
 import type { WritingStyleService } from "./service.js";
+import { roomScopeId } from "../documents/room-scope.js";
 
 const WORKER_JOB_TYPES = [WRITING_STYLE_EXTRACT_JOB_TYPE, WRITING_STYLE_REFRESH_JOB_TYPE] as const;
 const MAX_ATTEMPTS = 5;
@@ -147,7 +148,7 @@ export class WritingStyleWorker {
     try {
       if (job.type === WRITING_STYLE_EXTRACT_JOB_TYPE) {
         const payload = job.payload as WritingStyleExtractJobPayload;
-        const result = this.service.extractDocument(payload.documentId, payload.roomId, payload.version);
+        const result = this.service.extractDocument(payload.documentId, roomScopeId(payload.roomId), payload.version);
         if (result.changed) this.changedSinceLastCheck = true;
         this.complete(job.id, { outcome: result.outcome });
       } else {

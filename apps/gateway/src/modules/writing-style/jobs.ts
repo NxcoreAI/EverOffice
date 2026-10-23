@@ -12,7 +12,8 @@ export const WRITING_STYLE_REFRESH_JOB_TYPE = "writing-style.refresh";
 
 export interface WritingStyleExtractJobPayload {
   documentId: string;
-  roomId: string;
+  /** null = 工作区级文稿。 */
+  roomId: string | null;
   version: number;
   attempts: number;
 }

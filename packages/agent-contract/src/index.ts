@@ -1,5 +1,10 @@
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const MAIN_AGENT_ID = "main" as const;
+/**
+ * 工作区级文稿事件/订阅频道 id（P0-2）：roomId 为 null 的文稿（未归属任何 Room）
+ * 在 WS 订阅与事件总线上统一落到这个频道，避免为「无房文稿」伪造房间记录。
+ */
+export const WORKSPACE_DOCUMENT_CHANNEL = "__workspace__" as const;
 
 export type AgentSessionStatus = "idle" | "running" | "interrupted" | "closed";
 export type AgentRunStatus =
@@ -1153,7 +1158,8 @@ export interface TiptapJsonContent {
 
 export interface RoomDocument {
   id: string;
-  roomId: string;
+  /** 文稿所属 Room；null = 未归属任何 Room 的工作区级文稿。 */
+  roomId: string | null;
   title: string;
   contentJson: TiptapJsonContent;
   contentSchemaVersion: number;
@@ -1569,7 +1575,8 @@ export type DocumentEventType =
 
 export interface DocumentEvent<T = unknown> {
   id: string;
-  roomId: string;
+  /** 事件所属 Room；null = 工作区级事件（WS 频道见 WORKSPACE_DOCUMENT_CHANNEL）。 */
+  roomId: string | null;
   documentId: string;
   operationId: string | null;
   type: DocumentEventType;
@@ -1596,7 +1603,8 @@ export interface DocumentMovedPayload {
 
 export interface ImportRoomDocumentInput {
   id: string;
-  roomId: string;
+  /** null = 工作区级文稿（不写入任何 Room 归属）。 */
+  roomId: string | null;
   title: string;
   contentJson: TiptapJsonContent;
   /** 省略时按外部导入（import）落库；EverRoom 内新建（含本地 Markdown 导入）传 native，产物库只列 native。 */

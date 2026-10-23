@@ -40,20 +40,21 @@ export function documentRoutes(
       );
     }
 
+    // roomId 省略 = 列出整个工作区的文稿（P0-2）；传 roomId 时保持原有的按 Room 过滤。
     app.get(
       "/v1/documents",
       {
         schema: {
           tags: ["documents"],
           querystring: Type.Object({
-            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             trashed: Type.Optional(Type.Union([Type.Literal("true"), Type.Literal("false")])),
             origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
           }),
         },
       },
       async (request) => service.list(
-        request.query.roomId,
+        request.query.roomId ?? null,
         request.query.trashed === "true",
         request.query.origin,
       ),
@@ -369,14 +370,16 @@ export function documentRoutes(
           tags: ["documents"],
           body: Type.Object({
             id: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            // 省略 = 工作区级文稿（不归属任何 Room，P0-2）。
+            roomId: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
             title: Type.String({ minLength: 1, maxLength: 120 }),
             contentJson: JsonDocument,
             origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
           }),
         },
       },
-      async (request, reply) => reply.code(201).send(await service.import(request.body)),
+      async (request, reply) =>
+        reply.code(201).send(await service.import({ ...request.body, roomId: request.body.roomId ?? null })),
     );
 
     app.put(

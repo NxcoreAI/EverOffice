@@ -1,4 +1,4 @@
-import type { TiptapJsonContent } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL, type TiptapJsonContent } from "@nxcore/agent-contract";
 import type { ProjectedDocumentReference } from "@nxcore/document-model";
 import { hasEmbeddedDocumentImages, migrateDocumentContent } from "@nxcore/document-model";
 import {
@@ -19,9 +19,10 @@ export class DocumentContentEngine {
   normalizeDocument(
     content: TiptapJsonContent,
     documentId: string,
-    roomId: string,
+    roomId: string | null,
     indexedVersion = 0,
   ): NormalizedGatewayDocument {
+    const scope = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
     if (hasEmbeddedDocumentImages(content)) {
       throw new DocumentServiceError(
         "EMBEDDED_IMAGE_NOT_ALLOWED",
@@ -29,25 +30,26 @@ export class DocumentContentEngine {
         400,
       );
     }
-    const normalized = normalizeDocumentContent(content, documentId, roomId, { indexedVersion });
-    this.validateReferences(normalized.references, roomId);
+    const normalized = normalizeDocumentContent(content, documentId, scope, { indexedVersion });
+    this.validateReferences(normalized.references, scope);
     return normalized;
   }
 
   normalizeFragment(
     content: TiptapJsonContent,
     documentId: string,
-    roomId: string,
+    roomId: string | null,
   ): NormalizedGatewayDocument {
-    const normalized = normalizeDocumentFragment(content, documentId, roomId);
-    this.validateReferences(normalized.references, roomId);
+    const scope = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
+    const normalized = normalizeDocumentFragment(content, documentId, scope);
+    this.validateReferences(normalized.references, scope);
     return normalized;
   }
 
   normalizeStoredDocument(
     content: TiptapJsonContent,
     documentId: string,
-    roomId: string,
+    roomId: string | null,
     fromSchemaVersion: number,
     indexedVersion = 0,
   ): NormalizedGatewayDocument {
@@ -61,13 +63,14 @@ export class DocumentContentEngine {
         409,
       );
     }
+    const scope = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
     const normalized = normalizeDocumentContent(
       migrated.content,
       documentId,
-      roomId,
+      scope,
       { indexedVersion },
     );
-    this.validateReferences(normalized.references, roomId);
+    this.validateReferences(normalized.references, scope);
     return normalized;
   }
 

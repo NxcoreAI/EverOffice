@@ -68,7 +68,7 @@ export class DocumentLifecycleService {
     return current;
   }
 
-  emptyTrash(roomId: string): RoomDocument[] {
+  emptyTrash(roomId: string | null): RoomDocument[] {
     const trashed = this.repository.list(roomId, true);
     if (trashed.length === 0) return trashed;
     this.db.transaction((tx) => {
