@@ -97,7 +97,6 @@ import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
-import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
 import { AsrError } from "../modules/asr/errors.js";
@@ -123,7 +122,6 @@ import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js"
 import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
 import { ImageDescribeService } from "../modules/files/image-describe.js";
-import { FileClusteringService } from "../modules/files/clustering-service.js";
 import { ClipperService } from "../modules/clipper/service.js";
 import { clipperRoutes } from "../modules/clipper/routes.js";
 import { EmbeddingClient } from "../modules/knowledge/embedding.js";
@@ -865,7 +863,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentTools: createDocumentPiTools(documentMcpHost),
     analysisTools: subagentConfig.enabled
       ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
-          resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
           roomExists: (roomId) => documentMcpHost.roomExists(roomId),
         })
       : [],
@@ -1115,9 +1112,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-            // 分析任务合并（方案 §4.2 B2）：room_analysis 网关侧组装材料的数据源
-            // （Room 不存在时 buildRoomContextDigest 抛 context_room_not_found，语义一致）。
-            resolveRoomContext: async (roomId) => buildRoomContextDigest(db, roomId),
             // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
             // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
             resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
@@ -1321,7 +1315,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     // embedding 端点热替换（runtime knowledge.embedding 覆盖 env）。
     const embedding = embeddingFromConfig(config);
     knowledgeService.replaceEmbedding(embedding ? { client: embedding.client, model: embedding.model } : null);
-    fileClusteringService.replaceEmbedding(embedding?.client ?? null, embedding?.model ?? null);
     asrProvider = createAsrProvider(config, app.log);
     asrService.replaceProvider(asrProvider);
     // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。
@@ -1510,16 +1503,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     "multimodal-document-parser",
     createDocumentAnalysisResultValidator(documentUnderstandingService),
   );
-  const fileClusteringService = new FileClusteringService(
-    db,
-    agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
-    embeddingFromConfig(config)?.client ?? null,
-    config.knowledge?.embeddingModel ?? null,
-  );
-  filesService.setVersionClassifier((fileEntryId, fileVersionId) => {
-    fileClusteringService.enqueue(fileEntryId, fileVersionId);
-  });
-  fileClusteringService.initialize();
   const diaryGenerator = config.agentRuntime !== "fake" && config.backgroundPi
     ? new DiaryAgentGenerator(config.backgroundPi.model || "diary-agent", app.log)
     : null;
@@ -1607,7 +1590,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     // Stop producers while all ingest/classification dependencies are still alive.
     await clipperService.dispose();
     await filesService.dispose();
-    await fileClusteringService.dispose();
     await nangoConnectorManager.dispose();
     nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
@@ -1790,7 +1772,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     cleanupIngestSources: (fileEntryIds) => {
       ingestService.cleanupSources(fileEntryIds.map((id) => ({ sourceKind: "file" as const, sourceId: id })));
     },
-  }, fileClusteringService));
+  }));
   await app.register(clipperRoutes(clipperService));
   await app.register(documentUnderstandingRoutes(documentUnderstandingService));
   // 统一理解引擎（U1）：接入面唯一，台账 + 三链路扇出（§7）。

@@ -123,7 +123,6 @@ type VersionIngestor = (input: {
   pipelines?: FileImportInput["pipelines"];
   roomId?: string;
 }) => Promise<VersionIngestResult>;
-type VersionClassifier = (fileEntryId: string, fileVersionId: string) => void;
 /** 显式 roomId 导入的同步归属钩子（create-server 注入 knowledge 落入口决策）。 */
 type RoomEntrySink = (input: { fileEntryId: string; roomId: string; sourceTitle: string }) => void;
 
@@ -168,7 +167,6 @@ export interface FileDeletionResult {
  */
 export class FilesService {
   private versionIngestor: VersionIngestor | null = null;
-  private versionClassifier: VersionClassifier | null = null;
   private roomEntrySink: RoomEntrySink | null = null;
   private fileJobWorker: Promise<void> | null = null;
   private disposed = false;
@@ -226,10 +224,6 @@ export class FilesService {
     if (this.disposed) throw new Error("FilesService 已关闭");
     this.versionIngestor = ingestor;
     this.kickFileJobs();
-  }
-
-  setVersionClassifier(classifier: VersionClassifier): void {
-    this.versionClassifier = classifier;
   }
 
   setRoomEntrySink(sink: RoomEntrySink): void {
@@ -512,7 +506,6 @@ export class FilesService {
       this.db.update(fileEntries).set({ state: "ready", updatedAt: now })
         .where(eq(fileEntries.id, fileEntryId)).run();
     }
-    this.versionClassifier?.(fileEntryId, fileVersionId);
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
   }
 

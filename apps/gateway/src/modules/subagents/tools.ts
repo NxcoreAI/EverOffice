@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
-import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
 import { roomScopeId } from "../documents/room-scope.js";
 import {
   DOC_WRITER_AGENT_ID,
@@ -486,8 +485,6 @@ export function createSubagentPiTools(
   orchestrator: SubagentOrchestrator,
   options: {
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
-    /** Room 材料共享投影（方案 §4.2 B2）：room_analysis 网关侧组装 content 的数据源。 */
-    resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string, roomId: string | null) => DocumentDraftSnapshot;
     /** 实时房间存在性查询：run.availableRooms 是开跑快照，校验显式 roomId 时兜底。 */
@@ -677,68 +674,6 @@ export function createSubagentPiTools(
         signal,
         "分析提供的材料并提炼可核验结论",
       ),
-    });
-
-    // 分析任务合并（方案 §4.2 B2）：Room 材料由网关侧组装成 content 投喂
-    // content-analyst（context-room 的 material-analysis 任务已废弃），
-    // 对主 Agent 的工具名、描述、参数与返回结构保持不变。
-    tools.push({
-      name: "room_analysis",
-      label: "Analyze room materials",
-      description: "调度 Context Room Agent 分析指定 Room 的已收录资料，返回事实、风险、矛盾、信息缺口和下一步建议。用户询问某个 Room 的整体情况或资料结论时使用。",
-      parameters: Type.Object({
-        roomId: Type.String({ minLength: 1, maxLength: 128 }),
-        focus: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
-        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
-      }, { additionalProperties: false }),
-      execute: async (run, params, signal) => {
-        const roomId = String(params.roomId ?? "").trim();
-        if (!options.resolveRoomContext) throw new Error("room_analysis_room_context_unavailable");
-        const digest = await options.resolveRoomContext(roomId);
-        if (!digest) throw new Error("context_room_not_found");
-        // content-analyst 为纯投喂制（input：content/question/sourceLabel/context），
-        // focus 作为问题、responseLanguage 折入问题作答语言要求。
-        const focus = typeof params.focus === "string" ? params.focus.trim() : "";
-        const responseLanguage = typeof params.responseLanguage === "string"
-          ? params.responseLanguage.trim()
-          : "";
-        const question = [
-          focus || "分析该 Room 的资料并提炼可核验结论",
-          ...(responseLanguage ? [`请用 ${responseLanguage} 回答`] : []),
-        ].join("；");
-        const input = {
-          content: formatRoomContextDigest(digest),
-          question,
-          sourceLabel: digest.room.title,
-        };
-        const task = "分析指定 Context Room 的资料并提炼可核验结论";
-        const invocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-          agentId: "content-analyst",
-          task,
-          input,
-          idempotencyKey: dispatchKey(run.runId, "content-analyst", task, input),
-          source: "primary_agent",
-          parentSessionId: run.sessionId,
-          parentRunId: run.runId,
-          ...(signal ? { signal } : {}),
-        }));
-        const structured = invocation.result?.structuredOutput !== null
-          && typeof invocation.result?.structuredOutput === "object"
-          && !Array.isArray(invocation.result.structuredOutput)
-          ? invocation.result.structuredOutput as Record<string, unknown>
-          : extractJsonObject(invocation.result?.text ?? "");
-        return {
-          content: JSON.stringify({
-            invocationId: invocation.id,
-            agentId: invocation.agentDefinitionId,
-            status: invocation.status,
-            ...(structured ? { analysis: structured } : {}),
-            result: invocation.result,
-            error: invocation.errorMessage,
-          }),
-          details: invocation,
-        };
-      },
     });
   }
   const documentParser = registry.get("multimodal-document-parser");
