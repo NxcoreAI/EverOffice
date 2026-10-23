@@ -250,7 +250,7 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | P0-2c | 渲染层 `RoomDocumentsProvider` → 工作区文稿库 Provider、`DocsPage` 去 Room 维度 | **改并入 Phase 2**：渲染层的文档 tab / 文稿页 / 产物库都以 `roomId` 为键，只有在删除 Room 时才能一次性收敛，单独改造反而要写两遍（决策记录见 §8.1） |
 | 2026-10-23 | P0-3 | 18 个 Office 工具改名（`document_*` / `office_create` / `slides_*` / `sheets_create`），MCP server 名改 `everroom-office`，跨 50 文件 | 完成（gateway 测试回到基线；desktop 失败清单与基线逐行一致） |
 | 2026-10-23 | P0-4 | Agent 工具面重建：运行时去掉 run 级 Room 粘滞与 knowledge/记忆注入，用户档剔除 `context_room_*` 工具；main/main-lite/main-direct/doc-writer/slides-planner 的能力声明、工具清单与人设去 Room/记忆 | 完成（gateway 套件维持基线 10 个失败） |
-| — | P0-2d | `document_operations` 去 room_id（Agent 写入路径的工作区级归属） | 未开始 |
+| 2026-10-23 | P0-2d | `document_operations.room_id` 放开为可空（迁移 0083，重建表并保全四张子表数据）；操作类型/读凭证/授权判定全链路可空；document.* 能力 manifest `requiresRoom=false`；摘除写入工具的 Room 守卫并去掉 `patch_begin` 记忆清单注入 | 完成（gateway tsc 干净、套件维持基线 10 个失败；新增工作区级端到端与升级路径回归用例各 1） |
 | — | Phase 1 | 断耦合 | 未开始 |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 3 | 外围清理 | 未开始 |
