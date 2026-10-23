@@ -456,8 +456,6 @@ describe("gateway server", () => {
     expect(initialize.json()).toMatchObject({ jsonrpc: "2.0", id: 1 });
     expect(initialized.statusCode).toBe(202);
     expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-      "context_room_list",
-      "context_room_create",
       "document_list",
       "document_read",
       "document_patch_begin",
@@ -470,11 +468,6 @@ describe("gateway server", () => {
       "document_write_abort",
       "document_comment_add",
       "document_delete",
-      "context_room_task_start",
-      "context_room_task_read",
-      "context_room_task_update",
-      "context_room_task_clarify",
-      "context_room_task_attach",
     ]);
   });
 
@@ -519,8 +512,6 @@ describe("gateway server", () => {
       await client.connect(transport as unknown as Parameters<Client["connect"]>[0]);
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual([
-        "context_room_list",
-        "context_room_create",
         "document_list",
         "document_read",
         "document_patch_begin",
@@ -533,11 +524,6 @@ describe("gateway server", () => {
         "document_write_abort",
         "document_comment_add",
         "document_delete",
-        "context_room_task_start",
-        "context_room_task_read",
-        "context_room_task_update",
-        "context_room_task_clarify",
-        "context_room_task_attach",
       ]);
     } finally {
       await client.close();

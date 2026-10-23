@@ -39,7 +39,6 @@ import { createNotificationPiTools } from "../modules/notifications/pi-tools.js"
 import { documentRoutes } from "../modules/documents/routes.js";
 import { documentOperationRoutes } from "../modules/documents/operations/routes.js";
 import { DocumentService } from "../modules/documents/service.js";
-import { TaskFolderService } from "../modules/documents/task-folders.js";
 import { DocumentCommentService } from "../modules/documents/comments.js";
 import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
 import { documentOverviewRoutes } from "../modules/documents/overview-routes.js";
@@ -509,10 +508,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(aiRelayRoutes({ sessions: aiRelaySessions, runtimeConfigManager }));
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
-  // 任务管线：澄清意图签发器——AgentService 在下方构造，经 getter 惰性取用。
-  const agentServiceRef: { current: AgentService | null } = { current: null };
-  // 任务夹服务（task pipeline）：room_folders 的 CRUD/归夹，注册表与 REST 路由共用。
-  const taskFolderService = new TaskFolderService(db);
   const documentService = new DocumentService(db, documentEventBroker,
     undefined, undefined, (documentId, currentVersion) => (
     documentOperationService.prepareExternalVersionAdvance(documentId, currentVersion)
@@ -588,9 +583,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
       officeBridgeClient,
-      // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。
-      taskFolderService,
-      () => agentServiceRef.current,
       // PPT 逐页进度上报：set_page 成功落页即广播快照。
       slidesProgress,
       // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
@@ -640,12 +632,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // doc-writer 研究工具面（用户决策：与主 Agent 同等的工具使用）——检索/读取/
   // 分析类全给，写入/调度/通知类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("doc-writer", () => createDocWriterAgentTools({
-    roomTools: [],
     documentTools: createDocumentPiTools(documentMcpHost),
     analysisTools: subagentConfig.enabled
-      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
-          roomExists: (roomId) => documentMcpHost.roomExists(roomId),
-        })
+      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator)
       : [],
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
@@ -655,7 +644,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
   // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
-    roomTools: [],
     documentTools: createDocumentPiTools(documentMcpHost),
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
@@ -724,7 +712,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
   // 渠道会话（Claude Code / Codex 整段锁定）的 EverRoom 工具 MCP host：
-  // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 context_room_* 读写。
+  // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 document_* 读写。
   const gatewayLoopbackHost = ["0.0.0.0", "::"].includes(config.host) ? "127.0.0.1" : config.host;
   // 渠道 MCP 注入 URL 必须用 listen 后的实际绑定地址：桌面 main 以 --port 0 拉起网关，
   // 构造期的 config.port 是 0，注入 http://127.0.0.1:0 会让 CLI 连接失败并静默丢弃该 MCP 服务器。
@@ -783,7 +771,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
             // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
             resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
-            roomExists: (roomId) => documentMcpHost.roomExists(roomId),
             // dispatch 期软租约：agent 修改中文档只读（编辑器 writing 态 + 保存
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
@@ -909,8 +896,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   agentService.setChannelSessionRevoker((sessionId) => channelMcpHost.revokeAgentSession(sessionId));
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
-  // 任务管线澄清签发器：注册表经 getter 惰性取用，此处绑定实例。
-  agentServiceRef.current = agentService;
   await agentService.initialize();
   registerTranscriptionSummaryAgent(agentResolver, config);
   const backgroundAgentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.transcriptionSummary);
@@ -1255,7 +1240,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       config.documentIndexBackfill?.readTriggerCooldownMs ?? 1_800_000,
     )
     : null;
-  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger, taskFolderService));
+  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger));
   await app.register(documentCommentRoutes(documentCommentService));
   await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
   await app.register(documentSectionPreviewRoutes(documentService, () => documentOverviewRuntime));

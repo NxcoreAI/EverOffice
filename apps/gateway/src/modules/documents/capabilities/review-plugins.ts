@@ -485,7 +485,7 @@ function hunkTool(
 ): DocumentCapabilityTool {
   return {
     name: "document_patch_hunk", title: "追加可审阅的文档修改项",
-    description: "按严格连续 sequence 追加修改项。优先以引用方式转交：传 document_draft 返回的 invocationId 与 itemIndex（0 起，按顺序逐项），operation/target/markdown 由服务端从 doc-writer 结果转交，参数中不携带正文；显式 target/markdown 仅供无法引用 invocation 的调用方直写。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。块索引标记：文档来源标记的 blockId 只能取自本 run 对该来源文档的 document_read 返回（宿主文档自身的块 id 不可用作来源）；记忆标记的 memoryId 只能照抄 patch_begin 返回的 memoryIndex，禁止凭会话历史拼装。",
+    description: "按严格连续 sequence 追加修改项。优先以引用方式转交：传 document_draft 返回的 invocationId 与 itemIndex（0 起，按顺序逐项），operation/target/markdown 由服务端从 doc-writer 结果转交，参数中不携带正文；显式 target/markdown 仅供无法引用 invocation 的调用方直写。edit 必须使用能表达用户改动的最小 target；replace 的 markdown 只能是该 target 的新内容，绝不能复制 document_read 返回的完整 markdown、文档标题或未修改的后续章节。continue 仅能 insert 全新内容；每批 markdown 只能包含本批新增片段，禁止发送累计内容、原文或全文。块索引标记：文档来源标记的 blockId 只能取自本 run 对该来源文档的 document_read 返回（宿主文档自身的块 id 不可用作来源），禁止凭会话历史拼装。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       operationId: { type: "string", description: "兼容字段；省略时 Gateway 使用当前 run 唯一运行中的 Patch。" },
       patchId: { type: "string", description: "兼容旧 Agent 会话的别名；通常无需传入。" },

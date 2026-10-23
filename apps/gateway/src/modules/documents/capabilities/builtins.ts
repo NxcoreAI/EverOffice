@@ -13,8 +13,6 @@ import { reviewPlugins } from "./review-plugins.js";
 import { selectionRewritePlugin } from "./selection-rewrite-plugin.js";
 import type { CapabilityBackend } from "./shared.js";
 import type { DocumentRoomRegistry, SlidesPageProgressReporter } from "./types.js";
-import { taskPlugin, type TaskClarifyIssuerInput } from "./task-plugin.js";
-import type { TaskFolderService } from "../task-folders.js";
 import type { SlidesVisualReviewer } from "../../slides-visual-review/review.js";
 
 export function createBuiltinDocumentCapabilityRegistry(
@@ -30,12 +28,6 @@ export function createBuiltinDocumentCapabilityRegistry(
   publishDocumentEvent?: (event: DocumentEvent) => void,
   /** Office 生成桥（agent 写 Word）：传入则启用 office_create 等工具。 */
   officeBridge?: OfficeBridgeClient | null,
-  /** 任务管线：任务夹服务（常驻，直接传入）。 */
-  taskFolders?: TaskFolderService,
-  /** 任务管线：澄清意图签发器（AgentService 晚于注册表构造，经 getter 惰性取用）。 */
-  issueTaskClarify?: () => {
-    issueTaskClarification(input: TaskClarifyIssuerInput): { pendingIntentId: string; status: string } | null;
-  } | null,
   /** PPT 逐页进度上报器（只报不定）：传入则 slides 落页即广播进度快照。 */
   slidesProgress?: SlidesPageProgressReporter | null,
   /** 落页视觉复检器：传入则 preset 落页后截图送 VLM 判定（未配置 VLM 时内部跳过）。 */
@@ -50,13 +42,6 @@ export function createBuiltinDocumentCapabilityRegistry(
   registry.register(commentPlugin(backend, comments, publishDocumentEvent));
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
-  // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。服务齐备才注册。
-  if (taskFolders && issueTaskClarify) {
-    registry.register(taskPlugin(backend, taskFolders, () => {
-      const issuer = issueTaskClarify();
-      return issuer ? (input) => issuer.issueTaskClarification(input) : null;
-    }));
-  }
   // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
   if (officeBridge) registry.register(officePlugin(officeBridge, slidesProgress, visualReviewer ?? null));
   return registry;

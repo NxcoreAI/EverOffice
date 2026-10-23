@@ -469,7 +469,7 @@ describe('document transactions', () => {
     expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(0)
   })
 
-  it('lists document Rooms from the run context and refuses to create a draft before the user selects one', async () => {
+  it('creates workspace-level documents without a pre-selected Room', async () => {
     const { db, service } = await createHarness()
     const operations = new DocumentOperationService(db, service.broker)
     const host = new DocumentMcpHost(service, undefined, undefined, operations)
@@ -484,29 +484,6 @@ describe('document transactions', () => {
       ],
     }
 
-    const listed = await host.callTool('context_room_list', {}, globalContext)
-    expect(listed.structuredContent).toEqual({
-      rooms: [
-        { id: 'room-1', title: '产品规划', kind: '项目' },
-        { id: 'room-2', title: '后端进阶', kind: '主题' },
-      ],
-      selectionRequired: true,
-      selectedRoomId: null,
-    })
-    const candidates = await host.callTool('context_room_list', {
-      candidateRoomIds: ['room-2'],
-    }, globalContext)
-    expect(candidates.structuredContent).toEqual({
-      rooms: [{ id: 'room-2', title: '后端进阶', kind: '主题' }],
-      selectionRequired: true,
-      selectedRoomId: null,
-    })
-    // Room 创建随 Context Room 模块退役：工具仍在，但网关不再提供 Room 服务，
-    // 明确报不可用而不是伪造创建成功。
-    await expect(host.callTool('context_room_create', {
-      title: 'Campus Life',
-      description: 'Campus activities and study notes',
-    }, globalContext)).rejects.toThrow('ROOM_SERVICE_UNAVAILABLE')
     // P0-2d：没有绑定 Room 时不再要求先选房，直接落到工作区级文稿。
     const workspaceStarted = await host.callTool('document_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
@@ -1344,8 +1321,6 @@ describe('document transactions', () => {
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
     const result = messages[0]?.result as { tools?: Array<{ name: string; description: string }> }
     expect(result.tools?.map((tool) => tool.name)).toEqual([
-      'context_room_list',
-      'context_room_create',
       'document_list',
       'document_read',
       'document_patch_begin',
@@ -1368,15 +1343,7 @@ describe('document transactions', () => {
     expect(result.tools?.find((tool) => tool.name === 'document_write_begin')?.description)
       .toContain('只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档')
     expect(result.tools?.find((tool) => tool.name === 'document_write_begin')?.description)
-      .toContain('句子的创建对象是 Room、Context Room 或房间')
-    expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
-      .toContain('无法可靠确定唯一目标时调用')
-    expect(result.tools?.find((tool) => tool.name === 'context_room_list')?.description)
-      .toContain('最可能相关的 2 至 5 个 Room')
-    expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
-      .toContain('用户明确要求创建')
-    expect(result.tools?.find((tool) => tool.name === 'context_room_create')?.description)
-      .toContain('创建一个管理项目文档的 Context Room')
+      .toContain('不需要先让用户选择 Room')
     // 写作规则已迁往 doc-writer skill；append 描述只保留机械契约与引用转交纪律（M3/V2）。
     expect(result.tools?.find((tool) => tool.name === 'document_write_append')?.description)
       .toContain('document_draft 返回的 invocationId 与 chunkIndex')
@@ -1390,8 +1357,8 @@ describe('document transactions', () => {
       .toContain('state/applied/documentChanged')
     expect(host.instructions()).toContain('最终回复以最后一次工具结果为准')
     expect(host.instructions()).toContain('awaiting_review')
-    expect(host.instructions()).toContain('用途从句中的“文档/文件/项目”只是 Room 管理的内容')
-    expect(host.instructions()).toContain('在 Context Room 里创建一份项目文档')
+    expect(host.instructions()).toContain('文档写入工作区文稿库（docs 页）')
+    expect(host.instructions()).toContain('不需要先让用户选择 Room')
 
     await host.exchange('mcp-session', {
       jsonrpc: '2.0',
@@ -1402,7 +1369,7 @@ describe('document transactions', () => {
     const reconnected = await host.exchange('mcp-session', {
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {},
     }, { agentSessionId: 'session-1', runId: 'run-1', roomId: 'room-1' })
-    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(14)
+    expect((reconnected[0]?.result as { tools?: unknown[] }).tools).toHaveLength(12)
   })
 })
 

@@ -888,7 +888,7 @@ export class DocumentService {
     roomId: string | null;
     title: string;
     markdown: string;
-    /** 任务产物（workplan.md 等）标 native：出现在 Room 文档列表且可编辑。 */
+    /** 产出的文稿默认标 native：出现在工作区文档列表且可编辑。 */
     origin?: "native" | "import";
   }): Promise<RoomDocument> {
     const title = input.title.trim().slice(0, 120);
