@@ -29,6 +29,10 @@ export interface PixiForceGraphCanvasNode extends PixiForceGraphNode {
 
 export interface PixiForceGraphCanvasHandle {
   fitView(minScale?: number): void
+  /** 带 1s 弹簧补间（一大一小交替衰减）回到自适应视野（关系图谱「无操作自动复位」用）。 */
+  animateFitView?(options?: { minScale?: number; durationMs?: number }): void
+  /** 用户接管画布（拖拽/滚轮/移回画布）时取消复位补间；返回是否真的取消了在播补间。 */
+  cancelFitAnimation?(): boolean
 }
 
 interface PixiForceGraphCanvasProps {
@@ -82,6 +86,12 @@ export const PixiForceGraphCanvas = forwardRef<PixiForceGraphCanvasHandle, PixiF
   useImperativeHandle(ref, () => ({
     fitView(minScale?: number) {
       rendererRef.current?.fitView(minScale)
+    },
+    animateFitView(options?: { minScale?: number; durationMs?: number }) {
+      rendererRef.current?.animateFitView(options)
+    },
+    cancelFitAnimation() {
+      return rendererRef.current?.cancelFitAnimation() ?? false
     },
   }), [])
 

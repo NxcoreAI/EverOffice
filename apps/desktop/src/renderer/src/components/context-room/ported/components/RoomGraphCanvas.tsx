@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -37,6 +38,14 @@ interface RoomGraphCanvasProps {
   onOpenRoom: (roomId: string) => void
   onSelectRelation?: (relationId: string) => void
   onSelectRoom: (roomId: string | null) => void
+  /**
+   * 「无操作自动复位」的空闲阈值（毫秒）；不传 = 关闭。
+   *
+   * 语义：用户改过视口（缩放 / 平移拖拽）之后，鼠标**离开画布**满 N 毫秒 →
+   * 弹性补间回到自适应视野。画布内图谱保持不动；只点击节点（没移动、视口没变）
+   * 不会武装；移回画布会取消待触发的复位并停掉在播补间。
+   */
+  autoFitOnIdleMs?: number
 }
 
 const ROOM_KIND_COLORS: Record<ContextRoomKind, number> = {
@@ -67,6 +76,7 @@ function RoomGraphCanvasComponent(
     onOpenRoom,
     onSelectRelation,
     onSelectRoom,
+    autoFitOnIdleMs = 0,
   }: RoomGraphCanvasProps,
   ref: React.ForwardedRef<RoomGraphCanvasHandle>,
 ) {
@@ -151,6 +161,78 @@ function RoomGraphCanvasComponent(
     canvasRef,
     settleFit,
   })
+  // 「无操作自动复位」：只有视口真被用户改动过（缩放 / 平移拖拽）才武装；
+  // 复位时机：鼠标**离开**关系图谱画布满 autoFitOnIdleMs → 弹性补间回自适应视野。
+  // 鼠标在画布内时图谱必须保持不动（不排倒计时）；回进画布会取消待触发的复位和正在播放的补间。
+  const autoFitTimer = useRef<number | null>(null)
+  const autoFitArmed = useRef(false)
+  const pointerInside = useRef(false)
+  const pointerStart = useRef<{ x: number; y: number } | null>(null)
+  const pointerMoved = useRef(false)
+  const draggingNode = useRef(false)
+  const autoFitFire = useCallback(() => {
+    autoFitTimer.current = null
+    autoFitArmed.current = false
+    const canvas = canvasRef.current
+    // 1s 慢弹簧（一大一小交替）补间归位；不支持补间的画布退回瞬时对准。
+    if (canvas?.animateFitView) canvas.animateFitView({ durationMs: 1000 })
+    else canvas?.fitView()
+  }, [])
+  const clearAutoFitTimer = useCallback(() => {
+    if (autoFitTimer.current === null) return
+    window.clearTimeout(autoFitTimer.current)
+    autoFitTimer.current = null
+  }, [])
+  const armAutoFit = useCallback(() => {
+    // 只武装，不排倒计时：倒计时一律等鼠标离开画布才开始
+    autoFitArmed.current = true
+  }, [])
+  useEffect(() => clearAutoFitTimer, [clearAutoFitTimer])
+
+  const handlePointerEnter = useCallback(() => {
+    pointerInside.current = true
+    // 鼠标回到画布内：取消待触发的复位；正在播放的补间也立刻停（画布内图谱必须静止）。
+    // 若确实停掉了一段在播的补间，重新武装——等下次离开时把它补完。
+    clearAutoFitTimer()
+    if (canvasRef.current?.cancelFitAnimation?.()) autoFitArmed.current = true
+  }, [clearAutoFitTimer])
+  const handlePointerLeave = useCallback(() => {
+    pointerInside.current = false
+    pointerStart.current = null
+    // 离开画布才开始倒计时（视口被改过才需要复位）
+    clearAutoFitTimer()
+    if (autoFitOnIdleMs <= 0 || !autoFitArmed.current) return
+    autoFitTimer.current = window.setTimeout(autoFitFire, autoFitOnIdleMs)
+  }, [autoFitFire, autoFitOnIdleMs, clearAutoFitTimer])
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    pointerInside.current = true
+    pointerStart.current = { x: event.clientX, y: event.clientY }
+    pointerMoved.current = false
+    draggingNode.current = false
+    // 用户伸手了：正在播放的复位补间立刻停（否则会跟拖拽抢镜头）
+    canvasRef.current?.cancelFitAnimation?.()
+  }, [])
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    pointerInside.current = true
+    const start = pointerStart.current
+    if (start && !pointerMoved.current) {
+      // 3px 死区：点击节点时的轻微抖动不算「改动视口」
+      if (Math.abs(event.clientX - start.x) > 3 || Math.abs(event.clientY - start.y) > 3) {
+        pointerMoved.current = true
+        // 拖的是节点（不是平移画布）→ 视口没变，不武装
+        if (!draggingNode.current) armAutoFit()
+      }
+    }
+  }, [armAutoFit])
+  const handlePointerEnd = useCallback(() => {
+    pointerStart.current = null
+  }, [])
+  const handleWheel = useCallback(() => {
+    // 滚轮 = 缩放，视口一定变了；正在播放的补间同样让位
+    canvasRef.current?.cancelFitAnimation?.()
+    armAutoFit()
+  }, [armAutoFit])
+
   const resizeLayout = useCallback((width: number, height: number) => {
     const dimensions = roomGraphLayoutDimensions({
       compact,
@@ -171,7 +253,16 @@ function RoomGraphCanvasComponent(
   }), [])
 
   return (
-    <div className="context-room-graph-shell nx-graph-shell">
+    <div
+      className="context-room-graph-shell nx-graph-shell"
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+      onWheel={handleWheel}
+    >
       <PixiForceGraphCanvas
         ref={canvasRef}
         ariaLabel={t('contextRoom:graphs.roomRelationsCanvas')}
@@ -186,7 +277,10 @@ function RoomGraphCanvasComponent(
         selectedEdgeId={selectedRelationId}
         onResize={resizeLayout}
         onUserGesture={layout.cancelAutoFit}
-        onDragNode={layout.drag}
+        onDragNode={(nodeId, x, y) => {
+          draggingNode.current = true
+          layout.drag(nodeId, x, y)
+        }}
         onReleaseNode={layout.release}
         onOpenNode={onOpenRoom}
         onSelectEdge={onSelectRelation}

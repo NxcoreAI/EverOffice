@@ -3,20 +3,16 @@
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const fitViewCalls = { count: 0 }
+const homeGraphProps: Array<{ autoFitOnIdleMs?: number }> = []
 
 vi.mock('../src/renderer/src/components/context-room/ported/components/RoomGraphCanvas', async () => {
   const { forwardRef, useImperativeHandle } = await import('react')
   return {
     RoomGraphCanvas: forwardRef(function MockRoomGraphCanvas(
-      _props: Record<string, unknown>,
-      ref,
+      props: { autoFitOnIdleMs?: number },
+      _ref,
     ) {
-      useImperativeHandle(ref, () => ({
-        fitView: async () => {
-          fitViewCalls.count += 1
-        },
-      }), [])
+      homeGraphProps.push(props)
       return null
     }),
   }
@@ -91,30 +87,24 @@ function renderHome() {
 
 describe('首页 Room 关系图谱的自适应按钮', () => {
   afterEach(() => {
-    fitViewCalls.count = 0
+    homeGraphProps.length = 0
     delete (window as unknown as { nxcore?: unknown }).nxcore
   })
 
-  // 首页画布可自由缩放平移：缩到最小或拖走后全图看不见，浮层按钮必须常驻并可点。
-  it('keeps an always-visible fit control that re-fits the whole graph', async () => {
+  // 首页画布不再有「适应画布」浮层按钮：改成鼠标离开图谱满 5 秒自动缩放居中。
+  it('drives the graph by idle auto-fit instead of a fit button', async () => {
     stubRoomGraph([])
     let renderer: TestRenderer.ReactTestRenderer | null = null
     await act(async () => {
       renderer = renderHome()
     })
 
-    const fitButton = renderer!.root.findByProps({ className: 'context-room-graph-fit' })
-    expect(fitButton.props['aria-label']).toBe('自适应图谱：缩放并居中')
-
-    await act(async () => {
-      fitButton.props.onClick()
-    })
-
-    expect(fitViewCalls.count).toBe(1)
+    expect(homeGraphProps.at(-1)!.autoFitOnIdleMs).toBe(5000)
+    expect(renderer!.root.findAllByProps({ className: 'context-room-graph-fit' })).toHaveLength(0)
     renderer!.unmount()
   })
 
-  it('does not offer the fit control before the graph has loaded', async () => {
+  it('renders no graph (and no fit control) before the graph has loaded', async () => {
     stubKnowledge({
       getRoomRelations: vi.fn(),
       // 永不 resolve：停在加载态，画布还没渲染。

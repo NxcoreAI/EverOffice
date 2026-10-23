@@ -179,6 +179,14 @@ class FakeViewport extends FakeContainer implements PixiViewport {
     super()
   }
 
+  get screenWidth() {
+    return this.options.screenWidth
+  }
+
+  get screenHeight() {
+    return this.options.screenHeight
+  }
+
   drag() {
     this.calls.push('drag')
     this.on('pointerdown', () => {
@@ -206,12 +214,32 @@ class FakeViewport extends FakeContainer implements PixiViewport {
     return this.visibleBounds
   }
 
+  centerX = 0
+  centerY = 0
+
+  /** 复位补间读取的「当前画面中心」快照（由 moveCenter 更新）。 */
+  get center() {
+    return { x: this.centerX, y: this.centerY }
+  }
+
   moveCenter(x: number, y: number) {
+    this.centerX = x
+    this.centerY = y
     this.calls.push(`moveCenter:${String(x)},${String(y)}`)
     return this
   }
 
-  setZoom(scale: number) {
+  animateOptions: { position?: { x: number; y: number }; scale?: number; time?: number; ease?: (t: number) => number; removeOnInterrupt?: boolean; callbackOnComplete?: (viewport: PixiViewport) => void } | null = null
+
+  animate(options: { position?: { x: number; y: number }; scale?: number; time?: number; ease?: (t: number) => number; removeOnInterrupt?: boolean; callbackOnComplete?: (viewport: PixiViewport) => void }) {
+    this.animateOptions = options
+    this.calls.push(`animate:${String(options.time)}`)
+    this.scale.x = options.scale ?? this.scale.x
+    this.scale.y = options.scale ?? this.scale.y
+    return this
+  }
+
+  setZoom(scale: number, _center?: boolean) {
     this.scale.x = scale
     this.scale.y = scale
     this.calls.push(`setZoom:${String(scale)}`)
@@ -249,6 +277,12 @@ class FakeViewport extends FakeContainer implements PixiViewport {
 
 function createFakes() {
   const ticker = new FakeTicker()
+  let nowMs = 0
+  const clock = {
+    /** 推进注入时钟（毫秒）。 */
+    advance: (ms: number) => { nowMs += ms },
+    read: () => nowMs,
+  }
   const textures: FakeTexture[] = []
   const graphics: FakeGraphics[] = []
   const particles: FakeParticleContainer[] = []
@@ -314,6 +348,7 @@ function createFakes() {
       }
     },
     Ticker: { shared: ticker },
+    now: clock.read,
     Viewport: class extends FakeViewport {
       constructor(options: { screenWidth: number; screenHeight: number; worldWidth: number; worldHeight: number; events?: unknown }) {
         super(options)
@@ -321,7 +356,7 @@ function createFakes() {
       }
     },
   }
-  return { appDestroy, containers, dependencies, graphics, particles, renderer, texts, textures, ticker, view, viewports }
+  return { appDestroy, clock, containers, dependencies, graphics, particles, renderer, texts, textures, ticker, view, viewports }
 }
 
 function createHost() {
@@ -854,9 +889,10 @@ describe('PixiForceGraphRenderer', () => {
       positions: new Float32Array([100, 200, 300, 240]),
     })
     const viewport = fakes.viewports[0]!
-    // 内容包围盒（含半径 18 与标签预留 24）：(82,182)-(318,282)，中心 (200,232)。
+    // 居中按节点几何中心：(82,182)-(318,258) → (200,220)。
+    // 底边 24px 标签预留只参与缩放，不参与居中（否则整体固定上偏 12px）。
     // 只居中、不缩放：世界大于面板时通过视口平移浏览，而不是压进面板。
-    expect(viewport.calls).toContain('moveCenter:200,232')
+    expect(viewport.calls).toContain('moveCenter:200,220')
     expect(viewport.calls.some((call) => call.startsWith('setZoom:'))).toBe(false)
   })
 
@@ -872,7 +908,7 @@ describe('PixiForceGraphRenderer', () => {
     })
     const viewport = fakes.viewports[0]!
     // 宿主 0×0（隐藏 tab / 入场动画容器）：构造时按 640×420 兜底居中一次。
-    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toEqual(['moveCenter:200,232'])
+    expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toEqual(['moveCenter:200,220'])
 
     // 真实尺寸到来 → 补居中一次；之后的面板微调不再抢用户的平移。
     renderer.resize(400, 300)
@@ -900,11 +936,11 @@ describe('PixiForceGraphRenderer', () => {
     fakes.ticker.tick()
     expect(viewport.calls.some((call) => call.startsWith('moveCenter:'))).toBe(false)
 
-    // Worker 首帧坐标写入（revision 为偶数）后，下一帧对准内容中心。
+    // Worker 首帧坐标写入（revision 为偶数）后，下一帧对准节点几何中心 (200,220)。
     positions.set([100, 200, 300, 240])
     revision = 2
     fakes.ticker.tick()
-    expect(viewport.calls).toContain('moveCenter:200,232')
+    expect(viewport.calls).toContain('moveCenter:200,220')
     // 只补一次：后续帧不再重复居中。
     fakes.ticker.tick()
     expect(viewport.calls.filter((call) => call.startsWith('moveCenter:'))).toHaveLength(1)
@@ -924,12 +960,111 @@ describe('PixiForceGraphRenderer', () => {
     renderer.fitView(1)
     // minScale 1：内容超出屏幕时保持原始缩放、只居中（紧凑面板语义）。
     expect(viewport.scale.x).toBe(1)
-    expect(viewport.calls).toContain('moveCenter:1000,712')
+    expect(viewport.calls).toContain('moveCenter:1000,700')
 
     renderer.fitView()
     // 缺省 minScale 0.2：整体可见优先，允许缩小到内容入屏。
     expect(viewport.scale.x).toBeGreaterThan(0.2)
     expect(viewport.scale.x).toBeLessThan(1)
+  })
+
+  // 复位补间：不再用 pixi-viewport 的 Animate 插件（它按 Penner 签名调用 ease、
+  // 且以「世界宽度」为插值量，弹簧手感会被改写）——我们自己逐帧插值 scale 与中心，
+  // 与预览页 scratch/spring-fit-demo.html 的数学一致。
+  it('animates the fit as a 1s spring tween driven by the ticker', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([0, 0, 400, 400]),
+    })
+    const viewport = fakes.viewports[0]!
+    const targetScale = 372 / 460
+
+    // 模拟用户已放大（scale 2）并平移到 (0,0)
+    viewport.setZoom(2)
+    viewport.moveCenter(0, 0)
+
+    renderer.animateFitView()
+
+    // 第一帧是起点本身：不能瞬时跳到目标
+    expect(viewport.scale.x).toBe(2)
+    expect(viewport.center.x).toBe(0)
+
+    // ~340ms：弹簧第一次冲过头（缩得比目标更小）
+    fakes.clock.advance(340)
+    fakes.ticker.tick()
+    const peakScale = viewport.scale.x
+    expect(peakScale).toBeLessThan(targetScale)
+
+    // ~700ms：往回摆（比目标更大）
+    fakes.clock.advance(360)
+    fakes.ticker.tick()
+    const troughScale = viewport.scale.x
+    expect(troughScale).toBeGreaterThan(targetScale)
+    expect(viewport.scale.x).toBeGreaterThan(peakScale)
+
+    // 中心：从 0 出发朝 200 走，spring 过冲把中心推过了目标（>200）
+    expect(viewport.center.x).toBeGreaterThan(0)
+    expect(viewport.center.x).toBeGreaterThan(200 - (200 - 0) * 0.2)
+
+    // 1s 末：scale 与中心都精确落在目标（无需额外校正）
+    fakes.clock.advance(300)
+    fakes.ticker.tick()
+    expect(viewport.scale.x).toBeCloseTo(targetScale, 6)
+    expect(viewport.center.x).toBeCloseTo(200, 6)
+    expect(viewport.center.y).toBeCloseTo(200, 6)
+    // 补间结束：再来一帧也不再变化
+    const callsBefore = viewport.calls.length
+    fakes.clock.advance(16)
+    fakes.ticker.tick()
+    expect(viewport.scale.x).toBeCloseTo(targetScale, 6)
+    expect(viewport.calls.length).toBe(callsBefore)
+  })
+
+  it('cancels the fit tween as soon as the user grabs the canvas', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([0, 0, 400, 400]),
+    })
+    const viewport = fakes.viewports[0]!
+    viewport.setZoom(2)
+    viewport.moveCenter(0, 0)
+
+    renderer.animateFitView()
+    fakes.clock.advance(200)
+    fakes.ticker.tick()
+    const scaleMidway = viewport.scale.x
+    expect(scaleMidway).not.toBe(2)
+
+    // 用户接管：取消后视口停在被取消的那一帧，不再被补间拖动
+    renderer.cancelFitAnimation()
+    fakes.clock.advance(800)
+    fakes.ticker.tick()
+    expect(viewport.scale.x).toBeCloseTo(scaleMidway, 6)
+  })
+
+  it('applies the fit instantly when the tween duration is zero', async () => {
+    const fakes = createFakes()
+    const renderer = await createPixiForceGraphRenderer({
+      dependencies: fakes.dependencies,
+      edges: [],
+      host: createHost(),
+      nodes: [{}, {}],
+      positions: new Float32Array([0, 0, 400, 400]),
+    })
+    const viewport = fakes.viewports[0]!
+
+    renderer.animateFitView({ durationMs: 0 })
+
+    expect(viewport.scale.x).toBeCloseTo(372 / 460, 6)
+    expect(viewport.calls).toContain('moveCenter:200,200')
   })
 
   it('caps the zoom at 1 when every node is stacked at a single point', async () => {
@@ -947,7 +1082,7 @@ describe('PixiForceGraphRenderer', () => {
     renderer.fitView()
     // 不把这叠节点放大成满屏重叠大饼：只居中、缩放收敛到 ≤1。
     expect(viewport.calls).toContain('setZoom:1')
-    expect(viewport.calls).toContain('moveCenter:0,12')
+    expect(viewport.calls).toContain('moveCenter:0,0')
   })
 
   it('resizes viewport and releases ticker, texture, viewport, sprites, and app resources', async () => {
@@ -967,7 +1102,7 @@ describe('PixiForceGraphRenderer', () => {
     renderer.fitView()
     // 两节点近距重叠（56×80 包围盒）属退化内容：只居中、不放大。
     expect(fakes.viewports[0]?.calls).toContain('setZoom:1')
-    expect(fakes.viewports[0]?.calls).toContain('moveCenter:20,42')
+    expect(fakes.viewports[0]?.calls).toContain('moveCenter:20,30')
 
     renderer.destroy()
     renderer.destroy()

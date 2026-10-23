@@ -6,7 +6,7 @@ import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType }
 import { dispatchRoomMemoryChanged } from '@/components/context-room/roomMemoryChange'
 import { RoomAssignControl } from './RoomAssignControl'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, memoryFailureText, toMemoryFailure, type MemoryFailure } from './useMemoryData'
+import { formatDate, formatTimeShort, memoryFailureText, toMemoryFailure, type MemoryFailure } from './useMemoryData'
 
 const PAGE_SIZE = 50
 
@@ -312,6 +312,10 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
   const [featuredDismissed, setFeaturedDismissed] = useState(false)
+  // 精选正文固定占三行：超出三行折叠，点「展开」看全文（收起后回到三行状态）。
+  const [featuredExpanded, setFeaturedExpanded] = useState(false)
+  const [featuredClamped, setFeaturedClamped] = useState(false)
+  const featuredContentRef = useRef<HTMLParagraphElement | null>(null)
   // 动态类型 chips 从「累计见过的类型」推导而非当前 items：items 会被类型过滤收窄，
   // 否则一切换筛选，其余动态类型标签会跟着消失，看起来像标签栏自动收起。
   const [knownTypes, setKnownTypes] = useState<string[]>([])
@@ -388,6 +392,25 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
     })[0]
   }, [filtered, items])
 
+  // 换一条精选（或收起）时回到三行态。
+  useEffect(() => {
+    setFeaturedExpanded(false)
+  }, [featured?.id])
+
+  // 只有真被截断时才给「展开」：量一次 scrollHeight vs clientHeight，
+  // 窗口宽度变化会改变折行，所以跟随 resize 复测。
+  useEffect(() => {
+    if (!featured || featuredExpanded) return
+    const measure = () => {
+      const element = featuredContentRef.current
+      if (!element || typeof element.scrollHeight !== 'number') return
+      setFeaturedClamped(element.scrollHeight > element.clientHeight + 1)
+    }
+    measure()
+    window.addEventListener?.('resize', measure)
+    return () => window.removeEventListener?.('resize', measure)
+  }, [featured?.id, featured?.content, featuredExpanded])
+
   const grouped = useMemo(() => {
     const groups: Array<{ id: TimelineBucketId; label: string; items: MemoryAtomicItemDto[] }> = []
     for (const bucket of TIMELINE_BUCKETS) {
@@ -423,9 +446,25 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
               {featured.roomTitle ? <span className="mem-featured-scope">仅 Room: {featured.roomTitle}</span> : <span className="mem-featured-scope">全局</span>}
               <span className="mem-featured-flag"><Sparkles aria-hidden="true" />{t('memory:timeline.featured')}</span>
             </div>
-            <p className="mem-featured-content">{featured.content}</p>
+            <p
+              ref={featuredContentRef}
+              className="mem-featured-content"
+              data-expanded={featuredExpanded || undefined}
+            >
+              {featured.content}
+            </p>
             <div className="mem-featured-meta">
               <span>{formatDate(featured.updatedAt, locale)}</span>
+              {featuredClamped || featuredExpanded ? (
+                <button
+                  type="button"
+                  className="mem-featured-toggle"
+                  aria-expanded={featuredExpanded}
+                  onClick={() => setFeaturedExpanded((current) => !current)}
+                >
+                  {t(featuredExpanded ? 'memory:timeline.collapseFeatured' : 'memory:timeline.expandFeatured')}
+                </button>
+              ) : null}
             </div>
           </div>
           <span className="mem-featured-visual" aria-hidden="true">
@@ -499,7 +538,14 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
               <ul className="mem-tl-list">
                 {group.items.map((item) => (
                   <li key={item.id} className="mem-atomic-item mem-tl-item" data-memory-id={item.id}>
-                    <time className="mem-tl-time">{formatDate(item.updatedAt, locale)}</time>
+                    <time
+                      className="mem-tl-time"
+                      dateTime={item.updatedAt ?? undefined}
+                      title={formatDate(item.updatedAt, locale)}
+                    >
+                      {formatTimeShort(item.updatedAt, locale)}
+                    </time>
+                    <span className="mem-tl-link" aria-hidden="true" />
                     <button
                       type="button"
                       className="mem-atomic-summary"
