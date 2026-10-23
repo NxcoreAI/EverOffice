@@ -101,7 +101,6 @@ import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSli
 import { buildRoomContextDigest } from "../modules/context-rooms/room-context-digest.js";
 import { RoomOverviewService } from "../modules/context-rooms/overview-service.js";
 import { RoomOverviewScheduler } from "../modules/context-rooms/overview-scheduler.js";
-import { createRoomOverviewAgentTools } from "../modules/context-rooms/overview-agent-tools.js";
 import { AsrError } from "../modules/asr/errors.js";
 import { createAsrProvider } from "../modules/asr/provider-factory.js";
 import { asrRoutes } from "../modules/asr/routes.js";
@@ -159,7 +158,6 @@ import { perceptionRoutes } from "../modules/perception/routes.js";
 import { PerceptionService } from "../modules/perception/service.js";
 import { screenMemoryRoutes } from "../modules/screen-memory/routes.js";
 import { ScreenMemoryService } from "../modules/screen-memory/service.js";
-import { createScreenMemorySearchPiTools } from "../modules/screen-memory/agent-tool.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
 import {
@@ -1113,8 +1111,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
     tools: [
-      ...createRoomOverviewAgentTools(roomOverviewService),
-      ...createScreenMemorySearchPiTools(screenMemoryService),
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
       ...(subagentConfig.enabled
@@ -1240,30 +1236,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         resolveAgentConversation?.(threadId, query) ?? null
       )),
     ],
-    // Room 级 wiki：会话按 roomId 解析本 Room wiki；未命中回退配置默认集。
-    ...(config.knowledge?.roomWikisEnabled
-      ? {
-          resolveKnowledgeWikiIds: async (input) => {
-            if (!input.roomId) return [];
-            const wikiId = knowledgeService.resolveRoomWikiId(input.roomId);
-            return wikiId ? [wikiId] : [];
-          },
-        }
-      : {}),
-    // 限定 Room 记忆注入：run 绑定 Room 时取该 Room 的甄选记忆（归属表快照）。
-    resolveRoomMemories: async (input) => (
-      input.roomId ? memoryService.listRoomMemories(input.roomId) : []
-    ),
-    roomMemorySearch: async (roomId, query, limit) => {
-      const snapshots = await memoryService.searchRoomMemories(roomId, query, limit);
-      return snapshots.map((item) => ({
-        id: item.memoryId,
-        type: item.type,
-        content: item.content,
-        created_at: item.updatedAt,
-        updated_at: item.updatedAt,
-      }));
-    },
   };
   registerPrimaryAgent(agentResolver, config, documentMcpHost, primaryIntegrations);
   // 会话档位衍生 runtime（main-direct / main-lite）：与 main 共用 integrations。
