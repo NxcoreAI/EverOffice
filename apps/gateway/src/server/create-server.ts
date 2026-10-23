@@ -69,7 +69,7 @@ import {
   createIndexBackfillRuntime,
   createImportClassifierRuntime,
   createSessionTitleRuntime,
-  createWritingStyleRuntime,
+  createVersionSummaryRuntime,
   isPiRuntimeConfigured,
   registerLiteAgentIfMissing,
   registerModelTierAgents,
@@ -195,10 +195,6 @@ import { ThesisFormatService } from "../modules/thesis-format/service.js";
 import { thesisFormatRoutes } from "../modules/thesis-format/routes.js";
 import type { SlidesStyleStageDeps } from "../modules/subagents/slides-style-stage.js";
 import { aiRelayRoutes } from "../modules/ai-relay/routes.js";
-import { WritingStyleService } from "../modules/writing-style/service.js";
-import { WritingStyleLlm } from "../modules/writing-style/llm.js";
-import { writingStyleRoutes } from "../modules/writing-style/routes.js";
-import { WritingStyleWorker } from "../modules/writing-style/worker.js";
 import type { RuntimeConfig } from "../runtime-config.js";
 import { OpenAiCompatibleVlmClient } from "../modules/vision/vlm-client.js";
 import { isPrimaryConfigured as isRuntimePrimaryConfigured } from "../modules/runtime-config/validate.js";
@@ -918,17 +914,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
   // 版本变更概览（历史面板 AI 概览标题）复用 background 模型；失败由服务退回本地规则摘要。
-  let versionSummaryRuntime = createWritingStyleRuntime(config);
-  let writingStyleRuntime = createWritingStyleRuntime(config);
+  let versionSummaryRuntime = createVersionSummaryRuntime(config);
   // 文档速览（文章级 AI 摘要）：独立隔离 runtime；未配置时路由层置 aiAvailable=false。
   // let + 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让速览/
   // 章节预览在首次登录后一直 503（下方 onChange 重建）。
   let documentOverviewRuntime = createDocumentOverviewRuntime(config);
-  const writingStyleService = new WritingStyleService(
-    db,
-    writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null,
-    app.log,
-  );
   const contextRoomAgentDispatcher = new ContextRoomAgentDispatcher(subagentOrchestrator);
   // 写作路线导图（聚焦改版 2026-09）：新文档创建时 route-planner 逐层出
   // 路线选项，拍板后 doc-writer 照路线写正文；依赖 orchestrator，须在上方构造。
@@ -941,11 +931,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   });
   routeMindmapServiceRef.current = routeMindmapService;
   // doc-writer 调度封装（doc-writer-subagent-plan §8/M2）：编辑器划词改写迁入
-  // rewrite task；写作风格注入段对 doc-writer 全部 task 附加。
-  const docWriterDispatcher = new DocWriterAgentDispatcher(
-    subagentOrchestrator,
-    { getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection() },
-  );
+  // rewrite task。写作风格注入随写作风格提炼退役（Phase 2d）。
+  const docWriterDispatcher = new DocWriterAgentDispatcher(subagentOrchestrator);
   contextRoomService.setRoomAgentDispatcher(contextRoomAgentDispatcher, (bindings, message) => {
     app.log.warn(bindings, message);
   });
@@ -1121,10 +1108,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
             ),
             issueDraftReadReceipt: (context, documentId, version, blockIds) =>
               documentReadAuthority.issue(context, documentId, version, blockIds),
-            // 写作风格生成段迁移（§7）：主 Agent 不再注入，doc-writer dispatch 全 task 附加。
-            writingStyleProvider: {
-              getGenerationPromptSection: () => writingStyleService.getGenerationPromptSection(),
-            },
             // room_correction_draft 的组装数据源：总览投影的 claims 快照（主 Agent 不再
             // 经 context_get 携带全量总览；引用/模糊纠正的计算归 room-corrector 子 Agent）。
             resolveRoomCorrectionContext: (roomId) => {
@@ -1553,7 +1536,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   }
   let documentListSyncWorker: DocumentListSyncWorker | null = null;
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
-  let writingStyleWorker: WritingStyleWorker | null = null;
   let roomMemoryDeriveWorker: RoomMemoryDeriveWorker | null = null;
   let documentIndexBackfillWorker: DocumentIndexBackfillWorker | null = null;
   app.addHook("onClose", async () => {
@@ -1571,7 +1553,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await documentMcpHost.close();
     await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
-    await writingStyleWorker?.dispose();
     await roomMemoryDeriveWorker?.dispose();
     await documentIndexBackfillWorker?.dispose();
     await perceptionService.dispose();
@@ -1757,9 +1738,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentOverviewRuntime = createDocumentOverviewRuntime(config);
     sessionTitleService.replaceRuntime(createSessionTitleRuntime(config));
     conversationSuggestionService.replaceRuntime(createConversationSuggestionRuntime(config));
-    versionSummaryRuntime = createWritingStyleRuntime(config);
-    writingStyleRuntime = createWritingStyleRuntime(config);
-    writingStyleService.replaceLlm(writingStyleRuntime ? new WritingStyleLlm(writingStyleRuntime) : null);
+    versionSummaryRuntime = createVersionSummaryRuntime(config);
     const backfillRuntime = config.documentIndexBackfill?.llmEnabled === false
       ? null
       : createIndexBackfillRuntime(config);
@@ -1781,8 +1760,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     app.log,
   );
   documentHistoryBackfillWorker.start();
-  writingStyleWorker = new WritingStyleWorker(db, writingStyleService, app.log);
-  writingStyleWorker.start();
   // 统一搜索索引 worker（2s 轮询 + 启动回填）。
   searchService.start();
   const searchBackfill = new SearchBackfill(db);
@@ -1839,8 +1816,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     );
   }
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
-  // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
-  await app.register(writingStyleRoutes(writingStyleService));
   await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService, conversationSuggestionService));
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));
