@@ -19,13 +19,13 @@ import { showToast } from '@/state/toast';
 
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary, formatBytes, knowledgeFileStatusLabel } from '../../resources';
-import { localizedUiText, uiText } from '../../adapters';
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import { localizedUiText, uiText } from '@/components/office-editor/adapters';
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types';
 import { useRoomMails } from '../../hooks/useRoomMails';
 import { MailProviderIcon } from '../MailProviderIcon';
 import { ObjectDetailView } from '../ObjectDetailView';
 import { ResourceCorrectionMenu } from '../ResourceCorrection';
-import { FilterSelect } from '../shared';
+import { FilterSelect } from '@/components/office-editor/shared';
 import { ConnectorMailDetailPanel, useConnectorMailDetail } from './ConnectorMailDetail';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';

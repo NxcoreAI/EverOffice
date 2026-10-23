@@ -20,15 +20,15 @@ import {
 import { type ReactNode, useMemo, useState } from 'react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
-import { cn, localizedUiText, uiText } from '../adapters';
+import { cn, localizedUiText, uiText } from '@/components/office-editor/adapters';
 import { dispatchRoomMemoryChanged } from '../../roomMemoryChange';
 import type {
   ContextRoomActionItem,
   ContextRoomFileItem,
   ContextRoomMaterial,
   ContextRoomRecord,
-} from '../types';
-import { ActionConfirmDialog, Panel, Tag } from './shared';
+} from '@/components/office-editor/types';
+import { ActionConfirmDialog, Panel, Tag } from '@/components/office-editor/shared';
 
 export type DetailObject =
   | { kind: 'file'; value: ContextRoomFileItem }

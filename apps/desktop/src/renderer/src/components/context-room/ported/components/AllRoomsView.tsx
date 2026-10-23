@@ -2,7 +2,7 @@ import { ArrowLeft, Layers3, Search } from 'lucide-react'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
-import type { ContextRoomRecord } from '../types'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 import { RoomCard } from './RoomCard'
 import { RoomLifecycleDialogs } from './RoomDialogs'
 

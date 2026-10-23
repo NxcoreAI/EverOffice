@@ -3,7 +3,7 @@ import { ArrowRight, Check, GitMerge, Info, Loader2, RefreshCw, Sparkles, Split,
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
-import { ReferenceDialog } from './shared'
+import { ReferenceDialog } from '@/components/office-editor/shared'
 
 function confidenceLabel(candidate: RoomDuplicateCandidate, t: Translate): string {
   if (candidate.confidence === 'high') return t('contextRoom:duplicateCenter.confidenceHigh')

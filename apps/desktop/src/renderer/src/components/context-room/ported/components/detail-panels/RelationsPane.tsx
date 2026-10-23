@@ -4,7 +4,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { RoomDocument } from '@nxcore/agent-contract'
 
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge'
-import type { ContextRoomRecord, ContextRoomResource } from '../../types'
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types'
 import { createContextRoomResourceLibrary } from '../../resources'
 import { useRoomRelationGraph } from '../../hooks/useRoomRelationGraph'
 import { RoomGraphCanvas, type RoomGraphCanvasHandle } from '../RoomGraphCanvas'

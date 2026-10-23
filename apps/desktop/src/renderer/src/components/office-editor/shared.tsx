@@ -3,9 +3,9 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { AlertTriangle, Check, ChevronDown, type LucideIcon, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import type { ToolbarAction } from '../types';
-import { cn, uiText } from '../adapters';
-import { useLocale } from '../../../../i18n/LocaleContext';
+import type { ToolbarAction } from './types';
+import { cn, uiText } from './adapters';
+import { useLocale } from '@/i18n/LocaleContext';
 
 /** 统一下拉筛选：胶囊触发器 + 自绘菜单（Radix RadioGroup），弹层与卡片菜单同风格。 */
 export function FilterSelect<T extends string>({

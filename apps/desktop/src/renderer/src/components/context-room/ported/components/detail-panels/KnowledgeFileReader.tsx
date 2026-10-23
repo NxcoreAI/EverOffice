@@ -4,9 +4,9 @@ import { FolderOpen, ListTree } from 'lucide-react';
 import { showToast } from '@/state/toast';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import type { ContextRoomKnowledgeFileResource } from '../../types';
-import { uiText } from '../../adapters';
-import { MarkdownBody } from './MarkdownBody';
+import type { ContextRoomKnowledgeFileResource } from '@/components/office-editor/types';
+import { uiText } from '@/components/office-editor/adapters';
+import { MarkdownBody } from '@/components/office-editor/MarkdownBody';
 
 interface ReaderTocEntry {
   id: string;

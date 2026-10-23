@@ -50,7 +50,7 @@ import {
 import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from './components/office-editor/editor/documentBlockNavigation'
 import { requestRoomOfficeFocus, useEmbeddedOffice } from './components/office-editor/embeddedOffice'
 import { attachOfficeViewport } from './components/office-editor/officeViewport'
-import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
+import { onDocumentOperationNavigation } from './components/office-editor/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
 import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'

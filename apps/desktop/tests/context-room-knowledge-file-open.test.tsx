@@ -10,7 +10,7 @@ vi.mock('../src/renderer/src/components/graph/PixiForceGraphCanvas', () => ({
 import { WorkspaceContent } from '../src/renderer/src/components/context-room/ported/components/detail-workspace/WorkspaceContent'
 import { KnowledgeFileExternalCard } from '../src/renderer/src/components/context-room/ported/components/detail-panels/KnowledgeFileExternalCard'
 import { createContextRoomFixture } from './context-room-fixture'
-import type { ContextRoomKnowledgeFileResource } from '../src/renderer/src/components/context-room/ported/types'
+import type { ContextRoomKnowledgeFileResource } from '@/components/office-editor/types'
 import type { KnowledgeFileDto } from '../src/shared/knowledge'
 
 function knowledgeFileDto(id: string, originalName: string): KnowledgeFileDto {

@@ -14,8 +14,8 @@ import {
 import type { ReactNode } from 'react'
 
 import { useLocale } from '../../../../i18n/LocaleContext'
-import { localizedUiText, uiText } from '../adapters'
-import type { ContextRoomRecord } from '../types'
+import { localizedUiText, uiText } from '@/components/office-editor/adapters'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 import { roomKindIcon, roomKindTone } from './utils'
 
 export function RoomGraphInspectorShell({

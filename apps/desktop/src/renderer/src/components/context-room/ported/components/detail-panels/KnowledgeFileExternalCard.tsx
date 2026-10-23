@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { showToast } from '@/state/toast';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import type { ContextRoomKnowledgeFileResource } from '../../types';
-import { uiText } from '../../adapters';
+import type { ContextRoomKnowledgeFileResource } from '@/components/office-editor/types';
+import { uiText } from '@/components/office-editor/adapters';
 
 /**
  * 编辑栏里的「无应用内预览」文件占位卡（pdf/图片等非 md 非 Office 资料），

@@ -4,8 +4,8 @@ import { useState } from 'react'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '../../../../i18n/LocaleContext'
-import type { ContextRoomRecord } from '../types'
-import { ReferenceDialog } from './shared'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
+import { ReferenceDialog } from '@/components/office-editor/shared'
 import { RoomMergePartnerPicker } from './RoomMergePartnerPicker'
 
 /** 可纠正的路由资料：file=知识上传文件，mail=连接器邮件。 */

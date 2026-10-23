@@ -8,9 +8,9 @@ import type {
 } from '../../../../../../shared/knowledge'
 import { useLocale } from '../../../../i18n/LocaleContext'
 import { FilterSelect } from '../../../ui/FilterSelect'
-import type { ContextRoomRecord, ContextRoomResource } from '../types'
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types'
 import { RoomGraphInspectorShell } from './RoomGraphInspector'
-import { ReferenceDialog } from './shared'
+import { ReferenceDialog } from '@/components/office-editor/shared'
 
 export const ROOM_RELATION_TYPES: KnowledgeRoomRelationManualType[] = [
   'related',

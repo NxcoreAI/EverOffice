@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RoomDuplicateCandidate, RoomMergePreview } from '@nxcore/agent-contract'
 
 // 无 DOM 环境：ReferenceDialog（Radix Portal）替换为透传容器，只测弹窗内部状态机。
-vi.mock('../src/renderer/src/components/context-room/ported/components/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/renderer/src/components/context-room/ported/components/shared')>()
+vi.mock('../src/renderer/src/components/office-editor/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/components/office-editor/shared')>()
   return {
     ...actual,
     ReferenceDialog: function MockReferenceDialog({ open, children }: {

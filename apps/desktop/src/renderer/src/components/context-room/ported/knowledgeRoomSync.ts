@@ -2,7 +2,7 @@ import type { KnowledgeRoomDto } from '../../../../../shared/knowledge'
 
 import { createEmptyContextRoom } from './contextRoomFactory'
 import { isDemoContextRoomId } from './demoContextRooms'
-import type { ContextRoomKind, ContextRoomRecord } from './types'
+import type { ContextRoomKind, ContextRoomRecord } from '@/components/office-editor/types'
 
 const KNOWLEDGE_ROOM_KINDS = new Set<ContextRoomKind>([
   '人物',

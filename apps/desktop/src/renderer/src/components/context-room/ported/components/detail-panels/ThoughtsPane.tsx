@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { EmergenceCardDto, EmergenceMode } from '../../../../../../../shared/knowledge';
-import type { ContextRoomRecord } from '../../types';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
 import { useEmergence } from '../../hooks/useEmergence';
 import { VeinGraphCanvas } from '../VeinGraphCanvas';
 import { EmergenceCard } from './EmergenceCard';

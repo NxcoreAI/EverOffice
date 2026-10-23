@@ -7,7 +7,7 @@ import type {
   ContextRoomRecord,
   ContextRoomResource,
   ContextRoomResourceFolder,
-} from './types';
+} from '@/components/office-editor/types';
 interface FileItem {
   mimeType: string;
   modifiedAt: Date;

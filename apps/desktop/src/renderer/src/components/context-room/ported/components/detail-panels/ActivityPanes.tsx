@@ -15,8 +15,8 @@ import { useMemo, useState } from 'react';
 import type { RoomOverviewClaim } from '@nxcore/agent-contract';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import type { ContextRoomRecord } from '../../types';
-import { localizedUiText, uiText } from '../../adapters';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
+import { localizedUiText, uiText } from '@/components/office-editor/adapters';
 import { useRoomOverviewProjection } from '../../hooks/useRoomOverviewProjection';
 import { useRoomMails } from '../../hooks/useRoomMails';
 import { CalendarProviderIcon } from '../CalendarProviderIcon';

@@ -14,13 +14,13 @@ import type { RoomAppliedEntitySource } from '@nxcore/agent-contract';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { formatRoomUpdatedTime } from '../../roomUpdatedTime';
-import type { ContextRoomRecord } from '../../types';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
 import { disableRoomMemoryItem, enableRoomMemoryItem } from '../../roomMemoryItemActions';
 import { useRoomAppliedEntities } from '../../useRoomAppliedEntities';
-import { localizedUiText, uiText } from '../../adapters';
+import { localizedUiText, uiText } from '@/components/office-editor/adapters';
 import { EntityFactGraphCanvas } from '../EntityFactGraphCanvas';
 import { createEntityFactGraphData, type EntityFactGraphFactNode } from '../entityFactGraphModel';
-import { ActionConfirmDialog } from '../shared';
+import { ActionConfirmDialog } from '@/components/office-editor/shared';
 import { PanelEmptyState } from './PanelEmptyState';
 
 export function MemoryPane({

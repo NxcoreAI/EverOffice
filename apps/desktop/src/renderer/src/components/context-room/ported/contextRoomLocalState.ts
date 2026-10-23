@@ -6,7 +6,7 @@ import type {
 
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 
-import type { ContextRoomRecord } from './types';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
 import { removeDemoContextRooms } from './demoContextRooms';
 
 const CONTEXT_ROOM_STATE_KEY_BASE = 'nexcore:context-room:state';

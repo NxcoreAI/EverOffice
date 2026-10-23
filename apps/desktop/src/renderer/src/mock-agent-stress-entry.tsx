@@ -7,7 +7,7 @@ import type { AgentEvent, AgentSession, AgentSessionSnapshot } from '@nxcore/age
 import { LocaleProvider } from './i18n/LocaleContext'
 import { ContextRoomStateProvider } from './components/context-room/ContextRoomStateProvider'
 import { RoomDocumentsProvider } from './components/context-room/RoomDocumentsProvider'
-import { desktopOperationBridge, DocumentOperationProvider } from './components/context-room/operations'
+import { desktopOperationBridge, DocumentOperationProvider } from './components/office-editor/operations/index'
 import { AgentChatView } from './components/agent/AgentChatView'
 import { useAgentSession } from './components/agent/useAgentSession'
 

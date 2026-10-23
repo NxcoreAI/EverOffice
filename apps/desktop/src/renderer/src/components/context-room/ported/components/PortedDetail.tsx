@@ -12,7 +12,7 @@ import {
   createContextRoomResourceLibrary,
   getRoomResource,
 } from '../resources'
-import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../types'
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '@/components/office-editor/types'
 import { useContextRoomLayout } from '../hooks/useContextRoomLayout'
 import { useRoomKnowledgeFiles } from '../hooks/useRoomKnowledgeFiles'
 import { ObjectDetailView } from './ObjectDetailView'

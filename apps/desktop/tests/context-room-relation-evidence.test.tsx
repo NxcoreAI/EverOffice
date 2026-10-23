@@ -17,7 +17,7 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
 import type { KnowledgeRoomRelationDto } from '../src/shared/knowledge'
 
 import { createContextRoomFixture } from './context-room-fixture'
-import type { ContextRoomResource } from '../src/renderer/src/components/context-room/ported/types'
+import type { ContextRoomResource } from '@/components/office-editor/types'
 import { RoomRelationInspector } from '../src/renderer/src/components/context-room/ported/components/RoomRelationControls'
 
 const docResource = {

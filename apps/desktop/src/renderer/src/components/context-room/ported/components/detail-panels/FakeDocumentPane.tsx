@@ -4,8 +4,8 @@ import { useMemo, useState } from 'react'
 import { useLocale } from '../../../../../i18n/LocaleContext'
 
 import { createContextRoomResourceLibrary } from '../../resources'
-import type { ContextRoomRecord, ContextRoomResource } from '../../types'
-import { uiText } from '../../adapters'
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types'
+import { uiText } from '@/components/office-editor/adapters'
 import { TiptapDocumentEditor } from '@/components/office-editor/editor/TiptapDocumentEditor'
 
 export function FakeDocumentPane({

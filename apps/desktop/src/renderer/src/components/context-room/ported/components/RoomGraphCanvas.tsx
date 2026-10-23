@@ -6,7 +6,7 @@ import {
   useRef,
 } from 'react'
 
-import type { ContextRoomKind, ContextRoomRecord } from '../types'
+import type { ContextRoomKind, ContextRoomRecord } from '@/components/office-editor/types'
 import type { KnowledgeRoomRelationDto } from '../../../../../../shared/knowledge'
 import {
   PixiForceGraphCanvas,
@@ -21,7 +21,7 @@ import {
   roomRelationTypeColor,
 } from './roomGraphVisuals'
 import { useLocale } from '../../../../i18n/LocaleContext'
-import { uiText } from '../adapters'
+import { uiText } from '@/components/office-editor/adapters'
 import { relationTypeLabel } from './RoomRelationControls'
 
 export interface RoomGraphCanvasHandle {

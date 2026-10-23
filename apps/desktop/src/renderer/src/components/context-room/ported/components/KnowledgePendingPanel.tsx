@@ -30,10 +30,10 @@ import {
   type KnowledgeEntityDto,
   type KnowledgePromotionProgressDto,
 } from '../../../../../../shared/knowledge';
-import { localizedUiText } from '../adapters';
+import { localizedUiText } from '@/components/office-editor/adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
 import { UnmatchedDocsSection } from './UnmatchedDocsSection';
-import { ReferenceDialog } from './shared';
+import { ReferenceDialog } from '@/components/office-editor/shared';
 import {
   ROOM_RECOMMENDATION_RUN_EVENT,
   type RoomRecommendationRunPayload,

@@ -1,11 +1,11 @@
 import { AlertCircle, ChevronRight, FileClock, RefreshCw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useLocale } from '../../../i18n/LocaleContext'
-import { FilterSelect } from '../../ui/FilterSelect'
+import { useLocale } from '@/i18n/LocaleContext'
+import { FilterSelect } from '@/components/ui/FilterSelect'
 
 import { requestDocumentOperationNavigation } from './documentOperationNavigation'
 import { useDocumentOperations } from './DocumentOperationProvider'
-import './DocumentOperationCenter.css'
+import './DocumentOperationCenter'
 
 const visibleStatuses = new Set(['awaiting_review', 'conflicted', 'failed'])
 const statusCopy: Record<string, string> = {

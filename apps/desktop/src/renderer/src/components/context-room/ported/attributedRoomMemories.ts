@@ -1,6 +1,6 @@
 import type { MemoryRoomMemoryItemDto } from '../../../../../shared/memory'
 
-import type { ContextRoomMemoryItem, ContextRoomRecord } from './types'
+import type { ContextRoomMemoryItem, ContextRoomRecord } from '@/components/office-editor/types'
 
 /**
  * 快照记忆卡 + Room 归属记忆（gateway room_memory_attributions）的只读合并视图：

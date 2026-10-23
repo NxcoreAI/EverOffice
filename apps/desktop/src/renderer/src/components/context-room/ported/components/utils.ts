@@ -8,9 +8,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import type { ContextRoomKind, ContextRoomRecord } from '../types';
+import type { ContextRoomKind, ContextRoomRecord } from '@/components/office-editor/types';
 
-import { uiText } from '../adapters';
+import { uiText } from '@/components/office-editor/adapters';
 
 export function roomKindIcon(kind: ContextRoomKind): LucideIcon {
   if (kind === '议题') return MessageSquare;

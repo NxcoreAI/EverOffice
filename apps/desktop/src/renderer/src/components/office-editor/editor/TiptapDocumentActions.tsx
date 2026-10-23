@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import { showToast } from '@/state/toast'
-import { ActionConfirmDialog } from '@/components/context-room/ported/components/shared'
+import { ActionConfirmDialog } from '@/components/office-editor/shared'
 import { createDocxBlob, docxExportFileName } from './tiptapDocxExport'
 import { exportEditorPdf } from './tiptapPdfExport'
 import { MoveDocumentToRoomDialog } from '@/components/context-room/ported/components/MoveDocumentToRoomDialog'

@@ -1,7 +1,7 @@
 import type { RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
 import { documentBodyContent, tiptapText } from '@nxcore/document-model'
 
-import type { ContextRoomRecord } from '../types'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 
 const BLOCK_INDEX_MARK_NODE = 'blockIndexMark'
 

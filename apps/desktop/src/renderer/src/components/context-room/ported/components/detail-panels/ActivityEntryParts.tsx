@@ -9,8 +9,8 @@ import {
   type ActivityCategory,
   type ActivityEntry,
 } from '../../hooks/useRoomActivityEntries';
-import { localizedUiText } from '../../adapters';
-import type { ContextRoomResource } from '../../types';
+import { localizedUiText } from '@/components/office-editor/adapters';
+import type { ContextRoomResource } from '@/components/office-editor/types';
 import { requestDocumentHistory } from '@/components/office-editor/editor/documentHistoryOpenSignal';
 import type { WorkspaceObjectPreview } from './index';
 
