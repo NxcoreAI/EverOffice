@@ -4,10 +4,10 @@ import type { Translate } from '../../../../i18n/LocaleContext';
 
 import type { KnowledgeFileDto } from '../../../../../../shared/knowledge';
 import { createContextRoomResourceLibrary } from '../resources';
-import { localizedUiText } from '../adapters';
+import { localizedUiText } from '@/components/office-editor/adapters';
 import { useRoomMails } from './useRoomMails';
 import { useRoomOverviewProjection } from './useRoomOverviewProjection';
-import type { ContextRoomRecord, ContextRoomResource } from '../types';
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types';
 import { parseTimelineDate } from '../roomTimeline';
 
 /** 动态条目的对象类别（筛选 chips 与图标用）。 */

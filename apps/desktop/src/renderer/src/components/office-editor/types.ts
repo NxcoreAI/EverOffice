@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import type { KnowledgeRoomContextDto } from '../../../../../shared/knowledge';
+import type { KnowledgeRoomContextDto } from '../../../../shared/knowledge';
 
 export interface CloudDocBinding {
   workspaceId: string;

@@ -4,7 +4,7 @@ import { FolderInput, X } from 'lucide-react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '@/components/office-editor/types';
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import {
   BOARD_TABS as TABS,

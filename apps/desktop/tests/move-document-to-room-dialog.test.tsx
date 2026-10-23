@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MovedRoomDocument, RoomDocument } from '@nxcore/agent-contract'
 
 // 无 DOM 环境：Radix Portal 不渲染，替换成透传容器只测弹窗内部状态机。
-vi.mock('../src/renderer/src/components/context-room/ported/components/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/renderer/src/components/context-room/ported/components/shared')>()
+vi.mock('../src/renderer/src/components/office-editor/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/components/office-editor/shared')>()
   return {
     ...actual,
     ReferenceDialog: function MockReferenceDialog({ open, children }: {

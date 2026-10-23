@@ -1,7 +1,7 @@
 import type { DocumentOperationStatus } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { showToast } from '../../../state/toast'
-import { useLocale } from '../../../i18n/LocaleContext'
+import { showToast } from '@/state/toast'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import {
   buildContinuationRevisionPrompt,

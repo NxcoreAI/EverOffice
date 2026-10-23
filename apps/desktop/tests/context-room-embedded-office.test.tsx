@@ -15,7 +15,7 @@ import {
   releaseEmbeddedOffice,
 } from '@/components/office-editor/embeddedOffice'
 import { createContextRoomFixture } from './context-room-fixture'
-import type { ContextRoomKnowledgeFileResource } from '../src/renderer/src/components/context-room/ported/types'
+import type { ContextRoomKnowledgeFileResource } from '@/components/office-editor/types'
 import type { KnowledgeFileDto } from '../src/shared/knowledge'
 
 function agentDocxResource(fileId = 'file-agent-docx', name = '本周总结.docx'): ContextRoomKnowledgeFileResource {

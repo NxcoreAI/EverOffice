@@ -1,5 +1,5 @@
 import { dispatchRoomMemoryChanged } from '../roomMemoryChange'
-import type { ContextRoomMemoryItem, ContextRoomRecord } from './types'
+import type { ContextRoomMemoryItem, ContextRoomRecord } from '@/components/office-editor/types'
 
 type RoomRecordMutator = (current: ContextRoomRecord) => ContextRoomRecord
 

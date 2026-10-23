@@ -17,13 +17,13 @@ import type {
   KnowledgeWikiGraphDto,
   KnowledgeWikiPageDto,
 } from '../../../../../../../shared/knowledge';
-import type { ContextRoomRecord, ContextRoomWikiPageResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomWikiPageResource } from '@/components/office-editor/types';
 import {
   listRoomFilesExcludingConverted,
   scheduleRoomMarkdownImport,
 } from '../../../knowledgeMarkdownImport';
 import { WikiGraphCanvas } from '../WikiGraphCanvas';
-import { MarkdownBody, resolveWikiLinkTarget } from './MarkdownBody';
+import { MarkdownBody, resolveWikiLinkTarget } from '@/components/office-editor/MarkdownBody';
 import { WikiTree } from './WikiTree';
 
 const SOURCE_KIND_LABELS: Record<string, string> = {

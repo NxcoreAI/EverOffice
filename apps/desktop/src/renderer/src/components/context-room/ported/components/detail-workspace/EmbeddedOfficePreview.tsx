@@ -4,7 +4,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext'
 import { KnowledgeFileExternalCard } from '../detail-panels/KnowledgeFileExternalCard'
 import { releaseEmbeddedOffice, setEmbeddedOffice } from '@/components/office-editor/embeddedOffice'
 import { attachOfficeViewport, type OfficeViewportAttachment } from '@/components/office-editor/officeViewport'
-import type { ContextRoomKnowledgeFileResource, ContextRoomRecord } from '../../types'
+import type { ContextRoomKnowledgeFileResource, ContextRoomRecord } from '@/components/office-editor/types'
 
 /** 内嵌预览失败的三类真实来源；渲染时再翻译，effect 不依赖 locale。 */
 type PreviewFailure =

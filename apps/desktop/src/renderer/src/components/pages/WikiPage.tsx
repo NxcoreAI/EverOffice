@@ -6,7 +6,7 @@ import {
   WIKI_CLUSTERS,
   type WikiGraphCanvasHandle,
 } from '../context-room/ported/components/WikiGraphCanvas'
-import { MarkdownBody, resolveWikiLinkTarget } from '../context-room/ported/components/detail-panels/MarkdownBody'
+import { MarkdownBody, resolveWikiLinkTarget } from '@/components/office-editor/MarkdownBody'
 import { FOLDER_LABEL_KEYS, WRAPPER_DIR_NAMES, WIKI_TREE_CARET_SLOT, WikiTree } from '../context-room/ported/components/detail-panels/WikiTree'
 import type {
   KnowledgeRoomDto,
@@ -17,7 +17,7 @@ import type {
 import './WikiPage.css'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
-import { localizedRoomKind } from '../context-room/ported/adapters'
+import { localizedRoomKind } from '@/components/office-editor/adapters'
 import { formatRelative } from './sources/sourceKinds'
 
 type WikiView = 'tree' | 'graph'

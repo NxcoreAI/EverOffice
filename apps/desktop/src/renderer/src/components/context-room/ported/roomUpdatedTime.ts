@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { useLocale, type AppLocale, type Translate } from '../../../i18n/LocaleContext'
-import type { ContextRoomRecord } from './types'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS

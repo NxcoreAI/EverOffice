@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ContextRoomSnapshot, ContextRoomSnapshotItem } from '@nxcore/agent-contract'
 import { restoreContextRoomSnapshot } from '../src/renderer/src/components/context-room/ported/contextRoomLocalState'
-import type { ContextRoomRecord } from '../src/renderer/src/components/context-room/ported/adapters'
+import type { ContextRoomRecord } from '@/components/office-editor/adapters'
 
 function healthyRoom(id: string, title: string): ContextRoomSnapshotItem {
   return {

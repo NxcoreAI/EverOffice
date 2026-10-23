@@ -1,4 +1,4 @@
-import type { Translate } from '../../../i18n/LocaleContext'
+import type { Translate } from '@/i18n/LocaleContext'
 
 type ClassValue = string | false | null | undefined | Record<string, boolean>
 

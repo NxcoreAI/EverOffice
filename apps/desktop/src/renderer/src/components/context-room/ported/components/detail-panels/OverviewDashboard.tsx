@@ -22,8 +22,8 @@ import {
 import { recordRoomOverviewDiagnostic } from '../../../roomOverviewDiagnostics';
 
 import { createContextRoomResourceLibrary } from '../../resources';
-import { localizedUiText, uiText } from '../../adapters';
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import { localizedUiText, uiText } from '@/components/office-editor/adapters';
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types';
 import type { KnowledgeFileDto, KnowledgeWikiPagesResultDto } from '../../../../../../../shared/knowledge';
 import { formatTimelineTime } from '../../roomTimeline';
 import { useRoomUpdatedTime } from '../../roomUpdatedTime';

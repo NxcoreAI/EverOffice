@@ -14,7 +14,7 @@ import {
 } from './agentRunActivity'
 import type { DisplayAgentMessage } from './useAgentSession'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
-import { useDocumentOperations } from '../context-room/operations'
+import { useDocumentOperations } from '@/components/office-editor/operations/index'
 
 export interface LinkedAgentRunState {
   sessionId: string | null

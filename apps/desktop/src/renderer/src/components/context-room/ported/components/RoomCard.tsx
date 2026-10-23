@@ -2,8 +2,8 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Clock3, GitMerge, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { useLocale } from '../../../../i18n/LocaleContext';
 
-import type { ContextRoomRecord } from '../types';
-import { localizedRoomSummary } from '../adapters';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
+import { localizedRoomSummary } from '@/components/office-editor/adapters';
 import { useRoomUpdatedTime } from '../roomUpdatedTime';
 import { roomKindIcon, roomKindTone } from './utils';
 

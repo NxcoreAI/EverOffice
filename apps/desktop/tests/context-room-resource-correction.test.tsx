@@ -26,8 +26,8 @@ vi.mock('@radix-ui/react-dropdown-menu', () => {
     ),
   }
 })
-vi.mock('../src/renderer/src/components/context-room/ported/components/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/renderer/src/components/context-room/ported/components/shared')>()
+vi.mock('../src/renderer/src/components/office-editor/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/src/components/office-editor/shared')>()
   return {
     ...actual,
     ReferenceDialog: function MockReferenceDialog({ open, children }: { open: boolean; children?: ReactNode }) {

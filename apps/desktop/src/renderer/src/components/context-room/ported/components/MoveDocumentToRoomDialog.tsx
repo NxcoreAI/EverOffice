@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { showToast } from '@/state/toast'
 import { useLocale } from '../../../../i18n/LocaleContext'
-import { ReferenceDialog } from './shared'
+import { ReferenceDialog } from '@/components/office-editor/shared'
 
 export interface MovableDocumentSummary {
   id: string

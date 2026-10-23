@@ -1,6 +1,6 @@
 import { useLocale } from '../../../../../i18n/LocaleContext';
 
-import type { ContextRoomRecord } from '../../types';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
 import { MailPane, SchedulePane, TasksPane } from './ActivityPanes';
 import type { WorkspaceObjectPreview } from './index';
 

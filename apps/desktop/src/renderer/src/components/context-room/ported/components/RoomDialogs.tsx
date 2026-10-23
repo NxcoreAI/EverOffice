@@ -2,9 +2,9 @@ import { CalendarDays, FileText, Mail, RotateCcw, Trash2, X } from 'lucide-react
 import { useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
-import type { ContextRoomRecord } from '../types'
-import { localizedUiText, uiText } from '../adapters'
-import { ReferenceDialog } from './shared'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
+import { localizedUiText, uiText } from '@/components/office-editor/adapters'
+import { ReferenceDialog } from '@/components/office-editor/shared'
 import { roomKindIcon, roomKindTone } from './utils'
 
 export interface DraftRoom {

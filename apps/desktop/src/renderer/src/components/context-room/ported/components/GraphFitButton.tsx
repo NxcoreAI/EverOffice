@@ -1,7 +1,7 @@
 import { Maximize2 } from 'lucide-react'
 
 import { useLocale } from '../../../../i18n/LocaleContext'
-import { cn } from '../adapters'
+import { cn } from '@/components/office-editor/adapters'
 
 /**
  * 图谱「自适应」浮层按钮。

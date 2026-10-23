@@ -26,7 +26,7 @@ import remarkGfm from 'remark-gfm'
 import { parseAgentRoomSelectionResult } from './agentRoomSelection'
 import { AgentDocumentPicker } from './AgentDocumentPicker'
 import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
-import { uiText } from '../context-room/ported/adapters'
+import { uiText } from '@/components/office-editor/adapters'
 import {
   findPendingAgentDocumentSelection,
   type AgentDocumentSelectionItem,

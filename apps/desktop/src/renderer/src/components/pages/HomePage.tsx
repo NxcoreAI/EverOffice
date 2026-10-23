@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { PageId } from '@/data/navigation'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
-import { uiText } from '@/components/context-room/ported/adapters'
+import { uiText } from '@/components/office-editor/adapters'
 import { useLocale, type AppLocale } from '@/i18n/LocaleContext'
 import type { DiaryDayDetails } from '../../../../shared/sources'
 

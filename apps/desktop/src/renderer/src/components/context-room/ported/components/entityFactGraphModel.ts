@@ -5,7 +5,7 @@ import type {
   RoomAppliedEntityStatus,
   RoomAppliedFact,
 } from '@nxcore/agent-contract';
-import type { ContextRoomMemoryItem, ContextRoomRecord } from '../types';
+import type { ContextRoomMemoryItem, ContextRoomRecord } from '@/components/office-editor/types';
 
 /** Room 应用记忆（结构化实体 + 事实表实时数据），useRoomAppliedEntities 的返回形态。 */
 export type RoomAppliedMemoryInput = Pick<RoomAppliedEntitiesResult, 'entities' | 'facts'> | null | undefined;

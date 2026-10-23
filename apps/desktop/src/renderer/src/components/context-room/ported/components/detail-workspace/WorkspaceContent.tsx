@@ -7,7 +7,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 import type { KnowledgeFileDto, EmergenceFocusChapter } from '../../../../../../../shared/knowledge';
 import { officePreviewKindForFileName } from '../../../../../../../shared/sources';
 import { createContextRoomResourceLibrary } from '../../resources';
-import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '@/components/office-editor/types';
 import { EmbeddedOfficePreview } from './EmbeddedOfficePreview';
 import { ExternalImportDialog } from '@/components/office-editor/editor/ExternalImportDialog';
 import { externalDocumentFeatures } from '@/components/office-editor/editor/externalDocumentFeatures';

@@ -6,7 +6,7 @@ import { interpolate, resolveLocale, translate } from '../src/renderer/src/i18n/
 import i18n from '../src/renderer/src/i18n/i18next'
 import { i18nResources } from '../src/renderer/src/i18n/resources'
 import { desktopMessageResources, translateDesktopMessage } from '../src/shared/i18n/desktop'
-import { localizedRoomKind, localizedRoomSummary, localizedUiText } from '../src/renderer/src/components/context-room/ported/adapters'
+import { localizedRoomKind, localizedRoomSummary, localizedUiText } from '@/components/office-editor/adapters'
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

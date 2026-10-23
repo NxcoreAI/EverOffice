@@ -30,7 +30,7 @@ vi.mock('@radix-ui/react-dropdown-menu', () => {
 })
 
 import { createContextRoomFixture } from './context-room-fixture'
-import type { ContextRoomRecord } from '../src/renderer/src/components/context-room/ported/types'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 import type { WorkspaceObjectPreview } from '../src/renderer/src/components/context-room/ported/components/detail-panels'
 import { MailPane } from '../src/renderer/src/components/context-room/ported/components/detail-panels/ActivityPanes'
 

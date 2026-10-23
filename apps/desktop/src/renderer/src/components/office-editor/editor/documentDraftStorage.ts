@@ -2,7 +2,7 @@ import type { JSONContent } from '@tiptap/react'
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 
 import type { Translate } from '@/i18n/LocaleContext'
-import type { ContextRoomRecord } from '@/components/context-room/ported/types'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 
 // 旧布局把版本号嵌在 key 中段（everroom:context-room:document:v1:<id>），
 // 作为 legacyKeys 兜底认领；新规范 key 为 document-draft:<id>:v<N>。

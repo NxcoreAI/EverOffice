@@ -1,7 +1,7 @@
 import type { DocumentOperation } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
-import { createContinuationMarkdownEditor } from '../src/renderer/src/components/context-room/operations/DocumentContinuationExtension'
+import { createContinuationMarkdownEditor } from '@/components/office-editor/operations/DocumentContinuationExtension'
 import {
   buildContinuationRevisionPrompt,
   continuationRevealScrollTop,
@@ -9,21 +9,21 @@ import {
   pendingContinuationBlock,
   pendingContinuationBlocks,
   shouldHandleContinuationTab,
-} from '../src/renderer/src/components/context-room/operations/documentContinuationState'
+} from '@/components/office-editor/operations/documentContinuationState'
 import {
   nextDocumentReviewReveal,
   reviewDecisionCounts,
-} from '../src/renderer/src/components/context-room/operations/documentReviewState'
+} from '@/components/office-editor/operations/documentReviewState'
 import {
   mergeOperationDetail,
   mergeOperationSummary,
   setOperationDecision,
-} from '../src/renderer/src/components/context-room/operations/documentOperationState'
-import { classifyDocumentOperationError } from '../src/renderer/src/components/context-room/operations/types'
+} from '@/components/office-editor/operations/documentOperationState'
+import { classifyDocumentOperationError } from '@/components/office-editor/operations/types'
 import {
   getDocumentOperationPresenter,
   operationReviewView,
-} from '../src/renderer/src/components/context-room/operations/presenterRegistry'
+} from '@/components/office-editor/operations/presenterRegistry'
 
 const operation: DocumentOperation = {
   id: 'operation-1',

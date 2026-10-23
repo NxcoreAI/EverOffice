@@ -17,8 +17,8 @@ import { useLocale } from '@/i18n/LocaleContext'
 import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { WindowControls } from '@/components/WindowControls'
-import type { ContextRoomRecord } from '@/components/context-room/ported/types'
-import { localizedRoomKind } from '@/components/context-room/ported/adapters'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
+import { localizedRoomKind } from '@/components/office-editor/adapters'
 import { createRoomUsageGuide } from './roomUsageGuide'
 import {
   readRoomOnboardingMarker,

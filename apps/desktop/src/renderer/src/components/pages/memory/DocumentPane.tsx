@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight, FilePlus2, FileText, RefreshCw, Trash2, Uplo
 import { useEffect, useState } from 'react'
 
 import type { MemoryDocumentDto } from '../../../../../shared/memory'
-import { MarkdownBody } from '../../context-room/ported/components/detail-panels/MarkdownBody'
+import { MarkdownBody } from '@/components/office-editor/MarkdownBody'
 import { MemoryMarkdown } from './MemoryMarkdown'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, memoryFailureText, scrollPaneToTop, useAsyncData } from './useMemoryData'

@@ -14,12 +14,12 @@ import type {
   ContextRoomKnowledgeFileResource,
   ContextRoomRecord,
   ContextRoomResource,
-} from '../../types';
+} from '@/components/office-editor/types';
 import { markdownDocumentTitle, parseMarkdownDocument } from '@/components/office-editor/editor/markdownImport';
 import { ARTIFACT_IMPORT_EXTENSIONS, isArtifactImportFileName } from '../../../../../../../shared/sources';
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
-import { FilterSelect, ReferenceDialog } from '../shared';
+import { FilterSelect, ReferenceDialog } from '@/components/office-editor/shared';
 import { MoveDocumentToRoomDialog } from '../MoveDocumentToRoomDialog';
 
 type ArtifactFilter = 'all' | 'clouddoc' | 'office';

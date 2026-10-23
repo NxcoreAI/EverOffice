@@ -1,5 +1,5 @@
 import type { RoomAppliedEntitySource, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract';
-import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '@/components/office-editor/types';
 import type {
   EmergenceFocusInput,
   KnowledgeFileDto,

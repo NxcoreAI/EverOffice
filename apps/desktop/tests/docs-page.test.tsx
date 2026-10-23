@@ -43,7 +43,7 @@ vi.mock('../src/renderer/src/components/context-room/RoomDocumentsProvider', () 
 }))
 
 // FilterSelect 走 Radix（node 环境无 document），测试桩渲染原生 select。
-vi.mock('../src/renderer/src/components/context-room/ported/components/shared', () => ({
+vi.mock('../src/renderer/src/components/office-editor/shared', () => ({
   FilterSelect: function StubFilterSelect(props: {
     value: string
     options: ReadonlyArray<{ id: string; label: string }>

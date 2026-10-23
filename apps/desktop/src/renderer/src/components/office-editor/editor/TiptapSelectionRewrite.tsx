@@ -9,7 +9,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 
 import { streamSelectionRewrite } from './selectionRewriteAgent'
 import type { SelectionRewriteFormatContext } from './selectionRewriteAgent'
-import { useDocumentOperations } from '@/components/context-room/operations/index'
+import { useDocumentOperations } from '@/components/office-editor/operations/index'
 import { stripDocumentTitle } from '@nxcore/document-model'
 
 interface RewriteAnchor {

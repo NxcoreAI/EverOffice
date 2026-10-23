@@ -1,4 +1,4 @@
-import type { ContextRoomKind, ContextRoomRecord } from './types'
+import type { ContextRoomKind, ContextRoomRecord } from '@/components/office-editor/types'
 
 interface EmptyContextRoomInput {
   id: string

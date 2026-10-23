@@ -1,4 +1,4 @@
-import type { ContextRoomRecord } from './types';
+import type { ContextRoomRecord } from '@/components/office-editor/types';
 
 const cloudWorkspaceId = '5fc9205a-8077-4e39-bf77-aa5ae6262b93';
 

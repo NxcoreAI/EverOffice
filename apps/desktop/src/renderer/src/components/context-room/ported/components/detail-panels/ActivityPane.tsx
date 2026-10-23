@@ -5,12 +5,12 @@ import { useLocale, type Translate } from '../../../../../i18n/LocaleContext';
 
 import type { KnowledgeFileDto } from '../../../../../../../shared/knowledge';
 import { useRoomActivityEntries, type ActivityCategory } from '../../hooks/useRoomActivityEntries';
-import { localizedUiText } from '../../adapters';
+import { localizedUiText } from '@/components/office-editor/adapters';
 import { formatTimelineTime, parseTimelineDate } from '../../roomTimeline';
-import type { ContextRoomRecord, ContextRoomResource } from '../../types';
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types';
 import { ActivityEntryBody, CATEGORY_ICONS, useActivityEntryInteractions } from './ActivityEntryParts';
 import { PanelEmptyState } from './PanelEmptyState';
-import { FilterSelect } from '../shared';
+import { FilterSelect } from '@/components/office-editor/shared';
 import type { WorkspaceObjectPreview } from './index';
 
 type TimelineView = 'day' | 'week' | 'month';

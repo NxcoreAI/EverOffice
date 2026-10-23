@@ -5,8 +5,8 @@ import { useLocale } from '../../../../../i18n/LocaleContext'
 import type { EmergenceFocusChapter } from '../../../../../../../shared/knowledge'
 
 import { createContextRoomResourceLibrary } from '../../resources'
-import type { ContextRoomRecord, ContextRoomResource } from '../../types'
-import { uiText } from '../../adapters'
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types'
+import { uiText } from '@/components/office-editor/adapters'
 import { TiptapDocumentEditor } from '@/components/office-editor/editor/TiptapDocumentEditor'
 
 export function DocumentPane({

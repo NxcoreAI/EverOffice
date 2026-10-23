@@ -4,7 +4,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 
 import { MailProviderIcon } from '../MailProviderIcon';
 import { X } from 'lucide-react';
-import { MarkdownBody } from './MarkdownBody';
+import { MarkdownBody } from '@/components/office-editor/MarkdownBody';
 
 /** 连接器邮件详情拉取（会话内缓存，Room 切换即失效）：待办邮件区与资料面板共用。 */
 export function useConnectorMailDetail(roomId: string, sourceId: string | null) {

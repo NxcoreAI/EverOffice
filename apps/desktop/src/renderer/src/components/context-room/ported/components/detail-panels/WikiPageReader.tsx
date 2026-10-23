@@ -4,8 +4,8 @@ import { useLocale } from '../../../../../i18n/LocaleContext';
 import { showToast } from '@/state/toast';
 
 import type { KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
-import type { ContextRoomWikiPageResource } from '../../types';
-import { MarkdownBody, resolveWikiLinkTarget } from './MarkdownBody';
+import type { ContextRoomWikiPageResource } from '@/components/office-editor/types';
+import { MarkdownBody, resolveWikiLinkTarget } from '@/components/office-editor/MarkdownBody';
 
 /**
  * 编辑栏的 wiki 页面阅读器（room-wiki 方案 M3c）：readWikiPage 只读渲染，

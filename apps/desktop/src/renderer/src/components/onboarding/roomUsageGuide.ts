@@ -1,6 +1,6 @@
 import type { TiptapJsonContent } from '@nxcore/agent-contract'
 
-import type { ContextRoomKind, ContextRoomRecord } from '@/components/context-room/ported/types'
+import type { ContextRoomKind, ContextRoomRecord } from '@/components/office-editor/types'
 import type { Translate } from '@/i18n/LocaleContext'
 
 interface RoomUsageGuide {

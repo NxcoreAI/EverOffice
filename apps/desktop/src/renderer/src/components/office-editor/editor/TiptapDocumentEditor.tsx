@@ -28,8 +28,8 @@ import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeD
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
 import { useLocale } from '@/i18n/LocaleContext'
-import { uiText } from '@/components/context-room/ported/adapters'
-import type { ContextRoomRecord, ContextRoomResource } from '@/components/context-room/ported/types'
+import { uiText } from '@/components/office-editor/adapters'
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
 import { TiptapContentScale } from './TiptapContentScale'
@@ -45,20 +45,20 @@ import {
 } from './DocumentCursorCompletion'
 import { ensureStableBlockIds, StableBlockIds } from './StableBlockIds'
 import { DocumentHistoryDiffView } from './DocumentHistoryDiffView'
-import { useDocumentEditorOperations, useDocumentOperations } from '@/components/context-room/operations/index'
+import { useDocumentEditorOperations, useDocumentOperations } from '@/components/office-editor/operations/index'
 import {
   clearDocumentOperationReview,
   DocumentOperationReviewExtension,
   showDocumentOperationReview,
-} from '@/components/context-room/operations/DocumentOperationReviewExtension'
-import { DocumentOperationReviewToolbar } from '@/components/context-room/operations/DocumentOperationReviewToolbar'
-import { nextDocumentReviewReveal } from '@/components/context-room/operations/documentReviewState'
+} from '@/components/office-editor/operations/DocumentOperationReviewExtension'
+import { DocumentOperationReviewToolbar } from '@/components/office-editor/operations/DocumentOperationReviewToolbar'
+import { nextDocumentReviewReveal } from '@/components/office-editor/operations/documentReviewState'
 import {
   clearDocumentContinuation,
   DocumentContinuationExtension,
   showDocumentContinuation,
-} from '@/components/context-room/operations/DocumentContinuationExtension'
-import { DocumentContinuationToolbar } from '@/components/context-room/operations/DocumentContinuationToolbar'
+} from '@/components/office-editor/operations/DocumentContinuationExtension'
+import { DocumentContinuationToolbar } from '@/components/office-editor/operations/DocumentContinuationToolbar'
 import {
   SelectionRewritePreviewExtension,
   TiptapSelectionRewritePreview,

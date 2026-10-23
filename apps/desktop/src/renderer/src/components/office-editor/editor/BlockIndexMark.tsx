@@ -22,7 +22,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 import i18n from '@/i18n/i18next'
 import { showToast } from '@/state/toast'
 
-import type { ContextRoomMemoryItem } from '@/components/context-room/ported/types'
+import type { ContextRoomMemoryItem } from '@/components/office-editor/types'
 import { resolveDocumentBlockReference } from './documentBlockReferenceResolver'
 import {
   DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT,

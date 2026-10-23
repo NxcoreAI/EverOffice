@@ -9,8 +9,8 @@ import type {
   KnowledgeRuleDto,
   KnowledgeUnmatchedItemDto,
 } from '../../../../../../shared/knowledge'
-import { localizedUiText } from '../adapters'
-import { ReferenceDialog } from './shared'
+import { localizedUiText } from '@/components/office-editor/adapters'
+import { ReferenceDialog } from '@/components/office-editor/shared'
 import { notifyKnowledgeChanged } from './ResourceCorrection'
 
 /**

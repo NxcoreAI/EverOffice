@@ -1,5 +1,5 @@
 import type { DocumentOperationReviewView } from './presenterRegistry'
-import { useLocale } from '../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import { reviewDecisionCounts } from './documentReviewState'
 import type { DocumentReviewDecisionMap } from './documentReviewState'
 import './DocumentOperationReview.css'

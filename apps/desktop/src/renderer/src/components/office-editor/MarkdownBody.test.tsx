@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import type { KnowledgeWikiPageDto } from '../../../../../../../shared/knowledge';
+import type { KnowledgeWikiPageDto } from '../../../../shared/knowledge';
 import { MarkdownBody, decodeWikiHref, normalizeWikiLinkTarget, resolveWikiLinkTarget } from './MarkdownBody';
 
 const page = (id: string, title: string, path: string): KnowledgeWikiPageDto => ({ id, title, type: 'doc', path });

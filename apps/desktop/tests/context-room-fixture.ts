@@ -1,4 +1,4 @@
-import type { ContextRoomRecord } from '../src/renderer/src/components/context-room/ported/types'
+import type { ContextRoomRecord } from '@/components/office-editor/types'
 
 export function createContextRoomFixture(
   id = 'room-test',

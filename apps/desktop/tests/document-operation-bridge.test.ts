@@ -1,7 +1,7 @@
 import type { DocumentOperationSummary } from '@nxcore/agent-contract'
 import { describe, expect, it, vi } from 'vitest'
 
-import { createDesktopOperationBridge } from '../src/renderer/src/components/context-room/operations/desktopOperationBridge'
+import { createDesktopOperationBridge } from '@/components/office-editor/operations/desktopOperationBridge'
 import type { NxcoreDesktopApi } from '../src/shared/sources'
 
 function summary(id: string, status: DocumentOperationSummary['status'], capabilityId = 'document.edit'):
