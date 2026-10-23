@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import type { PerceptionService } from "../perception/service.js";
-import { insightEvidenceMarkdown } from "../reality/insight-tags.js";
+import { insightEvidenceMarkdown } from "../vision/insight-tags.js";
 import type { FilesService } from "./service.js";
 
 export interface ImageDescribeOutcome {

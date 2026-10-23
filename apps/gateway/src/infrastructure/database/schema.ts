@@ -2527,9 +2527,8 @@ export const diarySchedules = sqliteTable("diary_schedules", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
 
-/** User-managed Agent schedules. Built-in tasks (for example diary.daily)
- * remain outside this table and are exposed by the scheduler as immutable
- * records. */
+/** User-managed Agent schedules. Phase 1 起调度器不再注入内置任务，
+ * 表内记录与接口返回一一对应。 */
 export const agentSchedules = sqliteTable(
   "agent_schedules",
   {

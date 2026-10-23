@@ -16,8 +16,8 @@ import {
   visualProcessingJobs,
 } from "../../infrastructure/database/schema.js";
 import type { FilesService } from "../files/service.js";
-import { insightEvidenceMarkdown, normalizeInsightTags } from "../reality/insight-tags.js";
-import type { VisualInferenceClient, VisualInferenceResult } from "./vlm-client.js";
+import { insightEvidenceMarkdown, normalizeInsightTags } from "../vision/insight-tags.js";
+import type { VisualInferenceClient, VisualInferenceResult } from "../vision/vlm-client.js";
 import {
   screenshotContinuityMs,
   shouldGroupScreenshot,

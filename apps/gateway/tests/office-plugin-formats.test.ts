@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OfficeBridgeClient } from "../src/modules/documents/capabilities/office-bridge-client.js";
 import { officePlugin } from "../src/modules/documents/capabilities/office-plugin.js";
 import { SlidesVisualReviewer } from "../src/modules/slides-visual-review/review.js";
-import type { VlmPromptAnalyzer } from "../src/modules/perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../src/modules/vision/vlm-client.js";
 import type { DocumentExecutionContext } from "../src/modules/documents/capabilities/types.js";
 
 function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {

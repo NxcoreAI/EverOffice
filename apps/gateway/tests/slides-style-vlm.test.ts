@@ -6,7 +6,7 @@ import {
 } from "../src/modules/slides-style/vlm-extract.js";
 import { styleParamsFromStyler, baselineStyleParams } from "../src/modules/slides-style/compose.js";
 import type { OverviewExtraction } from "../src/modules/slides-style/compose.js";
-import type { VlmPromptAnalyzer } from "../src/modules/perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../src/modules/vision/vlm-client.js";
 import type { PaletteRoles } from "../src/modules/slides-style/extract.js";
 
 function analyzer(answer: unknown): VlmPromptAnalyzer {

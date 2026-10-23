@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RealityTag } from "@nxcore/reality-contract";
-import { normalizeInsightTags } from "../reality/insight-tags.js";
+import { normalizeInsightTags } from "./insight-tags.js";
 import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
 
 export interface VisualInferenceResult {

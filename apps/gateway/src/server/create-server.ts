@@ -73,7 +73,6 @@ import {
   createSessionTitleRuntime,
   createWritingStyleRuntime,
   isPiRuntimeConfigured,
-  registerDiaryAgent,
   registerLiteAgentIfMissing,
   registerModelTierAgents,
   registerPrimaryAgent,
@@ -165,6 +164,7 @@ import {
   createDocumentUnderstandingTools,
 } from "../modules/document-understanding/tools.js";
 import { diaryRoutes } from "../modules/diary/routes.js";
+import { registerDiaryAgent } from "../modules/diary/agent-runtime.js";
 import { DiaryService } from "../modules/diary/service.js";
 import { AgentSchedulerService } from "../modules/agent-scheduler/service.js";
 import { agentSchedulerRoutes } from "../modules/agent-scheduler/routes.js";
@@ -215,7 +215,7 @@ import { WritingStyleLlm } from "../modules/writing-style/llm.js";
 import { writingStyleRoutes } from "../modules/writing-style/routes.js";
 import { WritingStyleWorker } from "../modules/writing-style/worker.js";
 import type { RuntimeConfig } from "../runtime-config.js";
-import { OpenAiCompatibleVlmClient } from "../modules/perception/vlm-client.js";
+import { OpenAiCompatibleVlmClient } from "../modules/vision/vlm-client.js";
 import { isPrimaryConfigured as isRuntimePrimaryConfigured } from "../modules/runtime-config/validate.js";
 import { DEFAULT_SECRET_STORE_MASTER_KEY, SecretStore } from "../security/secret-store.js";
 import { redactSecrets, redactText } from "../security/secret-redaction.js";
@@ -1570,7 +1570,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       });
     });
   }
-  const agentSchedulerService = new AgentSchedulerService(db, diaryService, agentService);
+  const agentSchedulerService = new AgentSchedulerService(db, agentService);
   agentSchedulerService.initialize();
   diaryService.initialize();
   screenMemoryMarkDiaryStaleRef.current = (at) => diaryService.markStaleAt(at);

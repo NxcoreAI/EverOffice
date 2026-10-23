@@ -308,35 +308,43 @@ describe("gateway server", () => {
     expect(diaryConflict.statusCode).toBe(409);
   });
 
-  it("manages agent schedules and delegates the diary task to the scheduler", async () => {
+  it("lists only user schedules: the built-in diary slot is gone (Phase 1)", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
 
     const initial = await app.inject({ method: "GET", url: "/v1/agent/schedules", headers });
     expect(initial.statusCode).toBe(200);
-    const task = initial.json<Array<{ id: string; enabled: boolean; configVersion: number }>>()[0]!;
-    expect(task.id).toBe("diary.daily");
+    expect(initial.json<unknown[]>()).toEqual([]);
+
+    const created = await app.inject({
+      method: "POST", url: "/v1/agent/schedules", headers,
+      payload: { agentId: "primary", name: "每日复盘", prompt: "总结进展", localTime: "08:15", timezone: "UTC" },
+    });
+    expect(created.statusCode).toBe(201);
+    const task = created.json<{ id: string; enabled: boolean; configVersion: number }>();
+    expect(task.enabled).toBe(true);
 
     const updated = await app.inject({
-      method: "PATCH",
-      url: "/v1/agent/schedules/diary.daily",
-      headers,
-      payload: { enabled: !task.enabled, localTime: "08:15", timezone: "UTC", configVersion: task.configVersion },
+      method: "PATCH", url: `/v1/agent/schedules/${task.id}`, headers,
+      payload: { localTime: "08:30", timezone: "UTC", configVersion: task.configVersion },
     });
     expect(updated.statusCode).toBe(200);
-    expect(updated.json()).toMatchObject({ id: "diary.daily", enabled: !task.enabled, localTime: "08:15", timezone: "UTC" });
+    expect(updated.json()).toMatchObject({ id: task.id, localTime: "08:30", timezone: "UTC" });
 
-    const runNow = await app.inject({ method: "POST", url: "/v1/agent/schedules/diary.daily/run", headers });
-    expect(runNow.statusCode).toBe(202);
-    expect(runNow.json()).toMatchObject({ runId: expect.any(String) });
-
+    const missingPatch = await app.inject({
+      method: "PATCH", url: "/v1/agent/schedules/missing", headers,
+      payload: { localTime: "08:30", configVersion: 1 },
+    });
     const missing = await app.inject({ method: "POST", url: "/v1/agent/schedules/missing/run", headers });
+    const removed = await app.inject({ method: "DELETE", url: `/v1/agent/schedules/${task.id}`, headers });
     await app.close();
+    expect(missingPatch.statusCode).toBe(404);
     expect(missing.statusCode).toBe(404);
+    expect(removed.statusCode).toBe(204);
   });
 
-  it("supports user schedules while protecting built-in tasks and exposing MCP execution", async () => {
+  it("supports user schedules and exposes MCP execution", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
@@ -345,13 +353,11 @@ describe("gateway server", () => {
       payload: { agentId: "primary", name: "整理收件箱", description: "测试任务", prompt: "整理今天的收件箱", localTime: "10:00", timezone: "UTC" },
     });
     const task = created.json<{ id: string; builtin: boolean }>();
-    const builtinDelete = await app.inject({ method: "DELETE", url: "/v1/agent/schedules/diary.daily", headers });
     const mcpList = await app.inject({ method: "POST", url: "/v1/mcp/agent-schedules", headers, payload: { jsonrpc: "2.0", id: 1, method: "tools/list" } });
     const deleted = await app.inject({ method: "DELETE", url: `/v1/agent/schedules/${task.id}`, headers });
     await app.close();
     expect(created.statusCode).toBe(201);
     expect(task.builtin).toBe(false);
-    expect(builtinDelete.statusCode).toBe(409);
     expect(mcpList.json<{ result: { tools: Array<{ name: string }> } }>().result.tools.map((tool) => tool.name)).toContain("agent_schedule_run");
     expect(deleted.statusCode).toBe(204);
   });

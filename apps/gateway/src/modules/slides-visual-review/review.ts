@@ -7,7 +7,7 @@
  * 同页最多触发一次重落，超限后仍不通过则放行并在结果中标记。
  */
 
-import type { VlmPromptAnalyzer } from "../perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../vision/vlm-client.js";
 
 export interface VisualReviewIssue {
   item: string;
