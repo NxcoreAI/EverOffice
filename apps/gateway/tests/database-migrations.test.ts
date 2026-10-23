@@ -106,7 +106,6 @@ describe("database migrations", () => {
 
     beforeMerge.sqlite.exec("DROP TABLE runtime_config_store");
     beforeMerge.sqlite.exec("DROP TABLE agent_schedules");
-    beforeMerge.sqlite.exec("ALTER TABLE ingest_events DROP COLUMN reinstated_at");
     beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787320000000);
     beforeMerge.sqlite.prepare(
       "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",

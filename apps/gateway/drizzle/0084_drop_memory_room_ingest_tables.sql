@@ -9,7 +9,6 @@
 --   room_doc_links（documents / agent / search / index-backfill）
 --   room_overviews（agent-access）
 --   room_source_memberships（search / agent-access）
---   ingest_events（files.purgeUnsupportedFiles）
 --
 -- 幂等：全部用 DROP TABLE IF EXISTS，可重复执行。
 -- SQLite 的 DROP TABLE 会连带删除该表上的索引与触发器（本项目迁移里没有
@@ -74,4 +73,8 @@ DROP TABLE IF EXISTS `writing_style_insights`;--> statement-breakpoint
 DROP TABLE IF EXISTS `writing_style_profiles`;--> statement-breakpoint
 DROP TABLE IF EXISTS `writing_style_settings`;--> statement-breakpoint
 DROP TABLE IF EXISTS `writing_style_signals`;--> statement-breakpoint
-DROP TABLE IF EXISTS `writing_style_user_content`;
+DROP TABLE IF EXISTS `writing_style_user_content`;--> statement-breakpoint
+
+-- 理解引擎台账：最后两处读取（files.purgeUnsupportedFiles 的清污删除、
+-- connectors 连接级联的软删）已随本相位摘除，写入方更早随 ingest 模块删除。
+DROP TABLE IF EXISTS `ingest_events`;

@@ -183,6 +183,9 @@ function adoptPreReleaseConnectorMarkdownMigrations(
     "status", "attempts", "available_at", "lease_owner", "lease_until", "last_error",
     "created_at", "updated_at",
   ])) return;
+  // 该函数只服务「早期 pre-release 连接器分支 + 统一理解引擎」的库：那批库在
+  // migrate 之前就存在 ingest_events（0084 才删），用它的列形态当形态哨兵。
+  // 已修到 0084 之后的库不会走到这里（0017/0018 早已记录在案）。
   if (!hasColumns("ingest_events", ["deleted_at"])) return;
   for (const index of [
     "connector_markdown_artifacts_source_idx",
@@ -190,7 +193,6 @@ function adoptPreReleaseConnectorMarkdownMigrations(
     "connector_markdown_artifacts_status_idx",
     "connector_markdown_outbox_due_idx",
     "connector_markdown_outbox_source_idx",
-    "ingest_events_source_hash_idx",
   ]) {
     if (!hasObject("index", index)) return;
   }
@@ -288,13 +290,25 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
       if (addColumn && (!hasObject("table", addColumn[1]!) || hasColumn(addColumn[1]!, addColumn[2]!))) continue;
       const dropIndex = statement.match(/^DROP INDEX [`"]([^`"]+)[`"]/);
       if (dropIndex && !hasObject("index", dropIndex[1]!)) continue;
+      // 重放的历史迁移里可能引用已被后续迁移删掉的表（如 0084 删掉的 ingest_events）：
+      // 目标表不存在时该语句无意义，跳过而不是让补丁路径炸掉。
+      const indexTarget = statement.match(/^CREATE(?: UNIQUE)? INDEX(?: IF NOT EXISTS)? [`"][^`"]+[`"] ON [`"]([^`"]+)[`"]/);
+      const tableTarget = statement.match(/^(?:ALTER TABLE|INSERT INTO|UPDATE|DELETE FROM) [`"]([^`"]+)[`"]/);
+      const referenced = indexTarget?.[1] ?? tableTarget?.[1];
+      if (referenced && !hasObject("table", referenced)) continue;
       sqlite.exec(statement);
     }
   };
   // 0018_living_secret_warriors 的日记/感知/视觉表已随 0084 删除，不能整条重放；
-  // 这里只补它给 uploaded_files 加的四列（早期开发库可能因 0018 与连接器分支
-  // 时间戳冲突而被 Drizzle 跳过）。
-  if (hasObject("table", "uploaded_files")) {
+  // 这里只补它给 uploaded_files 加的四列。只在「游标已越过 0018 但列缺失」的库上
+  // 补——否则会把列提前加到还没跑 0018 的旧库上，等 0018 真跑时 ADD COLUMN 撞车。
+  const canonical0018 = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0018_living_secret_warriors");
+  const appliedCursor = Number((sqlite.prepare(
+    "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+  ).get() as { created_at?: number } | undefined)?.created_at ?? 0);
+  const cursorPassed0018 = typeof canonical0018?.when === "number" && appliedCursor >= canonical0018.when;
+  if (cursorPassed0018 && hasObject("table", "uploaded_files")) {
     const uploadedFileColumns: Array<[string, string]> = [
       ["asset_kind", "text DEFAULT 'document' NOT NULL"],
       ["origin_channel", "text DEFAULT 'upload' NOT NULL"],
@@ -307,17 +321,9 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
       }
     }
   }
-  if (hasObject("table", "ingest_events") && !hasColumn("ingest_events", "deleted_at")) {
-    sqlite.exec("ALTER TABLE `ingest_events` ADD `deleted_at` integer");
-  }
   if (!hasObject("table", "connector_markdown_artifacts")) runMigrationStatements("0018_charming_vampiro");
   if (!hasObject("table", "subagent_definitions")) runMigrationStatements("0019_sturdy_fantastic_four");
   if (!hasObject("table", "runtime_config_store")) runMigrationStatements("0023_runtime_config_store");
-  if (existsSync(join(migrationsDir, "0023_wide_red_hulk.sql"))
-    && hasObject("table", "ingest_events")
-    && !hasColumn("ingest_events", "reinstated_at")) {
-    sqlite.exec("ALTER TABLE `ingest_events` ADD `reinstated_at` integer");
-  }
   if (!hasObject("table", "agent_schedules")) runMigrationStatements("0025_greedy_the_santerians");
 }
 

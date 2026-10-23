@@ -12,7 +12,6 @@ import {
   fileClassifications,
   fileEntries,
   fileVersions,
-  ingestEvents,
   jobs,
   parsedContents,
   uploadedFiles,
@@ -837,7 +836,6 @@ export class FilesService {
     const rows = this.db.select().from(uploadedFiles).all()
       .filter((row) => !isSupportedUploadFilename(row.originalName));
     for (const row of rows) {
-      this.db.delete(ingestEvents).where(and(eq(ingestEvents.sourceKind, "file"), eq(ingestEvents.sourceId, row.id))).run();
       await this.deleteFile(row.id);
     }
     return rows.length;
