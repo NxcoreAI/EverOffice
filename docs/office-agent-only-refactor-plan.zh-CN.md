@@ -255,6 +255,7 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | Phase 1b | 断耦合（聚类 + Room 材料）：删除 `files/clustering-service.ts`（图片聚类/embedding）与 `PATCH /v1/file-clusters/:id`、`FilesService.versionClassifier` 钩子及 create-server 装配；删除子 Agent 工具 `room_analysis` 与 `resolveRoomContext` 选项（保留纯投喂的 `content_analysis`） | 完成（tsc 干净；`subagent-tools` 48 / `room-context-digest` 8 全绿；`file-catalog` 仅基线 1 失败） |
 | 2026-10-23 | Phase 1c | 断耦合（图片描述 + 连接级联）：删除 `files/image-describe.ts` 与 VLM 描述链路（ingest 改为图片占位 markdown，图片仍是一等格式）；`connection-purge` 去掉 memory/knowledge 两步清理与 `memoryDeleted` | 完成（tsc 干净；全量套件 10 个失败 = 基线：189 文件 / 1955 用例） |
 | 2026-10-23 | Phase 1d | `data-migrations` 去 `memoryService`：`JobType` 只剩 `source_gc`、幂等门简化为内容 hash、删除 `indexMemory`/`afterJob`/记忆检索补全/GC 记忆清理，导入后运行直接完成（`phase` 由 `memory` 改 `finalizing`） | 完成（tsc 干净；套件维持基线 10 个失败；两个迁移测试文件 10 用例全绿，重启恢复用例改为真实崩溃路径） |
+| 2026-10-23 | Phase 1e | 补最后一条静态边：`documents/core/{commit-service,lifecycle-service}` 不再 `enqueueWritingStyleExtract`（提交/回收站/恢复/清空共 6 处）——此前扫描漏了 `writing-style`，它是唯一「存活 → 将删」的遗漏模块；`doc-writer` 的风格注入为结构化 provider，无静态依赖 | 完成（tsc 干净；`document-*` 87 用例全绿；套件维持基线 10 个失败） |
 | 2026-10-23 | Phase 1 闸门 | 网关「存活模块 → 将删模块」反向依赖 **18 → 0**（`data-migrations` 是最后一个）。剩余命中全部属于 Phase 2 范围：`create-server.ts` 40 处装配（§3 表逐行处理）+ 桌面 3 个自身即将删除的文件（`main/knowledge/llm-env.ts`、`shared/knowledge.ts`、`main/screenshot/window-screenshot-service.ts`，依赖方向均为将删→将删） | Phase 1 完成 |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 2 | 删除模块 | 未开始 |
