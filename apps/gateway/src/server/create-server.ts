@@ -70,7 +70,6 @@ import {
   registerLiteAgentIfMissing,
   registerModelTierAgents,
   registerPrimaryAgent,
-  registerTranscriptionSummaryAgent,
   type AgentRuntimeIntegrationOptions,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
@@ -84,11 +83,6 @@ import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
-import { AsrError } from "../modules/asr/errors.js";
-import { createAsrProvider } from "../modules/asr/provider-factory.js";
-import { asrRoutes } from "../modules/asr/routes.js";
-import { AsrService } from "../modules/asr/service.js";
-import type { AsrProvider } from "../modules/asr/types.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
@@ -108,7 +102,6 @@ import { purgeConnectorConnectionCascade } from "../modules/connectors/connectio
 import { ConversationSuggestionService } from "../modules/processing/conversation-suggestion.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { SessionTitleService } from "../modules/processing/session-title.js";
-import { TranscriptionSummaryService } from "../modules/processing/service.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
 import {
@@ -177,7 +170,6 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   };
   apply(config.pi as unknown as Record<string, unknown> | null, runtime.primary);
   apply(config.backgroundPi as unknown as Record<string, unknown> | null, runtime.background);
-  apply(config.transcriptionSummaryPi as unknown as Record<string, unknown> | null, runtime.transcriptionSummary);
   apply(config.litePi as unknown as Record<string, unknown> | null, runtime.lite);
   apply(config.cursorCompletionPi as unknown as Record<string, unknown> | null, runtime.cursorCompletion);
   // background/cursorCompletion 对齐 env 构建语义（config.ts 的 {...pi} 拷贝）：
@@ -185,7 +177,6 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   // 继承 primary——否则 patch 永远凑不齐 isPiRuntimeConfigured，后台转写总结
   // runtime 一直停留在未配置占位，任务永远 runtime_config_not_ready。
   inheritPrimaryDefaults(config.pi, config.backgroundPi);
-  inheritPrimaryDefaults(config.pi, config.transcriptionSummaryPi);
   inheritPrimaryDefaults(config.pi, config.cursorCompletionPi);
   // lite 档连接三要素（provider/baseUrl/apiKey）缺省继承 primary，但 model
   // 不继承——model 空＝未配置 lite＝档位隐藏，回落主模型会冒充轻量档。
@@ -293,11 +284,7 @@ export function isAiQuotaError(message: string): boolean {
   return /insufficient_user_quota|insufficient quota|exceeded your current quota|预扣费额度失败|额度不足/i.test(message);
 }
 
-export interface ServerOverrides {
-  asrProvider?: AsrProvider | null;
-}
-
-export async function createServer(config: GatewayConfig, overrides: ServerOverrides = {}) {
+export async function createServer(config: GatewayConfig) {
   const gatewayLogger = await createGatewayLogger(config.dataDir, config.logLevel);
   // Fastify emits one INFO line for both sides of every request. Keep those
   // access logs disabled by default; warn/error paths still reach the logger.
@@ -433,14 +420,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
 
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
     request.log.error({ err: error }, "request failed");
-    if (error instanceof AsrError) {
-      await reply.code(error.statusCode).send({
-        error: error.code,
-        message: redactText(error.message),
-        requestId: request.id,
-      });
-      return;
-    }
     if (error instanceof DocumentServiceError) {
       await reply.code(error.statusCode).send({
         error: error.code,
@@ -869,28 +848,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   agentService.setChannelSessionRevoker((sessionId) => channelMcpHost.revokeAgentSession(sessionId));
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
-  registerTranscriptionSummaryAgent(agentResolver, config);
-  const backgroundAgentRuntime = agentResolver.resolve(BUILTIN_AGENT_IDS.transcriptionSummary);
-  app.log.info(
-    {
-      runtimeId: backgroundAgentRuntime.id,
-      ...(config.backgroundPi
-        ? {
-            provider: config.backgroundPi.provider,
-            model: config.backgroundPi.model,
-            maxTokens: config.backgroundPi.maxTokens,
-          }
-        : {}),
-    },
-    "background transcription runtime configured",
-  );
-  const transcriptionSummaryService = new TranscriptionSummaryService(backgroundAgentRuntime, false);
   const sessionTitleService = new SessionTitleService(createSessionTitleRuntime(config));
   const conversationSuggestionService = new ConversationSuggestionService(createConversationSuggestionRuntime(config));
-  let asrProvider = Object.hasOwn(overrides, "asrProvider")
-    ? overrides.asrProvider ?? null
-    : createAsrProvider(config, app.log);
-  const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
   runtimeConfigManager.onChange((snapshot) => {
     app.log.info({
       event: "runtime_config.selected",
@@ -902,8 +861,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         ["primary", "background", "cursorCompletion", "asr", "vlm", "webSearch"].includes(key)),
     }, "runtime config selected");
     applyRuntimeConfig(config, snapshot.config);
-    asrProvider = createAsrProvider(config, app.log);
-    asrService.replaceProvider(asrProvider);
     // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。
     if (registerWebSearchAgentIfMissing(agentResolver, config)) {
       app.log.info("web search agent registered from runtime config");
@@ -935,8 +892,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         const lite = agentResolver.reload(BUILTIN_AGENT_IDS.lite);
         await lite.previous?.dispose();
       }
-      const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
-      await transcriptionSummaryService.replaceRuntime(background.current);
       for (const agentId of [BUILTIN_AGENT_IDS.cursorCompletion, BUILTIN_AGENT_IDS.webSearch]) {
         if (!agentResolver.has(agentId)) continue;
         const { previous } = agentResolver.reload(agentId);
@@ -1066,13 +1021,11 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await channelMcpHost.close();
     await subagentOrchestrator.dispose();
     slidesProgress.dispose();
-    await transcriptionSummaryService.dispose();
     await documentMcpHost.close();
     await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
     await documentIndexBackfillWorker?.dispose();
     await agentSchedulerService.dispose();
-    await asrService.dispose();
     await agentResolver.dispose();
     await notificationMcpHost.close();
     sqlite.close();
@@ -1084,9 +1037,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
     await agentService.replaceRuntime(primary.current);
     await primary.previous?.dispose();
-    const background = agentResolver.reload(BUILTIN_AGENT_IDS.transcriptionSummary);
-    await transcriptionSummaryService.replaceRuntime(background.current);
-    await background.previous?.dispose();
   };
   await app.register(mcpRoutes(mcpConfigManager, reloadMcpRuntimes));
   app.post("/v1/security/secrets/logout", { schema: { tags: ["security"] } }, async () => {
@@ -1204,7 +1154,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   ));
   await app.register(documentImportRoutes(documentImportService));
   await app.register(agentDocumentExportRoutes(agentDocumentExportService));
-  await app.register(asrRoutes(asrService));
   await app.register(slideImageRoutes(slideImageStore));
   await app.register(slidesPageImagesRoutes(pageImageSessionsStore));
   await app.register(thesisFormatRoutes(thesisFormatService));
@@ -1284,7 +1233,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     );
   }
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
-  await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService, conversationSuggestionService));
+  await app.register(processingRoutes(sessionTitleService, conversationSuggestionService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
   await app.register(nangoConnectorRoutes(

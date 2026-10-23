@@ -12,7 +12,6 @@ export const BUILTIN_AGENT_IDS = {
   primaryDirect: "main-direct",
   /** 轻量模型档＝会话档位 lite；未配置 litePi 时不注册。 */
   lite: "main-lite",
-  transcriptionSummary: "transcription-summary",
   cursorCompletion: "cursor-completion",
   webSearch: "web-search",
   connectorMapper: "connector-mapper",

@@ -59,8 +59,7 @@ describe("connector session routes", () => {
       memory: null,
       pi: null,
       backgroundPi: null,
-      transcriptionSummaryPi: null,
-      asrInputDir: join(dir, "recordings"),
+            asrInputDir: join(dir, "recordings"),
       asr: null,
       knowledge: null,
       ingestFilter: {

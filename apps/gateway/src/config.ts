@@ -331,7 +331,6 @@ export interface GatewayConfig {
   ingestFilter: IngestFilterConfig;
   backgroundPi: PiRuntimeConfig | null;
   /** 转写总结专用档：独立于 background 换模型；model 为空＝未配置（回退 backgroundPi）。 */
-  transcriptionSummaryPi: PiRuntimeConfig | null;
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
   /** 审页代理专用档（slides-reviewer，需多模态模型）；未配置＝回退 backgroundPi。 */
@@ -1139,17 +1138,6 @@ export function loadConfig(
           ...pi,
           model: rawConfig.aiBackgroundModel,
           maxTokens: rawConfig.aiBackgroundMaxTokens,
-        }
-      : null,
-    // 转写总结档与 background 同为派生段（连接要素继承主模型），但 model 独立
-    // 配置（NXCORE_AI_TRANSCRIPTION_MODEL / runtime config transcriptionSummary
-    // 段）——后台任务换模型不再连带转写总结。恒建对象：runtime config 的 apply
-    // 只能打补丁，model 空时靠 inheritPrimaryDefaults 凑四要素后由段内 model 覆盖。
-    transcriptionSummaryPi: pi
-      ? {
-          ...pi,
-          model: rawConfig.aiTranscriptionModel,
-          maxTokens: rawConfig.aiTranscriptionMaxTokens,
         }
       : null,
     // lite 档恒从 pi 派生（连接要素继承主模型），model 空＝未配置：

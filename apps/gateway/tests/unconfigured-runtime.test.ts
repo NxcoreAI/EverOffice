@@ -3,7 +3,6 @@ import { UnconfiguredAgentRuntime } from "@nxcore/agent-runtime";
 import { loadConfig, type PiRuntimeConfig } from "../src/config.js";
 import {
   createAgentRuntime,
-  createBackgroundAgentRuntime,
   createCursorCompletionRuntime,
   isPiRuntimeConfigured,
 } from "../src/modules/agent/runtime-factory.js";
@@ -101,18 +100,6 @@ describe("runtime factory degraded gates", () => {
     expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
   });
 
-  it("returns UnconfiguredAgentRuntime when background pi fields are empty", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_AGENT_RUNTIME: "pi",
-      NXCORE_AI_PROVIDER: "",
-      NXCORE_AI_MODEL: "",
-      NXCORE_AI_BASE_URL: "",
-      NXCORE_AI_API_KEY: "",
-    });
-    const runtime = createBackgroundAgentRuntime(config);
-    expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
-  });
-
   it("returns UnconfiguredAgentRuntime when cursor completion pi fields are empty", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_AGENT_RUNTIME: "pi",
@@ -127,14 +114,6 @@ describe("runtime factory degraded gates", () => {
     });
     const runtime = createCursorCompletionRuntime(config);
     expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
-  });
-
-  it("fake mode still returns FakeAgentRuntime", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_AGENT_RUNTIME: "fake",
-    });
-    const runtime = createBackgroundAgentRuntime(config);
-    expect(runtime.id).toBe("fake");
   });
 
   it("isPiRuntimeConfigured requires all four fields", () => {
