@@ -21,7 +21,7 @@ import { contentHashOf, storageRelPath, storeFileBlob } from "../files/storage.j
 import {
   CLIP_IMAGE_PROMPT_VERSION,
   type ClipImageAnalysisClient,
-} from "../perception/vlm-client.js";
+} from "../vision/vlm-client.js";
 
 export const CLIPPER_EXTRACTOR_VERSION = "readability-0.6.0+everroom-8";
 export const CLIPPER_PARSER_VERSION = "markdown-multimodal-v2";

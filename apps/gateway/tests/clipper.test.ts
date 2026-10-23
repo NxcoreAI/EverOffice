@@ -9,7 +9,7 @@ import { FilesService } from "../src/modules/files/service.js";
 import { clipperRoutes } from "../src/modules/clipper/routes.js";
 import { ClipperService, MAX_CLIPPER_ASSETS } from "../src/modules/clipper/service.js";
 import type { CreateClipperCaptureInput } from "../src/modules/clipper/service.js";
-import type { ClipImageAnalysisClient } from "../src/modules/perception/vlm-client.js";
+import type { ClipImageAnalysisClient } from "../src/modules/vision/vlm-client.js";
 
 const temporaryDirectories: string[] = [];
 

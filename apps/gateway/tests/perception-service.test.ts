@@ -20,7 +20,7 @@ import {
   MAX_SCREENSHOT_SEGMENT_MS,
   SCREENSHOT_REANALYSIS_INTERVAL_MS,
 } from "../src/modules/perception/visual-segmentation.js";
-import type { VisualInferenceClient } from "../src/modules/perception/vlm-client.js";
+import type { VisualInferenceClient } from "../src/modules/vision/vlm-client.js";
 
 const directories: string[] = [];
 const databases: DatabaseClient[] = [];

@@ -11,7 +11,7 @@ import type { SubagentOrchestrator } from "./orchestrator.js";
 import type { SlidesStyleSessionStore } from "../slides-style/style-session.js";
 import type { SlidesStyleImageGenerator } from "../slides-style/image-gen.js";
 import type { DemoPptxRenderer } from "../slides-style/render.js";
-import type { VlmPromptAnalyzer } from "../perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../vision/vlm-client.js";
 import type { SlidesStyleSessionData, StyleComposition, StyleOverviewImage } from "../slides-style/types.js";
 import {
   extractFromOverview,

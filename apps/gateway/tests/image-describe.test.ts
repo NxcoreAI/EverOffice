@@ -18,7 +18,7 @@ import type { KnowledgeService } from "../src/modules/knowledge/service.js";
 import type { MemoryService } from "../src/modules/memory/service.js";
 import { MaterialsService } from "../src/modules/materials/service.js";
 import { PerceptionService } from "../src/modules/perception/service.js";
-import type { VisualInferenceClient, VisualInferenceResult } from "../src/modules/perception/vlm-client.js";
+import type { VisualInferenceClient, VisualInferenceResult } from "../src/modules/vision/vlm-client.js";
 
 const directories: string[] = [];
 const databases: DatabaseClient[] = [];

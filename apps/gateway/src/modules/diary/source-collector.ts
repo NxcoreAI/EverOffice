@@ -16,7 +16,7 @@ import {
   visualNodes,
   visualObservations,
 } from "../../infrastructure/database/schema.js";
-import { insightEvidenceMarkdown, normalizeInsightTags } from "../reality/insight-tags.js";
+import { insightEvidenceMarkdown, normalizeInsightTags } from "../vision/insight-tags.js";
 import { YjsHistoryService } from "../documents/core/yjs-history-service.js";
 import type { DiaryKnowledgeEntity, DiaryMemoryProvider, DiarySource } from "./types.js";
 import { clampDate, hash, iso } from "./utils.js";

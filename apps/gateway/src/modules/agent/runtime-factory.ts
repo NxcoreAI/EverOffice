@@ -12,7 +12,6 @@ import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
 import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
 import type { FormatMappingService } from "../connectors/format-mapping-service.js";
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
-import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
@@ -294,44 +293,6 @@ export function createDocumentOverviewRuntime(config: GatewayConfig): AgentRunti
     workingDirectory: join(pi.workingDirectory, "document-overview"),
     agentDirectory: join(pi.agentDirectory, "document-overview"),
   });
-}
-
-/** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
-export function createDiaryAgentRuntime(
-  config: GatewayConfig,
-  generator: DiaryAgentGenerator,
-): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
-  const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    runtimeId: `pi:${BUILTIN_AGENT_IDS.diary}`,
-    maxTokens: config.diaryMaxTokens ?? Math.max(pi.maxTokens, 16_384),
-    includeBashTool: false,
-    maxToolCallsPerRun: 128,
-    runtimeRole: "internal",
-    skillsEnabled: true,
-    skillPrompts: bundle.skillPrompts,
-    systemPrompt: bundle.systemPrompt,
-    sessionsDir: join(pi.sessionsDir, "diary"),
-    workingDirectory: join(pi.workingDirectory, "diary"),
-    agentDirectory: join(pi.agentDirectory, "diary"),
-  }, { tools: generator.tools() });
-}
-
-export function registerDiaryAgent(
-  resolver: AgentResolver,
-  config: GatewayConfig,
-  generator: DiaryAgentGenerator,
-): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
-  resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.diary,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createDiaryAgentRuntime(config, generator)
-    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.diary));
 }
 
 export function createCursorCompletionRuntime(config: GatewayConfig): AgentRuntime {

@@ -4,7 +4,7 @@ import {
   parseClipImageAnalysis,
   parseDocumentOcr,
   parseVisualInference,
-} from "../src/modules/perception/vlm-client.js";
+} from "../src/modules/vision/vlm-client.js";
 
 afterEach(() => vi.unstubAllGlobals());
 

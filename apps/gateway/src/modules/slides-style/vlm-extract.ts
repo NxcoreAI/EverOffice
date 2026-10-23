@@ -7,7 +7,7 @@
  * 抛错，由调用方决定回退（缺省气质=中性无衬线、缺省装饰=无阴影）。
  */
 
-import type { VlmPromptAnalyzer } from "../perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../vision/vlm-client.js";
 
 export interface FontTemperament {
   serif: boolean;

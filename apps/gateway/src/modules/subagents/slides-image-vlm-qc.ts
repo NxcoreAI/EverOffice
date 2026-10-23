@@ -3,7 +3,7 @@
  * 使用网关现有 VLM 通道，不新增依赖；失败/未配置时放行（不阻塞生图链路）。
  */
 
-import type { VlmPromptAnalyzer } from "../perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../vision/vlm-client.js";
 
 export interface SlideImageVlmVerdict {
   ok: boolean;

@@ -5,7 +5,7 @@ import {
   visualReviewToolPayload,
   type VisualReviewOutcome,
 } from "./review.js";
-import type { VlmPromptAnalyzer } from "../perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../vision/vlm-client.js";
 
 function fakeVlm(reply: () => unknown): VlmPromptAnalyzer & { calls: number } {
   const analyzer = {

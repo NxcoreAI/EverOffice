@@ -14,7 +14,7 @@ import {
 import { DOCUMENT_PARSER_REVISION } from "../src/modules/document-understanding/types.js";
 import { extractOoxmlAssets } from "../src/modules/document-understanding/assets.js";
 import { FilesService } from "../src/modules/files/service.js";
-import type { DocumentOcrClient } from "../src/modules/perception/vlm-client.js";
+import type { DocumentOcrClient } from "../src/modules/vision/vlm-client.js";
 
 const directories: string[] = [];
 const databases: DatabaseClient[] = [];
