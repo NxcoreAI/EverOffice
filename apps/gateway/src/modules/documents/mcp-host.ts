@@ -158,7 +158,6 @@ export class DocumentMcpHost {
     lastInputSignature?: string;
     identicalFailureCount: number;
   }>();
-  private readonly roomsRegistry: DocumentRoomRegistry | undefined;
   readonly capabilities: DocumentCapabilityRegistry;
 
   constructor(
@@ -168,17 +167,7 @@ export class DocumentMcpHost {
     private readonly operations?: DocumentOperationService,
     private readonly onDiagnostic?: (diagnostic: DocumentToolDiagnostic) => void,
   ) {
-    this.roomsRegistry = rooms;
     this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry(documents, rooms, operations);
-  }
-
-  /**
-   * 实时房间存在性查询。run 的 availableRooms 是开跑快照，同一 run 内
-   * context_room_create 新建的房间不在其中；校验显式 roomId 时须以本方法兜底。
-   */
-  roomExists(roomId: string): boolean {
-    if (!roomId.trim()) return false;
-    return this.roomsRegistry?.listReferences().some((room) => room.id === roomId) ?? false;
   }
 
   listTools(): readonly DocumentMcpToolDefinition[] {

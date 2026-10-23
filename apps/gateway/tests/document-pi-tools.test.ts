@@ -137,7 +137,6 @@ describe('Document Pi tool routing', () => {
         inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
       }],
       callTool,
-      roomExists: () => false,
     } as unknown as DocumentMcpHost
     const begin = createDocumentPiTools(host)[0]!
 

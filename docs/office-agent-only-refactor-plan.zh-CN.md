@@ -82,8 +82,8 @@
 
 | 旧名 | 新名 | 归属 | 定义位置（起点） | 状态 |
 |---|---|---|---|---|
-| `context_room_list` | — 删除 | Room | query-plugin | 待 Phase 2 |
-| `context_room_create` | — 删除 | Room | create-plugin | 待 Phase 2 |
+| `context_room_list` | — 删除 | Room | query-plugin | ✅ 已删（Phase 2d-3） |
+| `context_room_create` | — 删除 | Room | query-plugin | ✅ 已删（Phase 2d-3） |
 | `context_room_document_list` | `document_list` | Office | query-plugin.ts:102 | ✅ 已改 |
 | `context_room_document_read` | `document_read` | Office | query-plugin.ts:127 | ✅ 已改 |
 | `context_room_document_delete` | `document_delete` | Office | delete-plugin.ts:20 | ✅ 已改 |
@@ -102,7 +102,7 @@
 | `context_room_slides_read` | `slides_read` | Office | office-plugin.ts:437 | ✅ 已改 |
 | `context_room_slides_edit` | `slides_edit` | Office | office-plugin.ts `SLIDES_TOOL_NAMES` | ✅ 已改 |
 | `context_room_sheets_create` | `sheets_create` | Office | office-plugin.ts:370 | ✅ 已改 |
-| `context_room_task_start/read/update/clarify/attach` | — 删除 | Room 任务夹 | task-plugin.ts:213/268/328/386/462 | 待 Phase 2 |
+| `context_room_task_start/read/update/clarify/attach` | — 删除 | Room 任务夹 | task-plugin.ts | ✅ 已删（Phase 2d-3） |
 
 MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mcp-host.ts:348`）。
 
@@ -257,7 +257,7 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | Phase 1d | `data-migrations` 去 `memoryService`：`JobType` 只剩 `source_gc`、幂等门简化为内容 hash、删除 `indexMemory`/`afterJob`/记忆检索补全/GC 记忆清理，导入后运行直接完成（`phase` 由 `memory` 改 `finalizing`） | 完成（tsc 干净；套件维持基线 10 个失败；两个迁移测试文件 10 用例全绿，重启恢复用例改为真实崩溃路径） |
 | 2026-10-23 | Phase 1e | 补最后一条静态边：`documents/core/{commit-service,lifecycle-service}` 不再 `enqueueWritingStyleExtract`（提交/回收站/恢复/清空共 6 处）——此前扫描漏了 `writing-style`，它是唯一「存活 → 将删」的遗漏模块；`doc-writer` 的风格注入为结构化 provider，无静态依赖 | 完成（tsc 干净；`document-*` 87 用例全绿；套件维持基线 10 个失败） |
 | 2026-10-23 | Phase 1 闸门 | 网关「存活模块 → 将删模块」反向依赖 **18 → 0**（`data-migrations` 是最后一个）。剩余命中全部属于 Phase 2 范围：`create-server.ts` 40 处装配（§3 表逐行处理）+ 桌面 3 个自身即将删除的文件（`main/knowledge/llm-env.ts`、`shared/knowledge.ts`、`main/screenshot/window-screenshot-service.ts`，依赖方向均为将删→将删） | Phase 1 完成 |
-| — | Phase 2 | 删除模块 | 未开始 |
+| 2026-10-23 | Phase 2d-3 | 摘除 Room 工具面与任务夹孤儿（Office/Agent 侧）：删除 `context_room_list` / `context_room_create`（query-plugin）与 `context_room_task_start/read/update/clarify/attach` 及其全部注册链（`capabilities/task-plugin.ts`、`documents/task-folders.ts`、`builtins.ts` 的 `taskFolders`/`issueTaskClarify` 参数、`/v1/documents/folders` 路由与 create-server 装配、`AgentService.issueTaskClarification`）；删除 `import/room-classifier.ts` 与其测试；删除 `subagents/tools.ts` 的 `room_correction_draft` 分支及 `resolveRoomCorrectionContext`/`resolveRoomMemoryItems`/`roomExists` 选项与 `roomTools` 管线，`mcp-host.roomExists()`、`runtime-factory` 的 `^context_room_` 前缀过滤、agent service 的 Room 总览/引用纠正 prompt 与 `attachRoomSelectionIntent` 一并摘除；`document_write_begin` 等描述与 `doc-writer` schema/skill 改为工作区文稿库与纯文档来源标记话术 | 完成（gateway tsc 0 错误；套件 8 个失败 = 基线） |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 3 | 外围清理 | 未开始 |
 

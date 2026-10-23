@@ -18,7 +18,7 @@ import { documentToolErrorPayload } from "../documents/mcp-host.js";
  *
  * 网关为每个渠道 agentSession 签发一个不可猜的 token，挂在
  * POST /v1/mcp/everroom/:token 上，把 DocumentMcpHost 的全部
- * context_room_* 读写能力以 MCP 形态暴露给 CLI 子进程。鉴权走
+ * document_* 读写能力以 MCP 形态暴露给 CLI 子进程。鉴权走
  * token-in-path：避免把网关全局 token 种进 CLI 子进程的环境变量。
  *
  * token 按 agentSessionId 缓存复用：claude 适配器 loadSession 续会话时

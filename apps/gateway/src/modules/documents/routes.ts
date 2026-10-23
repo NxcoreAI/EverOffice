@@ -5,7 +5,6 @@ import { agentDocumentMarkdown } from "./agent-markdown.js";
 import { documentBodyContent } from "./content-model.js";
 import { DocumentServiceError, type DocumentService } from "./service.js";
 import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
-import type { TaskFolderService } from "./task-folders.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const MoveRoomBody = Type.Object({
   fromRoomId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -24,22 +23,8 @@ export function documentRoutes(
   service: DocumentService,
   summaryRuntime?: () => import("@nxcore/agent-runtime").AgentRuntime | null,
   indexBackfillReadTrigger?: DocumentIndexBackfillReadTrigger | null,
-  taskFolders?: TaskFolderService | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
-    if (taskFolders) {
-      app.get(
-        "/v1/documents/folders",
-        {
-          schema: {
-            tags: ["documents"],
-            querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
-          },
-        },
-        async (request) => taskFolders.list(request.query.roomId),
-      );
-    }
-
     // roomId 省略 = 列出整个工作区的文稿（P0-2）；传 roomId 时保持原有的按 Room 过滤。
     app.get(
       "/v1/documents",

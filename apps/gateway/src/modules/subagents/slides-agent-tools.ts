@@ -18,14 +18,7 @@ import { createSlidesImagePrewarmTools } from "./slides-page-images-prewarm.js";
  * - slides-builder（落页）：PPT 四件套独占——方案已带全部内容，检索类一律拒绝，
  *   杜绝落页阶段重新检索挤占逐页生成预算。策略集中在 allowlist，装配方传什么都先过滤再合并。
  */
-const SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST = new Set([
-  "memory_search",
-  "conversation_search",
-  "room_context_get",
-]);
-
 const SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST = new Set([
-  "context_room_list",
   "document_list",
   "document_read",
 ]);
@@ -37,13 +30,8 @@ const SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST = new Set(["slides_image_prewarm"]);
 
 const SLIDES_BUILDER_TOOL_ALLOWLIST = new Set<string>(SLIDES_TOOL_NAMES);
 
-/** planner 取数预算：draft 阶段需要背景，但单篇正文/单次 Room 投影不该整篇进上下文。 */
+/** planner 取数预算：draft 阶段需要背景，但单篇正文不该整篇进上下文。 */
 const PLANNER_DOCUMENT_READ_LIMIT = 8_000;
-const PLANNER_ROOM_DOCUMENT_PREVIEW_CHARS = 600;
-const PLANNER_ROOM_MAX_DOCUMENTS = 6;
-const PLANNER_ROOM_MAX_FACTS = 60;
-const PLANNER_ROOM_MAX_ENTITIES = 30;
-const PLANNER_ROOM_MAX_CORRECTIONS = 10;
 
 function filterTools(
   tools: PiAgentRuntimeTool[],
@@ -57,61 +45,6 @@ function subagentPhase(input: StartRuntimeRunInput): string | null {
   if (!structured || typeof structured !== "object" || Array.isArray(structured)) return null;
   const phase = (structured as Record<string, unknown>).phase;
   return typeof phase === "string" ? phase : null;
-}
-
-/**
- * planner 的 room_context_get：不把 Room 全量文档投影（单次可达数万 token）直接
- * 灌给方案代理；文档只留标题+预览，正文按需用 document_read 分页取。
- * arrange 阶段输入已带 draftPages，直接省掉文档段。
- */
-function createPlannerRoomContextTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
-  return {
-    ...tool,
-    description: `${tool.description}（PPT 方案代理：文档只返回标题与预览，正文按需用 document_read 分页读取；编排阶段不返回文档正文。）`,
-    execute: async (input, params, signal, onUpdate) => {
-      const result = await tool.execute(input, params, signal, onUpdate);
-      let payload: unknown;
-      try {
-        payload = JSON.parse(result.content);
-      } catch {
-        return result;
-      }
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return result;
-      const value = payload as Record<string, unknown>;
-      const phase = subagentPhase(input);
-      const documents = Array.isArray(value.documents) ? value.documents : [];
-      const compactDocuments = phase === "arrange"
-        ? []
-        : documents.slice(0, PLANNER_ROOM_MAX_DOCUMENTS).map((document) => {
-            const record = document !== null && typeof document === "object"
-              ? document as Record<string, unknown>
-              : {};
-            const markdown = typeof record.markdown === "string" ? record.markdown : "";
-            return {
-              documentId: record.documentId,
-              title: record.title,
-              version: record.version,
-              updatedAt: record.updatedAt,
-              characters: markdown.length,
-              preview: markdown.slice(0, PLANNER_ROOM_DOCUMENT_PREVIEW_CHARS),
-              ...(markdown.length > PLANNER_ROOM_DOCUMENT_PREVIEW_CHARS ? { previewTruncated: true } : {}),
-            };
-          });
-      const compact = {
-        ...value,
-        ...(Array.isArray(value.facts) ? { facts: value.facts.slice(0, PLANNER_ROOM_MAX_FACTS) } : {}),
-        ...(Array.isArray(value.entities) ? { entities: value.entities.slice(0, PLANNER_ROOM_MAX_ENTITIES) } : {}),
-        ...(Array.isArray(value.appliedCorrections)
-          ? { appliedCorrections: value.appliedCorrections.slice(-PLANNER_ROOM_MAX_CORRECTIONS) }
-          : {}),
-        documents: compactDocuments,
-        ...(phase === "arrange"
-          ? { documentsOmitted: "编排阶段输入 draftPages 已含全部页内容，这里不再返回文档正文；确需原文时用 document_read 按 offset/limit 分页读取。" }
-          : {}),
-      };
-      return { content: JSON.stringify(compact), details: result.details };
-    },
-  };
 }
 
 /**
@@ -146,16 +79,12 @@ function createPlannerDocumentReadTool(tool: PiAgentRuntimeTool): PiAgentRuntime
 }
 
 export function createSlidesPlannerAgentTools(deps: {
-  /** createContextRoomAgentTools 的产物（记忆/会话/Room 上下文）。 */
-  roomTools: PiAgentRuntimeTool[];
   /** createDocumentPiTools 的产物（取文档只读子集）。 */
   documentTools: PiAgentRuntimeTool[];
   /** createWebSearchPiTools 的产物（未配置时传空数组）。 */
   webSearchTools: PiAgentRuntimeTool[];
 }): PiAgentRuntimeTool[] {
   return [
-    ...filterTools(deps.roomTools, SLIDES_PLANNER_ROOM_TOOL_ALLOWLIST)
-      .map((tool) => (tool.name === "room_context_get" ? createPlannerRoomContextTool(tool) : tool)),
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
       .map((tool) => (tool.name === "document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),

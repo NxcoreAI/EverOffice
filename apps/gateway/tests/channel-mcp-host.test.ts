@@ -8,15 +8,15 @@ import type { McpServer } from "@zed-industries/agent-client-protocol";
 function fakeRegistry(): DocumentCapabilityRegistry {
   return {
     listTools: () => [{
-      name: "context_room_doc_read",
+      name: "document_read",
       title: "读取文档",
-      description: "读取 Room 内文档",
+      description: "读取文档",
       inputSchema: { type: "object", properties: { ref: { type: "string" } } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     }],
     promptGuidelines: () => ["文档工具使用守则"],
     execute: async (name: string, args: Record<string, unknown>, _context: DocumentExecutionContext) => {
-      if (name === "context_room_doc_read") {
+      if (name === "document_read") {
         return { content: [{ type: "text", text: `doc:${String(args.ref)}` }] };
       }
       throw new Error(`METHOD_NOT_FOUND: Unknown tool ${name}`);
@@ -94,10 +94,10 @@ describe("ChannelMcpHost", () => {
 
     const listed = await rpc(host, token, "tools/list");
     const names = (listed[0]?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
-    expect(names).toContain("context_room_doc_read");
+    expect(names).toContain("document_read");
 
     const docCall = await rpc(host, token, "tools/call", {
-      name: "context_room_doc_read",
+      name: "document_read",
       arguments: { ref: "notes/a.md" },
     });
     expect(docCall[0]?.result).toMatchObject({ content: [{ type: "text", text: "doc:notes/a.md" }] });
