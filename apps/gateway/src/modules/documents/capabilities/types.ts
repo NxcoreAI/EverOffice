@@ -85,7 +85,7 @@ export interface DocumentOperationPlan {
 export interface NormalizedStartDocumentOperationInput {
   capabilityId: string;
   context: {
-    roomId: string;
+    roomId: string | null;
     documentId?: string;
     sessionId: string;
     runId: string;

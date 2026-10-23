@@ -47,7 +47,8 @@ export interface CreateDocumentOperationInput {
   capabilityVersion: number;
   interactionMode: DocumentOperationInteractionMode;
   presenterKey: string;
-  roomId: string;
+  /** 工作区级操作为 null（P0-2d）。 */
+  roomId: string | null;
   documentId?: string | null;
   documentTitle: string;
   sessionId: string;
@@ -185,7 +186,7 @@ export class DocumentOperationService {
   }
 
   create(input: CreateDocumentOperationInput): DocumentOperation {
-    if (!input.capabilityId.trim() || !input.presenterKey.trim() || !input.roomId.trim()) {
+    if (!input.capabilityId.trim() || !input.presenterKey.trim() || (input.roomId !== null && !input.roomId.trim())) {
       throw new DocumentServiceError("INVALID_OPERATION", "Document operation identity is incomplete");
     }
     const id = input.id ?? randomUUID();

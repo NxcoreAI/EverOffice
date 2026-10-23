@@ -40,7 +40,6 @@ async function createHarness(name: string): Promise<Harness> {
     operations,
     undefined,
     undefined,
-    undefined,
     (event) => events.push(event),
   );
   disposables.push(() => database.sqlite.close());
@@ -54,7 +53,7 @@ const CONTENT = {
   ],
 } as never;
 
-async function seedDocument(documents: DocumentService, id: string, roomId = "room-1") {
+async function seedDocument(documents: DocumentService, id: string, roomId: string | null = "room-1") {
   return documents.import({ id, roomId, title: "删除测试文档", contentJson: CONTENT });
 }
 
@@ -140,13 +139,16 @@ describe("document_delete", () => {
     }, { agentSessionId: "s3", runId: "run-missing", roomId: "room-1" }), "NOT_FOUND");
   });
 
-  it("未选择 Room 时被拒（ROOM_SELECTION_REQUIRED）", async () => {
-    const { registry, documents } = await createHarness("delete-tool-noroom");
-    const document = await seedDocument(documents, "doc-del-5");
-    await expectServiceError(registry.execute(TOOL, {
+  it("P0-2d：工作区级文稿（roomId 为 null）也能删除", async () => {
+    const { registry, documents } = await createHarness("delete-tool-workspace");
+    const document = await seedDocument(documents, "doc-del-5", null);
+    expect(documents.get(document.id)?.roomId).toBeNull();
+    const result = await registry.execute(TOOL, {
       documentId: document.id,
       confirm: true,
-    }, { agentSessionId: "s4", runId: "run-noroom", roomId: null }), "ROOM_SELECTION_REQUIRED");
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(true);
+    }, { agentSessionId: "s4", runId: "run-workspace", roomId: null });
+    expect(result.structuredContent).toMatchObject({ documentId: document.id });
+    expect(documents.get(document.id)?.deletedAt).toBeTruthy();
+    expect(documents.list(null).some((item) => item.id === document.id)).toBe(false);
   });
 });

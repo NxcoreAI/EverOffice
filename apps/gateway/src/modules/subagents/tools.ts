@@ -311,7 +311,7 @@ interface MaterialSourceEntry {
  * 匹配不上就不注入——宁缺毋滥，避免误挂。
  */
 export function inferMaterialSourcesFromReads(
-  reads: { documentsReadByRun(runId: string): Array<{ roomId: string; documentId: string; version: number }> },
+  reads: { documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> },
   readDocument: (documentId: string, roomId: string) => {
     document: { title: string };
     blocks: Array<{ blockId: string; depth: number; textPreview: string }>;
@@ -324,6 +324,9 @@ export function inferMaterialSourcesFromReads(
   if (!runId || normalizedMaterial.length < 20) return [];
   const entries: MaterialSourceEntry[] = [];
   for (const read of reads.documentsReadByRun(runId)) {
+    // 工作区级文稿没有归属 Room：块索引 URI（everroom://room/{roomId}/...）无法表达，
+    // 暂不参与素材来源推断（Phase 2 随 Room 删除一并去掉 roomId 维度）。
+    if (!read.roomId) continue;
     if (roomId && read.roomId !== roomId) continue;
     let snapshot;
     try {

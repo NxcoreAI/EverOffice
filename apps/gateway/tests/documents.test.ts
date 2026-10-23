@@ -533,9 +533,14 @@ describe('document transactions', () => {
       room: { id: createdRoom.id, title: 'Campus Life' },
       navigation: { action: 'opened', roomId: createdRoom.id },
     })
-    await expect(host.callTool('document_write_begin', {
+    // P0-2d：没有绑定 Room 时不再要求先选房，直接落到工作区级文稿。
+    const workspaceStarted = await host.callTool('document_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
-    }, globalContext)).rejects.toThrow('ROOM_SELECTION_REQUIRED')
+    }, globalContext)
+    expect(workspaceStarted.structuredContent).toMatchObject({ roomId: null, state: 'running' })
+    expect(service.list(null)).toEqual([
+      expect.objectContaining({ title: '服务端学习路径', status: 'draft', version: 0 }),
+    ])
     expect(service.list('room-1')).toEqual([])
     expect(service.list('room-2')).toEqual([])
 

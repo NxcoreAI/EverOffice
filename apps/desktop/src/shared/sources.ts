@@ -1480,7 +1480,7 @@ export interface NxcoreDesktopApi {
       status?: DocumentOperationStatus
     }): Promise<DocumentOperationSummary[]>
     startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
-    getOperation(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation>
+    getOperation(operationId: string, context?: { roomId: string | null; sessionId: string; runId: string }): Promise<DocumentOperation>
     executeOperationCommand(
       operationId: string,
       input: DocumentOperationCommandInput,

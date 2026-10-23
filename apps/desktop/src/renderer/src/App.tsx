@@ -142,7 +142,8 @@ export function App() {
   } | null>(null)
   const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
-    roomId: string
+    /** 工作区级文稿为 null（P0-2d）。 */
+    roomId: string | null
     documentId: string
     blockId?: string | null
     requestId: number
@@ -550,15 +551,17 @@ export function App() {
   }, [fullOnboardingStage])
 
   const openDocumentTarget = useCallback((target: {
-    roomId: string
+    roomId: string | null
     documentId: string
     blockId?: string | null
   }) => {
     if (manualMemoryOnboardingRef.current) return
-    const room = availableContextRooms.find((item) => item.id === target.roomId)
+    const room = target.roomId
+      ? availableContextRooms.find((item) => item.id === target.roomId)
+      : undefined
     logDocumentFocusDiagnostic({ at: 'app-request', ...target, hasRoomTab: Boolean(room) })
     if (room) openContextRoomTab(room)
-    else {
+    else if (target.roomId) {
       setActivePage('rooms')
       setActiveContextRoomId(target.roomId)
     }

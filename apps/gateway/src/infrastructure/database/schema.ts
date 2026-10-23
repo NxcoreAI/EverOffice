@@ -1020,7 +1020,8 @@ export const documentOperations = sqliteTable(
       enum: ["streaming_commit", "atomic_review", "incremental_review", "preview_replace"],
     }).$type<DocumentOperationInteractionMode>().notNull(),
     presenterKey: text("presenter_key").notNull(),
-    roomId: text("room_id").notNull(),
+    // P0-2d：工作区级操作没有归属 Room（Agent 在无 Room 时创建/修改文稿）。
+    roomId: text("room_id"),
     documentId: text("document_id").references(() => documents.id, { onDelete: "cascade" }),
     documentTitle: text("document_title").notNull(),
     agentSessionId: text("agent_session_id").notNull(),

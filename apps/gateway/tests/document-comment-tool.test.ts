@@ -42,7 +42,6 @@ async function createHarness(name: string, withComments = true): Promise<Harness
     undefined,
     operations,
     undefined,
-    undefined,
     withComments ? comments : undefined,
     (event) => events.push(event),
   );

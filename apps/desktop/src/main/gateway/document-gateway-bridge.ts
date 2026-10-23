@@ -235,8 +235,14 @@ export class DocumentGatewayBridge {
     }, true)
   }
 
-  getOperation(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation> {
-    const suffix = context ? `?${new URLSearchParams(context)}` : ''
+  getOperation(
+    operationId: string,
+    context?: { roomId: string | null; sessionId: string; runId: string },
+  ): Promise<DocumentOperation> {
+    // 工作区级操作没有归属 Room：只带 sessionId/runId，缺省即为工作区级。
+    const search = context ? new URLSearchParams({ sessionId: context.sessionId, runId: context.runId }) : null
+    if (context?.roomId) search?.set('roomId', context.roomId)
+    const suffix = search ? `?${search}` : ''
     return this.request(`/v1/document-operations/${encodeURIComponent(operationId)}${suffix}`)
   }
 

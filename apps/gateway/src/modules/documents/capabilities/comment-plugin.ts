@@ -39,7 +39,7 @@ export function commentPlugin(
   const commentAdd: DocumentCapabilityTool = {
     name: "document_comment_add",
     title: "添加文档审阅评论",
-    description: "对当前 Room 文档添加一条审阅评论。必须先在当前 run 调用 document_read 读取全文；"
+    description: "对当前文档添加一条审阅评论。必须先在当前 run 调用 document_read 读取全文；"
       + "每条评论聚焦一处具体问题：body 用一两句话说明问题与改进建议；"
       + "quotedText 必须从正文逐字摘录一段纯文本原文（不带 Markdown 标记，建议 20-80 字）用于正文锚定；"
       + "能确定所在块时同时传 blockId（照抄 document_read 返回的 blocks）。一次审阅最多添加 5 条评论。",
@@ -57,11 +57,10 @@ export function commentPlugin(
     },
     annotations: annotations(false),
     execute: (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const documentId = stringArg(args, "documentId");
       const document = backend.get(documentId);
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
+      if (context.roomId !== null && document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document does not belong to this Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
 
       const blockId = typeof args.blockId === "string" && args.blockId.trim() ? args.blockId.trim() : null;
@@ -136,7 +135,7 @@ export function commentPlugin(
   };
 
   return {
-    manifest: manifest("document.comment", "mutation", null, null, true, true),
+    manifest: manifest("document.comment", "mutation", null, null, false, true),
     promptGuidelines: [
       "用户要求审阅、评审、给文档提意见或找问题时：先调用 document_read 读取当前权威版本，"
       + "再挑出 3-5 处最有价值的具体改进点（结构缺口、论证漏洞、缺少反例或数据支撑、事实性风险、表达歧义），"

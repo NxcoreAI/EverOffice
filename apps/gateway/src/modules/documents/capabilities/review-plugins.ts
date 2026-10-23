@@ -15,9 +15,6 @@ import { integerArg, record, stringArg, success, type DocumentCapabilityPlugin, 
 const CHUNK_MAX_BYTES = 64 * 1024;
 const OPERATION_MAX_BYTES = 2 * 1024 * 1024;
 const OPERATION_TTL_MS = 10 * 60 * 1000;
-/** patch_begin 注入的 Room 记忆清单上限与预览长度（与 doc-writer memoryIndex 同口径）。 */
-const PATCH_MEMORY_INDEX_LIMIT = 50;
-const PATCH_MEMORY_PREVIEW_CHARS = 200;
 /** 409 自纠提示：随 INDEX_MARK_TARGET_NOT_FOUND 回传的目标文档块清单上限与预览长度。 */
 const INDEX_MARK_HINT_BLOCK_LIMIT = 40;
 const INDEX_MARK_HINT_PREVIEW_CHARS = 80;
@@ -433,11 +430,10 @@ function beginTool(
   backend: CapabilityBackend,
   operations: DocumentOperationService | undefined,
   reads: DocumentReadAuthority,
-  resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
 ): DocumentCapabilityTool {
   return {
     name: "document_patch_begin", title: "开始准备文档修改建议",
-    description: "必须先在当前 run 调用 document_read；Gateway 会自动使用本轮读取凭证。重写、润色、扩写、替换或删除已有段落必须使用 kind=edit，并只覆盖用户要求修改的最小正文范围；kind=continue 只用于在原文后新增全新内容，不能用于改写已有内容。返回的 memoryIndex 是本 Room 归属记忆清单：直写模式给段落挂记忆索引标记时 memoryId 只能照抄 memoryIndex，写法 ^[短标题](everroom://memory/{roomId}/{memoryId})；文档来源标记的 blockId 只能来自本 run 对该来源文档的 document_read，禁止用宿主文档的块 id 或会话历史拼装。",
+    description: "必须先在当前 run 调用 document_read；Gateway 会自动使用本轮读取凭证。重写、润色、扩写、替换或删除已有段落必须使用 kind=edit，并只覆盖用户要求修改的最小正文范围；kind=continue 只用于在原文后新增全新内容，不能用于改写已有内容。来源标记的 blockId 只能来自本 run 对该来源文档的 document_read，禁止用宿主文档的块 id 或会话历史拼装。",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       documentId: { type: "string" }, baseVersion: { type: "integer", minimum: 0 },
       readReceipt: { type: "string", minLength: 1, description: "兼容字段；Gateway 默认使用当前 run 最近一次有效的文档读取。" },
@@ -445,12 +441,11 @@ function beginTool(
     }, required: ["documentId", "baseVersion", "kind", "summary"] },
     annotations: annotations(false),
     execute: (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const kind = stringArg(args, "kind");
       if (kind !== "continue" && kind !== "edit") throw new Error("INVALID_REQUEST: kind must be continue or edit");
       const document = backend.get(stringArg(args, "documentId"));
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
+      if (context.roomId !== null && document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document does not belong to this Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
       if (document.activeTransactionId) throw new DocumentServiceError("DOCUMENT_BUSY", "Document is busy", 409);
       const baseVersion = integerArg(args, "baseVersion");
@@ -476,23 +471,9 @@ function beginTool(
         expiresAt,
         acquireDocumentLease: true,
       });
-      // 记忆清单是辅助数据：读取失败只降级为不注入，不拖垮 patch_begin。
-      let memoryIndex: Array<Record<string, unknown>> = [];
-      if (resolveRoomMemoryItems) {
-        try {
-          memoryIndex = resolveRoomMemoryItems(document.roomId).slice(0, PATCH_MEMORY_INDEX_LIMIT).map((item) => ({
-            memoryId: item.id,
-            contentPreview: item.content.slice(0, PATCH_MEMORY_PREVIEW_CHARS),
-            ...(item.type ? { type: item.type.slice(0, 32) } : {}),
-          }));
-        } catch {
-          memoryIndex = [];
-        }
-      }
       return success({ operationId: operation.id, patchId: operation.id, state: operation.status, documentId: document.id,
         readReceiptResolved: !readReceipt, baseVersion, nextSequence: 1,
-        nextAction: "document_patch_hunk", expiresAt: expiresAt.toISOString(),
-        ...(memoryIndex.length ? { memoryIndex, memoryIndexCount: memoryIndex.length } : {}) });
+        nextAction: "document_patch_hunk", expiresAt: expiresAt.toISOString() });
     },
   };
 }
@@ -1000,14 +981,13 @@ export function reviewPlugins(
   backend: CapabilityBackend,
   operations: DocumentOperationService | undefined,
   reads: DocumentReadAuthority,
-  resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
 ): DocumentCapabilityPlugin[] {
-  const tools = [beginTool(backend, operations, reads, resolveRoomMemoryItems), hunkTool(backend, operations, reads), commitTool(backend, operations), abortTool(operations)];
+  const tools = [beginTool(backend, operations, reads), hunkTool(backend, operations, reads), commitTool(backend, operations), abortTool(operations)];
   return [
-    { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", true, true),
+    { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", false, true),
       promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证；patch_begin 后 patch_hunk 凭返回的 invocationId 与 itemIndex（0 起，按顺序逐项）引用转交，operation/target/markdown 由服务端从 doc-writer 结果取用，不得在工具参数中复写或补写。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
       command: (operation, command) => editCommand(backend, operation, command) },
-    { manifest: manifest("document.continue", "mutation", "incremental_review", "continuation", true, true),
+    { manifest: manifest("document.continue", "mutation", "incremental_review", "continuation", false, true),
       promptGuidelines: ["continue 只用于追加原文中不存在的全新内容，不能用于重写、润色、扩写或替换已有段落；追加内容必须来自 document_draft(task=draft-continue)，patch_hunk 凭返回的 invocationId 与 itemIndex（0 起）引用转交，markdown 由服务端从 doc-writer 结果取用。普通续写默认插入文末；长篇内容可分多次调用 document_draft 再按连续 sequence 分批引用，禁止在参数中发送累计内容、原文或全文，最终由用户逐块接受。"], tools: [],
       command: (operation, command) => continuationCommand(backend, operation, command) },
   ];

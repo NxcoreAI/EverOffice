@@ -1417,7 +1417,8 @@ export interface DocumentOperationSummary {
   capabilityVersion: number;
   interactionMode: DocumentOperationInteractionMode;
   presenterKey: string;
-  roomId: string;
+  /** 工作区级操作为 null（P0-2d：文档域去 roomId）。 */
+  roomId: string | null;
   documentId: string | null;
   documentTitle: string;
   sessionId: string;
@@ -1466,7 +1467,7 @@ export interface DocumentOperationCommandInput {
   type: string;
   payload?: Record<string, unknown>;
   context?: {
-    roomId: string;
+    roomId: string | null;
     sessionId: string;
     runId: string;
   };
@@ -1524,7 +1525,8 @@ export interface CompleteExternalDocumentPatchInput {
   preparationId: string;
   resultingSourceHash: string;
   context: {
-    roomId: string;
+    /** 工作区级操作为 null（P0-2d）。 */
+    roomId: string | null;
     sessionId: string;
     runId: string;
   };
@@ -1537,7 +1539,7 @@ export interface StartDocumentOperationInput {
    * invocationId 变体由网关归一化为 sessionId = runId = invocationId 后落库。
    */
   context: {
-    roomId: string;
+    roomId: string | null;
     documentId?: string;
     sessionId?: string;
     runId?: string;

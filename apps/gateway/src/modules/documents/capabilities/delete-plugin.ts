@@ -18,8 +18,8 @@ const MAX_REASON_LENGTH = 500;
 export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlugin {
   const documentDelete: DocumentCapabilityTool = {
     name: "document_delete",
-    title: "删除 Room 文档（移入回收站）",
-    description: "把当前 Room 的一篇文档移入回收站（可恢复）。只能在用户明确要求删除该文档时调用，"
+    title: "删除文档（移入回收站）",
+    description: "把一篇文档移入回收站（可恢复）。只能在用户明确要求删除该文档时调用，"
       + "且必须传 confirm=true 表示已与用户确认目标文档；无法确定用户指哪篇时先用 "
       + "document_list 列出标题与用户核对。删除成功后在回复中明确告知用户"
       + "删除了哪篇文档、可从回收站恢复。不要批量删除，除非用户逐一点名。",
@@ -35,7 +35,6 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
     },
     annotations: annotations(false, true),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const documentId = stringArg(args, "documentId");
       const reason = typeof args.reason === "string" && args.reason.trim()
         ? args.reason.trim().slice(0, MAX_REASON_LENGTH)
@@ -50,7 +49,7 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
       }
       const document = backend.get(documentId);
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
+      if (context.roomId !== null && document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document does not belong to this Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is already in trash", 409);
 
       await backend.delete(documentId);
@@ -71,7 +70,7 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
   };
 
   return {
-    manifest: manifest("document.delete", "mutation", null, null, true, true),
+    manifest: manifest("document.delete", "mutation", null, null, false, true),
     promptGuidelines: [
       "只有用户明确要求删除文档（如「删掉这篇」「把它移到回收站」）时才调用 document_delete："
       + "先用 document_list 或 document_read 确认目标文档，拿不准用户指哪篇时先向用户复述标题核对；"

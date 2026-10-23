@@ -761,6 +761,67 @@ describe("document capability registry", () => {
     expect(database.db.select().from(documentVersions).all()).toHaveLength(1);
   });
 
+  it("P0-2d：无归属 Room 时也能创建、读取、列出并删除工作区级文档", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-workspace-document-test-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const broker = new DocumentEventBroker();
+    const documents = new DocumentService(database.db, broker);
+    const operations = new DocumentOperationService(database.db, broker);
+    const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
+    disposables.push(() => database.sqlite.close());
+    // 工作区级：没有绑定任何 Room。
+    const context = { agentSessionId: "session-workspace", runId: "run-workspace", roomId: null };
+
+    const started = await registry.execute("document_write_begin", {
+      mode: "create", title: "工作区文稿", format: "markdown",
+    }, context);
+    const operationId = String(started.structuredContent.operationId);
+    expect(started.structuredContent).toMatchObject({ roomId: null, state: "running" });
+    expect(database.db.select().from(documentOperations).all()).toEqual([
+      expect.objectContaining({ id: operationId, roomId: null }),
+    ]);
+
+    await registry.execute("document_write_append", {
+      operationId, sequence: 1, text: "## 第一节\n\n工作区正文",
+    }, context);
+    const committed = await registry.execute("document_write_commit", {
+      operationId, finalSequence: 1,
+    }, context);
+    const documentId = String(committed.structuredContent.docId);
+    expect(committed.structuredContent).toMatchObject({ state: "completed", docId: documentId });
+
+    // 文档与操作都落在工作区归属（roomId = null），不写 room_doc_links。
+    expect(documents.get(documentId)).toMatchObject({
+      id: documentId, roomId: null, title: "工作区文稿", version: 1, status: "active",
+    });
+    expect(database.db.select().from(documentOperations).all()[0]).toMatchObject({ roomId: null, status: "completed" });
+
+    // 读：无 Room 上下文可直接读
+    const read = await registry.execute("document_read", { documentId }, context);
+    expect(read.structuredContent).toMatchObject({
+      roomId: null,
+      documentId,
+      title: "工作区文稿",
+      version: 1,
+      markdown: expect.stringContaining("工作区正文"),
+    });
+
+    // 列：工作区列表包含该文稿，且回显 roomId = null
+    const listed = await registry.execute("document_list", {}, context);
+    expect(listed.structuredContent).toMatchObject({
+      roomId: null,
+      documents: [expect.objectContaining({ id: documentId, roomId: null, title: "工作区文稿" })],
+    });
+
+    // 删：工作区文稿可进回收站
+    const deleted = await registry.execute("document_delete", {
+      documentId, confirm: true, reason: "测试",
+    }, context);
+    expect(deleted.structuredContent).toMatchObject({ documentId });
+    expect(documents.get(documentId)?.deletedAt).toBeTruthy();
+  });
+
   it("reassembles a table split across Agent document chunks before persisting it", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-create-table-operation-test-"));
     temporaryDirectories.push(dataDir);
