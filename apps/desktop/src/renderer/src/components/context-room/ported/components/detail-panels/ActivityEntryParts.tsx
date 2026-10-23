@@ -11,7 +11,7 @@ import {
 } from '../../hooks/useRoomActivityEntries';
 import { localizedUiText } from '../../adapters';
 import type { ContextRoomResource } from '../../types';
-import { requestDocumentHistory } from '../detail-editor/documentHistoryOpenSignal';
+import { requestDocumentHistory } from '@/components/office-editor/editor/documentHistoryOpenSignal';
 import type { WorkspaceObjectPreview } from './index';
 
 export const CATEGORY_ICONS: Record<ActivityCategory, typeof Mic> = {

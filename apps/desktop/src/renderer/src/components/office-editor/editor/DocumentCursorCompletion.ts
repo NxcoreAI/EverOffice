@@ -5,7 +5,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { useEffect, useRef, useState } from 'react'
 import i18n from '@/i18n/i18next'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import {
   classifyDocumentCursorCompletionError,

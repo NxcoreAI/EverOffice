@@ -1,7 +1,7 @@
 import { Redo2, Search, Undo2 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import type { Editor } from '@tiptap/react'
 
 /** 文档顶部状态行的快捷操作：撤销 / 重做 / 文档内查找（+ 可选尾部按钮，如章节大纲开关）。

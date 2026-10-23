@@ -1,4 +1,4 @@
-import type { EmergenceFocusChapter } from '../../../../../../../shared/knowledge';
+import type { EmergenceFocusChapter } from '../../../../../shared/knowledge';
 
 /**
  * 焦点系统的章节信号（PRD 7.3 当前章节）：光标所在标题到下一个同级/更高级标题之间

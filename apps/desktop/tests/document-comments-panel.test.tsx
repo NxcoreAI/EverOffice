@@ -11,7 +11,7 @@ const windowAddEventListener = vi.fn()
 const windowRemoveEventListener = vi.fn()
 let documentEventListeners: Array<(frame: unknown) => void> = []
 
-import { ImportedCommentsPanel } from '../src/renderer/src/components/context-room/ported/components/detail-editor/ImportedCommentsPanel'
+import { ImportedCommentsPanel } from '@/components/office-editor/editor/ImportedCommentsPanel'
 
 function localComment(overrides: Partial<LocalDocumentComment> & Pick<LocalDocumentComment, 'id'>): LocalDocumentComment {
   return {

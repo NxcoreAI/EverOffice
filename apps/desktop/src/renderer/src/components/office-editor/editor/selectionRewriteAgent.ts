@@ -1,7 +1,7 @@
 import type { SubagentInvocation } from '@nxcore/agent-contract'
 import i18n from '@/i18n/i18next'
 import type { AppLocale } from '@/i18n/resources'
-import type { RoomAgentSelectionRewriteInput } from '../../../../../../../shared/sources'
+import type { RoomAgentSelectionRewriteInput } from '../../../../../shared/sources'
 
 /**
  * 划词改写已迁入 context-room dispatch_only 子 Agent：dispatch 后轮询 invocation 至终态。

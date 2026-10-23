@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { createDocumentPdfHtml } from '../src/main/document-pdf-template'
-import { markdownExportFileName } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapDocumentActions'
-import { pdfExportFileName } from '../src/renderer/src/components/context-room/ported/components/detail-editor/tiptapPdfExport'
+import { markdownExportFileName } from '@/components/office-editor/editor/TiptapDocumentActions'
+import { pdfExportFileName } from '@/components/office-editor/editor/tiptapPdfExport'
 import {
   createDocxBlob,
   docxExportFileName,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/tiptapDocxExport'
+} from '@/components/office-editor/editor/tiptapDocxExport'
 
 describe('Markdown document export', () => {
   it('creates a safe Markdown download name', () => {

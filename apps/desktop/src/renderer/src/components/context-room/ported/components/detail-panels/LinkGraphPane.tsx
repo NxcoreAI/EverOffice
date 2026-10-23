@@ -5,7 +5,7 @@ import { FileText, Brain, Network, Target, ExternalLink, LocateFixed } from 'luc
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import { FilterSelect } from '../../../../ui/FilterSelect'
 import type { ContextRoomRecord } from '../../types'
-import { requestDocumentBlockNavigation } from '../detail-editor/documentBlockNavigation'
+import { requestDocumentBlockNavigation } from '@/components/office-editor/editor/documentBlockNavigation'
 import { LinkGraphCanvas } from '../LinkGraphCanvas'
 import { edgeSourceNodeId, edgeTargetNodeId } from '../LinkGraphCanvas'
 import {

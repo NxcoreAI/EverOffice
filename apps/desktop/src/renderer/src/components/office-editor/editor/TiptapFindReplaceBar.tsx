@@ -1,7 +1,7 @@
 import { CaseSensitive, ChevronDown, ChevronUp, Replace, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import { EditorIconButton } from './EditorIconButton'
 import {
   closeFindReplace,

@@ -7,10 +7,10 @@ import type {
 } from '@nxcore/agent-contract'
 import { ExternalLink, Loader2, Search, X , Plus, Replace} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import { showToast } from '../../../../../state/toast'
-import { FilterSelect } from '../../../../ui/FilterSelect'
-import { SourceIcon } from '../../../../pages/sources/SourceIcon'
+import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
+import { FilterSelect } from '@/components/ui/FilterSelect'
+import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 import './ExternalDocumentDialogs.css'
 
 /**

@@ -2,8 +2,8 @@ import type { DocumentEvent, DocumentMovedPayload, RoomDocument, TiptapJsonConte
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n/i18next'
 
-import { hasEmbeddedDocumentImages, localizeDocumentImages } from '../components/detail-editor/documentImageAssets'
-import { invalidateDocumentBlockReferences } from '../components/detail-editor/documentBlockReferenceInvalidation'
+import { hasEmbeddedDocumentImages, localizeDocumentImages } from '@/components/office-editor/editor/documentImageAssets'
+import { invalidateDocumentBlockReferences } from '@/components/office-editor/editor/documentBlockReferenceInvalidation'
 
 export function documentFromEvent(event: DocumentEvent): RoomDocument | null {
   if (!event.payload || typeof event.payload !== 'object') return null

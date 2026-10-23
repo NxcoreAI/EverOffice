@@ -1,6 +1,6 @@
 import type { DocumentOverviewView } from '@nxcore/agent-contract'
 import { ChevronDown, Sparkles } from 'lucide-react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import type { DocumentOverviewStatus } from './useDocumentOverview'
 import './TiptapDocumentEditor.css'
 

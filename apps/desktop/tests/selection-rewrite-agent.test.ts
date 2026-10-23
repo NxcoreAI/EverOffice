@@ -5,7 +5,7 @@ import {
   sanitizeSelectionRewriteOutput,
   streamSelectionRewrite,
   type SelectionRewriteAgentApi,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/selectionRewriteAgent'
+} from '@/components/office-editor/editor/selectionRewriteAgent'
 
 function invocation(overrides: Partial<SubagentInvocation>): SubagentInvocation {
   return {

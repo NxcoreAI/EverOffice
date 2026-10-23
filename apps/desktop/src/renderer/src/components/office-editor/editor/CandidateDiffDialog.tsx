@@ -1,7 +1,7 @@
 import type { RoomDocument } from '@nxcore/agent-contract'
 import { Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import './ExternalDocumentDialogs.css'
 
 interface DiffView {

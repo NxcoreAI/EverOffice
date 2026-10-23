@@ -6,7 +6,7 @@ import {
   isSessionBusyError,
   runDocumentAiReview,
   type DocumentAiReviewAgentApi,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/aiReviewAgent'
+} from '@/components/office-editor/editor/aiReviewAgent'
 
 function fakeApi(options: {
   startRunInput?: (input: unknown) => void

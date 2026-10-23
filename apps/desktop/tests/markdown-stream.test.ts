@@ -20,13 +20,13 @@ import {
   MarkdownBlockBuffer,
   operationStreamChunksToApply,
   revealTiptapNode,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/markdownStream'
+} from '@/components/office-editor/editor/markdownStream'
 import {
   isNearDocumentStreamEnd,
   isSelectionOutsideViewport,
   nextDocumentStreamFollowState,
   setScrollElementScrolling,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/useTransientEditorInteractions'
+} from '@/components/office-editor/editor/useTransientEditorInteractions'
 
 describe('Markdown stream buffering', () => {
   it('buffers incomplete content across chunks and flushes final Chinese text', () => {

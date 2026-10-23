@@ -1,7 +1,7 @@
 import type { AgentDocumentExportRunView } from '@nxcore/agent-contract'
 import { Check, Loader2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import './ExternalDocumentDialogs.css'
 
 const POLL_INTERVAL_MS = 2_500

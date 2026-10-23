@@ -7,9 +7,9 @@ import type {
 } from '@nxcore/agent-contract'
 import { Check, ChevronDown, Clock3, CloudDownload, History, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { showToast } from '../../../../../state/toast'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import { SourceIcon } from '../../../../pages/sources/SourceIcon'
+import { showToast } from '@/state/toast'
+import { useLocale } from '@/i18n/LocaleContext'
+import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 import {
   consumePendingDocumentHistory,
   onDocumentHistoryOpen,

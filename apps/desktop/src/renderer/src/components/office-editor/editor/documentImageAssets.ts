@@ -5,7 +5,7 @@ import type {
   DocumentImageMimeType,
   StoreDocumentImageInput,
   StoredDocumentImage,
-} from '../../../../../../../shared/sources'
+} from '../../../../../shared/sources'
 
 const EMBEDDED_IMAGE = /^data:(image\/(?:avif|gif|jpeg|png|webp));base64,([a-z0-9+/=\s]+)$/i
 

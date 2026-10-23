@@ -47,9 +47,9 @@ import {
   clearRoomOverviewCitation,
   type RoomOverviewCitation,
 } from '@/components/context-room/roomOverviewCitation'
-import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
-import { requestRoomOfficeFocus, useEmbeddedOffice } from '@/components/context-room/ported/embeddedOffice'
-import { attachOfficeViewport } from '@/components/context-room/ported/officeViewport'
+import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from './components/office-editor/editor/documentBlockNavigation'
+import { requestRoomOfficeFocus, useEmbeddedOffice } from './components/office-editor/embeddedOffice'
+import { attachOfficeViewport } from './components/office-editor/officeViewport'
 import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'

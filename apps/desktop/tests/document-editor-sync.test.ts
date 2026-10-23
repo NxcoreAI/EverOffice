@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   setEditorContentPreservingView,
   shouldApplyBackendDocumentSnapshot,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentEditorSync'
+} from '@/components/office-editor/editor/documentEditorSync'
 
 const editors: Editor[] = []
 

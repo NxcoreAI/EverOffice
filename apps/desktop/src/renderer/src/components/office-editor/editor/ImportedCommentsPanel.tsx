@@ -2,9 +2,9 @@ import type { ExternalDocumentCommentView } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
 import { Check, ChevronDown, LoaderCircle, MessageSquare, Sparkles, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import type { LocalDocumentComment } from '../../../../../../../shared/sources'
-import { SourceIcon } from '../../../../pages/sources/SourceIcon'
+import { useLocale } from '@/i18n/LocaleContext'
+import type { LocalDocumentComment } from '../../../../../shared/sources'
+import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 import {
   COMMENT_ANCHOR_CLICKED_EVENT,
   resolveCommentRanges,

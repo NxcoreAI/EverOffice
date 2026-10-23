@@ -21,7 +21,7 @@ vi.mock('@tiptap/pm/tables', () => ({
   },
 }))
 
-import { TiptapTableControls } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapTableControls'
+import { TiptapTableControls } from '@/components/office-editor/editor/TiptapTableControls'
 
 const rect = (left: number, top: number, width: number, height: number) => ({
   left,
