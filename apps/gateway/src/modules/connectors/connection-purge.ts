@@ -1,10 +1,9 @@
-import { and, eq, inArray, isNull, like, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store.js";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   connectorCalendarEvents,
   connectorEmails,
-  ingestEvents,
 } from "../../infrastructure/database/schema.js";
 
 export interface ConnectorPurgeCascadeDeps {
@@ -17,7 +16,6 @@ export interface ConnectorPurgeCascadeDeps {
 export interface ConnectorPurgeCascadeSummary {
   mailRows: number;
   calendarRows: number;
-  ledgerRows: number;
 }
 
 /**
@@ -44,26 +42,6 @@ export async function purgeConnectorConnectionCascade(
   const calendarRows = db.select({ id: connectorCalendarEvents.id }).from(connectorCalendarEvents)
     .where(and(eq(connectorCalendarEvents.ownerId, ownerId), eq(connectorCalendarEvents.connectionName, connection.id)))
     .all();
-  const domainIds = [...mailRows, ...calendarRows].map((row) => row.id);
-  const refPrefix = `connector:${connection.provider}:${connection.id}:`;
-
-  // 台账：命中的活跃行软删（与 cleanupSource 同语义：保留历史、旧 hash 不再幂等命中）。
-  const ledgerRows = db.select({ sourceKind: ingestEvents.sourceKind, sourceId: ingestEvents.sourceId }).from(ingestEvents)
-    .where(and(
-      isNull(ingestEvents.deletedAt),
-      domainIds.length > 0
-        ? or(inArray(ingestEvents.sourceId, domainIds), like(ingestEvents.sourceId, refPrefix + "%"))
-        : like(ingestEvents.sourceId, refPrefix + "%"),
-    ))
-    .all();
-  if (ledgerRows.length > 0) {
-    const now = new Date();
-    db.update(ingestEvents).set({ deletedAt: now, updatedAt: now }).where(and(
-      isNull(ingestEvents.deletedAt),
-      inArray(ingestEvents.sourceId, ledgerRows.map((row) => row.sourceId)),
-    )).run();
-  }
-
   db.delete(connectorEmails)
     .where(and(eq(connectorEmails.ownerId, ownerId), eq(connectorEmails.connectionName, connection.id)))
     .run();
@@ -75,7 +53,6 @@ export async function purgeConnectorConnectionCascade(
   const summary: ConnectorPurgeCascadeSummary = {
     mailRows: mailRows.length,
     calendarRows: calendarRows.length,
-    ledgerRows: ledgerRows.length,
   };
   log.info({ module: "connector-purge-cascade", connectionId: connection.id, ...summary }, "connector connection downstream cascade purged");
   return summary;

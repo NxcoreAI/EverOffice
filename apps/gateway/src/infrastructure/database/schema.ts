@@ -1736,63 +1736,6 @@ export interface IngestFilterVerdict {
  * 实时 policy（策略事后变化不应让已进入的资料行为漂移）。
  * 引擎只记自己做的；Room/wiki 下游状态继续查 knowledge 既有表（§6.3）。
  */
-export const ingestEvents = sqliteTable(
-  "ingest_events",
-  {
-    /** ing-<uuid12> */
-    id: text("id").primaryKey(),
-    sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
-    }).notNull(),
-    sourceId: text("source_id").notNull(),
-    sourceVersion: integer("source_version").notNull(),
-    dataType: text("data_type").notNull(),
-    /** 识别依据（U1 全确定性）：explicit | json-type | extension | source-kind | sniff */
-    detectedBy: text("detected_by").notNull(),
-    title: text("title").notNull(),
-    /** 源内容指纹（原始字节 / 表引用的规范化序列化）。 */
-    contentHash: text("content_hash").notNull(),
-    /** 归一化产物（parsed_contents 行；全文，消费端各自截断）。 */
-    parsedId: text("parsed_id").notNull(),
-    /** 策略快照（U3）json {room, wiki, memory}。 */
-    pipelines: text("pipelines", { mode: "json" }).$type<IngestPipelines>().notNull(),
-    /** 记忆链路即时结果 json {documentId, chunkCount, deduplicated} | {error} | null */
-    memoryResult: text("memory_result", { mode: "json" })
-      .$type<IngestMemoryOk | { error: string }>(),
-    /** Room 链路 route job 引用（knowledge.route）。 */
-    routeJobId: text("route_job_id"),
-    /**
-     * 过滤闸状态（agent 过滤器，ingest 第一级）：
-     * null = 未经过闸（豁免/过滤关闭时的直通）；pending = 待判定；
-     * passed | filtered | bypassed（fail-open 放行，verdict 记录失败原因）
-     */
-    filterStatus: text("filter_status", {
-      enum: ["pending", "passed", "filtered", "bypassed"],
-    }),
-    /** 过滤器判定 json {informative, reason, category, confidence}（含 bypassed 的失败说明）。 */
-    filterVerdict: text("filter_verdict", { mode: "json" })
-      .$type<IngestFilterVerdict>(),
-    /**
-     * 误杀恢复时间戳（POST reinstate 写入）：用户明确表达"过滤器拦错了"的
-     * 精确记录——洞察 job 的误杀样本只认这列，不拿 verdict 近似。
-     */
-    reinstatedAt: integer("reinstated_at", { mode: "timestamp_ms" }),
-    /** file | paste-file | connector | reality | everroom-doc | upload */
-    originChannel: text("origin_channel").notNull().default("upload"),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("ingest_events_source_idx").on(table.sourceKind, table.sourceId),
-    index("ingest_events_source_hash_idx").on(table.sourceId, table.contentHash),
-  ],
-);
-
 export const subagentDefinitions = sqliteTable("subagent_definitions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
