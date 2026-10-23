@@ -121,7 +121,6 @@ import { materialsRoutes } from "../modules/materials/routes.js";
 import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
 import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
-import { ImageDescribeService } from "../modules/files/image-describe.js";
 import { ClipperService } from "../modules/clipper/service.js";
 import { clipperRoutes } from "../modules/clipper/routes.js";
 import { EmbeddingClient } from "../modules/knowledge/embedding.js";
@@ -1838,8 +1837,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       "ingest filter gate enabled",
     );
   }
-  // 图片描述器：VLM 结果同时喂文件链路（markdown 解析产物）与视觉库（素材检索）。
-  const imageDescribeService = new ImageDescribeService(filesService, perceptionService, app.log);
   const ingestService = new IngestService(
     db,
     filesService,
@@ -1853,7 +1850,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ingestFilterService,
     // 暂停闸状态文件（记忆页「继续/暂停」，重启保持）
     resolve(config.dataDir, "ingest-gate.json"),
-    imageDescribeService,
   );
   // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
   ingestService.recoverPendingFilters();
@@ -2089,7 +2085,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     nangoConnectorManager,
     nangoConnectorConfig.enabled,
     nangoConnectorAuthorization,
-    // 连接删除级联：先清 gateway.sqlite 下游（域表/记忆/台账/knowledge/落盘文档），
+    // 连接删除级联：先清 gateway.sqlite 下游（域表/台账/落盘文档），
     // 再由路由内 repository.purgeConnection 收尾 connectors.sqlite。失败抛错则
     // 连接保留（路由 500），各步幂等、重试安全。
     async (id) => {
@@ -2098,8 +2094,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       await purgeConnectorConnectionCascade(
         {
           db,
-          memory: memoryService,
-          knowledge: knowledgeService,
           documentStore: nangoConnectorDocumentStore,
           ownerId: connectorDomainOwner,
           log: app.log,
