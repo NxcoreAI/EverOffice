@@ -327,7 +327,7 @@ function runtimePrompt(
   const selectedText = input.context?.selectedText?.trim();
   const attachments = input.context?.attachments ?? [];
   const hasSelectedRoom = Boolean(
-    input.context?.selectedRoomId?.trim() || input.context?.activeDocument?.roomId.trim(),
+    input.context?.selectedRoomId?.trim() || input.context?.activeDocument?.roomId?.trim(),
   );
   const roomOverviewRouting = hasSelectedRoom
     && !selectedText
@@ -428,7 +428,7 @@ function selectedRunRoomId(
   registry?: AgentRoomRegistry,
 ): string | null {
   const selectedRoomId = input.context?.selectedRoomId?.trim()
-    || input.context?.activeDocument?.roomId.trim();
+    || input.context?.activeDocument?.roomId?.trim();
   if (!selectedRoomId) return null;
   const resolved = registry
     ? resolveRoomId(registry, selectedRoomId)

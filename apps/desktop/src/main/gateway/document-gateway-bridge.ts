@@ -30,6 +30,7 @@ import type {
   StartDocumentOperationInput,
   SyncExternalDocumentProjectionInput,
 } from '@nxcore/agent-contract'
+import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
 import type { WebContents } from 'electron'
 import WebSocket from 'ws'
 import type { GatewaySupervisor } from './gateway-supervisor'
@@ -89,20 +90,29 @@ export function documentOperationListResult(
   return result.operations
 }
 
+/**
+ * 文档查询串：roomId 为空时省略该参数，网关按「整个工作区」返回（P0-2）。
+ */
+function roomQuery(roomId: string | null | undefined): string {
+  return roomId ? `?${new URLSearchParams({ roomId })}` : ''
+}
+
 export class DocumentGatewayBridge {
   private readonly subscriptions = new Map<number, Map<string, Subscription>>()
   private readonly contentsLifecycle = new WebContentsLifecycle()
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
-  list(roomId: string): Promise<RoomDocument[]> {
+  /** roomId 传 null/省略 = 整个工作区的文稿（P0-2）；传 roomId 时按 Room 过滤。 */
+  list(roomId?: string | null): Promise<RoomDocument[]> {
     // 打开房间的文档基线是纯读幂等：网关偶发 500（issue #259）在桥内静默重试，
     // 瞬断自愈，不再一击即成全局报错弹窗 + 空房间。
-    return this.request(`/v1/documents?${new URLSearchParams({ roomId })}`, undefined, false, 2)
+    return this.request(`/v1/documents${roomQuery(roomId)}`, undefined, false, 2)
   }
 
-  listTrash(roomId: string): Promise<RoomDocument[]> {
-    return this.request(`/v1/documents?${new URLSearchParams({ roomId, trashed: 'true' })}`, undefined, false, 2)
+  listTrash(roomId?: string | null): Promise<RoomDocument[]> {
+    const query = roomId ? `?${new URLSearchParams({ roomId, trashed: 'true' })}` : '?trashed=true'
+    return this.request(`/v1/documents${query}`, undefined, false, 2)
   }
 
   get(documentId: string): Promise<RoomDocument> {
@@ -325,11 +335,14 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/permanent`, { method: 'DELETE' })
   }
 
-  emptyTrash(roomId: string): Promise<void> {
-    return this.request(`/v1/documents/trash?${new URLSearchParams({ roomId })}`, { method: 'DELETE' })
+  /** roomId 传 null/省略 = 清空整个工作区回收站。 */
+  emptyTrash(roomId?: string | null): Promise<void> {
+    return this.request(`/v1/documents/trash${roomQuery(roomId)}`, { method: 'DELETE' })
   }
 
-  subscribe(contents: WebContents, roomId: string): void {
+  subscribe(contents: WebContents, roomId?: string | null): void {
+    // 工作区级订阅走保留频道 id，与网关事件总线的分区键一致。
+    roomId = roomId ?? WORKSPACE_DOCUMENT_CHANNEL
     let subscriptions = this.subscriptions.get(contents.id)
     if (!subscriptions) {
       subscriptions = new Map()

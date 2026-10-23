@@ -2729,15 +2729,15 @@ function registerDocumentHandlers(
         console.error('Failed to delete local document assets', { documentId, error })
       })
     },
-    emptyTrash: async (_event, roomId) => {
+    emptyTrash: async (_event, roomId: string | null | undefined) => {
       const trashed = await bridge.listTrash(roomId)
       await bridge.emptyTrash(roomId)
       await Promise.all(trashed.map((document) => assets.deleteDocument(document.id).catch((error) => {
         console.error('Failed to delete local document assets', { documentId: document.id, error })
       })))
     },
-    subscribe: (event, roomId) => bridge.subscribe(event.sender, roomId),
-    unsubscribe: (event, roomId) => bridge.unsubscribe(event.sender.id, roomId),
+    subscribe: (event, roomId: string | null | undefined) => bridge.subscribe(event.sender, roomId),
+    unsubscribe: (event, roomId: string | null | undefined) => bridge.unsubscribe(event.sender.id, roomId ?? undefined),
   })
 }
 
