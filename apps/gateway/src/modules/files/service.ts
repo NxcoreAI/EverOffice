@@ -9,11 +9,7 @@ import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import { enqueueSearchIndex } from "../search/jobs.js";
 import {
   fileBlobs,
-  clipperAssets,
-  clipperCaptures,
   fileClassifications,
-  fileClusterMemberships,
-  fileClusters,
   fileEntries,
   fileVersions,
   ingestEvents,
@@ -477,22 +473,19 @@ export class FilesService {
       entry: fileEntries,
       version: fileVersions,
       blob: fileBlobs,
-      membership: fileClusterMemberships,
-      cluster: fileClusters,
       classification: fileClassifications,
     }).from(fileEntries)
       .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
-      .leftJoin(fileClusterMemberships, eq(fileEntries.id, fileClusterMemberships.fileEntryId))
-      .leftJoin(fileClusters, eq(fileClusterMemberships.clusterId, fileClusters.id))
       .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
       .where(isNull(fileEntries.deletedAt))
       .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
-    const items = rows.map(({ entry, version, blob, cluster, classification }) => ({
+    const items = rows.map(({ entry, version, blob, classification }) => ({
       id: entry.id,
       originalName: entry.originalName,
       displayName: entry.displayName,
-      sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
+      // 聚类（同源多份文件的共享标题）随 file-clusters 退役：一律用条目显示名。
+      sharedTitle: entry.displayName ?? entry.originalName,
       sourceKind: entry.sourceKind,
       sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : entry.sourceKind === "artifact-imported" ? "产物导入" : "历史上传"),
       relativePath: entry.relativePath,
@@ -503,7 +496,7 @@ export class FilesService {
       summary: classification?.summary ?? null,
       tags: classification?.tags ?? [],
       processingState: entry.state === "deleted" ? "missing" : entry.state,
-      clusterId: cluster?.id ?? null,
+      clusterId: null,
       contentHash: version?.contentHash ?? "",
       currentVersionId: version?.id ?? null,
       parsed: Boolean(version?.parsedId),
@@ -622,20 +615,9 @@ export class FilesService {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!entry || entry.sourceKind === "legacy-upload") return null;
     const versions = this.db.select().from(fileVersions).where(eq(fileVersions.fileEntryId, fileEntryId)).all();
-    const clipperAssetHashes = this.db.select({ contentHash: clipperAssets.contentHash }).from(clipperAssets)
-      .innerJoin(clipperCaptures, eq(clipperAssets.captureId, clipperCaptures.id))
-      .where(eq(clipperCaptures.fileEntryId, fileEntryId)).all()
-      .flatMap(({ contentHash }) => contentHash ? [contentHash] : []);
-    const membership = this.db.select().from(fileClusterMemberships)
-      .where(eq(fileClusterMemberships.fileEntryId, fileEntryId)).get();
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
     // 源行已删：worker 重读时移除索引行。
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
-    if (membership) {
-      const remaining = this.db.select({ id: fileClusterMemberships.fileEntryId }).from(fileClusterMemberships)
-        .where(eq(fileClusterMemberships.clusterId, membership.clusterId)).limit(1).get();
-      if (!remaining) this.db.delete(fileClusters).where(eq(fileClusters.id, membership.clusterId)).run();
-    }
     let blobCollected = false;
     for (const version of versions) {
       const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
@@ -656,20 +638,6 @@ export class FilesService {
         if (!parsedReference && !legacyParsedReference) {
           this.db.delete(parsedContents).where(eq(parsedContents.id, version.parsedId)).run();
         }
-      }
-    }
-    for (const contentHash of new Set(clipperAssetHashes)) {
-      const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
-        .where(eq(fileVersions.contentHash, contentHash)).limit(1).get();
-      const legacyReference = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)
-        .where(eq(uploadedFiles.contentHash, contentHash)).limit(1).get();
-      const clipperReference = this.db.select({ id: clipperAssets.id }).from(clipperAssets)
-        .where(eq(clipperAssets.contentHash, contentHash)).limit(1).get();
-      if (!catalogReference && !legacyReference && !clipperReference) {
-        const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).get();
-        this.db.delete(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).run();
-        if (blob) await rm(join(this.dataDir, blob.storagePath), { force: true }).catch(() => undefined);
-        blobCollected = true;
       }
     }
     if (entry.sourceKind === "local-folder") {

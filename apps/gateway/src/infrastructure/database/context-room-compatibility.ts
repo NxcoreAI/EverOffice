@@ -58,15 +58,13 @@ function repairLegacyRoomOverviews(sqlite: Database.Database): void {
   })();
 }
 
-/** A pre-release correction table omitted the nullable Agent run attribution. */
-function repairLegacyRoomContextCorrections(sqlite: Database.Database): void {
-  const columns = columnsOf(sqlite, "room_context_corrections");
-  if (columns.size === 0 || columns.has("proposed_by_run_id")) return;
-  sqlite.exec("ALTER TABLE `room_context_corrections` ADD `proposed_by_run_id` text");
-}
-
-/** Reconcile Context Room tables produced by pre-release overview builds. */
+/**
+ * Reconcile Context Room tables produced by pre-release overview builds.
+ *
+ * 0084 之后 Context Room 侧只剩 `room_overviews`（agent-access 仍在读它，
+ * 待 P0-2 文档去 roomId 后一并删除）；`room_context_corrections` 已随 0084
+ * 删除，原来给它补 `proposed_by_run_id` 的修复一并移除。
+ */
 export function repairContextRoomSchema(sqlite: Database.Database): void {
   repairLegacyRoomOverviews(sqlite);
-  repairLegacyRoomContextCorrections(sqlite);
 }

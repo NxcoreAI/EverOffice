@@ -21,7 +21,10 @@ async function migrationsThrough0082(dataDir: string): Promise<string> {
   const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
     entries: Array<{ tag?: string }>;
   };
-  journal.entries = journal.entries.filter((entry) => entry.tag !== TAG);
+  // 截断到 0082：不能只删 0083 一条，否则后续迁移（如 0084）的 when 更大，
+  // 会让 Drizzle 把 0083 视作已越过而静默跳过。
+  const cutoff = journal.entries.findIndex((entry) => entry.tag === TAG);
+  journal.entries = cutoff === -1 ? journal.entries : journal.entries.slice(0, cutoff);
   await writeFile(journalPath, JSON.stringify(journal, null, 2));
   await rm(join(target, `${TAG}.sql`));
   return target;
