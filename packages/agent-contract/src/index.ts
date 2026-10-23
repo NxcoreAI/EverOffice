@@ -264,6 +264,13 @@ export interface SubagentInvocation {
 /** 对话时间线用的调用树节点：附带 Agent 展示名（registry 缺失时回退 id）。 */
 export interface SubagentInvocationNode extends SubagentInvocation {
   agentName: string;
+  /**
+   * 本次调用最近一次上下文用量快照（来自该调用 runtime 的 context.usage 事件）。
+   * 缺省 = runtime 未透出（如非 pi 运行时），调用方不渲染用量圆环。
+   */
+  contextUsage?: AgentContextUsage | null;
+  /** 本次调用是否处于上下文压缩中（context.compaction 事件最新信号）。 */
+  contextCompacting?: boolean;
 }
 
 export interface SubagentInvocationEvent {
