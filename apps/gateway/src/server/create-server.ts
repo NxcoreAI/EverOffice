@@ -58,7 +58,6 @@ import { DocumentImportService } from "../modules/documents/import/service.js";
 import { documentImportRoutes } from "../modules/documents/import/routes.js";
 import { DocumentBatchImportService } from "../modules/documents/import/batch-service.js";
 import { documentImportBatchRoutes } from "../modules/documents/import/batch-routes.js";
-import { RoomAssignmentClassifier } from "../modules/documents/import/room-classifier.js";
 import { AgentDocumentExportService } from "../modules/documents/agent-export/service.js";
 import { agentDocumentExportRoutes } from "../modules/documents/agent-export/routes.js";
 import { createDocumentExportPiTools } from "../modules/documents/agent-export/tools.js";
@@ -67,7 +66,6 @@ import {
   createAgentResolver,
   createDocumentOverviewRuntime,
   createConversationSuggestionRuntime,
-  createIngestFilterAgentRuntime,
   createIndexBackfillRuntime,
   createImportClassifierRuntime,
   createSessionTitleRuntime,
@@ -121,17 +119,9 @@ import { materialsRoutes } from "../modules/materials/routes.js";
 import { createMaterialSearchPiTools } from "../modules/materials/agent-tool.js";
 import { MaterialsService } from "../modules/materials/service.js";
 import { FilesService } from "../modules/files/service.js";
-import { ClipperService } from "../modules/clipper/service.js";
-import { clipperRoutes } from "../modules/clipper/routes.js";
 import { EmbeddingClient } from "../modules/knowledge/embedding.js";
-import { ingestRoutes } from "../modules/ingest/routes.js";
-import { IngestService } from "../modules/ingest/service.js";
-import { IngestFilterService } from "../modules/ingest/filter-agent.js";
-import { FilterRulesStore } from "../modules/ingest/rules.js";
-import { FilterInsightJob } from "../modules/ingest/rules-insight.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
-import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
@@ -1291,9 +1281,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     ? overrides.asrProvider ?? null
     : createAsrProvider(config, app.log);
   const asrService = new AsrService(db, config.asrInputDir, asrProvider, app.log);
-  // ingest 过滤器/洞察 runtime 的统一构造（boot 与 onChange 共用；下方声明
-  // 后回填，emit 只从 HTTP handler 触发，届时早已初始化）。
-  let buildIngestFilterRuntime: () => AgentRuntime | null = () => null;
   runtimeConfigManager.onChange((snapshot) => {
     app.log.info({
       event: "runtime_config.selected",
@@ -1389,10 +1376,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         formatMappingService.attachAgentRuntime(mapper.current);
         await mapper.previous?.dispose();
       }
-      // 过滤器/洞察 job 持有的冻结 runtime 同步热替换。
-      const nextFilterRuntime = buildIngestFilterRuntime();
-      ingestFilterService?.replaceRuntime(nextFilterRuntime);
-      filterInsightJob?.replaceRuntime(nextFilterRuntime);
       // 子 Agent 缓存作废（下次 acquire 以新 backgroundPi 重建）。
       await subagentRuntimeManager.invalidate();
     } catch (error) {
@@ -1464,8 +1447,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   };
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
-  const clipperService = new ClipperService(db, filesService, config.dataDir, createVlmProvider(config));
-  await clipperService.initialize();
   const documentUnderstandingService = new DocumentUnderstandingService(
     db,
     filesService,
@@ -1486,7 +1467,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   runtimeConfigManager.onChange(() => {
     const visualProvider = createVlmProvider(config);
     documentUnderstandingService.replaceVisualProvider(visualProvider);
-    clipperService.replaceVisualProvider(visualProvider);
   });
   subagentRuntimeManager.registerAgentTools(
     "multimodal-document-parser",
@@ -1580,7 +1560,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   let documentIndexBackfillWorker: DocumentIndexBackfillWorker | null = null;
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
-    await clipperService.dispose();
     await filesService.dispose();
     await nangoConnectorManager.dispose();
     nangoConnectorDb.close();
@@ -1597,8 +1576,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     await writingStyleWorker?.dispose();
     await roomMemoryDeriveWorker?.dispose();
     await documentIndexBackfillWorker?.dispose();
-    filterInsightJob?.dispose();
-    ingestService.disposeFilter();
     await perceptionService.dispose();
     await agentSchedulerService.dispose();
     await diaryService.dispose();
@@ -1760,128 +1737,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     // 整源清理级联（桌面「清空数据源」→ DELETE /v1/local-file-references）：
     // 记忆一次批量扫描；台账软删 + knowledge 批量清理由 ingest 统一收口。
     deleteMemoryDocumentsBatch: (fileEntryIds) => memoryService.deleteDocumentsByCallerRefs({ refs: fileEntryIds }),
-    cleanupIngestSources: (fileEntryIds) => {
-      ingestService.cleanupSources(fileEntryIds.map((id) => ({ sourceKind: "file" as const, sourceId: id })));
-    },
   }));
-  await app.register(clipperRoutes(clipperService));
   await app.register(documentUnderstandingRoutes(documentUnderstandingService));
-  // 统一理解引擎（U1）：接入面唯一，台账 + 三链路扇出（§7）。
-  // 策略两层文件启动时整表读入：①工程默认 ingest-policy-defaults.json（包根，工程师改）
-  // ②部署覆盖 ingest-policies.json（dataDir，运行环境改）。缺文件/坏条目告警降级，不阻塞启动。
-  const policyWarn = (message: string) => app.log.warn({ module: "ingest.policy" }, message);
-  // agent 过滤器（ingest 第一级闸门）：偏好化改造（ingest-filter-agent-plan）——
-  // ① 规则文档（用户偏好段 + 系统洞察段）注入 prompt；② toolsEnabled 时换用
-  // 过滤器专用 runtime（只读 memory/wiki 工具 + 全局 wiki 作用域），关闭时退回
-  // 零工具 background runtime（现行为）；③ 降级链 agent → knowledge LLM → fail-open。
-  const filterRulesStore = new FilterRulesStore({
-    filePath: config.ingestFilter.rulesFile,
-    maxBytes: config.ingestFilter.rulesMaxBytes,
-  }, app.log);
-  // boot 与 runtime config onChange 共用的构造器（回填给上方 onChange 闭包）。
-  buildIngestFilterRuntime = () => (config.ingestFilter.toolsEnabled
-    ? createIngestFilterAgentRuntime(
-        config,
-        // 全局 wiki 作用域（§4.2 方案 A）：过滤是全局闸门，一批可横跨多 Room，
-        // 忽略 roomId 返回全部活跃 wiki（Room wikis + 配置默认集）。解析失败由
-        // pi runtime 回退配置默认集。
-        knowledgeService.enabled
-          ? async () => {
-              const ids = knowledgeService.listRoomWikis()
-                .filter((wiki) => wiki.status === "active")
-                .map((wiki) => wiki.knowledgeId);
-              return [...new Set(ids)];
-            }
-          : undefined,
-      )
-    : backgroundAgentRuntime);
-  const ingestFilterRuntime = buildIngestFilterRuntime();
-  const ingestFilterService = config.ingestFilter.enabled
-    ? new IngestFilterService(
-      ingestFilterRuntime ?? backgroundAgentRuntime,
-      agentResolver.has(BUILTIN_AGENT_IDS.knowledge) ? agentResolver : null,
-        config.ingestFilter,
-        app.log,
-        filterRulesStore,
-    )
-    : null;
-  // 系统洞察维护 job（§4.4）：每小时洞察 agent 蒸馏记忆 L2/L3 + wiki + 误杀样本
-  // 重写 insight 段。素材域不含 L1（原子记忆琐碎噪音大）；agent 不可用或失败
-  // 保留旧洞察——洞察是增强，不是依赖，无 LLM 降级路径。
-  let filterInsightJob: FilterInsightJob | null = null;
-  if (ingestFilterService) {
-    filterInsightJob = new FilterInsightJob(
-      db,
-      ingestFilterRuntime,
-      filterRulesStore,
-      { enabled: config.ingestFilter.insightEnabled, intervalMs: config.ingestFilter.insightIntervalMs },
-      app.log,
-    );
-    filterInsightJob.start();
-    app.log.info(
-      {
-        mode: config.ingestFilter.mode,
-        threshold: config.ingestFilter.confidenceThreshold,
-        exempt: config.ingestFilter.exemptSourceKinds,
-        tools: config.ingestFilter.toolsEnabled,
-        insight: config.ingestFilter.insightEnabled,
-      },
-      "ingest filter gate enabled",
-    );
-  }
-  const ingestService = new IngestService(
-    db,
-    filesService,
-    knowledgeService,
-    memoryService,
-    app.log,
-    {
-      project: await loadProjectDefaults(policyWarn),
-      deploy: await loadPolicyOverrides(config.dataDir, policyWarn),
-    },
-    ingestFilterService,
-    // 暂停闸状态文件（记忆页「继续/暂停」，重启保持）
-    resolve(config.dataDir, "ingest-gate.json"),
-  );
-  // 启动恢复：进程被杀时 pending 滞留的过滤事件重新入队（幂等）
-  ingestService.recoverPendingFilters();
-  // 暂停闸也拦对话捕获：暂停期间 Agent 聊天不写 L0（ingest 闸只管文档链路，
-  // 对话路径在 AgentService.startRun 单点接闸，否则侧栏记忆指示器仍会跳动）。
-  agentService.setMemoryCaptureGate(() => ingestService.getPause().paused);
   // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
   // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
   // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走
   // ingestConnector cloud-doc（knowledge 弱实体 → 待处理面板晋升）。
-  const importRoomClassifier = new RoomAssignmentClassifier(createImportClassifierRuntime(config));
+  // Phase 2：Room 自动归类与知识孵化已退役，批量导入只剩显式目标（auto 模式
+  // 在服务内按「分类器/孵化端口未配置」拒绝，与功能删除语义一致）。
   const documentBatchImportService = new DocumentBatchImportService(
     db,
     documentImportService,
     app.log,
-    {
-      classifier: importRoomClassifier,
-      roster: () => Promise.resolve(knowledgeService.listRooms().map((room) => ({
-        id: room.id,
-        title: room.title,
-        kind: room.kind,
-        aliases: room.aliases,
-      }))),
-      incubate: async (unit) => {
-        await ingestService.ingestConnector({
-          kind: "cloud-doc",
-          sourceId: unit.sourceId,
-          dataType: "document",
-          title: unit.title,
-          markdown: unit.markdown,
-          entrySignals: { sourceTag: unit.sourceTag },
-          // knowledge router 未开启时降级 memory-only（room/wiki 管线依赖
-          // router），与文件导入同款策略——孵化仍进记忆引擎，auto 批不因
-          // 路由关闭被拒（拒绝曾让导入入口整个不可用且提示指向不存在的设置）。
-          ...(knowledgeService.routerEnabled
-            ? {}
-            : { pipelines: { room: false, wiki: false, memory: true } }),
-        });
-      },
-    },
   );
   documentBatchImportService.recoverInterrupted();
   await app.register(documentImportBatchRoutes(documentBatchImportService, documentImportService));
@@ -1890,7 +1757,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 一直 503 或静默降级，直到重启）。
   runtimeConfigManager.onChange(() => {
     documentOverviewRuntime = createDocumentOverviewRuntime(config);
-    importRoomClassifier.replaceRuntime(createImportClassifierRuntime(config));
     sessionTitleService.replaceRuntime(createSessionTitleRuntime(config));
     conversationSuggestionService.replaceRuntime(createConversationSuggestionRuntime(config));
     versionSummaryRuntime = createWritingStyleRuntime(config);
@@ -1902,62 +1768,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     documentIndexBackfillWorker?.replaceLlm(backfillRuntime ? new IndexBackfillLlm(backfillRuntime) : null);
   });
   filesService.setRoomEntrySink((input) => knowledgeService.recordImportRoomDecision(input));
+  // 版本导入只做解析产物登记（Phase 2 起不再扇出统一理解引擎三链路）。
   filesService.setVersionIngestor(async (input) => {
-    await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
-    const versionContext = filesService.getVersionContext(input.fileEntryId, input.fileVersionId);
-    return ingestService.ingest({
-      source: { ref: {
-        sourceKind: "file",
-        sourceId: input.fileEntryId,
-        sourceVersionId: input.fileVersionId,
-      } },
-      // knowledge router 未开启时降级为仅记忆链路（引擎约束：room 依赖
-      // router），与连接器 sink 同款策略；桌面 packaged 环境不注入
-      // NXCORE_KNOWLEDGE_ROUTER_ENABLED，不降级会把每个文件导入整单
-      // router_disabled 拒绝。显式 pipelines（如测试/内部调用）原样透传。
-      ...(input.pipelines
-        ? { pipelines: input.pipelines }
-        : config.knowledge?.routerEnabled
-          ? {}
-          : { pipelines: { room: false, wiki: false, memory: true } }),
-      ...(input.roomId ? { roomId: input.roomId } : {}),
-      ...(versionContext?.entry.sourceKind === "web-clipper" ? { originChannel: "web-clipper" as const } : {}),
-    });
-  });
-  realityService.setReadySink(async (event) => {
-    diaryService.markStaleAt(new Date(event.startedAt));
-    const roomEnabled = knowledgeService.routerEnabled;
-    const memoryEnabled = memoryService.enabled;
-    if (!roomEnabled && !memoryEnabled) return;
-    await ingestService.ingest({
-      source: { ref: { sourceKind: "reality-event", sourceId: event.id } },
-      dataType: "meeting-minutes",
-      occurredAt: event.endedAt ?? event.startedAt,
-      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
-      originChannel: "reality",
-    });
-  });
-  perceptionService.setReadySink(async (evidence) => {
-    const roomEnabled = knowledgeService.routerEnabled;
-    const memoryEnabled = memoryService.enabled;
-    if (!roomEnabled && !memoryEnabled) return;
-    await ingestService.ingestVisualEvent({
-      ...evidence,
-      pipelines: { room: roomEnabled, wiki: roomEnabled, memory: memoryEnabled },
-    });
-  });
-  perceptionService.initialize();
-  // 屏幕记忆下沉：摘要就绪且过新颖度三规则的区间进记忆链路（room/wiki 不走，加入 Room 由用户显式操作）。
-  screenMemoryService.setIntervalSink(async (unit) => {
-    if (!memoryService.enabled) return;
-    await ingestService.ingestScreenInterval({
-      sourceId: unit.id,
-      sourceVersion: unit.version,
-      title: unit.title,
-      markdown: unit.markdown,
-      occurredAt: unit.occurredAt,
-      pipelines: { room: false, wiki: false, memory: memoryService.enabled },
-    });
+    const parsed = await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
+    return { parsedId: parsed?.id ?? null, dataType: "document" };
   });
   // 文档列举后台增量同步（15 分钟 delta + 每日全量对账）：只处理已有缓存行的
   // 连接，连接断开等预期失败在 worker 内静默跳过。
@@ -2029,11 +1843,6 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   // 主 Agent 不再持有 writingStyleProvider，四信号门控随 writing-style-gate.ts 退役。
   await app.register(writingStyleRoutes(writingStyleService));
-  await app.register(ingestRoutes(
-    ingestService,
-    filterRulesStore,
-    filterInsightJob ? () => filterInsightJob!.refreshNow() : null,
-  ));
   await app.register(processingRoutes(transcriptionSummaryService, sessionTitleService, conversationSuggestionService));
   await app.register(realityRoutes(realityService));
   await app.register(perceptionRoutes(perceptionService));
