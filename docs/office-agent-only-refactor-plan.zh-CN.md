@@ -249,12 +249,27 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | P0-2b | 桌面主进程桥接与 preload：`list/listTrash/emptyTrash` 支持空 roomId，`subscribe` 落到工作区频道；回收站路由与渲染层空归属适配 | 完成（tsc 与基线一致；bridge 新增 2 用例） |
 | 2026-10-23 | P0-2c | 渲染层 `RoomDocumentsProvider` → 工作区文稿库 Provider、`DocsPage` 去 Room 维度 | **改并入 Phase 2**：渲染层的文档 tab / 文稿页 / 产物库都以 `roomId` 为键，只有在删除 Room 时才能一次性收敛，单独改造反而要写两遍（决策记录见 §8.1） |
 | 2026-10-23 | P0-3 | 18 个 Office 工具改名（`document_*` / `office_create` / `slides_*` / `sheets_create`），MCP server 名改 `everroom-office`，跨 50 文件 | 完成（gateway 测试回到基线；desktop 失败清单与基线逐行一致） |
-| — | P0-4 | Agent 运行时工具面重建 | 未开始 |
+| 2026-10-23 | P0-4 | Agent 工具面重建：运行时去掉 run 级 Room 粘滞与 knowledge/记忆注入，用户档剔除 `context_room_*` 工具；main/main-lite/main-direct/doc-writer/slides-planner 的能力声明、工具清单与人设去 Room/记忆 | 完成（gateway 套件维持基线 10 个失败） |
+| — | P0-2d | `document_operations` 去 room_id（Agent 写入路径的工作区级归属） | 未开始 |
 | — | Phase 1 | 断耦合 | 未开始 |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 3 | 外围清理 | 未开始 |
 
 ### 8.1 决策记录
+
+- **P0-2d 新增（2026-10-23，本轮发现）**：`document_operations.room_id` 仍是
+  `NOT NULL`（`drizzle/0011_flippant_killmonger.sql:51`），因此 Agent 的
+  `document_write_begin → commit` 写入路径**仍必须绑定 Room**：`create-plugin.ts`
+  的 `roomId: context.roomId!` 与 `ROOM_SELECTION_REQUIRED` 守卫、`patch_begin`
+  的同类守卫都源于此。在 operations 表放开归属之前，把 Office 工具描述里的
+  Room 话术改掉会造成"文档说支持工作区文档、运行时却报 ROOM_SELECTION_REQUIRED"
+  的矛盾，故新增 P0-2d：迁移 `document_operations.room_id` 为可空（SQLite 需重建表）、
+  `CreateDocumentOperationInput.roomId` 改 `string | null`、操作仓储按 `roomScopeId`
+  分键，然后才摘除各写入工具的 Room 守卫并重写工具描述。
+- **`context_room_*` 工具的删除时机（2026-10-23）**：P0-4 起用户档 runtime 已不把它们
+  交给模型，但文档 MCP host 仍注册这些工具供 Room 界面与 context-room 子 Agent 使用；
+  注册表层的删除随 Phase 2 的模块删除一起做。
+
 
 - **P0-2c 并入 Phase 2（2026-10-23）**：渲染层的文稿标签页、`DocsPage` 列表、Room 产物库
   都以 `roomId` 作为键与分组维度（`ActiveDocumentDescriptor`、`openDocuments[{roomId, documentId}]`、
