@@ -1140,7 +1140,8 @@ export interface AgentDocumentCursorAnchor {
 }
 
 export interface AgentActiveDocumentContext {
-  roomId: string;
+  /** null = 工作区级文稿（无 Room 归属）。 */
+  roomId: string | null;
   documentId: string;
   title: string;
   version: number;
