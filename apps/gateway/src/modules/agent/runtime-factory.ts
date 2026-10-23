@@ -26,6 +26,9 @@ export interface AgentRuntimeIntegrationOptions {
   externalCalls?: ExternalCallBudgetService;
 }
 
+/** Room 域工具前缀：P0-4 起不进用户档工具面（Phase 2 随模块删除）。 */
+const ROOM_DOMAIN_TOOL_PREFIX = /^context_room_/;
+
 function agentDirectories(config: GatewayConfig, agentId: string) {
   const root = join(config.dataDir, "agent", "runtimes", agentId);
   return {
@@ -118,7 +121,11 @@ function createUserFacingRuntime(
       // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
       ...createDocumentPiTools(mcpHost)
-        .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),
+        .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name))
+        // P0-4：Room 域工具（context_room_*）不再进入用户档工具面。
+        // 它们仍注册在文档 MCP host 上供 Room 界面与 context-room 子 Agent 使用，
+        // 随 Phase 2 删除 Context Room 时一并摘除。
+        .filter((tool) => !ROOM_DOMAIN_TOOL_PREFIX.test(tool.name)),
       // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
       // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
       ...(config.cliConnector?.baseUrl
