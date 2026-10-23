@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { findMatchesInText, type TextIndex } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapFindReplaceExtension'
+import { findMatchesInText, type TextIndex } from '@/components/office-editor/editor/TiptapFindReplaceExtension'
 
 function index(text: string, segmentTexts: string[], startFrom = 10): TextIndex {
   const segments = segmentTexts.map((segmentText) => {

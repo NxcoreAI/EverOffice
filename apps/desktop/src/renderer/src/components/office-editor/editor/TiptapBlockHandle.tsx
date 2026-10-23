@@ -15,7 +15,7 @@ import {
   Link2,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import { useTiptapBlockHandleVisibility } from './useTiptapBlockHandleVisibility'
 
 const BLOCK_HANDLE_POSITION = { placement: 'left-start' } as const

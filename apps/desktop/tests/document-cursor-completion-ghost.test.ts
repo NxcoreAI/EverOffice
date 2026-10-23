@@ -7,7 +7,7 @@ import {
   DOCUMENT_CURSOR_COMPLETION_ACCEPT_EVENT,
   DOCUMENT_CURSOR_COMPLETION_DISMISS_EVENT,
   DOCUMENT_CURSOR_COMPLETION_RETRY_EVENT,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentCursorCompletion'
+} from '@/components/office-editor/editor/DocumentCursorCompletion'
 
 function menuItems(ghost: HTMLElement): HTMLButtonElement[] {
   return Array.from(

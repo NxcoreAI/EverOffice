@@ -6,7 +6,7 @@ import {
   removeDocumentDraft,
   shouldRecoverDocumentDraft,
   writeDocumentDraft,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentDraftStorage'
+} from '@/components/office-editor/editor/documentDraftStorage'
 import { translate } from '../src/renderer/src/i18n/LocaleContext'
 import { createContextRoomFixture } from './context-room-fixture'
 

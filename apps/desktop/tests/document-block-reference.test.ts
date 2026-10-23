@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { MarkdownManager } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 
-import { DocumentBlockReference } from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentBlockReference'
+import { DocumentBlockReference } from '@/components/office-editor/editor/DocumentBlockReference'
 import {
   createEverroomBlockReferenceUrl,
   documentBlockReferenceToMarkdown,
@@ -12,9 +12,9 @@ import {
   parseDocumentBlockReferenceMarkdown,
   parseEverroomBlockReferenceUrl,
   parseSameRoomBlockReferenceLink,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockReferenceLink'
-import { documentBlockReferenceInvalidationMatches } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockReferenceInvalidation'
-import { resolveDocumentBlockReference } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockReferenceResolver'
+} from '@/components/office-editor/editor/documentBlockReferenceLink'
+import { documentBlockReferenceInvalidationMatches } from '@/components/office-editor/editor/documentBlockReferenceInvalidation'
+import { resolveDocumentBlockReference } from '@/components/office-editor/editor/documentBlockReferenceResolver'
 
 describe('document block references', () => {
   const reference = {

@@ -15,7 +15,7 @@ import {
 } from '@tiptap/react'
 import { FileWarning, Link2, LoaderCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import {
   DOCUMENT_BLOCK_REFERENCE_NODE,

@@ -4,7 +4,7 @@ import {
   documentBlockFocusRequestKey,
   documentBlockNavigationKey,
   planDocumentBlockNavigation,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentBlockNavigation'
+} from '@/components/office-editor/editor/documentBlockNavigation'
 
 describe('document block navigation', () => {
   const target = { roomId: 'room-1', documentId: 'doc-1', blockId: 'block-1' }

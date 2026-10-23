@@ -21,12 +21,12 @@ vi.mock('@tiptap/react', async () => {
   }
 })
 
-vi.mock('../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapSelectionRewrite', () => ({
+vi.mock('../src/renderer/src/components/office-editor/editor/TiptapSelectionRewrite', () => ({
   clearSelectionRewritePromptDecoration: vi.fn(),
   showSelectionRewritePromptDecoration: vi.fn(() => true),
 }))
 
-import { TiptapBubbleToolbar } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapBubbleToolbar'
+import { TiptapBubbleToolbar } from '@/components/office-editor/editor/TiptapBubbleToolbar'
 
 describe('TiptapBubbleToolbar', () => {
   afterEach(() => {

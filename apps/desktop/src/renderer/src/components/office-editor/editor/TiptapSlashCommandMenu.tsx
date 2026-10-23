@@ -16,9 +16,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
-import { showToast } from '../../../../../state/toast'
+import { showToast } from '@/state/toast'
 import {
   DOCUMENT_IMAGE_ACCEPT,
   storeDocumentImageFile,

@@ -23,9 +23,9 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
-import { showToast } from '../../../../../state/toast'
+import { showToast } from '@/state/toast'
 import { EditorIconButton } from './EditorIconButton'
 import { DOCUMENT_IMAGE_ACCEPT, storeDocumentImageFile } from './documentImageAssets'
 import { blockIndexTargetFromClipboardText } from './blockIndexLink'

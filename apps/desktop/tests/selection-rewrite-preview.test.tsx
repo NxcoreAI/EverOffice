@@ -18,7 +18,7 @@ vi.mock('../src/renderer/src/i18n/LocaleContext', async (importOriginal) => {
   }
 })
 
-import { TiptapSelectionRewritePreview } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapSelectionRewrite'
+import { TiptapSelectionRewritePreview } from '@/components/office-editor/editor/TiptapSelectionRewrite'
 
 type Preview = NonNullable<React.ComponentProps<typeof TiptapSelectionRewritePreview>['preview']>
 

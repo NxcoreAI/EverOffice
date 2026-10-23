@@ -15,7 +15,7 @@ import type {
   ContextRoomRecord,
   ContextRoomResource,
 } from '../../types';
-import { markdownDocumentTitle, parseMarkdownDocument } from '../detail-editor/markdownImport';
+import { markdownDocumentTitle, parseMarkdownDocument } from '@/components/office-editor/editor/markdownImport';
 import { ARTIFACT_IMPORT_EXTENSIONS, isArtifactImportFileName } from '../../../../../../../shared/sources';
 import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';

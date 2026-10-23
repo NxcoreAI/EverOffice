@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '../../../../i18n/LocaleContext'
 
 import { consumeDocumentFocusRequest } from '../documentFocus'
-import { consumeRoomOfficeFocus, useRoomOfficeFocus } from '../embeddedOffice'
-import { logDocumentFocusDiagnostic } from './detail-editor/documentBlockNavigation'
-import { onRoomMemoryNavigation } from './detail-editor/blockIndexNavigation'
+import { consumeRoomOfficeFocus, useRoomOfficeFocus } from '@/components/office-editor/embeddedOffice'
+import { logDocumentFocusDiagnostic } from '@/components/office-editor/editor/documentBlockNavigation'
+import { onRoomMemoryNavigation } from '@/components/office-editor/editor/blockIndexNavigation'
 import { isMarkdownFileName } from '../../knowledgeMarkdownImport'
 import { isRoomArtifactSourceKind, officePreviewKindForFileName } from '../../../../../../shared/sources'
 import {

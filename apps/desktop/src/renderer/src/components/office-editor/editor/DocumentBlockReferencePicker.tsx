@@ -1,7 +1,7 @@
 import type { DocumentBlockList, DocumentBlockSummary, RoomDocument } from '@nxcore/agent-contract'
 import { FileText, Link2, LoaderCircle, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import type { DocumentBlockReferenceAttrs } from './documentBlockReferenceLink'
 import './DocumentBlockReference.css'

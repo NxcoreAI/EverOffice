@@ -11,7 +11,7 @@ import type {
 } from '../../../../../shared/writing-style'
 import { MemoryEmptyView } from './MemoryStatusViews'
 import { formatDate, memoryFailureText, useAsyncData, useSnapshottedAsyncData } from './useMemoryData'
-import { invalidateCompletionWritingStyleCache } from '../../context-room/ported/components/detail-editor/writingStyleInjection'
+import { invalidateCompletionWritingStyleCache } from '@/components/office-editor/editor/writingStyleInjection'
 
 const TIER_LABEL: Record<WritingStyleProfileDto['confidenceTier'], string> = {
   empty: 'memory:writingStyle.tierEmpty',

@@ -16,7 +16,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import { isTableHeaderAxisActive, toggleTableHeaderAxis } from './documentTableHeaders'
 
 type TableMenuKind = 'row' | 'column' | 'cell' | 'table'

@@ -12,7 +12,7 @@ import {
   type DocumentCursorCompletionAgentApi,
   type DocumentCursorCompletionFormatContext,
   type DocumentCursorCompletionRequest,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent'
+} from '@/components/office-editor/editor/documentCursorCompletionAgent'
 
 function session(): AgentSession {
   return {

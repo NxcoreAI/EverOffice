@@ -3,7 +3,7 @@ import { Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { proposedSelectionRewriteContent } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapSelectionRewrite'
+import { proposedSelectionRewriteContent } from '@/components/office-editor/editor/TiptapSelectionRewrite'
 
 const editors: Editor[] = []
 

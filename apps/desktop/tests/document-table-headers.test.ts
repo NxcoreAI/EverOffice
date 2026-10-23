@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   isTableHeaderAxisActive,
   toggleTableHeaderAxis,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentTableHeaders'
+} from '@/components/office-editor/editor/documentTableHeaders'
 
 const editors: Editor[] = []
 

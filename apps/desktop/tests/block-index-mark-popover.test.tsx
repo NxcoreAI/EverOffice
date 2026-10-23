@@ -12,11 +12,11 @@ vi.mock('@/state/toast', () => ({ showToast: vi.fn() }))
 import {
   BlockIndexMark,
   BlockIndexMarkView,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/BlockIndexMark'
+} from '@/components/office-editor/editor/BlockIndexMark'
 import {
   BLOCK_INDEX_MARK_NODE,
   toBlockIndexMarkNodeAttrs,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/blockIndexLink'
+} from '@/components/office-editor/editor/blockIndexLink'
 
 // 这里刻意不 mock @radix-ui/react-popover:用真 Radix + 真 DOM 渲染验证
 // hover → 打开 → 保持打开 → 移出关闭 的完整链路。此前 Radix 被整体 mock,

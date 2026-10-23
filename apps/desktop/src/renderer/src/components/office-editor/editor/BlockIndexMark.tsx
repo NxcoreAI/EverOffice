@@ -18,11 +18,11 @@ import * as Popover from '@radix-ui/react-popover'
 import { Plugin } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 import i18n from '@/i18n/i18next'
 import { showToast } from '@/state/toast'
 
-import type { ContextRoomMemoryItem } from '../../types'
+import type { ContextRoomMemoryItem } from '@/components/context-room/ported/types'
 import { resolveDocumentBlockReference } from './documentBlockReferenceResolver'
 import {
   DOCUMENT_BLOCK_REFERENCES_INVALIDATED_EVENT,

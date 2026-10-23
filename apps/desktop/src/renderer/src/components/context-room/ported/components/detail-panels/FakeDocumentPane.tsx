@@ -6,7 +6,7 @@ import { useLocale } from '../../../../../i18n/LocaleContext'
 import { createContextRoomResourceLibrary } from '../../resources'
 import type { ContextRoomRecord, ContextRoomResource } from '../../types'
 import { uiText } from '../../adapters'
-import { TiptapDocumentEditor } from '../detail-editor/TiptapDocumentEditor'
+import { TiptapDocumentEditor } from '@/components/office-editor/editor/TiptapDocumentEditor'
 
 export function FakeDocumentPane({
   room,

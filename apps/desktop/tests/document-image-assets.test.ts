@@ -5,7 +5,7 @@ import {
   hasEmbeddedDocumentImages,
   localizeDocumentImages,
   storeDocumentImageFile,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentImageAssets'
+} from '@/components/office-editor/editor/documentImageAssets'
 
 describe('document image localization', () => {
   it('uses the official resizable image node view with edge and corner handles', () => {

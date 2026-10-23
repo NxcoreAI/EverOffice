@@ -2,7 +2,7 @@ import { generateHTML } from '@tiptap/html'
 import type { Editor } from '@tiptap/react'
 import i18n from '@/i18n/i18next'
 
-import type { ExportDocumentPdfResult } from '../../../../../../../shared/sources'
+import type { ExportDocumentPdfResult } from '../../../../../shared/sources'
 
 export function pdfExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName

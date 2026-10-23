@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   attachOfficeViewport,
   type OfficeViewportAttachment,
-} from '../src/renderer/src/components/context-room/ported/officeViewport'
+} from '@/components/office-editor/officeViewport'
 
 const REAL_RECT = { x: 10, y: 20, width: 300, height: 200, top: 20, right: 310, bottom: 220, left: 10 }
 const ZERO_RECT = { x: 0, y: 0, width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0 }

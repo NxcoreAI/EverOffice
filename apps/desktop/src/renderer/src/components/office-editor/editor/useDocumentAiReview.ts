@@ -1,8 +1,8 @@
 import type { AgentSession } from '@nxcore/agent-contract'
 import { useCallback, useState } from 'react'
-import { useActiveDocument } from '../../../../../state/ActiveDocumentContext'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import { showToast } from '../../../../../state/toast'
+import { useActiveDocument } from '@/state/ActiveDocumentContext'
+import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 import type { RoomDocument } from '@nxcore/agent-contract'
 import {
   isSessionBusyError,

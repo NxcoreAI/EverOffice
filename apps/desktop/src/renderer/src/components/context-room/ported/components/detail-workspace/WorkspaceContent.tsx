@@ -9,8 +9,8 @@ import { officePreviewKindForFileName } from '../../../../../../../shared/source
 import { createContextRoomResourceLibrary } from '../../resources';
 import type { ContextRoomRecord, ContextRoomResource, ContextRoomWikiPageResource } from '../../types';
 import { EmbeddedOfficePreview } from './EmbeddedOfficePreview';
-import { ExternalImportDialog } from '../detail-editor/ExternalImportDialog';
-import { externalDocumentFeatures } from '../detail-editor/externalDocumentFeatures';
+import { ExternalImportDialog } from '@/components/office-editor/editor/ExternalImportDialog';
+import { externalDocumentFeatures } from '@/components/office-editor/editor/externalDocumentFeatures';
 import { DocumentContent } from '../detail-panels/DocumentPane';
 import { KnowledgeFileExternalCard } from '../detail-panels/KnowledgeFileExternalCard';
 import { KnowledgeFileReader } from '../detail-panels/KnowledgeFileReader';

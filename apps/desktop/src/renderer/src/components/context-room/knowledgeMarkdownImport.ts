@@ -1,7 +1,7 @@
 import {
   markdownDocumentTitle,
   parseMarkdownDocument,
-} from './ported/components/detail-editor/markdownImport'
+} from '@/components/office-editor/editor/markdownImport'
 import type { KnowledgeFileDto } from '../../../../shared/knowledge'
 
 const MARKDOWN_FILE_PATTERN = /\.(?:md|markdown)$/i

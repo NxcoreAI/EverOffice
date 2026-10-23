@@ -5,9 +5,9 @@ import type {
 } from '@nxcore/agent-contract'
 import { BookOpen, FileText, FolderOpen, Loader2, RefreshCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import { showToast } from '../../../../../state/toast'
-import { MarkdownBody } from '../detail-panels/MarkdownBody'
+import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
+import { MarkdownBody } from '@/components/context-room/ported/components/detail-panels/MarkdownBody'
 import './ExternalDocumentDialogs.css'
 
 /**

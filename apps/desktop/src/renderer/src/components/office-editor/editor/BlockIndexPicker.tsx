@@ -1,8 +1,8 @@
 import { Brain, Link2, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
-import type { ContextRoomMemoryItem } from '../../types'
+import type { ContextRoomMemoryItem } from '@/components/context-room/ported/types'
 import type { BlockIndexTarget } from './blockIndexLink'
 import './DocumentBlockReference.css'
 import './BlockIndexMark.css'

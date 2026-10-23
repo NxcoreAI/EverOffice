@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   markdownDocumentTitle,
   parseMarkdownDocument,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/markdownImport'
-import { DOCUMENT_HEADING_LEVELS } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentHeadingLevels'
+} from '@/components/office-editor/editor/markdownImport'
+import { DOCUMENT_HEADING_LEVELS } from '@/components/office-editor/editor/documentHeadingLevels'
 
 describe('Markdown document import', () => {
   it('supports every Markdown heading level without falling back to H1', () => {

@@ -1,7 +1,7 @@
 import type { DocumentOverviewView, RoomDocument } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import { showToast } from '../../../../../state/toast'
+import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
 
 /**
  * 文档速览（文章级 AI 摘要）状态机：挂载 GET → 无速览且 eligible 且

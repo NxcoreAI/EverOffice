@@ -13,7 +13,7 @@ import { WorkspaceContent } from '../src/renderer/src/components/context-room/po
 import {
   getEmbeddedOffice,
   releaseEmbeddedOffice,
-} from '../src/renderer/src/components/context-room/ported/embeddedOffice'
+} from '@/components/office-editor/embeddedOffice'
 import { createContextRoomFixture } from './context-room-fixture'
 import type { ContextRoomKnowledgeFileResource } from '../src/renderer/src/components/context-room/ported/types'
 import type { KnowledgeFileDto } from '../src/shared/knowledge'

@@ -20,11 +20,11 @@ import {
   BlockIndexMark,
   BlockIndexMarkView,
   handleBlockIndexPaste,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/BlockIndexMark'
+} from '@/components/office-editor/editor/BlockIndexMark'
 import {
   BLOCK_INDEX_MARK_NODE,
   toBlockIndexMarkNodeAttrs,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/blockIndexLink'
+} from '@/components/office-editor/editor/blockIndexLink'
 import { showToast } from '@/state/toast'
 
 const editors: Editor[] = []

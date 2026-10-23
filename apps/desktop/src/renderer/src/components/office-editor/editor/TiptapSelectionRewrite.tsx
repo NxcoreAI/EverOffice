@@ -5,11 +5,11 @@ import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Check, LoaderCircle, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import { streamSelectionRewrite } from './selectionRewriteAgent'
 import type { SelectionRewriteFormatContext } from './selectionRewriteAgent'
-import { useDocumentOperations } from '../../../operations'
+import { useDocumentOperations } from '@/components/context-room/operations/index'
 import { stripDocumentTitle } from '@nxcore/document-model'
 
 interface RewriteAnchor {

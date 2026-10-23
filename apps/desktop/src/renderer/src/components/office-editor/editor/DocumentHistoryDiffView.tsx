@@ -9,7 +9,7 @@ import type { Editor } from '@tiptap/react'
 import { DOMSerializer } from '@tiptap/pm/model'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { useEffect, useRef } from 'react'
-import { useLocale } from '../../../../../i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
 interface TextRange {
   start: number

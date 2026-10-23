@@ -4,8 +4,8 @@ import { Editor } from '@tiptap/react'
 import { Slice } from '@tiptap/pm/model'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { BlockIndexMark } from '../src/renderer/src/components/context-room/ported/components/detail-editor/BlockIndexMark'
-import { DocumentBlockReference } from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentBlockReference'
+import { BlockIndexMark } from '@/components/office-editor/editor/BlockIndexMark'
+import { DocumentBlockReference } from '@/components/office-editor/editor/DocumentBlockReference'
 import {
   BLOCK_INDEX_MARK_NODE,
   blockIndexTargetFromClipboardText,
@@ -14,11 +14,11 @@ import {
   insertBlockIndexMark,
   isAutoLinkableUrl,
   toBlockIndexMarkNodeAttrs,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/blockIndexLink'
+} from '@/components/office-editor/editor/blockIndexLink'
 import {
   StableBlockIds,
   stripStableBlockIdsFromPaste,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/StableBlockIds'
+} from '@/components/office-editor/editor/StableBlockIds'
 
 const editors: Editor[] = []
 

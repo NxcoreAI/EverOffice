@@ -1,5 +1,5 @@
 import type { DocumentDiffResult, DocumentVersionSnapshot, ImportCandidateDiffView, RoomDocument, TiptapJsonContent } from '@nxcore/agent-contract'
-import type { EmergenceFocusChapter } from '../../../../../../../shared/knowledge'
+import type { EmergenceFocusChapter } from '../../../../../shared/knowledge'
 import { extractCurrentSection } from './currentSection'
 import type { ResolveDocumentBlockReferencesInput } from '@nxcore/agent-contract'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
@@ -23,13 +23,13 @@ import { GitCompare, ListTree, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { stripDocumentTitle } from '@nxcore/document-model'
 
-import { useRoomDocumentsState } from '../../../RoomDocumentsProvider'
+import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
 import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
-import { useLocale } from '../../../../../i18n/LocaleContext'
-import { uiText } from '../../adapters'
-import type { ContextRoomRecord, ContextRoomResource } from '../../types'
+import { useLocale } from '@/i18n/LocaleContext'
+import { uiText } from '@/components/context-room/ported/adapters'
+import type { ContextRoomRecord, ContextRoomResource } from '@/components/context-room/ported/types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
 import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
 import { TiptapContentScale } from './TiptapContentScale'
@@ -45,20 +45,20 @@ import {
 } from './DocumentCursorCompletion'
 import { ensureStableBlockIds, StableBlockIds } from './StableBlockIds'
 import { DocumentHistoryDiffView } from './DocumentHistoryDiffView'
-import { useDocumentEditorOperations, useDocumentOperations } from '../../../operations'
+import { useDocumentEditorOperations, useDocumentOperations } from '@/components/context-room/operations/index'
 import {
   clearDocumentOperationReview,
   DocumentOperationReviewExtension,
   showDocumentOperationReview,
-} from '../../../operations/DocumentOperationReviewExtension'
-import { DocumentOperationReviewToolbar } from '../../../operations/DocumentOperationReviewToolbar'
-import { nextDocumentReviewReveal } from '../../../operations/documentReviewState'
+} from '@/components/context-room/operations/DocumentOperationReviewExtension'
+import { DocumentOperationReviewToolbar } from '@/components/context-room/operations/DocumentOperationReviewToolbar'
+import { nextDocumentReviewReveal } from '@/components/context-room/operations/documentReviewState'
 import {
   clearDocumentContinuation,
   DocumentContinuationExtension,
   showDocumentContinuation,
-} from '../../../operations/DocumentContinuationExtension'
-import { DocumentContinuationToolbar } from '../../../operations/DocumentContinuationToolbar'
+} from '@/components/context-room/operations/DocumentContinuationExtension'
+import { DocumentContinuationToolbar } from '@/components/context-room/operations/DocumentContinuationToolbar'
 import {
   SelectionRewritePreviewExtension,
   TiptapSelectionRewritePreview,
