@@ -27,17 +27,17 @@ tools:
   - wiki_search
   - wiki_read
   - context_room_list
-  - context_room_document_list
-  - context_room_document_read
+  - document_list
+  - document_read
   - context_room_document_intent
-  - context_room_patch_begin
-  - context_room_patch_hunk
-  - context_room_patch_commit
-  - context_room_patch_abort
-  - context_room_write_begin
-  - context_room_write_append
-  - context_room_write_commit
-  - context_room_write_abort
+  - document_patch_begin
+  - document_patch_hunk
+  - document_patch_commit
+  - document_patch_abort
+  - document_write_begin
+  - document_write_append
+  - document_write_commit
+  - document_write_abort
   - document_draft
   - slides_draft
   - room_correction_draft

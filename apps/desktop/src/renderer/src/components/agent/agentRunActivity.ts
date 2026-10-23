@@ -140,15 +140,15 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     connector_schema: ['查看操作要求', '已查看操作要求'],
     connector_search: ['查找可用操作', '已查找可用操作'],
     context_room_document_intent: ['准备创建选项', '已准备创建选项'],
-    context_room_document_list: ['获取文档列表', '已获取文档列表'],
-    context_room_document_read: ['读取文档', '已读取文档'],
+    document_list: ['获取文档列表', '已获取文档列表'],
+    document_read: ['读取文档', '已读取文档'],
     context_room_list: ['获取 Room 列表', '已获取 Room 列表'],
-    context_room_patch_begin: ['准备文档修改', '已准备文档修改'],
-    context_room_patch_commit: ['提交文档修改', '已提交文档修改'],
-    context_room_patch_hunk: ['生成文档修改', '已生成文档修改'],
-    context_room_write_append: ['写入文档内容', '已写入文档内容'],
-    context_room_write_begin: ['开始创建文档', '已开始创建文档'],
-    context_room_write_commit: ['提交新文档', '已提交新文档'],
+    document_patch_begin: ['准备文档修改', '已准备文档修改'],
+    document_patch_commit: ['提交文档修改', '已提交文档修改'],
+    document_patch_hunk: ['生成文档修改', '已生成文档修改'],
+    document_write_append: ['写入文档内容', '已写入文档内容'],
+    document_write_begin: ['开始创建文档', '已开始创建文档'],
+    document_write_commit: ['提交新文档', '已提交新文档'],
     local_agent_dispatch: ['委派本机 Agent', '已委派本机 Agent'],
     agent_dispatch: ['调度子 Agent', '已调度子 Agent'],
     tool_search: ['选择所需工具', '已选择所需工具'],
@@ -174,15 +174,15 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
         connector_schema: ['surface:agentExecutionTimeline.viewOperationRequirements', 'surface:agentExecutionTimeline.operationRequirementsViewed'],
         connector_search: ['surface:agentExecutionTimeline.searchAvailableOperations', 'surface:agentExecutionTimeline.availableOperationsFound'],
         context_room_document_intent: ['surface:agentExecutionTimeline.prepareCreationOptions', 'surface:agentExecutionTimeline.creationOptionsPrepared'],
-        context_room_document_list: ['surface:agentExecutionTimeline.getDocumentList', 'surface:agentExecutionTimeline.documentListRetrieved'],
-        context_room_document_read: ['surface:agentExecutionTimeline.readDocument', 'surface:agentExecutionTimeline.documentRead'],
+        document_list: ['surface:agentExecutionTimeline.getDocumentList', 'surface:agentExecutionTimeline.documentListRetrieved'],
+        document_read: ['surface:agentExecutionTimeline.readDocument', 'surface:agentExecutionTimeline.documentRead'],
         context_room_list: ['surface:agentExecutionTimeline.getRoomList', 'surface:agentExecutionTimeline.roomListRetrieved'],
-        context_room_patch_begin: ['surface:agentExecutionTimeline.prepareDocumentChanges', 'surface:agentExecutionTimeline.documentChangesPrepared'],
-        context_room_patch_commit: ['surface:agentExecutionTimeline.commitDocumentChanges', 'surface:agentExecutionTimeline.documentChangesCommitted'],
-        context_room_patch_hunk: ['surface:agentExecutionTimeline.generateDocumentChanges', 'surface:agentExecutionTimeline.documentChangesGenerated'],
-        context_room_write_append: ['surface:agentExecutionTimeline.writeDocumentContent', 'surface:agentExecutionTimeline.documentContentWritten'],
-        context_room_write_begin: ['surface:agentExecutionTimeline.startDocumentCreation', 'surface:agentExecutionTimeline.documentCreationStarted'],
-        context_room_write_commit: ['surface:agentExecutionTimeline.commitNewDocument', 'surface:agentExecutionTimeline.newDocumentCommitted'],
+        document_patch_begin: ['surface:agentExecutionTimeline.prepareDocumentChanges', 'surface:agentExecutionTimeline.documentChangesPrepared'],
+        document_patch_commit: ['surface:agentExecutionTimeline.commitDocumentChanges', 'surface:agentExecutionTimeline.documentChangesCommitted'],
+        document_patch_hunk: ['surface:agentExecutionTimeline.generateDocumentChanges', 'surface:agentExecutionTimeline.documentChangesGenerated'],
+        document_write_append: ['surface:agentExecutionTimeline.writeDocumentContent', 'surface:agentExecutionTimeline.documentContentWritten'],
+        document_write_begin: ['surface:agentExecutionTimeline.startDocumentCreation', 'surface:agentExecutionTimeline.documentCreationStarted'],
+        document_write_commit: ['surface:agentExecutionTimeline.commitNewDocument', 'surface:agentExecutionTimeline.newDocumentCommitted'],
         local_agent_dispatch: ['surface:agentExecutionTimeline.dispatchLocalAgent', 'surface:agentExecutionTimeline.localAgentDispatched'],
         agent_dispatch: ['surface:agentExecutionTimeline.dispatchSubagent', 'surface:agentExecutionTimeline.subagentDispatched'],
         tool_search: ['surface:agentExecutionTimeline.selectRequiredTool', 'surface:agentExecutionTimeline.requiredToolSelected'],
@@ -304,7 +304,7 @@ function resultRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function committedDocumentTitle(tool: DisplayAgentToolCall): string | null {
-  if (tool.name !== 'context_room_write_commit' || tool.status !== 'completed') return null
+  if (tool.name !== 'document_write_commit' || tool.status !== 'completed') return null
   const root = resultRecord(tool.result)
   const details = resultRecord(root?.details)
   const structured = resultRecord(root?.structuredContent)
@@ -330,7 +330,7 @@ function documentSummaryFallback(answer: string, tools: DisplayAgentToolCall[]):
   const title = committedDocumentTitle(commit)
   if (!title) return answer
   const documentText = normalizeDocumentText(tools
-    .filter((tool) => tool.name === 'context_room_write_append' && tool.status === 'completed')
+    .filter((tool) => tool.name === 'document_write_append' && tool.status === 'completed')
     .map((tool) => typeof tool.args.text === 'string' ? tool.args.text : '')
     .join('\n'))
   const normalizedAnswer = normalizeDocumentText(answer)
@@ -387,7 +387,7 @@ export function agentToolStageText(
 
   const root = resultRecord(tool.result ?? tool.partialResult)
   const structured = resultRecord(root?.structuredContent) ?? resultRecord(root?.details) ?? root
-  if (tool.name === 'context_room_document_read') {
+  if (tool.name === 'document_read') {
     const title = userText(structured?.title, 80)
     const blockCount = structured?.blockCount
     const version = structured?.version
@@ -397,13 +397,13 @@ export function agentToolStageText(
         : `《${title}》当前有 ${blockCount} 个可编辑内容块，基于版本 ${version} 处理。`
     }
   }
-  if (tool.name === 'context_room_patch_begin') {
+  if (tool.name === 'document_patch_begin') {
     const summary = userText(tool.args.summary, 180)
     if (summary) return t
       ? t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary })
       : punctuate(`修改范围已确定：${summary}`)
   }
-  if (tool.name === 'context_room_patch_hunk') {
+  if (tool.name === 'document_patch_hunk') {
     const sequence = structured?.acceptedSequence ?? tool.args.sequence
     const operation = tool.args.operation
     const markdown = typeof tool.args.markdown === 'string' ? tool.args.markdown.trim() : ''

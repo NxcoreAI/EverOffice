@@ -124,7 +124,7 @@ export function findPendingAgentDocumentSelection(
   dismissedToolIds: ReadonlySet<string>,
 ): PendingAgentDocumentSelection | null {
   const candidates = tools
-    .filter((tool) => tool.name === 'context_room_document_list' && tool.status === 'completed')
+    .filter((tool) => tool.name === 'document_list' && tool.status === 'completed')
     .flatMap((tool) => {
       if (!selectionParseCache.has(tool)) {
         selectionParseCache.set(tool, parseAgentDocumentSelectionResult(tool.result))

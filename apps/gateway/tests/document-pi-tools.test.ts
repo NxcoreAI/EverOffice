@@ -76,11 +76,11 @@ describe('Document Pi tool routing', () => {
     const host = {
       listTools: () => [
         {
-          name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+          name: 'document_write_begin', title: 'Begin', description: 'Begin',
           inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
         },
         {
-          name: 'context_room_write_append', title: 'Append', description: 'Append',
+          name: 'document_write_append', title: 'Append', description: 'Append',
           inputSchema: { type: 'object', properties: { operationId: { type: 'string' } } },
         },
       ],
@@ -98,10 +98,10 @@ describe('Document Pi tool routing', () => {
     await begin!.execute(input, { roomId: 'room-java', title: 'Java 并发指南' })
     await append!.execute(input, { operationId: 'operation-1', sequence: 1, text: '正文' })
 
-    expect(callTool).toHaveBeenNthCalledWith(1, 'context_room_write_begin', expect.any(Object), expect.objectContaining({
+    expect(callTool).toHaveBeenNthCalledWith(1, 'document_write_begin', expect.any(Object), expect.objectContaining({
       roomId: 'room-java',
     }))
-    expect(callTool).toHaveBeenNthCalledWith(2, 'context_room_write_append', expect.any(Object), expect.objectContaining({
+    expect(callTool).toHaveBeenNthCalledWith(2, 'document_write_append', expect.any(Object), expect.objectContaining({
       roomId: 'room-java',
     }))
   })
@@ -110,7 +110,7 @@ describe('Document Pi tool routing', () => {
     const { callTool } = harness()
     const host = {
       listTools: () => [{
-        name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+        name: 'document_write_begin', title: 'Begin', description: 'Begin',
         inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
       }],
       callTool,
@@ -132,7 +132,7 @@ describe('Document Pi tool routing', () => {
     }))
     const host = {
       listTools: () => [{
-        name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+        name: 'document_write_begin', title: 'Begin', description: 'Begin',
         inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
       }],
       callTool,
@@ -143,12 +143,12 @@ describe('Document Pi tool routing', () => {
     await begin.execute(runtimeInput('创建一份文档'), { roomId: 'room-fresh', title: '文档' })
 
     expect(callTool).toHaveBeenCalledOnce()
-    expect(callTool).toHaveBeenCalledWith('context_room_write_begin', expect.any(Object), expect.objectContaining({
+    expect(callTool).toHaveBeenCalledWith('document_write_begin', expect.any(Object), expect.objectContaining({
       roomId: 'room-fresh',
     }))
   })
 
-  describe('context_room_document_list selectionRequired 意图闸门', () => {
+  describe('document_list selectionRequired 意图闸门', () => {
     function documentListHarness() {
       const callTool = vi.fn(async (): Promise<DocumentMcpToolResult> => ({
         content: [{ type: 'text', text: JSON.stringify({
@@ -164,7 +164,7 @@ describe('Document Pi tool routing', () => {
       }))
       const host = {
         listTools: () => [{
-          name: 'context_room_document_list',
+          name: 'document_list',
           title: '列出当前 Room 的文档',
           description: '列出文档。',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -172,7 +172,7 @@ describe('Document Pi tool routing', () => {
         callTool,
       } as unknown as DocumentMcpHost
       const tool = createDocumentPiTools(host)[0]
-      if (!tool) throw new Error('context_room_document_list tool was not created')
+      if (!tool) throw new Error('document_list tool was not created')
       return { callTool, tool }
     }
 

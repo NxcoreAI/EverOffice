@@ -14,8 +14,8 @@ const ROOM_TOOL_ALLOWLIST = new Set([
 
 const DOCUMENT_TOOL_ALLOWLIST = new Set([
   "context_room_list",
-  "context_room_document_list",
-  "context_room_document_read",
+  "document_list",
+  "document_read",
 ]);
 
 const ANALYSIS_TOOL_ALLOWLIST = new Set([

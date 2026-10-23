@@ -28,11 +28,11 @@ export function createBuiltinDocumentCapabilityRegistry(
   /** 块索引标记（blockIndexMark）：Room 归属记忆权威清单；patch_begin 注入
    *  memoryIndex，供直写模式挂记忆标记时照抄 memoryId。 */
   resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
-  /** 文档评论服务（AI 审阅）：传入则启用 context_room_document_comment_add 工具。 */
+  /** 文档评论服务（AI 审阅）：传入则启用 document_comment_add 工具。 */
   comments?: DocumentCommentService,
   /** 文档事件广播：评论落库后发 document.comments.changed，桌面评论面板实时刷新。 */
   publishDocumentEvent?: (event: DocumentEvent) => void,
-  /** Office 生成桥（agent 写 Word）：传入则启用 context_room_office_create 等工具。 */
+  /** Office 生成桥（agent 写 Word）：传入则启用 office_create 等工具。 */
   officeBridge?: OfficeBridgeClient | null,
   /** 写作路线导图拍板（聚焦改版）：服务晚于注册表构造，经 getter 惰性取用。 */
   routeMindmapFinalize?: () => {

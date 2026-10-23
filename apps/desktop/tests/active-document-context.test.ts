@@ -130,11 +130,11 @@ describe('Agent document selection result', () => {
     })
     const tools = [
       {
-        id: 'tool-old', runId: 'run-old', name: 'context_room_document_list', status: 'completed',
+        id: 'tool-old', runId: 'run-old', name: 'document_list', status: 'completed',
         result: result('doc-old'), startedAt: '2026-08-17T01:00:00.000Z', completedAt: '2026-08-17T01:00:02.000Z',
       },
       {
-        id: 'tool-new', runId: 'run-new', name: 'context_room_document_list', status: 'completed',
+        id: 'tool-new', runId: 'run-new', name: 'document_list', status: 'completed',
         result: result('doc-new'), startedAt: '2026-08-17T02:00:00.000Z', completedAt: '2026-08-17T02:00:02.000Z',
       },
     ]
@@ -161,7 +161,7 @@ describe('Agent document selection result', () => {
     expect(findPendingAgentDocumentSelection([{
       id: 'tool-1',
       runId: 'run-1',
-      name: 'context_room_document_list',
+      name: 'document_list',
       status: 'completed',
       result: {
         selectionRequired: true,
@@ -180,7 +180,7 @@ describe('Agent document selection result', () => {
     const emptyResult = {
       id: 'tool-empty',
       runId: 'run-empty',
-      name: 'context_room_document_list',
+      name: 'document_list',
       status: 'completed',
       result: { selectionRequired: true, documents: [] },
       startedAt: '2026-08-17T03:00:00.000Z',
@@ -189,7 +189,7 @@ describe('Agent document selection result', () => {
     const legacyResult = {
       id: 'tool-legacy',
       runId: 'run-legacy',
-      name: 'context_room_document_list',
+      name: 'document_list',
       status: 'completed',
       result: { selectionRequired: true, documents: [{ id: 'doc-1', title: '旧结果缺 roomId' }] },
       startedAt: '2026-08-17T02:00:00.000Z',

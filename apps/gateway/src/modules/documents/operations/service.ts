@@ -225,7 +225,7 @@ export class DocumentOperationService {
             documentId: input.documentId,
             currentVersion: current.version,
             retryable: true,
-            nextAction: "context_room_document_read",
+            nextAction: "document_read",
           });
         }
       }
