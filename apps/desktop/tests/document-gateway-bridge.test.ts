@@ -324,3 +324,50 @@ describe('DocumentGatewayBridge 订阅就绪韧性', () => {
     await new Promise<void>((resolve) => wss.close(() => resolve()))
   }, 10_000)
 })
+
+describe('DocumentGatewayBridge 工作区级文稿（P0-2）', () => {
+  async function bridgeWithRecorder(paths: string[]): Promise<DocumentGatewayBridge> {
+    const server = createServer((request, response) => {
+      paths.push(request.url ?? '')
+      json(response, 200, [])
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const { port } = server.address() as AddressInfo
+    return new DocumentGatewayBridge({
+      getConnection: () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as GatewaySupervisor)
+  }
+
+  it('omits roomId when listing the whole workspace and keeps it when scoped', async () => {
+    const paths: string[] = []
+    const bridge = await bridgeWithRecorder(paths)
+
+    await bridge.list(null)
+    await bridge.list('room-1')
+    await bridge.listTrash(null)
+    await bridge.listTrash('room-1')
+
+    expect(paths).toEqual([
+      '/v1/documents',
+      '/v1/documents?roomId=room-1',
+      '/v1/documents?trashed=true',
+      '/v1/documents?roomId=room-1&trashed=true',
+    ])
+  })
+
+  it('empties the whole workspace trash when no room is given', async () => {
+    const paths: string[] = []
+    const bridge = await bridgeWithRecorder(paths)
+
+    await bridge.emptyTrash(null)
+    await bridge.emptyTrash('room-1')
+
+    expect(paths).toEqual(['/v1/documents/trash', '/v1/documents/trash?roomId=room-1'])
+  })
+})

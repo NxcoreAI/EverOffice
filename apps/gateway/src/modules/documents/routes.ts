@@ -301,11 +301,14 @@ export function documentRoutes(
       {
         schema: {
           tags: ["documents"],
-          querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+          // roomId 省略 = 清空整个工作区回收站（P0-2）。
+          querystring: Type.Object({
+            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          }),
         },
       },
       async (request, reply) => {
-        await service.emptyTrash(request.query.roomId);
+        await service.emptyTrash(request.query.roomId ?? null);
         return reply.code(204).send();
       },
     );

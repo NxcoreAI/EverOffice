@@ -796,8 +796,9 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    list: (roomId) => invoke('documents:list', roomId),
-    listTrash: (roomId) => invoke('documents:list-trash', roomId),
+    // roomId 传 null/undefined = 整个工作区的文稿（P0-2）
+    list: (roomId?: string | null) => invoke('documents:list', roomId),
+    listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
@@ -828,10 +829,10 @@ const api: NxcoreDesktopApi = {
     moveMany: (documentIds, fromRoomId, roomId) => invoke('documents:move-many', documentIds, fromRoomId, roomId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
-    emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
+    emptyTrash: (roomId?: string | null) => invoke('documents:empty-trash', roomId),
     exportPdf: (input) => invoke('documents:export-pdf', input),
-    subscribe: (roomId) => invoke('documents:subscribe', roomId),
-    unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
+    subscribe: (roomId?: string | null) => invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId?: string | null) => invoke('documents:unsubscribe', roomId),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
