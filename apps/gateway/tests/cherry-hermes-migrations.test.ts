@@ -21,19 +21,14 @@ const thread = (content: string): NormalizedExternalThread => ({
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "everroom-cherry-")); dirs.push(directory);
   const database = createDatabase(join(directory, "gateway.sqlite"), migrationsDir);
-  const memory = {
-    enabled: true,
-    replaceConversationBatches: vi.fn(async (input: { sessionId: string; messages: unknown[] }) => ({ sessionId: input.sessionId, messagesImported: input.messages.length })),
-    deleteConversations: vi.fn(async () => ({ deletedCount: 1 })),
-    searchConversations: vi.fn(async () => ({ messages: [] })),
-  } as any;
-  return { database, memory, service: new DataMigrationService(database.db, database.sqlite, memory) };
+  return { database, service: new DataMigrationService(database.db, database.sqlite) };
 }
 
 afterEach(async () => { await Promise.all(dirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
-const jobsFor = (service: DataMigrationService, runId: string): number =>
-  (service["sqlite"].prepare("SELECT count(*) count FROM migration_jobs WHERE run_id=? AND type='memory_index'").get(runId) as { count: number }).count;
+/** 幂等信号：同一线程是否被本次运行重新写入（import_version 自增）。 */
+const importVersionFor = (service: DataMigrationService): number =>
+  (service["sqlite"].prepare("SELECT import_version v FROM external_agent_threads").get() as { v: number }).v;
 
 describe("cherry/hermes migration foundation", () => {
   it("seeds capability states for cherry on begin and activates sync after completion", async () => {
@@ -54,47 +49,37 @@ describe("cherry/hermes migration foundation", () => {
   });
 
   it("re-importing identical threads is a zero-task operation", async () => {
-    const { database, memory, service } = await setup();
+    const { database, service } = await setup();
     const first = service.begin({ provider: "cherry", transport: "directory", stableSourceKey: "root", displayName: "Cherry Studio" });
     service.appendThreads(first.run.id, [thread("帮我排期")]);
     await service.finish(first.run.id);
     await service.idle();
-    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(1);
     const versionAfterFirst = (database.sqlite.prepare("SELECT import_version v FROM external_agent_threads").get() as { v: number }).v;
 
     const second = service.begin({ provider: "cherry", transport: "directory", stableSourceKey: "root", displayName: "Cherry Studio" });
     service.appendThreads(second.run.id, [thread("帮我排期")]);
     await service.finish(second.run.id);
     await service.idle();
-    expect(jobsFor(service, second.run.id)).toBe(0);
-    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(1);
+    expect(database.sqlite.prepare("SELECT count(*) count FROM migration_jobs").get()).toEqual({ count: 0 });
     const versionAfterSecond = (database.sqlite.prepare("SELECT import_version v FROM external_agent_threads").get() as { v: number }).v;
     expect(versionAfterSecond).toBe(versionAfterFirst);
     service.dispose();
     database.sqlite.close();
   });
 
-  it("changed content, missing attachments or a stale rule version re-enqueue indexing", async () => {
-    const { database, memory, service } = await setup();
+  it("changed content re-imports the thread and bumps its version", async () => {
+    const { database, service } = await setup();
     const first = service.begin({ provider: "cherry", transport: "directory", stableSourceKey: "root", displayName: "Cherry Studio" });
     service.appendThreads(first.run.id, [thread("帮我排期")]);
     await service.finish(first.run.id);
     await service.idle();
-    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(1);
+    expect(importVersionFor(service)).toBe(1);
 
     const changed = service.begin({ provider: "cherry", transport: "directory", stableSourceKey: "root", displayName: "Cherry Studio" });
     service.appendThreads(changed.run.id, [thread("帮我重新排期")]);
     await service.finish(changed.run.id);
     await service.idle();
-    expect(jobsFor(service, changed.run.id)).toBe(1);
-    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(2);
-
-    database.sqlite.prepare("UPDATE external_agent_threads SET memory_rule_version=0").run();
-    const rulesBumped = service.begin({ provider: "cherry", transport: "directory", stableSourceKey: "root", displayName: "Cherry Studio" });
-    service.appendThreads(rulesBumped.run.id, [thread("帮我重新排期")]);
-    await service.finish(rulesBumped.run.id);
-    await service.idle();
-    expect(jobsFor(service, rulesBumped.run.id)).toBe(1);
+    expect(importVersionFor(service)).toBe(2);
     service.dispose();
     database.sqlite.close();
   });
