@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
+import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
 import {
@@ -22,12 +23,12 @@ import {
 import type { SlidesProgressTracker } from "./slides-progress-tracker.js";
 import { runLayouterTail } from "./slides-layout-tail.js";
 import type { LayouterOfficeBridge } from "./slides-layout-tail.js";
-import type { SlidesVisualReviewer } from "../slides-visual-review/review.js";
 import { collectPendingImagePages, generateSlidesPageImages } from "./slides-page-images.js";
 import { createSlideImageVlmReviewer } from "./slides-image-vlm-qc.js";
 import { analyzeReferenceFiles } from "./slides-reference.js";
 import {
   applyPrewarmReadyToPlan,
+  enqueuePrewarmImage,
   newPrewarmToken,
   reconcilePrewarm,
   registerPrewarm,
@@ -43,17 +44,21 @@ import {
 import type { SlidesPageImageSessionStore } from "./slides-page-images-store.js";
 import { runSlidesStyleStage, type SlidesStyleStageDeps } from "./slides-style-stage.js";
 import type { PageImagesStageOutcome } from "./slides-page-images-stage.js";
+import { assignContentSources, semanticHash, type SemanticReport } from "./slides-semantic-contract.js";
+import { assembleSemanticPlan, SEMANTIC_MODE } from "./slides-semantic-stage.js";
+import { prefetchSlidesMaterials } from "./slides-material-prefetch.js";
 import {
-  buildEditorInput,
-  buildShadowReport,
-  dispatchEditorStoryboard,
-  draftPagesHash,
-  editorPagesFromPlan,
-  mergeStoryboardIntoPlan,
-  storyboardFromInvocation,
-  type EditorDraftPage,
-  type EditorShadowReport,
-} from "./slides-editor.js";
+  arrangeBatchCheckpointKey,
+  arrangeBatchMeta,
+  mergeArrangeBatchPlans,
+  planArrangeBatches,
+  runArrangeBatches,
+  validateArrangeBatchPlan,
+  type ArrangeBatch,
+  type ArrangeBatchFailure,
+} from "./slides-arrange-batches.js";
+import type { MaterialHit } from "../materials/service.js";
+import { inferSceneId, resolveScene } from "../slides-layout/scene.js";
 import type { SlidesStoryboardStore } from "./slides-storyboards-store.js";
 
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
@@ -67,6 +72,47 @@ const CONCURRENCY_RETRY_DELAYS_MS = [500, 1_500];
 /** slides 长链路容量等待预算：整册生成以分钟计，宁可慢也不产出兜底整册。 */
 const SLIDES_CONCURRENCY_BUDGET_MS = 6 * 60_000;
 
+/**
+ * arrange 分批（2026-10-23 根因修复）：把「整册一次成稿」拆成 8 页一批。
+ * - 单批超时 5 分钟（agent policy 900s 只管整批上限，实际按批收紧）；
+ * - 单批失败重试 1 次，其他批继续；已完成批写 checkpoint；
+ * - checkpoint 同一草稿/指令/风格/来源跨用户重试复用，只补失败批。
+ */
+const ARRANGE_BATCH_SIZE = 8;
+const ARRANGE_BATCH_CONCURRENCY = 2;
+const ARRANGE_BATCH_TIMEOUT_MS = 5 * 60_000;
+const ARRANGE_BATCH_ATTEMPTS = 2;
+const ARRANGE_CHECKPOINT_TTL_MS = 30 * 60_000;
+const ARRANGE_CHECKPOINT_LIMIT = 8;
+
+interface ArrangeCheckpoint {
+  createdAt: number;
+  /** batchIndex → 已通过确定性校验的批结果。 */
+  batches: Map<number, Record<string, unknown>>;
+}
+
+const arrangeCheckpoints = new Map<string, ArrangeCheckpoint>();
+
+function arrangeCheckpointFor(key: string): ArrangeCheckpoint {
+  const now = Date.now();
+  for (const [candidate, entry] of arrangeCheckpoints) {
+    if (now - entry.createdAt > ARRANGE_CHECKPOINT_TTL_MS) arrangeCheckpoints.delete(candidate);
+  }
+  const existing = arrangeCheckpoints.get(key);
+  if (existing) {
+    existing.createdAt = now;
+    return existing;
+  }
+  while (arrangeCheckpoints.size >= ARRANGE_CHECKPOINT_LIMIT) {
+    const oldest = [...arrangeCheckpoints.entries()].sort((left, right) => left[1].createdAt - right[1].createdAt)[0];
+    if (!oldest) break;
+    arrangeCheckpoints.delete(oldest[0]);
+  }
+  const created: ArrangeCheckpoint = { createdAt: now, batches: new Map() };
+  arrangeCheckpoints.set(key, created);
+  return created;
+}
+
 interface ConcurrencyRetryOptions {
   /** 满窗时的容量等待（入参为单次等待上限）；缺省只做短退避。 */
   awaitCapacity?: (timeoutMs: number) => Promise<boolean>;
@@ -78,16 +124,34 @@ interface ConcurrencyRetryOptions {
   delaysMs?: number[];
 }
 
-/** slides 长链路（storyboard / 逐页布局 / 逐页审页）的容量等待选项。 */
-function slidesConcurrencyRetry(orchestrator: SubagentOrchestrator): ConcurrencyRetryOptions {
+/**
+ * slides 长链路（storyboard / 逐页布局 / 逐页审页）的容量等待选项。
+ *
+ * `agentId` 决定等**哪口池**的空位：`awaitCapacity` 按 agent 归属分池判容量，
+ * 不传 agentId 会退化成 default 池（slides 池满时立即"等到位"、退避空转，
+ * default 池满时 slides 链路白等）。所以每个调用点必须传自己 dispatch 的 agentId。
+ */
+function slidesConcurrencyRetry(orchestrator: SubagentOrchestrator, agentId: string): ConcurrencyRetryOptions {
   return {
     // 测试/旧宿主的 mock orchestrator 可能没有该方法：退化为不等待，由退避表与预算兜底。
     ...(typeof orchestrator.awaitCapacity === "function"
-      ? { awaitCapacity: (timeoutMs: number) => orchestrator.awaitCapacity(timeoutMs) }
+      ? { awaitCapacity: (timeoutMs: number) => orchestrator.awaitCapacity(timeoutMs, undefined, agentId) }
       : {}),
     capacityWaitMs: 60_000,
     budgetMs: SLIDES_CONCURRENCY_BUDGET_MS,
     delaysMs: [500, 1_500, 4_000, 8_000, 15_000],
+  };
+}
+
+/** 分批编排的容量等待：比整册落页链路短，避免单批在满窗上排十几分钟。 */
+function arrangeBatchRetry(orchestrator: SubagentOrchestrator): ConcurrencyRetryOptions {
+  return {
+    ...(typeof orchestrator.awaitCapacity === "function"
+      ? { awaitCapacity: (timeoutMs: number) => orchestrator.awaitCapacity(timeoutMs, undefined, "slides-planner") }
+      : {}),
+    capacityWaitMs: 30_000,
+    budgetMs: 2 * 60_000,
+    delaysMs: [500, 1_500, 4_000],
   };
 }
 
@@ -276,6 +340,45 @@ function extractJsonObject(value: string): Record<string, unknown> | null {
   return null;
 }
 
+/** 子代理结果 → 结构化方案：正式提交优先，缺失时回退解析最终文本（历史行为）。 */
+function structuredPlanOf(invocation: SubagentInvocation): Record<string, unknown> | null {
+  const structured = invocation.result?.structuredOutput;
+  if (structured !== null && typeof structured === "object" && !Array.isArray(structured)) {
+    return structuredClone(structured) as Record<string, unknown>;
+  }
+  return extractJsonObject(invocation.result?.text ?? "");
+}
+
+/** 方案里的 imagePrompt 按全册页序（1 起）提前入池生图；网关单批/分批共用。 */
+function enqueuePlanPrewarm(
+  token: string | null,
+  plan: Record<string, unknown>,
+  startPageIndex: number,
+): void {
+  if (!token) return;
+  const pages = Array.isArray(plan.pages) ? plan.pages : [];
+  pages.forEach((page, localIndex) => {
+    if (page === null || typeof page !== "object" || Array.isArray(page)) return;
+    const prompt = (page as Record<string, unknown>).imagePrompt;
+    if (typeof prompt !== "string" || !prompt.trim()) return;
+    enqueuePrewarmImage(token, startPageIndex + localIndex + 1, prompt.trim());
+  });
+}
+
+function enqueueBatchPrewarm(
+  token: string | null,
+  batch: ArrangeBatch,
+  plan: Record<string, unknown>,
+): void {
+  enqueuePlanPrewarm(token, plan, batch.startPageIndex);
+}
+
+function describeBatchFailures(failures: ArrangeBatchFailure[]): string {
+  return failures
+    .map((failure) => `第 ${failure.batch.index + 1}/${failure.batch.total} 批（${failure.errorCode || failure.status}）`)
+    .join("、");
+}
+
 function normalizeDocumentSummary(result: { text: string; structuredOutput?: unknown } | null): {
   summary: string | null;
   outputFormat: "structured" | "text" | null;
@@ -348,34 +451,6 @@ export function inferMaterialSourcesFromReads(
   return entries;
 }
 
-interface EditorShadowOutcome {
-  report: EditorShadowReport | null;
-  error?: string;
-}
-
-/** 影子结果挂到最终 tool 返回（details + content），不改变 status/落页结果。 */
-function attachEditorShadow(
-  result: { content: string; details: unknown },
-  shadow: EditorShadowOutcome | null,
-): { content: string; details: unknown } {
-  if (!shadow) return result;
-  let payload: Record<string, unknown> | null = null;
-  try {
-    const parsed = JSON.parse(result.content) as unknown;
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
-  } catch {
-    payload = null;
-  }
-  const details = result.details !== null && typeof result.details === "object" && !Array.isArray(result.details)
-    ? result.details as Record<string, unknown>
-    : {};
-  if (!payload) return { content: result.content, details: { ...details, storyboardShadow: shadow } };
-  return {
-    content: JSON.stringify({ ...payload, storyboardShadow: shadow }),
-    details: { ...details, storyboardShadow: shadow },
-  };
-}
-
 /** 参考 deck 抽取结果覆盖风格卡色板/明暗/构图；字体与间距仍沿用用户风格卡。 */
 function mergeReferenceStyleParams(
   styleParams: Record<string, unknown> | null,
@@ -431,50 +506,23 @@ function compactStylePalette(
   };
 }
 
-/** 主动 storyboard 的报告挂到最终 tool 返回（不改变落页结果）。 */
-function attachStoryboardReport(
-  result: { content: string; details: unknown },
-  report: EditorShadowReport | null,
-  error?: string,
-): { content: string; details: unknown } {
-  const payload = { report, ...(error ? { error } : {}) };
-  let body: Record<string, unknown> | null = null;
-  try {
-    const parsed = JSON.parse(result.content) as unknown;
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed as Record<string, unknown>;
-  } catch {
-    body = null;
-  }
-  const details = result.details !== null && typeof result.details === "object" && !Array.isArray(result.details)
-    ? result.details as Record<string, unknown>
-    : {};
-  // 主 Agent 只看到「是否应用」；原始错误留在 details 供排查，避免把内部超时当成用户可见失败。
-  const publicPayload = report
-    ? {
-        applied: report.passed,
-        pageCount: report.pageCount,
-        proseChars: report.proseChars,
-        copyChars: report.copyChars,
-        dropped: report.dropped,
-      }
-    : { applied: false };
-  if (!body) return { content: result.content, details: { ...details, storyboard: payload } };
-  return {
-    content: JSON.stringify({ ...body, storyboard: publicPayload }),
-    details: { ...details, storyboard: payload },
-  };
-}
+/**
+ * 风格预热（styler ∥ 大纲）：草稿阶段一拿到 draftDocumentId 就在后台开跑风格阶段。
+ *
+ * 依据：风格方向与纵览图只依赖用户那句需求，**不依赖草稿正文**；而用户读完草稿
+ * 平均要 8.5 分钟（P50 511s / 50 个真实会话实测）。把风格图放进这个窗口，后续
+ * `style` 调用会命中 `sessions.findActive` 的 images_ready 复用分支，直接亮候选卡。
+ *
+ * 用 promise 而不是"发出去就不管"，是为了防一个竞态：用户确认得极快时，预热还在
+ * 生图，`runStyleImages` 会因为会话没到 images_ready 而**新开一个会话重跑一遍**，
+ * 白白多烧一整套生图配额。所以 `style` 分支进来时先等这个 promise 落定。
+ *
+ * key = roomId + draftDocumentId：换草稿就是新一轮流程，旧预热不复用。
+ */
+const stylePrefetchByDraft = new Map<string, Promise<unknown>>();
 
-/** 影子等待上限：editor 与 arrange/落页并行，正常早已完成；超时只丢影子报告，不阻塞生成。 */
-async function settleEditorShadow(promise: Promise<EditorShadowOutcome>, timeoutMs = 20_000): Promise<EditorShadowOutcome> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<EditorShadowOutcome>((resolve) => {
-    timer = setTimeout(() => resolve({ report: null, error: `editor 影子等待超时（${timeoutMs}ms）` }), timeoutMs);
-    (timer as { unref?: () => void }).unref?.();
-  });
-  const outcome = await Promise.race([promise, timeout]);
-  if (timer) clearTimeout(timer);
-  return outcome;
+function stylePrefetchKey(roomId: string, draftDocumentId: string): string {
+  return `${roomId}::${draftDocumentId}`;
 }
 
 export function createSubagentPiTools(
@@ -540,19 +588,26 @@ export function createSubagentPiTools(
     /** 无模版风格管线（slides_draft 的 style/style_select 阶段与 generate 风格注入）。
      *  create-server 侧 filesService/materials 晚于工具装配创建：支持 getter 惰性取。 */
     slidesStyle?: SlidesStyleStageDeps | null | (() => SlidesStyleStageDeps | null);
-    /** slides 编辑层影子模式（M1）：用户确认草稿后压缩 storyboard，不替换现有 arrange。
+    /**
+     * 本机素材检索（MaterialsService.search 的同构入口，同步 DB 查询）。
+     * arrange 派发前按草稿每页的配图意图预取——planner 不再自己调 material_search，
+     * 见 slides-material-prefetch.ts。未配置时 planner 只靠 imagePrompt。
+     */
+    searchMaterials?: (query: string, limit?: number) => MaterialHit[];
+    /** slides 语义内容链路（storyboard/v3）：内容契约装配——storyboard 落库 + 实验隔离 hash。
      *  传入即启用；装配层默认传入，不需要 .env 开关。 */
-    slidesEditor?: { store?: SlidesStoryboardStore | null; active?: boolean } | null;
+    slidesEditor?: { store?: SlidesStoryboardStore | null; active?: boolean; generationConfig?: () => unknown } | null;
     /** 布局树落页装配（generate 尾部）：Office 桥 + 视觉复检器 + 素材字节读取。
      *  create-server 侧共享 office-plugin 的同一批实例；支持 getter 惰性取。 */
     slidesLayoutOffice?: {
       bridge: LayouterOfficeBridge | null;
-      visualReviewer: SlidesVisualReviewer | null;
+      /** 单册 deck 的页级并发上限（逐页取树 worker 数）；缺省 12。 */
+      deckConcurrency?: number;
       readMaterialBlob: (hash: string) => Promise<Uint8Array | null>;
       fetchImageHead: (url: string) => Promise<Uint8Array | null>;
     } | null | (() => {
       bridge: LayouterOfficeBridge | null;
-      visualReviewer: SlidesVisualReviewer | null;
+      deckConcurrency?: number;
       readMaterialBlob: (hash: string) => Promise<Uint8Array | null>;
       fetchImageHead: (url: string) => Promise<Uint8Array | null>;
     } | null);
@@ -1204,7 +1259,7 @@ export function createSubagentPiTools(
         + "style_select：用户挑定后调用，传 styleSessionId 与 candidateIndex（1 起）——提取风格、生成风格卡（色板/字号/线框/演示页）并展示确认卡，到此即停；"
         + "用户想改效果就在对话里说（如「标题改小点」），由 style 任务携带新反馈重出；确认后进入 generate。"
         + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId；当前未绑定 Room 时凭 styleSessionId 自动反查，不要猜测 roomId）——"
-        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度并检索配图。"
+        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度；配图由网关按草稿的配图建议预取本地素材随方案输入下发（方案代理不再逐页检索）。"
         + "方案里素材检索不到但值得配图的页，AI 配图自动在后台开始生成（并发进行），过目卡逐张亮出（生成中/失败页有占位行）："
         + "返回 page_images_review 即到此为止，期间用户随时可逐张处置——重生成传 regeneratePageImage=序号（1 起，反馈写 regenerateFeedback）；"
         + "打回某张传 rejectPageImage=序号（落页时该页退化图形版式，restorePageImage=序号可撤销）。"
@@ -1229,17 +1284,17 @@ export function createSubagentPiTools(
         ]),
         instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-        outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 24 })),
+        outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 32 })),
         /** 参考 deck 的本地 PDF/PPTX/图片路径（拖进对话区后主 Agent 可直接传路径）。 */
         referencePath: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
         /** 多张参考图/多个参考文件；支持 PDF/PPTX/PNG/JPG/WebP 混传。 */
         referencePaths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 12 })),
         /** 参考 deck 抽取结果（reference-style/v1）；有它时 styler/planner 按参考色板/密度/页数走。 */
         referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-        /** 参考 deck 的章节标题（可含 27 页原序）；planner 用它补全 20~24 页主干。 */
+        /** 参考 deck 的章节标题（可含 27 页原序）；planner 用它补全主干，最多 32 页。 */
         referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
         /** 目标页数；缺省由参考 style.pageBudget 或 planner 判断。 */
-        targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 24 })),
+        targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
         draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         candidateIndex: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
@@ -1284,7 +1339,7 @@ export function createSubagentPiTools(
             referenceStyle = ref.style as unknown as Record<string, unknown>;
             // 单张/几张参考图只取色板与视觉倾向，不用图名强行生成章节大纲。
             referenceOutline = ref.titles.length >= 4 ? ref.titles : [];
-            if (ref.pageCount >= 8) targetPages ??= Math.min(24, Math.max(12, Math.min(20, ref.pageCount)));
+            if (ref.pageCount >= 8) targetPages ??= Math.min(32, Math.max(12, Math.min(20, ref.pageCount)));
           } catch (error) {
             return {
               content: JSON.stringify({
@@ -1332,6 +1387,25 @@ export function createSubagentPiTools(
               }),
               details: { errorCode: "slides_style_unavailable" },
             };
+          }
+          // 草稿阶段预热过风格（用户阅读窗口里跑）：确认得再快也要等它落定，
+          // 否则会话还没到 images_ready，下面会新开一套会话把生图重跑一遍。
+          // 上限 120s：预热失败/卡住时不能把用户的这步操作一起拖死。
+          {
+            const requestedDraftId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+            const pendingKey = requestedDraftId
+              ? stylePrefetchKey(roomId, requestedDraftId)
+              : [...stylePrefetchByDraft.keys()].find((k) => k.startsWith(`${roomId}::`));
+            const pending = pendingKey ? stylePrefetchByDraft.get(pendingKey) : undefined;
+            if (pending) {
+              await Promise.race([
+                pending.catch(() => undefined),
+                new Promise((resolve) => {
+                  const timer = setTimeout(resolve, 120_000);
+                  (timer as { unref?: () => void }).unref?.();
+                }),
+              ]);
+            }
           }
           const styleResult = await runSlidesStyleStage(
             {
@@ -1499,6 +1573,41 @@ export function createSubagentPiTools(
             ...(gatePlan.warnings?.length ? { warnings: gatePlan.warnings } : {}),
           };
           onUpdate?.({ content: JSON.stringify(draftUpdate), details: draftUpdate });
+          // ── 风格预热：草稿已落文档、用户开始阅读，这一段等待是纯人工时间，正好用来出风格图。 ──
+          // 失败只记账不抛：预热是加速手段，绝不能影响草稿交付本身。
+          {
+            const prefetchDeps = typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle;
+            if (prefetchDeps) {
+              const key = stylePrefetchKey(roomId, draftDocument.documentId);
+              const prefetch = runSlidesStyleStage(
+                {
+                  task: "style",
+                  run: { runId: run.runId, sessionId: run.sessionId, roomId },
+                  instruction,
+                  ...(titleArg ? { title: titleArg } : {}),
+                  draftDocumentId: draftDocument.documentId,
+                  // 不带 signal：草稿 run 一返回就会 abort，而这段恰恰要活过 run 边界。
+                  // 不带 onUpdate：候选卡必须等用户确认草稿后再亮，抢跑会盖掉草稿卡。
+                  dispatch: (dispatchInput) => dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+                    agentId: dispatchInput.agentId,
+                    task: dispatchInput.task,
+                    input: dispatchInput.input,
+                    idempotencyKey: dispatchInput.idempotencyKey,
+                    source: "primary_agent",
+                    parentSessionId: run.sessionId,
+                    parentRunId: run.runId,
+                  })),
+                },
+                prefetchDeps,
+                orchestrator,
+              ).catch(() => undefined);
+              stylePrefetchByDraft.set(key, prefetch);
+              // 落定即清理，避免 Map 随会话数无限增长。
+              void prefetch.then(() => {
+                if (stylePrefetchByDraft.get(key) === prefetch) stylePrefetchByDraft.delete(key);
+              });
+            }
+          }
           return {
             content: JSON.stringify({
               status: "draft_ready",
@@ -1594,103 +1703,80 @@ export function createSubagentPiTools(
             const builderStyleParams = settle.builderStyleParams ?? styleSession?.styleParams ?? referenceStyleParams ?? null;
             const styleSessionIdToSettle = settle.styleSessionIdToSettle ?? styleSessionId;
 
-            // M3 主动 storyboard：planner arrange 的 plan 已带素材/配图，再交给 editor 压缩成 v2 copy；
-            // editor 失败或页数不一致时保留原 plan 走 v1，不阻塞落页。
-            let activePlan = builderPlan;
-            let storyboardReport: EditorShadowReport | null = null;
-            let storyboardError: string | undefined;
-            if (options.slidesEditor?.active === true && registry.get("slides-editor")) {
-              const editorDraftPages = editorPagesFromPlan(builderPlan);
-              const editorDeckStyle = deckStyleFrom(builderStyleParams as Record<string, unknown> | null);
-              const deckComposition = typeof editorDeckStyle?.composition === "string" ? editorDeckStyle.composition : undefined;
-              const compositionOptions = deckComposition ? { deckComposition } : {};
-              let compositionFeedback: string | undefined;
-              try {
-                for (let attempt = 0; attempt < 2; attempt += 1) {
-                  const editorBase = {
-                    instruction,
-                    roomId,
-                    title: typeof builderPlan.title === "string" ? builderPlan.title : (draftSnapshot?.document.title ?? ""),
-                    ...(editorDeckStyle ? { deckStyle: editorDeckStyle } : {}),
-                    ...(compositionFeedback ? { compositionFeedback } : {}),
-                  };
-                  const batched = await dispatchEditorStoryboard({
-                    draftPages: editorDraftPages,
-                    buildInput: (pages, batchIndex, batchCount) => buildEditorInput({
-                      ...editorBase,
-                      draftPages: pages,
-                      pageOffset: batchIndex * 6,
-                      pageCount: editorDraftPages.length,
-                    }),
-                    dispatch: (input, batchIndex) => dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-                      agentId: "slides-editor",
-                      task: "演示文稿压缩编排",
-                      input,
-                      idempotencyKey: dispatchKey(run.runId, "slides-editor", `active:${attempt}:${batchIndex}`, input),
-                      source: "primary_agent",
-                      parentSessionId: run.sessionId,
-                      ...(parentRunId ? { parentRunId } : {}),
-                      ...(signal ? { signal } : {}),
-                    }), slidesConcurrencyRetry(orchestrator)),
-                    options: compositionOptions,
-                  });
-                  const got = { storyboard: batched.storyboard, errors: batched.errors };
-                  if (!got.storyboard) {
-                    storyboardError = got.errors.join("; ") || "editor 未提交 storyboard";
-                    break;
-                  }
-                  const report = buildShadowReport(got.storyboard, editorDraftPages, compositionOptions);
-                  report.errors = [...new Set([...got.errors, ...report.errors])];
-                  report.warnings = [...new Set([...report.warnings, ...(got.storyboard.warnings ?? [])])];
-                  report.passed = report.errors.length === 0;
-                  storyboardReport = report;
-                  // 构图家族不忠于风格卡时只重排一次：把校验错误回传 editor，第二次仍不过才回退 v1。
-                  const compositionErrors = report.errors.filter((error) => error.startsWith("构图家族"));
-                  if (!report.passed && compositionErrors.length > 0 && attempt === 0) {
-                    compositionFeedback = compositionErrors.join("；");
-                    storyboardReport = report;
-                    continue;
-                  }
-                  const merged = report.passed ? mergeStoryboardIntoPlan(builderPlan, got.storyboard) : null;
-                  if (merged) {
-                    activePlan = merged;
-                  } else {
-                    storyboardError = report.passed
-                      ? `storyboard 页数 ${got.storyboard.pages.length} 与方案页数不一致`
-                      : `storyboard 验收未通过：${report.errors.slice(0, 2).join("; ")}`;
-                  }
-                  try {
-                    options.slidesEditor?.store?.save({
-                      roomId,
-                      draftDocumentId,
-                      draftHash: draftPagesHash(editorDraftPages),
-                      storyboard: got.storyboard,
-                      report,
-                    });
-                  } catch (error) {
-                    report.warnings.push(`storyboard 落库失败：${error instanceof Error ? error.message : String(error)}`);
-                  }
-                  break;
-                }
-              } catch (error) {
-                storyboardError = error instanceof Error ? error.message : String(error);
-              }
-            }
-
-            // 编排阶段被并发窗口饿死时不要拿未压缩的 v1 plan 继续落页：v1 输入与首轮 v2 输入
-            // 不同 → 幂等键不同 → 首轮已完成的布局树无法复用，重试会稳定产出「整册兜底版式」
-            // 的假成功（2026-10-20 事故）。直接回报可重试失败，窗口空了再跑可复用已有产物。
-            if (storyboardError && /subagent_(?:global_)?concurrency_limit/.test(storyboardError)) {
-              const errorCode = "slides_storyboard_unavailable";
+            // 单一产出路径：落页只接受 v2 页面，而 v2 页面由 editor 的 storyboard 提供。
+            // 没有 storyboard 就没有 v2 页——不退回 planner 的 v1 plan（那会把整册换成另一套语法）。
+            if (options.slidesEditor?.active !== true || !registry.get("slides-editor")) {
               return {
                 content: JSON.stringify({
                   ...(parentRunId ? { invocationId: parentRunId } : {}),
                   status: "failed",
-                  errorCode,
-                  retryable: true,
-                  message: "编排阶段并发窗口被占满（storyboard 未完成）；本轮未开始落页，避免产出兜底整册。稍后重试即可复用已确认的草稿与配图。",
+                  errorCode: "slides_storyboard_unavailable",
+                  retryable: false,
+                  message: "幻灯片只有 v2 一条产出路径：slides-editor 未装配，无法生成 storyboard。请检查子代理装配配置。",
                 }),
-                details: { errorCode },
+                details: { errorCode: "slides_storyboard_unavailable" },
+              };
+            }
+            // 场景：只看用户这一句指令里的场合词（静默判断，不上界面）。
+            // 它决定整套字号阶梯、最小字号与每页字数预算，所以必须在压缩之前定下来。
+            const deckScene = resolveScene(inferSceneId(instruction));
+            let activePlan = builderPlan;
+            let storyboardError: string | undefined;
+            let semanticReport: SemanticReport | null = null;
+            // 唯一内容路径：plan 必须带 semantic 内容契约（assemble 阶段已钉死 contentContext）。
+            // 契约缺失＝编排阶段就出了岔子（装配被关或 schema 漂移），直接失败——不再回退旧压缩链路。
+            if (builderPlan.contentContext === undefined) {
+              return {
+                content: JSON.stringify({
+                  ...(parentRunId ? { invocationId: parentRunId } : {}),
+                  status: "failed",
+                  errorCode: "slides_semantic_context_missing",
+                  retryable: false,
+                  message: "落页方案缺少语义内容契约（contentContext）；幻灯片只有 semantic-v3 一条内容路径。请检查 slides-editor 装配与 slides-planner 输出。",
+                }),
+                details: { errorCode: "slides_semantic_context_missing" },
+              };
+            }
+            try {
+              const assembled = await assembleSemanticPlan({
+                plan: builderPlan, instruction, roomId,
+                repair: (input, round) => dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+                  agentId: "slides-editor", task: "单页内容修复", input,
+                  idempotencyKey: dispatchKey(run.runId, "slides-editor", `semantic-repair:${round}`, input),
+                  source: "primary_agent", parentSessionId: run.sessionId,
+                  ...(parentRunId ? { parentRunId } : {}), ...(signal ? { signal } : {}),
+                }), slidesConcurrencyRetry(orchestrator, "slides-editor")),
+              });
+              activePlan = assembled.plan;
+              semanticReport = assembled.report;
+              try {
+                const generation = {
+                  config: options.slidesEditor?.generationConfig?.(),
+                  revisions: ["slides-planner", "slides-editor", "slides-layouter"].map(id => registry.get(id)?.revision?.digest),
+                };
+                options.slidesEditor?.store?.save({ roomId, draftDocumentId, draftHash: `semantic-v3:${semanticHash({ hash: assembled.draftHash, style: builderStyleParams, scene: deckScene.id, generation })}`, storyboard: assembled.storyboard, report: assembled.report });
+              } catch (error) {
+                semanticReport.warnings.push(`storyboard 落库失败：${error instanceof Error ? error.message : String(error)}`);
+              }
+            } catch (error) { storyboardError = error instanceof Error ? error.message : String(error); }
+
+            // 内容契约未通过就不落页：继续落页等于拿缺内容的方案硬排，且输入变了幂等键也变，
+            // 首轮已完成的布局树无法复用，重试会稳定产出「整册兜底版式」的假成功（2026-10-20 事故）。
+            // 一律回报可重试失败，窗口空了再跑可复用已有产物。
+            if (storyboardError || !semanticReport?.passed) {
+              const busy = Boolean(storyboardError && /subagent_(?:global_)?concurrency_limit/.test(storyboardError));
+              return {
+                content: JSON.stringify({
+                  ...(parentRunId ? { invocationId: parentRunId } : {}),
+                  status: "failed",
+                  errorCode: "slides_semantic_content_invalid",
+                  retryable: true,
+                  message: busy
+                    ? "编排阶段并发窗口被占满（内容契约未完成）；本轮未开始落页，避免产出兜底整册。稍后重试即可复用已确认的草稿与配图。"
+                    : "页面内容契约未通过；本轮未开始落页。已保留草稿与配图，具体缺陷见 contentError，可修复后重试。",
+                  contentError: storyboardError ?? "内容契约缺失",
+                }),
+                details: { errorCode: "slides_semantic_content_invalid", contentError: storyboardError ?? "内容契约缺失" },
               };
             }
 
@@ -1698,33 +1784,24 @@ export function createSubagentPiTools(
               {
                 progress: options.slidesProgress ?? null,
                 bridge: office.bridge,
-                visualReviewer: office.visualReviewer,
+                ...(office.deckConcurrency === undefined ? {} : { deckConcurrency: office.deckConcurrency }),
                 readMaterialBlob: office.readMaterialBlob,
                 fetchImageHead: office.fetchImageHead,
                 makeKey: dispatchKey,
-                dispatchPage: (input, idempotencyKey, tailParentRunId) =>
+                // 单页布局；第 4 参带附件时是"自审回投"——把该页渲染图投回同一个
+                // 视觉模型，让它看自己的成品。整册不再有独立的审页代理。
+                dispatchPage: (input, idempotencyKey, tailParentRunId, attachments) =>
                   dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
                     agentId: "slides-layouter",
                     task: "单页布局",
                     input,
+                    ...(attachments ? { attachments } : {}),
                     idempotencyKey,
                     source: "primary_agent",
                     parentSessionId: run.sessionId,
                     ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
                     ...(signal ? { signal } : {}),
-                  }), slidesConcurrencyRetry(orchestrator)),
-                dispatchReview: (input, idempotencyKey, tailParentRunId, attachments) =>
-                  dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-                    agentId: "slides-reviewer",
-                    task: "单页审阅",
-                    input,
-                    attachments,
-                    idempotencyKey,
-                    source: "primary_agent",
-                    parentSessionId: run.sessionId,
-                    ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
-                    ...(signal ? { signal } : {}),
-                  }), slidesConcurrencyRetry(orchestrator)),
+                  }), slidesConcurrencyRetry(orchestrator, "slides-layouter")),
               },
               {
                 roomId,
@@ -1737,6 +1814,7 @@ export function createSubagentPiTools(
                 styleParams: (builderStyleParams !== null && typeof builderStyleParams === "object" && !Array.isArray(builderStyleParams))
                   ? builderStyleParams as Record<string, unknown>
                   : null,
+                scene: deckScene.id,
                 draftDocumentId,
                 settle: {
                   ...(settle.pageImagesSessionId ? { pageImagesSessionId: settle.pageImagesSessionId } : {}),
@@ -1753,7 +1831,8 @@ export function createSubagentPiTools(
                 ...(onUpdate ? { onUpdate } : {}),
               },
             );
-            return attachStoryboardReport(tailResult, storyboardReport, storyboardError);
+            // 内容契约报告挂到 details（不改变落页结果）；semanticReport 在此处必非空（未通过已提前失败）。
+            return { ...tailResult, details: { ...(tailResult.details as Record<string, unknown>), contentReport: semanticReport } };
           };
 
           // 正文配图交互路由：带 decision/regenerate 参数续跑已落库的配图会话；
@@ -1930,7 +2009,8 @@ export function createSubagentPiTools(
               details: { errorCode: "slides_draft_document_not_found" },
             };
           }
-          const draftPages = parseDraftMarkdown(draftSnapshot.markdown);
+          // 唯一内容路径：草稿全文保真解析（semantic 契约要求来源完整，不截断）。
+          const draftPages = parseDraftMarkdown(draftSnapshot.markdown, { preserveContent: true });
           if (!draftPages) {
             return {
               content: JSON.stringify({
@@ -1954,61 +2034,6 @@ export function createSubagentPiTools(
               details: { errorCode: "slides_planner_not_registered" },
             };
           }
-          // slides-editor 影子模式（M1）：与 arrange/落页并行压缩 storyboard，只落库 + 进 details，
-          // 不替换 plan。装配层传入 slidesEditor 即启用（默认开启，无需 .env）。
-          const editorStore = options.slidesEditor?.store ?? null;
-          let editorShadowPromise: Promise<EditorShadowOutcome> | null = null;
-          if (options.slidesEditor && options.slidesEditor.active !== true && registry.get("slides-editor")) {
-            const editorDraftPages = draftPages as EditorDraftPage[];
-            editorShadowPromise = (async (): Promise<EditorShadowOutcome> => {
-              try {
-                const batched = await dispatchEditorStoryboard({
-                  draftPages: editorDraftPages,
-                  buildInput: (pages, batchIndex) => buildEditorInput({
-                    instruction,
-                    roomId,
-                    title: draftSnapshot.document.title,
-                    draftPages: pages,
-                    pageOffset: batchIndex * 6,
-                    pageCount: editorDraftPages.length,
-                  }),
-                  dispatch: (input, batchIndex) => dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-                    agentId: "slides-editor",
-                    task: "演示文稿压缩编排",
-                    input,
-                    idempotencyKey: dispatchKey(run.runId, "slides-editor", `condense:${batchIndex}`, input),
-                    source: "primary_agent",
-                    parentSessionId: run.sessionId,
-                    parentRunId: run.runId,
-                    ...(signal ? { signal } : {}),
-                  })),
-                });
-                const got = { storyboard: batched.storyboard, errors: batched.errors };
-                if (!got.storyboard) {
-                  return { report: null, error: got.errors.join("; ") || "editor 未提交 storyboard" };
-                }
-                const report = buildShadowReport(got.storyboard, editorDraftPages);
-                report.errors = [...new Set([...got.errors, ...report.errors])];
-                report.warnings = [...new Set([...report.warnings, ...(got.storyboard.warnings ?? [])])];
-                report.passed = report.errors.length === 0;
-                try {
-                  editorStore?.save({
-                    roomId,
-                    draftDocumentId,
-                    draftHash: draftPagesHash(editorDraftPages),
-                    storyboard: got.storyboard,
-                    report,
-                  });
-                } catch (error) {
-                  report.warnings.push(`storyboard 落库失败：${error instanceof Error ? error.message : String(error)}`);
-                }
-                return { report };
-              } catch (error) {
-                return { report: null, error: error instanceof Error ? error.message : String(error) };
-              }
-            })();
-            void editorShadowPromise.catch(() => undefined);
-          }
 
           // 配图预热：编排过程中 planner 即可经 slides_image_prewarm 入池生图（与编排重叠）。
           // 生图能力可用才注册 token；planner 不调工具时对账为空，行为与现状一致。
@@ -2024,19 +2049,9 @@ export function createSubagentPiTools(
             });
           }
           const deckStyle = deckStyleFrom(effectiveStyleParams as Record<string, unknown> | null);
-          const plannerInput: Record<string, unknown> = {
-            phase: "arrange",
-            instruction,
-            roomId,
-            title: draftSnapshot.document.title.slice(0, 120),
-            draftPages,
-            ...(deckStyle ? { deckStyle } : {}),
-            ...(referenceStyle ? { referenceStyle } : {}),
-            ...(referenceOutline.length > 0 ? { referenceOutline } : {}),
-            ...(targetPages !== undefined ? { targetPages } : {}),
-            ...(prewarmToken !== null ? { prewarmToken } : {}),
-          };
-          // 重排方案阶段一开始就广播（arrange 是第二段长等待）。
+          // 语义来源在编排入口一次分配（页序即来源页序），planner 与后续契约校验共用同一份。
+          const semanticSources = assignContentSources(draftPages, draftDocumentId);
+          // 重排方案阶段一开始就广播（arrange 是第二段长等待）：素材预取也算在这一段里。
           const planningPayload = slidesProgressPayload("planning", {
             title: draftSnapshot.document.title.slice(0, 120),
             totalPages: draftPages.length,
@@ -2044,63 +2059,251 @@ export function createSubagentPiTools(
             documentId: draftDocumentId,
           });
           onUpdate?.({ content: JSON.stringify(planningPayload), details: planningPayload });
-          let plannerInvocation;
-          try {
-            plannerInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-              agentId: "slides-planner",
-              task: "演示文稿编排",
-              input: plannerInput,
-              idempotencyKey: dispatchKey(run.runId, "slides-planner", "arrange", plannerInput),
-              source: "primary_agent",
-              parentSessionId: run.sessionId,
-              parentRunId: run.runId,
+          // 素材检索前移到网关：按页预取命中随输入下发，planner 不再逐页调 material_search
+          // （27 页 deck 实测 21~40 次工具往返，是 arrange 超时的主要来源）。
+          const materialHits = options.searchMaterials
+            ? prefetchSlidesMaterials({ pages: draftPages, search: options.searchMaterials })
+            : [];
+          const deckTitle = draftSnapshot.document.title.slice(0, 120);
+          // 根因修复：整册一次性成稿拆成 8 页一批。短 deck 仍是单批（行为与旧路径一致）。
+          const arrangeBatches = planArrangeBatches({
+            pages: draftPages,
+            sources: semanticSources,
+            batchSize: ARRANGE_BATCH_SIZE,
+          });
+          let plan: Record<string, unknown> | null = null;
+          let plannerInvocationId: string | null = null;
+
+          if (arrangeBatches.length <= 1) {
+            const plannerInput: Record<string, unknown> = {
+              phase: "arrange",
+              instruction,
+              roomId,
+              title: deckTitle,
+              draftPages,
+              contentMode: SEMANTIC_MODE,
+              sources: semanticSources,
+              ...(deckStyle ? { deckStyle } : {}),
+              ...(referenceStyle ? { referenceStyle } : {}),
+              ...(referenceOutline.length > 0 ? { referenceOutline } : {}),
+              ...(targetPages !== undefined ? { targetPages } : {}),
+              ...(prewarmToken !== null ? { prewarmToken } : {}),
+              ...(materialHits.length > 0 ? { materialHits } : {}),
+            };
+            let plannerInvocation;
+            try {
+              plannerInvocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
+                agentId: "slides-planner",
+                task: "演示文稿编排",
+                input: plannerInput,
+                idempotencyKey: dispatchKey(run.runId, "slides-planner", "arrange", plannerInput),
+                source: "primary_agent",
+                parentSessionId: run.sessionId,
+                parentRunId: run.runId,
+                ...(signal ? { signal } : {}),
+              }));
+            } catch (error) {
+              const errorCode = error instanceof Error ? error.message : String(error);
+              const retryable = isConcurrencyLimitError(error);
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode,
+                  retryable,
+                  message: retryable
+                    ? "编排代理调度被并发限额拒绝；如实告知用户可稍后重试（草稿已就绪），禁止自行拼 PPT 内容。"
+                    : "编排代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
+                }),
+                details: { errorCode },
+              };
+            }
+            if (plannerInvocation.status !== "completed") {
+              return {
+                content: JSON.stringify({
+                  invocationId: plannerInvocation.id,
+                  status: "failed",
+                  errorCode: plannerInvocation.errorCode ?? plannerInvocation.errorMessage ?? plannerInvocation.status,
+                  retryable: plannerInvocation.status === "timed_out" || plannerInvocation.status === "cancelled",
+                  message: `编排阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
+                }),
+                details: plannerInvocation,
+              };
+            }
+            plan = structuredPlanOf(plannerInvocation);
+            plannerInvocationId = plannerInvocation.id;
+          } else {
+            // 分批路径：单批失败只重试该批；已完成批写 checkpoint，用户重试时只补失败批。
+            const checkpointKey = arrangeBatchCheckpointKey({
+              roomId,
+              draftDocumentId,
+              instruction,
+              sourcesHash: semanticHash(semanticSources),
+              deckStyle,
+              referenceStyle,
+              batchSize: ARRANGE_BATCH_SIZE,
+            });
+            const checkpoint = arrangeCheckpointFor(checkpointKey);
+            const batchByIndex = new Map(arrangeBatches.map((batch) => [batch.index, batch]));
+            // 复用上次已完成的批时也要把配图重新入池（checkpoint 可能跨过一次用户重试）。
+            for (const [index, batchPlan] of checkpoint.batches) {
+              const batch = batchByIndex.get(index);
+              if (batch) enqueueBatchPrewarm(prewarmToken, batch, batchPlan);
+            }
+            const batchMaterialHits = (batch: ArrangeBatch) => {
+              const start = batch.startPageIndex;
+              const end = start + batch.pageCount;
+              return materialHits
+                .filter((hit) => hit.pageIndex >= start && hit.pageIndex < end)
+                .map((hit) => ({ ...hit, pageIndex: hit.pageIndex - start }));
+            };
+            const outcome = await runArrangeBatches({
+              batches: arrangeBatches,
+              checkpoint: checkpoint.batches,
               ...(signal ? { signal } : {}),
-            }));
-          } catch (error) {
-            const errorCode = error instanceof Error ? error.message : String(error);
-            const retryable = isConcurrencyLimitError(error);
-            return {
-              content: JSON.stringify({
-                status: "failed",
-                errorCode,
-                retryable,
-                message: retryable
-                  ? "编排代理调度被并发限额拒绝；如实告知用户可稍后重试（草稿已就绪），禁止自行拼 PPT 内容。"
-                  : "编排代理调度失败；如实告知用户，禁止自行拼 PPT 内容。",
-              }),
-              details: { errorCode },
-            };
+              concurrency: ARRANGE_BATCH_CONCURRENCY,
+              attempts: ARRANGE_BATCH_ATTEMPTS,
+              onBatchDone(batch, batchPlan) {
+                enqueueBatchPrewarm(prewarmToken, batch, batchPlan);
+                // 批次级进度：计划阶段不再是一片空白，也不影响 plan_ready 的既有载荷。
+                const progress = slidesProgressPayload("planning", {
+                  title: deckTitle,
+                  totalPages: draftPages.length,
+                  doneBatches: checkpoint.batches.size,
+                  totalBatches: arrangeBatches.length,
+                  roomId,
+                  documentId: draftDocumentId,
+                });
+                onUpdate?.({ content: JSON.stringify(progress), details: progress });
+              },
+              async run(batch, attempt) {
+                const hitsForBatch = batchMaterialHits(batch);
+                const batchInput: Record<string, unknown> = {
+                  phase: "arrange",
+                  instruction,
+                  roomId,
+                  title: deckTitle,
+                  draftPages: batch.pages,
+                  contentMode: SEMANTIC_MODE,
+                  sources: batch.sources,
+                  arrangeBatch: arrangeBatchMeta(batch, draftPages, deckTitle),
+                  ...(deckStyle ? { deckStyle } : {}),
+                  ...(referenceStyle ? { referenceStyle } : {}),
+                  ...(hitsForBatch.length > 0 ? { materialHits: hitsForBatch } : {}),
+                };
+                const invocation = await dispatchWithConcurrencyRetry(
+                  () => orchestrator.dispatch({
+                    agentId: "slides-planner",
+                    task: "演示文稿编排",
+                    input: batchInput,
+                    idempotencyKey: dispatchKey(
+                      run.runId,
+                      "slides-planner",
+                      `arrange-batch:${batch.index}:${attempt}`,
+                      batchInput,
+                    ),
+                    source: "primary_agent",
+                    parentSessionId: run.sessionId,
+                    parentRunId: run.runId,
+                    timeoutMs: ARRANGE_BATCH_TIMEOUT_MS,
+                    ...(signal ? { signal } : {}),
+                  }),
+                  arrangeBatchRetry(orchestrator),
+                );
+                if (invocation.status !== "completed") {
+                  return {
+                    ok: false as const,
+                    status: invocation.status,
+                    errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+                    invocationId: invocation.id,
+                  };
+                }
+                const batchPlan = structuredPlanOf(invocation);
+                const errors = batchPlan ? validateArrangeBatchPlan(batch, batchPlan) : ["批结果不是对象"];
+                if (!batchPlan || errors.length > 0) {
+                  return {
+                    ok: false as const,
+                    status: "failed",
+                    errorCode: errors[0] ?? "slides_arrange_batch_invalid",
+                    invocationId: invocation.id,
+                  };
+                }
+                return { ok: true as const, plan: batchPlan, invocationId: invocation.id };
+              },
+            });
+            if (outcome.aborted) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_arrange_cancelled",
+                  retryable: true,
+                  message: "编排已取消；已完成的批次已保留，重试只会补未完成批次。",
+                }),
+                details: { errorCode: "slides_arrange_cancelled" },
+              };
+            }
+            if (outcome.failures.length > 0) {
+              const failed = describeBatchFailures(outcome.failures);
+              return {
+                content: JSON.stringify({
+                  invocationId: outcome.firstInvocationId ?? undefined,
+                  status: "failed",
+                  errorCode: "slides_arrange_batch_failed",
+                  retryable: true,
+                  message: `编排未完成（${failed}失败）；已完成的批次已保留，重试只补未完成批次。`,
+                }),
+                details: {
+                  errorCode: "slides_arrange_batch_failed",
+                  failedBatches: outcome.failures.map((failure) => ({
+                    index: failure.batch.index,
+                    total: failure.batch.total,
+                    status: failure.status,
+                    errorCode: failure.errorCode,
+                    invocationId: failure.invocationId ?? null,
+                  })),
+                },
+              };
+            }
+            try {
+              plan = mergeArrangeBatchPlans({
+                deckTitle,
+                pages: draftPages,
+                sources: semanticSources,
+                batches: arrangeBatches,
+                results: outcome.results,
+              }).plan;
+            } catch (error) {
+              const errorCode = error instanceof Error ? error.message : String(error);
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_arrange_merge_failed",
+                  retryable: true,
+                  message: `分批编排结果无法合并（${errorCode}）；请重试。`,
+                }),
+                details: { errorCode: "slides_arrange_merge_failed" },
+              };
+            }
+            // 整册已合并完成：checkpoint 使命结束，避免同一草稿的再次生成复用旧方案。
+            arrangeCheckpoints.delete(checkpointKey);
+            plannerInvocationId = outcome.firstInvocationId;
           }
-          if (plannerInvocation.status !== "completed") {
-            return {
-              content: JSON.stringify({
-                invocationId: plannerInvocation.id,
-                status: "failed",
-                errorCode: plannerInvocation.errorCode ?? plannerInvocation.errorMessage ?? plannerInvocation.status,
-                retryable: plannerInvocation.status === "timed_out" || plannerInvocation.status === "cancelled",
-                message: `编排阶段未完成（${plannerInvocation.status}）；如实告知用户，禁止自行拼 PPT 内容。`,
-              }),
-              details: plannerInvocation,
-            };
-          }
-          const plan = plannerInvocation.result?.structuredOutput !== null
-            && typeof plannerInvocation.result?.structuredOutput === "object"
-            && !Array.isArray(plannerInvocation.result.structuredOutput)
-            ? plannerInvocation.result.structuredOutput as Record<string, unknown>
-            : extractJsonObject(plannerInvocation.result?.text ?? "");
+
           const gatePlan = plan ? slidesProgressPlanFrom(plan) : null;
           if (!plan || !gatePlan) {
             return {
               content: JSON.stringify({
-                invocationId: plannerInvocation.id,
+                ...(plannerInvocationId ? { invocationId: plannerInvocationId } : {}),
                 status: "failed",
                 errorCode: "slides_planner_result_invalid",
                 retryable: true,
                 message: "编排代理未提交含 pages/title 的结构化方案；可调整 instruction 后重新调用 slides_draft(task=generate)。",
               }),
-              details: plannerInvocation,
+              details: { errorCode: "slides_planner_result_invalid" },
             };
           }
+          // Pin the whole generation before image confirmation persists the plan; resumes use this marker.
+          // The mode belongs to the gateway, not to optional model output fields: sources are ours, content comes back validated.
+          plan.contentContext = { mode: SEMANTIC_MODE, revision: 1, sources: semanticSources, sourceHash: semanticHash(semanticSources) };
           // 编排方案实时可见：页序/密度/配图一出即透传给进度卡。
           const planUpdate: Record<string, unknown> = {
             stage: "plan_ready",
@@ -2177,17 +2380,11 @@ export function createSubagentPiTools(
                   ...(gatePlanFinal.warnings?.length ? { warnings: gatePlanFinal.warnings } : {}),
                 };
                 onUpdate?.({ content: JSON.stringify(refreshedUpdate), details: refreshedUpdate });
-                const tailResult = await dispatchBuilderTail(plan, gatePlanFinal, plannerInvocation.id);
-                const shadow = editorShadowPromise ? await settleEditorShadow(editorShadowPromise) : null;
-                return attachEditorShadow(tailResult, shadow);
+                return dispatchBuilderTail(plan, gatePlanFinal, plannerInvocationId);
               }
             }
           }
-          {
-            const tailResult = await dispatchBuilderTail(plan, gatePlan, plannerInvocation.id);
-            const shadow = editorShadowPromise ? await settleEditorShadow(editorShadowPromise) : null;
-            return attachEditorShadow(tailResult, shadow);
-          }
+          return dispatchBuilderTail(plan, gatePlan, plannerInvocationId);
         }
 
         // ── edit：不经方案阶段，slides-builder 直改。 ──

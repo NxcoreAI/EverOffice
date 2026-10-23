@@ -54,6 +54,11 @@ const RawConfigSchema = Type.Object(
     subagentsDir: Type.String(),
     subagentTimeoutMs: Type.Integer({ minimum: 1_000 }),
     subagentMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentSlidesMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentDefaultMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentBackgroundMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentSlidesReasoning: Type.Optional(AiReasoningSchema),
+    slidesDeckConcurrency: Type.Integer({ minimum: 1, maximum: 64 }),
     externalCallUserId: Type.String({ minLength: 1, maxLength: 200 }),
     externalCallWorkspaceId: Type.String({ minLength: 1, maxLength: 200 }),
     aiProvider: Type.String(),
@@ -65,6 +70,8 @@ const RawConfigSchema = Type.Object(
     aiSlidesReviewerMaxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
     aiSlidesReviewerContextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
     aiSlidesReviewerReasoning: Type.Optional(AiReasoningSchema),
+    /** 布局代理的视觉模型来源：slot＝SaaS 下发的 vlm 槽（默认）；background＝主模型（它自己就是多模态时用）。 */
+    aiSlidesVisionSource: Type.Union([Type.Literal("slot"), Type.Literal("background")], { default: "slot" }),
     aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
@@ -334,8 +341,18 @@ export interface GatewayConfig {
   transcriptionSummaryPi: PiRuntimeConfig | null;
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
-  /** 审页代理专用档（slides-reviewer，需多模态模型）；未配置＝回退 backgroundPi。 */
-  slidesReviewerPi?: PiRuntimeConfig | null;
+  /** 视觉档（slides-layouter 自审用，需多模态模型）；未配置＝回退 backgroundPi。 */
+  /**
+   * 视觉档（SaaS 下发的 vlm 模型槽）：slides-layouter 直接跑在这个视觉模型上，
+   * 自己看渲染图自查。留 null 时子代理回退 backgroundPi（主模型多模态时仍可用）。
+   */
+  slidesVisionPi?: PiRuntimeConfig | null;
+  /**
+   * 布局代理的视觉模型来源：
+   * - "slot"（默认）＝SaaS 下发的 vlm 槽模型（slidesVisionPi）
+   * - "background"＝主模型档（主模型本身多模态时，少一个模型槽更省事）
+   */
+  slidesVisionSource?: "slot" | "background" | undefined;
   diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
@@ -374,8 +391,50 @@ export interface SubagentFrameworkConfig {
   definitionsDir: string;
   runtimeDir: string;
   defaultTimeoutMs: number;
+  /** 全池总上限：所有子代理并发 invocation 数之和，任何池都不得突破。 */
   maxConcurrent: number;
+  /**
+   * slides 系列子代理（逐页布局 / 逐页审阅）的专属并发上限。
+   * 缺省沿用 `maxConcurrent`，即不分区——一册 15 页的 deck 需要 15 个页级
+   * invocation 同时在飞，与交互链路共用一个 4~8 的窗口时，页级调用会互相排队。
+   */
+  slidesMaxConcurrent?: number;
+  /** 非 slides 子代理（交互链路，如 context-room / doc-writer）的并发上限；缺省沿用 `maxConcurrent`。 */
+  defaultMaxConcurrent?: number;
+  /**
+   * 影子/旁路作业（slides-editor 的 storyboard 阴影压缩）的并发上限。
+   * 这类作业不参与交付，却会抢走页级布局的窗口——给它一个独立的小池。
+   */
+  backgroundMaxConcurrent?: number;
+  /** 单册 deck 的页级并发上限（逐页取树 worker 数）；缺省 `DEFAULT_SLIDES_DECK_CONCURRENCY`。 */
+  slidesDeckConcurrency?: number;
+  /**
+   * slides-* 子代理的推理档位覆盖（`NXCORE_SUBAGENT_SLIDES_REASONING`）。
+   * 实测单页 165s 里 98% 是模型推理，想继续压只能动它；缺省不设＝沿用全局档位。
+   * 拿来对同一份资料做 medium/low 的 A/B，不必改仓库里的 agent.yaml。
+   */
+  slidesReasoning?: AiReasoning;
 }
+
+/**
+ * slides 池默认并发：一次 15 页 deck 需要 15 个页级 invocation 同时在飞。
+ *
+ * 取 16 而不是"越大越好"，是实测出来的：真实 key 并发阶梯（micro-payload，
+ * 1/4/8/16/24/32）显示吞吐在 **16 见顶**（4.26 req/s），24 回落到 3.09，
+ * 32 触发 provider 429（13/64 请求失败）。越过拐点只会更慢，还会丢请求。
+ * 注：16 同时也是页级窗口（`slidesDeckConcurrency`）的默认值，二者对齐。
+ */
+export const DEFAULT_SLIDES_MAX_CONCURRENT = 16;
+/** 非 slides 池默认并发（与改造前全局窗口一致，交互链路不受影响）。 */
+export const DEFAULT_DEFAULT_MAX_CONCURRENT = 4;
+/** 影子作业池默认并发：够它自己推进即可，绝不与页级布局抢窗口。 */
+export const DEFAULT_BACKGROUND_MAX_CONCURRENT = 2;
+/**
+ * 单册 deck 页级并发默认值。
+ * 必须 ≥ 典型页数（15）：页级窗口小于页数时，剩下的页要等第一波落定才开工，
+ * 足足多出一整轮单页耗时（实测 P50 141s）。落页侧本身串行，故不必再往上加。
+ */
+export const DEFAULT_SLIDES_DECK_CONCURRENCY = 16;
 
 /** agent MCP 配置文件路径（NXCORE_MCP_CONFIG 优先，缺省 dataDir/agent/mcp.json）。 */
 export function resolveMcpConfigPath(dataDir: string, overridePath?: string): string {
@@ -612,7 +671,28 @@ export function loadConfig(
     ),
     subagentMaxConcurrent: parsePositiveInteger(
       "NXCORE_SUBAGENT_MAX_CONCURRENT",
-      env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "8",
+      env.NXCORE_SUBAGENT_MAX_CONCURRENT
+        ?? String(DEFAULT_SLIDES_MAX_CONCURRENT + DEFAULT_DEFAULT_MAX_CONCURRENT + DEFAULT_BACKGROUND_MAX_CONCURRENT),
+    ),
+    subagentSlidesMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT ?? String(DEFAULT_SLIDES_MAX_CONCURRENT),
+    ),
+    subagentDefaultMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT ?? String(DEFAULT_DEFAULT_MAX_CONCURRENT),
+    ),
+    subagentBackgroundMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_BACKGROUND_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_BACKGROUND_MAX_CONCURRENT ?? String(DEFAULT_BACKGROUND_MAX_CONCURRENT),
+    ),
+    subagentSlidesReasoning: parseAiReasoning(
+      "NXCORE_SUBAGENT_SLIDES_REASONING",
+      env.NXCORE_SUBAGENT_SLIDES_REASONING,
+    ),
+    slidesDeckConcurrency: parsePositiveInteger(
+      "NXCORE_SLIDES_DECK_CONCURRENCY",
+      env.NXCORE_SLIDES_DECK_CONCURRENCY ?? String(DEFAULT_SLIDES_DECK_CONCURRENCY),
     ),
     externalCallUserId: env.NXCORE_EXTERNAL_CALL_USER_ID?.trim() || "local-user",
     externalCallWorkspaceId: env.NXCORE_EXTERNAL_CALL_WORKSPACE_ID?.trim() || "local-workspace",
@@ -631,6 +711,7 @@ export function loadConfig(
       "NXCORE_AI_SLIDES_REVIEWER_REASONING",
       env.NXCORE_AI_SLIDES_REVIEWER_REASONING,
     ),
+    aiSlidesVisionSource: env.NXCORE_SUBAGENT_SLIDES_VISION_SOURCE === "background" ? "background" : "slot",
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
@@ -1163,12 +1244,13 @@ export function loadConfig(
           maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
-    // 审页档（slides-reviewer 专用，多模态）：model 可来自 env 专用键，也可由
-    // runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
+    // 视觉档（多模态）：model 可来自 env 专用键（NXCORE_AI_SLIDES_REVIEWER_MODEL），
+    // 也可由 runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
     // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
-    // 输出上限/窗口/思考档支持独立 env 键：审页模型常是 qwen 系视觉模型，
+    // 输出上限/窗口/思考档支持独立 env 键：视觉模型常是 qwen 系，
     // 输出上限远小于主模型；沿用主模型档会让长思考把输出预算吃满（2026-10 实测）。
-    slidesReviewerPi: pi
+    slidesVisionSource: rawConfig.aiSlidesVisionSource,
+    slidesVisionPi: pi
       ? {
           ...pi,
           model: rawConfig.aiSlidesReviewerModel,
@@ -1189,6 +1271,13 @@ export function loadConfig(
       runtimeDir: join(dataDir, "agent", "subagents"),
       defaultTimeoutMs: rawConfig.subagentTimeoutMs,
       maxConcurrent: rawConfig.subagentMaxConcurrent,
+      slidesMaxConcurrent: rawConfig.subagentSlidesMaxConcurrent,
+      defaultMaxConcurrent: rawConfig.subagentDefaultMaxConcurrent,
+      backgroundMaxConcurrent: rawConfig.subagentBackgroundMaxConcurrent,
+      slidesDeckConcurrency: rawConfig.slidesDeckConcurrency,
+      ...(rawConfig.subagentSlidesReasoning === undefined
+        ? {}
+        : { slidesReasoning: rawConfig.subagentSlidesReasoning }),
     },
     mcpConfigPath,
     webSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchApiKey

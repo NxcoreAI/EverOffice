@@ -84,7 +84,10 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
     const small = placement.overlay === true || placement.flexible === true || placement.kind === "icon";
     const isThin = placement.kind === "divider";
     const minW = isThin ? 0 : small ? OVERLAY_MIN_W : contract.minLeaf.w;
-    const minHeight = placement.packed || isThin ? 0 : small ? OVERLAY_MIN_H : contract.minLeaf.h;
+    // 文字叶子按内容定高（一行 kicker 约 31px，低于 32 的下限但完全正常）：
+    // 高度不足由上面的 neededHeight 溢出检查兜，不再走几何下限。
+    const contentSizedText = placement.kind === "text" && placement.flexible === true;
+    const minHeight = placement.packed || isThin || contentSizedText ? 0 : small ? OVERLAY_MIN_H : contract.minLeaf.h;
     if (frame.w < minW || frame.h < minHeight) {
       push(
         placement.path,

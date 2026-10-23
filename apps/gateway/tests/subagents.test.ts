@@ -97,6 +97,33 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+describe("shipped slides-planner bundle", () => {
+  it("预算与模型档位对齐 27 页 deck 的实测：900s / 80 tools / 显式输出上限", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-subagents-shipped-"));
+    temporaryDirectories.push(root);
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    const registry = new SubagentRegistry(database.db, {
+      enabled: true,
+      definitionsDir: resolve("../../agents"),
+      runtimeDir: join(root, "runtime"),
+      defaultTimeoutMs: 30_000,
+      maxConcurrent: 4,
+    }, {}, logger);
+    await registry.initialize();
+    const planner = registry.get("slides-planner");
+    expect(planner).not.toBeNull();
+    expect(planner!.revision.policy).toMatchObject({
+      timeoutMs: 900_000,
+      maxToolCalls: 80,
+      model: { reasoning: "off", maxTokens: 65_536 },
+    });
+    // arrange 的素材命中由网关预取、长 deck 由网关分批：输入契约必须接住两者。
+    const inputSchema = planner!.revision.inputSchema as { properties?: Record<string, unknown> } | null;
+    expect(inputSchema?.properties).toHaveProperty("materialHits");
+    expect(inputSchema?.properties).toHaveProperty("arrangeBatch");
+  });
+});
+
 describe("filesystem subagent framework", () => {
   it("loads bundles, snapshots skills and creates a new immutable revision after changes", async () => {
     const fixture = await createFixture();
@@ -272,6 +299,77 @@ describe("filesystem subagent framework", () => {
       [child.id, "Researcher", parent.id],
     ]);
     expect(orchestrator.listInvocationTree("run-missing")).toEqual([]);
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("listInvocationTree：附带每个子代理自己最近的上下文用量与压缩态", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+
+    const parent = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Parent task",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "usage-parent",
+      source: "primary_agent",
+      parentSessionId: "session-usage",
+      parentRunId: "run-usage",
+    });
+    const child = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Child task",
+      input: { topic: "EverRoom" },
+      idempotencyKey: "usage-child",
+      source: "primary_agent",
+      parentSessionId: "session-usage",
+      parentRunId: parent.id,
+    });
+
+    // 子 run 的 context.usage / context.compaction 事件本就会随 consumeEvents 落库。
+    const insertEvent = (invocationId: string, type: string, payload: unknown) => {
+      const seq = (orchestrator.listInvocationEvents(invocationId).at(-1)?.seq ?? 0) + 1;
+      fixture.database.db.insert(subagentInvocationEvents).values({
+        id: `${invocationId}-${seq}-${type}`,
+        invocationId,
+        seq,
+        type,
+        payload,
+        createdAt: new Date(),
+      }).run();
+    };
+    insertEvent(parent.id, "context.usage", {
+      tokens: 41_200,
+      contextWindow: 128_000,
+      percent: 32.2,
+      segments: [{ key: "systemPrompt", tokens: 5_200 }],
+    });
+    insertEvent(parent.id, "context.compaction", { active: false, reason: "threshold" });
+    insertEvent(parent.id, "context.compaction", { active: true, reason: "threshold" });
+    insertEvent(child.id, "context.usage", { tokens: null, contextWindow: 128_000, percent: null });
+
+    const tree = orchestrator.listInvocationTree("run-usage");
+    const parentNode = tree.find((node) => node.id === parent.id)!;
+    expect(parentNode.contextUsage).toEqual({
+      tokens: 41_200,
+      contextWindow: 128_000,
+      percent: 32.2,
+      segments: [{ key: "systemPrompt", tokens: 5_200 }],
+    });
+    expect(parentNode.contextCompacting).toBe(true);
+    const childNode = tree.find((node) => node.id === child.id)!;
+    // 压缩刚结束的快照：tokens 未知但窗口已知，原样透传给圆环（只剩轨道）。
+    expect(childNode.contextUsage).toEqual({ tokens: null, contextWindow: 128_000, percent: null });
+    expect(childNode.contextCompacting).toBeUndefined();
 
     await orchestrator.dispose();
     fixture.database.sqlite.close();
@@ -534,6 +632,142 @@ describe("filesystem subagent framework", () => {
     await orchestrator.dispose();
     fixture.database.sqlite.close();
   });
+
+  it.each((["failed", "timed_out", "cancelled", "interrupted"] as const).flatMap(ending =>
+    [true, false].map(submitted => ({ ending, submitted }))))(
+    "handles closing $ending with submitted=$submitted without overriding cancellation",
+    async ({ ending, submitted }) => {
+      const fixture = await createFixture({ outputSchema: true });
+      await fixture.registry.initialize();
+      const revision = fixture.registry.get("researcher")!.revision;
+      revision.policy.timeoutMs = 30;
+      const collector = new SubagentResultCollector();
+      const submit = collector.createTool(revision)!;
+      class ClosingRuntime extends FakeAgentRuntime {
+        override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+          return {
+            runId: input.runId,
+            runtimeSessionRef: `closing-${input.runId}`,
+            events: (async function* (): AsyncGenerator<RuntimeEvent> {
+              if (submitted) await submit.execute({ ...input, runtimeSessionRef: null }, { answer: "validated answer" });
+              if (ending === "timed_out") {
+                await new Promise(resolve => setTimeout(resolve, 60));
+              } else {
+                yield { type: `run.${ending}`, payload: { message: "closing request failed" } } as RuntimeEvent;
+              }
+            })(),
+          };
+        }
+      }
+      class ClosingManager extends SubagentRuntimeManager {
+        override acquire(): AgentRuntime { return new ClosingRuntime(); }
+        override prepareSubmittedResult(revisionId: string, runId: string, input: unknown) { collector.prepare(revisionId, runId, input); }
+        override takeSubmittedResult(revisionId: string, runId: string) { return collector.take(revisionId, runId); }
+      }
+      const manager = new ClosingManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+      const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
+      const invocation = await orchestrator.dispatch({
+        agentId: "researcher", task: "Submit then fail closing reply", input: {},
+        idempotencyKey: `closing-${ending}`, source: "primary_agent", parentRunId: "parent",
+      });
+      if (!submitted || ending === "cancelled" || ending === "interrupted") {
+        expect(invocation).toMatchObject({ status: ending, result: null });
+      } else {
+        expect(invocation).toMatchObject({ status: "completed", errorCode: null, errorMessage: null, result: { structuredOutput: { answer: "validated answer" } } });
+      }
+      await orchestrator.dispose();
+      fixture.database.sqlite.close();
+    },
+  );
+
+  it("dispatch timeoutMs 只能收紧 policy：分批单批使用更短上限", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const revision = fixture.registry.get("researcher")!.revision;
+    revision.policy.timeoutMs = 5_000;
+    class HangingRuntime extends FakeAgentRuntime {
+      override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+        return {
+          runId: input.runId,
+          runtimeSessionRef: `hang-${input.runId}`,
+          events: (async function* (): AsyncGenerator<RuntimeEvent> {
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+            yield { type: "run.completed", payload: {} } as RuntimeEvent;
+          })(),
+        };
+      }
+    }
+    class HangingManager extends SubagentRuntimeManager {
+      override acquire(): AgentRuntime { return new HangingRuntime(); }
+    }
+    const manager = new HangingManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
+    const started = Date.now();
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Bounded batch dispatch",
+      input: {},
+      idempotencyKey: "timeout-override",
+      source: "primary_agent",
+      parentRunId: "parent",
+      timeoutMs: 50,
+    });
+    expect(invocation.status).toBe("timed_out");
+    // 50ms 超时后框架最多再等 2s 收尾（runtime cancel grace）；关键是远早于 policy 5s。
+    expect(Date.now() - started).toBeLessThan(3_500);
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  });
+
+  it.each(["valid", "repair", "forged", "cancel-before", "cancel-during"] as const)(
+    "finishes on a validated submission without a closing model call: %s",
+    async (scenario) => {
+      const fixture = await createFixture({ outputSchema: true });
+      await fixture.registry.initialize();
+      const revision = fixture.registry.get("researcher")!.revision;
+      const collector = new SubagentResultCollector();
+      const submit = collector.createTool(revision)!;
+      const controller = new AbortController();
+      let closingRequest = false;
+      let stops = 0;
+      class SubmittedRuntime extends FakeAgentRuntime {
+        override async cancel() {
+          stops++;
+          if (scenario === "cancel-during" && stops === 1) controller.abort();
+        }
+        override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+          return { runId: input.runId, runtimeSessionRef: "submitted-run", events: (async function* (): AsyncGenerator<RuntimeEvent> {
+            if (scenario === "repair") {
+              await expect(submit.execute({ ...input, runtimeSessionRef: null }, {})).rejects.toThrow("subagent_result_schema_invalid");
+              yield { type: "tool.completed", payload: { name: "subagent_submit_result", result: { details: { accepted: false } } } };
+            }
+            if (scenario !== "forged") await submit.execute({ ...input, runtimeSessionRef: null }, { answer: "validated answer" });
+            if (scenario === "cancel-before") controller.abort();
+            yield { type: "tool.completed", payload: { name: "subagent_submit_result", result: { details: { accepted: true } } } };
+            closingRequest = true;
+            yield { type: scenario === "cancel-before" ? "run.cancelled" : "run.failed", payload: { message: "unnecessary closing request" } };
+          })() };
+        }
+      }
+      class SubmittedManager extends SubagentRuntimeManager {
+        override acquire(): AgentRuntime { return new SubmittedRuntime(); }
+        override prepareSubmittedResult(revisionId: string, runId: string, input: unknown) { collector.prepare(revisionId, runId, input); }
+        override takeSubmittedResult(revisionId: string, runId: string) { return collector.take(revisionId, runId); }
+      }
+      const manager = new SubmittedManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+      const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
+      const invocation = await orchestrator.dispatch({ agentId: "researcher", task: "Submit", input: {}, idempotencyKey: scenario, source: "primary_agent", parentRunId: "parent", signal: controller.signal });
+      if (scenario === "valid" || scenario === "repair") {
+        expect(invocation).toMatchObject({ status: "completed", result: { structuredOutput: { answer: "validated answer" } } });
+        expect(closingRequest).toBe(false);
+        expect(stops).toBe(1);
+      } else {
+        expect(invocation).toMatchObject({ status: scenario === "forged" ? "failed" : "cancelled", result: null });
+      }
+      await orchestrator.dispose();
+      fixture.database.sqlite.close();
+    },
+  );
 
   it("degrades to UnconfiguredAgentRuntime when pi fields are empty and invalidate() clears the cache", async () => {
     const fixture = await createFixture({});

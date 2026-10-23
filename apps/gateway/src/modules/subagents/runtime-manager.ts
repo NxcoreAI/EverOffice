@@ -19,7 +19,9 @@ export type SubagentResultValidator = (
 const SUBAGENT_TOOL_RESULT_MAX_CHARS = 24_000;
 /** run 内轮次级裁剪的触发比例（占 contextWindow）与保留轮数。 */
 const SUBAGENT_CONTEXT_GUARD_TRIGGER_RATIO = 0.5;
-const SUBAGENT_CONTEXT_GUARD_KEEP_TURNS = 6;
+// 2026-10-23 实测：planner 每轮工具结果约 12k 真实 token，保留 6 轮就占掉 72k，
+// 加上 system/tools 后即使触发裁剪也降不下来；保留 3 轮给「当前工作证据 + 一步回退」。
+const SUBAGENT_CONTEXT_GUARD_KEEP_TURNS = 3;
 
 export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): PiAgentRuntimeTool {
   const root = `${resolve(revision.agentDirectory)}${sep}`;
@@ -145,6 +147,52 @@ export class SubagentResultCollector {
   }
 }
 
+/**
+ * 单页推理档位的解算顺序（纯函数，便于单测）：
+ * 1. bundle 的 `policy.model.reasoning` —— agent 自己说了算；
+ * 2. `NXCORE_SUBAGENT_SLIDES_REASONING` —— 只作用于 `slides-*` 子代理；
+ * 3. 全局缺省档位。
+ *
+ * 为什么需要第 2 层：实测单页 165s 里 **98% 是模型推理**（工具只占 4s），
+ * 想继续压只能动推理量。用 env 而不是逐个改 agent.yaml，是为了能对同一份资料
+ * 快速做「medium vs low」的 A/B——改完重启网关即可，不动仓库里的 bundle。
+ * 缺省不设＝行为与改造前完全一致。
+ */
+export function resolveSubagentReasoning(input: {
+  policyReasoning?: PiRuntimeConfig["reasoning"] | undefined;
+  agentId: string;
+  slidesOverride?: PiRuntimeConfig["reasoning"] | undefined;
+  fallback?: PiRuntimeConfig["reasoning"] | undefined;
+}): PiRuntimeConfig["reasoning"] | undefined {
+  if (input.policyReasoning !== undefined) return input.policyReasoning;
+  if (input.slidesOverride !== undefined && input.agentId.startsWith("slides-")) {
+    return input.slidesOverride;
+  }
+  return input.fallback;
+}
+
+/**
+ * 子代理用哪个模型底座。
+ *
+ * 布局代理跑视觉档（model 来自 env 专用键或 vlm 槽＝SaaS 下发的视觉模型）——它要
+ * 自己看渲染图自查，所以必须是多模态模型；其余子代理仍走 background。视觉档 model
+ * 仍空＝未配置，回退 background（主模型多模态时照旧可用），不让布局因为没配视觉槽而停摆。
+ */
+export function resolveSubagentRuntimeBase(input: {
+  agentId: string;
+  /** "slot"＝用 SaaS 下发的 vlm 槽模型；"background"＝直接用主模型（主模型自己多模态时）。 */
+  visionSource?: "slot" | "background" | undefined;
+  visionPi?: PiRuntimeConfig | null | undefined;
+  backgroundPi?: PiRuntimeConfig | null | undefined;
+  pi?: PiRuntimeConfig | null | undefined;
+}): PiRuntimeConfig | null {
+  const useVisionSlot = (input.visionSource ?? "slot") === "slot";
+  const vision = useVisionSlot && input.agentId === "slides-layouter" && input.visionPi?.model
+    ? input.visionPi
+    : null;
+  return vision ?? input.backgroundPi ?? input.pi ?? null;
+}
+
 export class SubagentRuntimeManager {
   private readonly runtimes = new Map<string, AgentRuntime>();
   private readonly agentTools = new Map<string, () => PiAgentRuntimeTool[]>();
@@ -205,12 +253,13 @@ export class SubagentRuntimeManager {
 
   private createRuntime(revision: LoadedSubagentRevision): AgentRuntime {
     if (this.gatewayConfig.agentRuntime === "fake") return new FakeAgentRuntime();
-    // slides-reviewer 专用档（多模态审页）：model 来自 env 专用键或 vlm 槽
-    // （SaaS 下发视觉模型）——恒建对象后 model 仍空＝未配置，回退 background。
-    const reviewerPi = this.gatewayConfig.slidesReviewerPi;
-    const base = (revision.manifest.id === "slides-reviewer" && reviewerPi?.model
-      ? reviewerPi
-      : null) ?? this.gatewayConfig.backgroundPi ?? this.gatewayConfig.pi;
+    const base = resolveSubagentRuntimeBase({
+      agentId: revision.manifest.id,
+      visionSource: this.gatewayConfig.slidesVisionSource,
+      visionPi: this.gatewayConfig.slidesVisionPi,
+      backgroundPi: this.gatewayConfig.backgroundPi,
+      pi: this.gatewayConfig.pi,
+    });
     if (!base) throw new Error("subagent_pi_runtime_not_configured");
     // 降级启动：空字段 PiAgentRuntime 会在 pi SDK 深处炸出晦涩错误，
     // 换成类型化占位（runtime_config_not_ready）。
@@ -246,6 +295,19 @@ export class SubagentRuntimeManager {
     });
   }
 
+  private resolveReasoning(
+    revision: LoadedSubagentRevision,
+    model: PiRuntimeConfig,
+  ): { reasoning?: PiRuntimeConfig["reasoning"] } {
+    const resolved = resolveSubagentReasoning({
+      policyReasoning: revision.policy.model?.reasoning,
+      agentId: revision.manifest.id,
+      slidesOverride: this.config.slidesReasoning,
+      fallback: model.reasoning,
+    });
+    return resolved === undefined ? {} : { reasoning: resolved };
+  }
+
   private buildPiConfig(base: PiRuntimeConfig, revision: LoadedSubagentRevision): PiRuntimeConfig {
     const { memory: _memory, knowledge: _knowledge, mcp: _mcp, ...model } = base;
     const overrides = revision.policy.model;
@@ -253,7 +315,7 @@ export class SubagentRuntimeManager {
     // 子 Agent 上下文预算（2026-10 实测：planner 单条 room_context_get 171KB、
     // builder 自身工具参数 49.6k token，均把 128k 窗口顶穿）：
     // - 单条工具结果超 24k 字符按 JSON 感知规则截断；
-    // - run 内上下文估算过半窗口后，旧工具结果/参数替换为占位符（轮次级裁剪）。
+    // - run 内真实 usage 过半窗口后，旧工具结果/参数替换为占位符（轮次级裁剪）。
     // pi 的自动压缩只在整轮 run 结束后生效，子 Agent 一次 prompt 里几十个工具轮
     // 等不到它，必须由 runtime 侧补一道。
     return {
@@ -272,7 +334,7 @@ export class SubagentRuntimeManager {
       },
       ...(contextWindow !== model.contextWindow ? { contextWindow } : {}),
       ...(overrides?.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
-      ...(overrides?.reasoning !== undefined ? { reasoning: overrides.reasoning } : {}),
+      ...this.resolveReasoning(revision, model),
       agentDirectory: revision.agentDirectory,
       sessionsDir: join(this.config.runtimeDir, "sessions", revision.id),
       workingDirectory: join(this.config.runtimeDir, "workspaces", revision.id),
