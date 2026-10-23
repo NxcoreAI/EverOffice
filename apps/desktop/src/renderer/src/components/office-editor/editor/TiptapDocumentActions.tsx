@@ -251,7 +251,7 @@ export function TiptapDocumentActions({
         danger
         onConfirm={() => void deleteDocument()}
       />
-      {exportProvider && backendDocument && (
+      {exportProvider && backendDocument && backendDocument.roomId !== null && (
         <ExternalExportDialog
           open
           onClose={() => setExportProvider(null)}
@@ -263,7 +263,7 @@ export function TiptapDocumentActions({
           backendDocument={backendDocument}
         />
       )}
-      {importOpen && backendDocument && (
+      {importOpen && backendDocument && backendDocument.roomId !== null && (
         <ExternalImportDialog
           open
           onClose={() => setImportOpen(false)}

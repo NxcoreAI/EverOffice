@@ -313,11 +313,14 @@ export function ArtifactLibraryPane({
                 type="button"
                 className="context-room-artifact-selection-move"
                 disabled={selectedDocuments.length === 0}
-                onClick={() => setMoveTargets(selectedDocuments.map((document) => ({
-                  id: document.id,
-                  title: document.title,
-                  roomId: document.roomId,
-                })))}
+                onClick={() => setMoveTargets(selectedDocuments
+                  // Room 产物库只列出有归属的文稿（工作区级文稿不在此列）。
+                  .filter((document): document is typeof document & { roomId: string } => document.roomId !== null)
+                  .map((document) => ({
+                    id: document.id,
+                    title: document.title,
+                    roomId: document.roomId,
+                  })))}
               >
                 <FolderInput aria-hidden="true" />
                 {t('contextRoom:artifactLibrary.moveSelected')}
@@ -621,11 +624,14 @@ export function ArtifactLibraryPane({
                       >
                         {backendDocument ? (
                           <DropdownMenu.Item
-                            onSelect={() => setMoveTargets([{
-                              id: backendDocument.id,
-                              title: backendDocument.title || resource.name,
-                              roomId: backendDocument.roomId,
-                            }])}
+                            onSelect={() => {
+                              if (backendDocument.roomId === null) return
+                              setMoveTargets([{
+                                id: backendDocument.id,
+                                title: backendDocument.title || resource.name,
+                                roomId: backendDocument.roomId,
+                              }])
+                            }}
                           >
                             <FolderInput aria-hidden="true" />
                             {t('contextRoom:artifactLibrary.moveToAnotherRoom')}

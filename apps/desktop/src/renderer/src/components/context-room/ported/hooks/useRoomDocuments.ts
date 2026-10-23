@@ -10,7 +10,10 @@ export function documentFromEvent(event: DocumentEvent): RoomDocument | null {
   const document = (event.payload as { document?: unknown }).document
   if (!document || typeof document !== 'object') return null
   const value = document as Partial<RoomDocument>
-  return typeof value.id === 'string' && value.roomId === event.roomId ? value as RoomDocument : null
+  // Room 视图只处理有归属的文稿：工作区级文稿（roomId 为 null）在 Office 文稿库展示。
+  return typeof value.id === 'string' && typeof value.roomId === 'string' && value.roomId === event.roomId
+    ? value as RoomDocument
+    : null
 }
 
 function newerDocument(current: RoomDocument | undefined, incoming: RoomDocument): RoomDocument {
@@ -48,24 +51,27 @@ export function useRoomDocuments(roomIds: string[]) {
   const roomKey = useMemo(() => [...roomIds].sort().join('\u0000'), [roomIds])
 
   const upsertDocument = useCallback((document: RoomDocument) => {
+    // 无归属文稿不进入 Room 索引（P0-2）；const 绑定让闭包内保持窄化。
+    const roomId = document.roomId
+    if (roomId === null) return
     if (document.deletedAt) {
       setDocumentsByRoom((current) => ({
         ...current,
-        [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
+        [roomId]: (current[roomId] ?? []).filter((candidate) => candidate.id !== document.id),
       }))
       setTrashedDocumentsByRoom((current) => ({
         ...current,
-        [document.roomId]: mergeRoomDocuments(current[document.roomId] ?? [], [document]),
+        [roomId]: mergeRoomDocuments(current[roomId] ?? [], [document]),
       }))
       return
     }
     setTrashedDocumentsByRoom((current) => ({
       ...current,
-      [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
+      [roomId]: (current[roomId] ?? []).filter((candidate) => candidate.id !== document.id),
     }))
     setDocumentsByRoom((current) => ({
       ...current,
-      [document.roomId]: mergeRoomDocuments(current[document.roomId] ?? [], [document]),
+      [roomId]: mergeRoomDocuments(current[roomId] ?? [], [document]),
     }))
   }, [])
 
@@ -105,6 +111,9 @@ export function useRoomDocuments(roomIds: string[]) {
     if (!documents) return
     const unsubscribeEvents = documents.onEvent(({ event }) => {
       if (!DOCUMENT_STATE_EVENT_TYPES.has(event.type)) return
+      // 工作区级事件（roomId 为 null）不属于任何 Room 清单。
+      const eventRoomId = event.roomId
+      if (eventRoomId === null) return
 
       // 跨 Room 移动：事件发往源房，先摘除再拉一次目标房基线（目标房另有
       // document.changed 增量，重复合并按 id 去重，幂等）。
@@ -114,16 +123,16 @@ export function useRoomDocuments(roomIds: string[]) {
           : null
         setDocumentsByRoom((current) => ({
           ...current,
-          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+          [eventRoomId]: (current[eventRoomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
         }))
         setTrashedDocumentsByRoom((current) => ({
           ...current,
-          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+          [eventRoomId]: (current[eventRoomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
         }))
-        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
-          ? { ...current, [event.roomId]: null }
+        setFocusedDocumentByRoom((current) => current[eventRoomId] === event.documentId
+          ? { ...current, [eventRoomId]: null }
           : current)
-        invalidateDocumentBlockReferences({ roomId: event.roomId, documentId: event.documentId })
+        invalidateDocumentBlockReferences({ roomId: eventRoomId, documentId: event.documentId })
         if (typeof payload?.toRoomId === 'string' && payload.toRoomId) {
           void refreshRoom(payload.toRoomId).catch(() => undefined)
         }
@@ -134,10 +143,10 @@ export function useRoomDocuments(roomIds: string[]) {
       if (document) {
         upsertDocument(document)
         if (document.status === 'draft' && document.activeTransactionId) {
-          setFocusedDocumentByRoom((current) => ({ ...current, [event.roomId]: document.id }))
+          setFocusedDocumentByRoom((current) => ({ ...current, [eventRoomId]: document.id }))
         } else {
-          setFocusedDocumentByRoom((current) => current[event.roomId] === document.id
-            ? { ...current, [event.roomId]: null }
+          setFocusedDocumentByRoom((current) => current[eventRoomId] === document.id
+            ? { ...current, [eventRoomId]: null }
             : current)
         }
       }
@@ -145,19 +154,19 @@ export function useRoomDocuments(roomIds: string[]) {
       if (event.type === 'document.deleted') {
         setDocumentsByRoom((current) => ({
           ...current,
-          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+          [eventRoomId]: (current[eventRoomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
         }))
         setTrashedDocumentsByRoom((current) => ({
           ...current,
-          [event.roomId]: (current[event.roomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
+          [eventRoomId]: (current[eventRoomId] ?? []).filter((candidate) => candidate.id !== event.documentId),
         }))
-        setFocusedDocumentByRoom((current) => current[event.roomId] === event.documentId
-          ? { ...current, [event.roomId]: null }
+        setFocusedDocumentByRoom((current) => current[eventRoomId] === event.documentId
+          ? { ...current, [eventRoomId]: null }
           : current)
       }
 
       if (document || event.type === 'document.deleted') {
-        invalidateDocumentBlockReferences({ roomId: event.roomId, documentId: event.documentId })
+        invalidateDocumentBlockReferences({ roomId: eventRoomId, documentId: event.documentId })
       }
     })
     const unsubscribeReady = documents.onReady?.((roomId) => {
@@ -215,10 +224,12 @@ export function useRoomDocuments(roomIds: string[]) {
   const deleteDocument = useCallback(async (document: RoomDocument) => {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
+    const roomId = document.roomId
+    if (roomId === null) return
     await documents.delete(document.id)
     upsertDocument({ ...document, deletedAt: new Date().toISOString() })
-    setFocusedDocumentByRoom((current) => current[document.roomId] === document.id
-      ? { ...current, [document.roomId]: null }
+    setFocusedDocumentByRoom((current) => current[roomId] === document.id
+      ? { ...current, [roomId]: null }
       : current)
   }, [upsertDocument])
 
@@ -253,10 +264,12 @@ export function useRoomDocuments(roomIds: string[]) {
   const deleteDocumentPermanently = useCallback(async (document: RoomDocument) => {
     const documents = window.nxcore?.documents
     if (!documents) throw new Error(i18n.t('surface:agent.documentServiceUnavailable'))
+    const roomId = document.roomId
+    if (roomId === null) return
     await documents.deletePermanently(document.id)
     setTrashedDocumentsByRoom((current) => ({
       ...current,
-      [document.roomId]: (current[document.roomId] ?? []).filter((candidate) => candidate.id !== document.id),
+      [roomId]: (current[roomId] ?? []).filter((candidate) => candidate.id !== document.id),
     }))
   }, [])
 
