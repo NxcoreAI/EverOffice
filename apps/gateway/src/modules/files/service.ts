@@ -111,9 +111,9 @@ export interface CatalogFileDto {
   updatedAt: string;
 }
 
+/** 解析结果：解析产物 id（无解析器时为空）+ 数据类型。Phase 2 起不再回传 ingest 事件 id。 */
 interface VersionIngestResult {
-  eventId: string;
-  parsedId: string;
+  parsedId: string | null;
   dataType: string;
 }
 
@@ -495,10 +495,10 @@ export class FilesService {
     };
   }
 
-  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string, ingestEventId: string): void {
+  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string | null): void {
     const now = new Date();
     this.db.update(fileVersions).set({
-      parsedId, ingestEventId, status: "parsed", errorCode: null, errorMessage: null,
+      parsedId, status: "parsed", errorCode: null, errorMessage: null,
       processedAt: now,
     }).where(and(eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId))).run();
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
@@ -775,7 +775,7 @@ export class FilesService {
             ...(payload.pipelines ? { pipelines: payload.pipelines } : {}),
             ...(payload.roomId ? { roomId: payload.roomId } : {}),
           });
-          this.touchVersionParsed(payload.fileEntryId, payload.fileVersionId, result.parsedId, result.eventId);
+          this.touchVersionParsed(payload.fileEntryId, payload.fileVersionId, result.parsedId);
           this.db.update(jobs).set({ status: "completed", result, error: null, updatedAt: new Date() })
             .where(eq(jobs.id, job.id)).run();
         } catch (error) {

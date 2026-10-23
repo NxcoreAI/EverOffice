@@ -11,7 +11,7 @@ import { extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { convertRawEmailToMarkdown } from "./email-content.js";
-import { IngestError } from "../../../apps/gateway/src/modules/ingest/types.js";
+import { IngestError } from "./errors.js";
 
 /**
  * U2 格式扩展（unified-ingest-plan §5.3）：office/html/csv/eml -> markdown，

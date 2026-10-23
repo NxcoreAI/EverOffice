@@ -17,7 +17,6 @@ export const BUILTIN_AGENT_IDS = {
   cursorCompletion: "cursor-completion",
   knowledge: "knowledge",
   webSearch: "web-search",
-  ingestFilter: "ingest-filter",
   connectorMapper: "connector-mapper",
 } as const;
 

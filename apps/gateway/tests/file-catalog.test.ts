@@ -74,7 +74,7 @@ describe("unified file catalog", () => {
     expect(imported.contentHash).toBe(createHash("sha256").update(buffer).digest("hex"));
     await expect(readFile(join(test.dataDir, storageRelPath(imported.contentHash)))).rejects.toThrow();
     const parsedId = test.service.ensureParsed(imported.contentHash, buffer.toString("utf8"), "markdown@1");
-    test.service.touchVersionParsed(imported.fileEntryId, imported.fileVersionId, parsedId, "event-local");
+    test.service.touchVersionParsed(imported.fileEntryId, imported.fileVersionId, parsedId);
     await rm(sourcePath);
 
     expect(test.service.catalogStoragePathOf(imported.fileEntryId)).toBeNull();

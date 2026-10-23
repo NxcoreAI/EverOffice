@@ -181,37 +181,6 @@ export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntim
   });
 }
 
-/**
- * ingest 过滤器专用 Runtime（ingest-filter-agent-plan §4.2）：
- * 独立目录（ingest-filter 子目录），memory + knowledge 集成但**只读工具**——
- * memory_search / wiki_search / wiki_read，无任何写路径，无 bash，无内置工具。
- *
- * 记忆隔离（§4.1）由装配与 run 侧共同保证：这里不给 mcp、不给写工具；
- * filter-agent.ts 的 run 显式传 captureMemory/recallMemory 双 false。
- * 与 background runtime（显式剥 memory）不同：过滤器需要只读记忆检索。
- */
-export function createIngestFilterAgentRuntime(
-  config: GatewayConfig,
-  resolveWikiIds?: (input: { roomId: string | null }) => Promise<string[]>,
-): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const bundle = builtin(BUILTIN_AGENT_IDS.ingestFilter);
-  const { mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    includeBashTool: false,
-    builtinTools: [],
-    maxToolCallsPerRun: config.ingestFilter.maxToolCalls,
-    runtimeRole: "internal",
-    // 过滤器输出是给程序 JSON.parse 的：必须挂机器对机器的 bundle 人设，
-    // 否则落到默认聊天人设（"最终答复要总结"），模型会在数组前后加说明文字
-    skillsEnabled: false,
-    systemPrompt: bundle.systemPrompt,
-    sessionsDir: join(pi.sessionsDir, "ingest-filter"),
-    workingDirectory: join(pi.workingDirectory, "ingest-filter"),
-    agentDirectory: join(pi.agentDirectory, "ingest-filter"),
-  }, resolveWikiIds ? { resolveKnowledgeWikiIds: resolveWikiIds } : {});
-}
 
 /** 写作风格定性层的隔离内部 runtime（无工具、无记忆/knowledge，ingest-filter 同款）。 */
 export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime | null {

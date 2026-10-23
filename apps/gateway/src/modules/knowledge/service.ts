@@ -34,7 +34,19 @@ import {
 } from "./entity-registry.js";
 import { bestMatch } from "./entity-index.js";
 import { buildDocumentEnvelope, envelopeFilename, type DocEnvelope } from "./envelope.js";
-import { truncateUtf8 } from "../ingest/normalizers.js";
+
+/** UTF-8 安全截断（原 ingest/normalizers 的 truncateUtf8，随引擎退役内联）。 */
+function truncateUtf8(text: string, maxBytes: number, marker: string): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let low = 0;
+  let high = Math.min(text.length, maxBytes);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, mid), "utf8") <= maxBytes) low = mid;
+    else high = mid - 1;
+  }
+  return `${text.slice(0, low)}\n\n${marker}`;
+}
 import { enqueueSearchIndex } from "../search/jobs.js";
 import { convertUploadedFile } from "./file-convert.js";
 import {

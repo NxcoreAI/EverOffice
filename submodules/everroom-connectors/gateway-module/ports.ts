@@ -37,8 +37,6 @@ export interface IngestLikeResult {
   parsedId?: string | null;
 }
 
-/** 宿主 IngestService（类型借自宿主 ingest 模块）。 */
-export type { IngestService } from "../../../apps/gateway/src/modules/ingest/service.js";
 /** 宿主 FilesService（类型借自宿主 files 模块）。 */
 export type { FilesService } from "../../../apps/gateway/src/modules/files/service.js";
 
