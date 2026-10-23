@@ -247,9 +247,21 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | P0-1 收尾 | 移除文稿「移动到另一个 Room」入口 | 完成（46 用例全绿） |
 | 2026-10-23 | P0-2a | 契约 `RoomDocument.roomId` / `DocumentEvent.roomId` / `AgentActiveDocumentContext.roomId` / `ImportRoomDocumentInput.roomId` 改 `string \| null`；新增 `WORKSPACE_DOCUMENT_CHANNEL`；网关文档内核（repository GET 改 LEFT JOIN、list(null) 全工作区、无归属不再写 `room_doc_links`、content-engine/event-broker/lifecycle/service/commit 全链路接受 null、新增 `room-scope.ts` 归一旧管线 scope） | 完成（tsc 与基线一致；document-* 329 用例全绿） |
 | 2026-10-23 | P0-2b | 桌面主进程桥接与 preload：`list/listTrash/emptyTrash` 支持空 roomId，`subscribe` 落到工作区频道；回收站路由与渲染层空归属适配 | 完成（tsc 与基线一致；bridge 新增 2 用例） |
-| — | P0-2c | 渲染层：`RoomDocumentsProvider` → 工作区文稿库 Provider，`DocsPage` 改为唯一文稿入口 | 未开始 |
-| — | P0-3 | 25 个工具改名 | 未开始 |
+| 2026-10-23 | P0-2c | 渲染层 `RoomDocumentsProvider` → 工作区文稿库 Provider、`DocsPage` 去 Room 维度 | **改并入 Phase 2**：渲染层的文档 tab / 文稿页 / 产物库都以 `roomId` 为键，只有在删除 Room 时才能一次性收敛，单独改造反而要写两遍（决策记录见 §8.1） |
+| 2026-10-23 | P0-3 | 18 个 Office 工具改名（`document_*` / `office_create` / `slides_*` / `sheets_create`），MCP server 名改 `everroom-office`，跨 50 文件 | 完成（gateway 测试回到基线；desktop 失败清单与基线逐行一致） |
 | — | P0-4 | Agent 运行时工具面重建 | 未开始 |
 | — | Phase 1 | 断耦合 | 未开始 |
 | — | Phase 2 | 删除模块 | 未开始 |
 | — | Phase 3 | 外围清理 | 未开始 |
+
+### 8.1 决策记录
+
+- **P0-2c 并入 Phase 2（2026-10-23）**：渲染层的文稿标签页、`DocsPage` 列表、Room 产物库
+  都以 `roomId` 作为键与分组维度（`ActiveDocumentDescriptor`、`openDocuments[{roomId, documentId}]`、
+  `useRoomAgentFiles(roomIds)`）。在 Room 仍然存在时引入"工作区文稿库"会同时维护两套分组语义，
+  并在 Phase 2 删除 Room 时再改一遍；因此 P0-2 的渲染层部分随"删除 Room"一起做：
+  届时标签页改为 `documentId` 单键、`DocsPage` 直接消费工作区列表（网关与主进程的
+  工作区级读取链路已在 P0-2a/P0-2b 就位，可直接使用）。
+- **P0-3 保留 Room 工具不删（2026-10-23）**：`context_room_list/create/task_*` 仍被 Room
+  agent bundle 引用，提前删除只会把 Phase 2 的删除面提前到 Phase 0；故 P0-3 只做 Office 侧改名，
+  Room 工具的删除与 `document_write_*` 等描述里残留的 Room/记忆话术在 P0-4 与 Phase 2 处理。
