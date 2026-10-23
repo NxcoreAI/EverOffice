@@ -621,7 +621,7 @@ describe("document core", () => {
     ]);
   });
 
-  it("registers committed versions in the document outbox but skips version-zero drafts", async () => {
+  it("commits versions without enqueueing understanding-engine outbox jobs", async () => {
     const { db, commits } = await createCore();
     commits.create({
       documentId: "doc-draft",
@@ -639,15 +639,12 @@ describe("document core", () => {
       version: 1,
     });
 
-    // 每次写库都会入队 search.index；已提交版本额外入队 document.ingest 与
-    // writing-style.extract，version-0 草稿只有 search.index。这里只关心摄取作业。
+    // Phase 2：文稿提交不再入队理解引擎/写作风格作业，版本链本身照常写入。
     const queued = db.select().from(jobs).all();
-    const ingestJobs = queued.filter((job) => job.type === "document.ingest");
-    expect(ingestJobs).toHaveLength(1);
-    expect(ingestJobs[0]).toMatchObject({
-      status: "pending",
-      payload: expect.objectContaining({ documentId: "doc-committed", roomId: "room-core", version: 1 }),
-    });
+    expect(queued.filter((job) => job.type === "document.ingest")).toEqual([]);
+    expect(queued.filter((job) => job.type === "writing-style.extract")).toEqual([]);
+    // version-0 草稿不写版本行，只有已提交版本进版本链。
+    expect(db.select().from(documentVersions).all().map((row) => row.documentId)).toEqual(["doc-committed"]);
   });
 
   it("rolls back the document, version, projections, and outbox job together", async () => {
