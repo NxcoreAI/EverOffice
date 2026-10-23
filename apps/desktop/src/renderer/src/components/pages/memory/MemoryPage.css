@@ -2208,7 +2208,7 @@ button.mem-search-item:hover {
 .mem-tl-item {
   position: relative;
   display: grid;
-  grid-template-columns: 46px 16px minmax(0, 1fr);
+  grid-template-columns: 44px 18px minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -2217,10 +2217,11 @@ button.mem-search-item:hover {
   position: relative;
 }
 
+/* 短横线：左接气泡、右侧留 5px 空隙，不与时间文字相接 */
 .mem-tl-link::before {
   position: absolute;
   top: 14px;
-  right: 0;
+  right: 5px;
   left: 0;
   height: 1.5px;
   background: var(--cr-border, var(--border));
@@ -2229,7 +2230,7 @@ button.mem-search-item:hover {
 
 .mem-tl-link::after {
   position: absolute;
-  top: 10.5px;
+  top: 11.5px;
   left: 50%;
   width: 9px;
   height: 9px;
@@ -2240,9 +2241,11 @@ button.mem-search-item:hover {
   content: "";
 }
 
-/* 时间列：右对齐，与节点同一水平线 */
+/* 时间列：短时间（HH:mm）右对齐；完整日期悬停可见 */
 .mem-tl-time {
   padding-top: 7px;
+  padding-right: 4px;
+  overflow: visible;
   color: var(--cr-muted, var(--muted));
   font-size: 10px;
   font-variant-numeric: tabular-nums;

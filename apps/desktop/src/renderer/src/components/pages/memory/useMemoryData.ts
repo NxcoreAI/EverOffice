@@ -198,6 +198,14 @@ export function useMemoryOverview() {
   )
 }
 
+/** 时间轴左列用的短时间（HH:mm）；完整日期由分组标题与详情面板表达。 */
+export function formatTimeShort(value: string | null | undefined, locale: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+}
+
 export function formatDate(value: string | null | undefined, locale: string): string {
   if (!value) return '—'
   const date = new Date(value)

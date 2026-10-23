@@ -6,7 +6,7 @@ import type { MemoryAtomicItemDto, MemoryAtomicProvenanceDto, MemoryAtomicType }
 import { dispatchRoomMemoryChanged } from '@/components/context-room/roomMemoryChange'
 import { RoomAssignControl } from './RoomAssignControl'
 import { MemoryEmptyView } from './MemoryStatusViews'
-import { formatDate, memoryFailureText, toMemoryFailure, type MemoryFailure } from './useMemoryData'
+import { formatDate, formatTimeShort, memoryFailureText, toMemoryFailure, type MemoryFailure } from './useMemoryData'
 
 const PAGE_SIZE = 50
 
@@ -538,7 +538,13 @@ export function AtomicMemoryPane({ focusItemId, onOpenDocument, onOpenConversati
               <ul className="mem-tl-list">
                 {group.items.map((item) => (
                   <li key={item.id} className="mem-atomic-item mem-tl-item" data-memory-id={item.id}>
-                    <time className="mem-tl-time">{formatDate(item.updatedAt, locale)}</time>
+                    <time
+                      className="mem-tl-time"
+                      dateTime={item.updatedAt ?? undefined}
+                      title={formatDate(item.updatedAt, locale)}
+                    >
+                      {formatTimeShort(item.updatedAt, locale)}
+                    </time>
                     <span className="mem-tl-link" aria-hidden="true" />
                     <button
                       type="button"
