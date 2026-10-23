@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, FolderInput, MessageSquare, Trash2 } from 'lucide-react'
+import { ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, MessageSquare, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
@@ -9,7 +9,6 @@ import { showToast } from '@/state/toast'
 import { ActionConfirmDialog } from '@/components/office-editor/shared'
 import { createDocxBlob, docxExportFileName } from './tiptapDocxExport'
 import { exportEditorPdf } from './tiptapPdfExport'
-import { MoveDocumentToRoomDialog } from '@/components/context-room/ported/components/MoveDocumentToRoomDialog'
 import { DocumentHistoryPanel } from './DocumentHistoryPanel'
 import { ExternalExportDialog } from './ExternalExportDialog'
 import { ExternalImportDialog } from './ExternalImportDialog'
@@ -78,7 +77,6 @@ export function TiptapDocumentActions({
 }) {
   const { t } = useLocale()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [moveDialogOpen, setMoveDialogOpen] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   const [exportProvider, setExportProvider] = useState<'feishu' | 'notion' | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -153,7 +151,6 @@ export function TiptapDocumentActions({
   }
 
   const deleteDisabled = writing || saving || !backendDocument || !onDeleteDocument
-  const moveDisabled = writing || saving || !backendDocument
   return (
     <div className="context-room-document-actions">
       <DocumentHistoryPanel
@@ -230,17 +227,6 @@ export function TiptapDocumentActions({
             )}
             <DropdownMenu.Separator className="context-room-document-actions-separator" />
             <DropdownMenu.Item
-              disabled={moveDisabled}
-              title={!backendDocument
-                ? t('contextRoom:tiptapDocumentActions.saveBeforeMoving')
-                : undefined}
-              onSelect={() => setMoveDialogOpen(true)}
-            >
-              <FolderInput aria-hidden="true" />
-              {t('contextRoom:tiptapDocumentActions.moveToAnotherRoom')}
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator className="context-room-document-actions-separator" />
-            <DropdownMenu.Item
               className="danger"
               disabled={deleteDisabled}
               title={writing
@@ -256,13 +242,6 @@ export function TiptapDocumentActions({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
-      <MoveDocumentToRoomDialog
-        open={moveDialogOpen}
-        onOpenChange={setMoveDialogOpen}
-        documents={backendDocument
-          ? [{ id: backendDocument.id, title: documentName || backendDocument.title, roomId: backendDocument.roomId }]
-          : []}
-      />
       <ActionConfirmDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
