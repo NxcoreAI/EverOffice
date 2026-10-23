@@ -59,7 +59,7 @@ export class DocWriterAgentDispatcher implements DocWriterDispatcher {
  */
 export function isSelectionRewriteInvocationAuthorized(
   invocation: SubagentInvocation | null | undefined,
-  options: { capabilityId: string; roomId: string; now?: Date },
+  options: { capabilityId: string; roomId: string | null; now?: Date },
 ): boolean {
   if (!invocation || options.capabilityId !== "document.selection-rewrite") return false;
   if (invocation.agentDefinitionId !== DOC_WRITER_AGENT_ID) return false;

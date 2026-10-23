@@ -1,7 +1,8 @@
 export const OPEN_DOCUMENT_OPERATION_EVENT = 'everroom:open-document-operation'
 
 export interface DocumentOperationNavigationTarget {
-  roomId: string
+  /** 工作区级操作为 null（P0-2d）。 */
+  roomId: string | null
   documentId: string
   operationId: string
 }

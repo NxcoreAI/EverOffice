@@ -136,7 +136,8 @@ export function documentOperationRoutes(
         tags: ["documents", "operations"],
         params: IdParams,
         querystring: Type.Object({
-          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          // 工作区级操作没有归属 Room：缺省即按 null 比对（P0-2d）。
+          roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           sessionId: Type.String({ minLength: 1, maxLength: 128 }),
           runId: Type.String({ minLength: 1, maxLength: 128 }),
         }),
@@ -144,7 +145,7 @@ export function documentOperationRoutes(
       async (request, reply) => {
         const operation = operations.get(request.params.id);
         if (!operation) return reply.code(404).send({ error: "operation_not_found", message: "Document operation not found" });
-        if (operation.roomId !== request.query.roomId
+        if (operation.roomId !== (request.query.roomId ?? null)
           || operation.sessionId !== request.query.sessionId
           || operation.runId !== request.query.runId) {
           return reply.code(403).send({ error: "OPERATION_FORBIDDEN", message: "Operation belongs to another Agent run" });
@@ -165,7 +166,7 @@ export function documentOperationRoutes(
             type: Type.String({ minLength: 1, maxLength: 128 }),
             payload: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
             context: Type.Optional(Type.Object({
-              roomId: Type.String({ minLength: 1, maxLength: 128 }),
+              roomId: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
               sessionId: Type.String({ minLength: 1, maxLength: 128 }),
               runId: Type.String({ minLength: 1, maxLength: 128 }),
             })),

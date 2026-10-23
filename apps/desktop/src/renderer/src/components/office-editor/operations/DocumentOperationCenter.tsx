@@ -32,7 +32,8 @@ export function DocumentOperationCenter({ activeRoomId }: { activeRoomId: string
     [operations],
   )
   const rooms = useMemo(
-    () => [...new Set(active.map((entry) => entry.summary.roomId))],
+    () => [...new Set(active.map((entry) => entry.summary.roomId))]
+      .filter((roomId): roomId is string => roomId !== null),
     [active],
   )
   const documents = useMemo(

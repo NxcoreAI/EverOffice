@@ -99,7 +99,8 @@ export type DocumentCommittedHandler = (document: CommittedAgentDocument) => voi
 
 export interface AppliedAgentDocumentRewrite {
   sessionId: string;
-  roomId: string;
+  /** 工作区级改写为 null。 */
+  roomId: string | null;
   runId: string;
   operationId: string;
   documentId: string;

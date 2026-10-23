@@ -50,7 +50,8 @@ export function PageCanvas({
   page: PageId
   activeContextRoomId: string | null
   agentDocumentFocus: {
-    roomId: string
+    /** 工作区级文稿为 null（P0-2d）。 */
+    roomId: string | null
     documentId: string
     blockId?: string | null
     requestId: number
