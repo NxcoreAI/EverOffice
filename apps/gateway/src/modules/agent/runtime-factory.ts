@@ -150,31 +150,6 @@ function createUserFacingRuntime(
   });
 }
 
-export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
-  const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
-  if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  // 转写总结有独立模型档（transcriptionSummaryPi）；段未配置时回退 background。
-  const tier = isPiRuntimeConfigured(config.transcriptionSummaryPi)
-    ? config.transcriptionSummaryPi!
-    : config.backgroundPi;
-  if (!isPiRuntimeConfigured(tier)) {
-    return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.transcriptionSummary);
-  }
-  const { memory: _memory, ...pi } = tier!;
-  return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
-    // 后台总结是机器对机器 JSON 提取：不继承 primary 的 reasoning——
-    // 推理既白烧输出预算（长转写 JSON 更易 maxTokens 截断），且部分代理
-    // （litellm anthropic 协议）直接拒绝 reasoning_effort 参数。
-    reasoning: "off",
-    runtimeRole: "internal",
-    skillsEnabled: true,
-    skillPrompts: bundle.skillPrompts,
-    systemPrompt: bundle.systemPrompt,
-  });
-}
-
-
 /** 文稿版本摘要的隔离内部 runtime（无工具、单次调用）。
  *  原为写作风格定性层 runtime；风格提炼退役后由版本摘要接手（Phase 2d）。 */
 export function createVersionSummaryRuntime(config: GatewayConfig): AgentRuntime | null {
@@ -460,15 +435,6 @@ export function registerConnectorMapperAgent(
   }), () => createConnectorMapperAgentRuntime(config, formatMappingService)
     // 未配置 AI 时注册占位：映射生成不可用，源保持 pending（不假装成功）。
     ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorMapper));
-}
-
-export function registerTranscriptionSummaryAgent(resolver: AgentResolver, config: GatewayConfig): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
-  resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.transcriptionSummary,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createBackgroundAgentRuntime(config));
 }
 
 export function registerCursorCompletionAgent(resolver: AgentResolver, config: GatewayConfig): void {

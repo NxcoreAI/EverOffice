@@ -33,8 +33,7 @@ async function testConfig(): Promise<GatewayConfig> {
     knowledge: null,
     ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
-    transcriptionSummaryPi: null,
-    asrInputDir: join(dataDir, "recordings"),
+        asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
     asr: null,
@@ -181,41 +180,6 @@ describe("gateway server", () => {
     expect(task.builtin).toBe(false);
     expect(mcpList.json<{ result: { tools: Array<{ name: string }> } }>().result.tools.map((tool) => tool.name)).toContain("agent_schedule_run");
     expect(deleted.statusCode).toBe(204);
-  });
-
-  it("serves authenticated background transcription summaries", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const payload = {
-      jobId: "job-1",
-      sourceRecordId: "source-1",
-      transcript: "这是待总结的转写内容。",
-    };
-
-    const unauthorized = await app.inject({
-      method: "POST",
-      url: "/v1/processing/transcription-summary",
-      payload,
-    });
-    const authorized = await app.inject({
-      method: "POST",
-      url: "/v1/processing/transcription-summary",
-      headers: { authorization: `Bearer ${config.authToken}` },
-      payload,
-    });
-    await app.close();
-
-    expect(unauthorized.statusCode).toBe(401);
-    expect(authorized.statusCode).toBe(200);
-    const response = authorized.json<{ content: string }>();
-    expect(JSON.parse(response.content)).toMatchObject({
-      title: expect.any(String),
-      overview: expect.any(String),
-      keyPoints: expect.any(Array),
-      decisions: expect.any(Array),
-      actionItems: expect.any(Array),
-      topics: expect.any(Array),
-    });
   });
 
   it("supports the complete authenticated document CRUD lifecycle", async () => {
