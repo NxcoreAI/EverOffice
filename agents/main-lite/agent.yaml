@@ -9,8 +9,5 @@ skills: []
 
 capabilities:
   - conversation.respond
-  - memory.read
-  - knowledge.read
-  - context-room.read
 
 tools: []

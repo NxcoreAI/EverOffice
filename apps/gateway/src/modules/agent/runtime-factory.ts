@@ -3,13 +3,11 @@ import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import {
   PiAgentRuntime,
   type PiAgentRuntimeTool,
-  type RoomMemorySearch,
-  type RoomMemorySnapshot,
 } from "@nxcore/agent-runtime-pi";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
-import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
+import { createDocumentPiTools } from "../documents/pi-tools.js";
 import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
 import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
 import type { FormatMappingService } from "../connectors/format-mapping-service.js";
@@ -26,26 +24,6 @@ export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
   externalCalls?: ExternalCallBudgetService;
-  /** 会话级 Room wiki 解析（plan §6.1 resolveKnowledge），knowledge 模块注入。 */
-  resolveKnowledgeWikiIds?: (input: {
-    runId: string;
-    sessionId: string;
-    runtimeSessionRef: string | null;
-    prompt: string;
-    pageLabel: string;
-    roomId: string | null;
-  }) => Promise<string[]>;
-  /** 限定 Room 记忆注入：run 绑定 Room 时取该 Room 的甄选记忆快照（memory 模块注入）。 */
-  resolveRoomMemories?: (input: {
-    runId: string;
-    sessionId: string;
-    runtimeSessionRef: string | null;
-    prompt: string;
-    pageLabel: string;
-    roomId: string | null;
-  }) => Promise<RoomMemorySnapshot[]>;
-  /** memory_search 的 room_id 过滤（Room 绑定记忆快照内检索）。 */
-  roomMemorySearch?: RoomMemorySearch;
 }
 
 function agentDirectories(config: GatewayConfig, agentId: string) {
@@ -123,7 +101,6 @@ function createUserFacingRuntime(
   if (!pi || !isPiRuntimeConfigured(pi)) return null;
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   const directories = agentDirectories(config, agentId);
-  const routedRoomByRun = new Map<string, string>();
   return new PiAgentRuntime({
     ...withAgentDirectories(config, agentId, pi),
     bashSandbox: {
@@ -140,7 +117,7 @@ function createUserFacingRuntime(
       // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
       // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
-      ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun)
+      ...createDocumentPiTools(mcpHost)
         .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),
       // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
       // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
@@ -156,17 +133,7 @@ function createUserFacingRuntime(
         : []),
     ],
     promptGuidelines: mcpHost.capabilities.promptGuidelines(),
-    ...(knowledge?.resolveKnowledgeWikiIds
-      ? { resolveKnowledgeWikiIds: knowledge.resolveKnowledgeWikiIds }
-      : {}),
-    ...(knowledge?.resolveRoomMemories
-      ? { resolveRoomMemories: knowledge.resolveRoomMemories }
-      : {}),
-    ...(knowledge?.roomMemorySearch
-      ? { roomMemorySearch: knowledge.roomMemorySearch }
-      : {}),
     onRunFinished: async (input, outcome) => {
-      routedRoomByRun.delete(input.runId);
       await mcpHost.finishAgentRun(input.sessionId, outcome, input.runId);
     },
     ...(knowledge?.externalCalls

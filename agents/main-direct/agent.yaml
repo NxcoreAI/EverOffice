@@ -9,10 +9,6 @@ skills: []
 
 capabilities:
   - conversation.respond
-  - memory.read
-  - knowledge.read
-  - context-room.read
-  - context-room.propose-write
   - connector.read
   - connector.write-with-approval
   - web.search

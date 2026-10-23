@@ -67,16 +67,35 @@ function tools(service: Partial<RoomOverviewService>) {
 }
 
 describe('Context Room overview Agent tools', () => {
-  it('ships the regenerate tool and the durable correction protocol in the primary Agent bundle', () => {
+  it('P0-4：主 Agent bundle 不再声明 Room / 记忆工具与纠正协议', () => {
     const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), BUILTIN_AGENT_IDS.primary)
 
-    expect(bundle.tools).toContain('context_room_overview_regenerate')
-    expect(bundle.tools).toContain('context_room_correction_apply_citation')
-    expect(bundle.tools).toContain('room_correction_draft')
-    expect(bundle.systemPrompt).toContain('从 pendingCorrections 取得当前会话的精确 proposal id')
-    // 纠正计算已归 room-corrector 子 Agent：主 Agent 逐字转发，不再自带全套编辑规则。
-    expect(bundle.systemPrompt).toContain('room_correction_draft(task=citation-correction)')
-    expect(bundle.systemPrompt).toContain('edits 逐字转发给 context_room_correction_apply_citation')
+    // Room 域工具已从主 Agent 工具面摘除（模块本身在 Phase 2 删除）。
+    for (const name of [
+      'context_room_overview_regenerate',
+      'context_room_correction_apply_citation',
+      'room_correction_draft',
+      'context_room_context_get',
+      'context_room_list',
+      'context_room_create',
+      'memory_search',
+      'wiki_search',
+      'wiki_read',
+      'room_analysis',
+    ]) {
+      expect(bundle.tools, name).not.toContain(name)
+    }
+    expect(bundle.capabilities).not.toContain('memory.read')
+    expect(bundle.capabilities).not.toContain('knowledge.read')
+    expect(bundle.capabilities).not.toContain('context-room.read')
+    // 纠正协议话术不再出现在用户档人设里。
+    expect(bundle.systemPrompt).not.toContain('pendingCorrections')
+    expect(bundle.systemPrompt).not.toContain('room_correction_draft')
+    // Office 与 Agent 能力仍在。
+    expect(bundle.tools).toContain('document_read')
+    expect(bundle.tools).toContain('document_draft')
+    expect(bundle.tools).toContain('slides_draft')
+    expect(bundle.tools).toContain('agent_dispatch')
   })
 
   it('returns applied corrections and only the current session pending proposals', async () => {
