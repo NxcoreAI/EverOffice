@@ -25,7 +25,7 @@ export function MicrophonePermissionOnboarding({ onNavigateStage, onFinished }: 
     const refresh = async () => {
       const requestId = ++statusRequestRef.current
       try {
-        const status = await window.nxcore?.asr?.getMicrophoneAccessStatus()
+        const status = await window.nxcore?.permissions?.getMicrophoneAccessStatus()
         if (cancelled || requestId !== statusRequestRef.current) return
         setView(status === 'granted' ? 'granted' : status === 'denied' || status === 'restricted' ? 'denied' : status === 'not-determined' ? 'undetermined' : 'checking')
       } catch {
@@ -47,7 +47,7 @@ export function MicrophonePermissionOnboarding({ onNavigateStage, onFinished }: 
     setBusy(true)
     setView('requesting')
     try {
-      const allowed = await window.nxcore?.asr?.requestMicrophoneAccess()
+      const allowed = await window.nxcore?.permissions?.requestMicrophoneAccess()
       setView(allowed ? 'granted' : 'denied')
     } catch {
       setView('denied')
@@ -91,7 +91,7 @@ export function MicrophonePermissionOnboarding({ onNavigateStage, onFinished }: 
           disabled={view === 'granted' || view === 'requesting' || view === 'checking'}
           aria-label={view === 'granted' ? t('surface:onboarding.microphone.granted') : t('surface:onboarding.microphone.authorize')}
           onClick={() => {
-            if (view === 'denied') { void window.nxcore?.asr?.openMicrophoneSettings(); return }
+            if (view === 'denied') { void window.nxcore?.permissions?.openMicrophoneSettings(); return }
             void request()
           }}
         >
@@ -105,7 +105,7 @@ export function MicrophonePermissionOnboarding({ onNavigateStage, onFinished }: 
           </p>
         ) : null}
         {view === 'denied' ? (
-          <button type="button" className="mic-perm-settings" onClick={() => { void window.nxcore?.asr?.openMicrophoneSettings() }}>
+          <button type="button" className="mic-perm-settings" onClick={() => { void window.nxcore?.permissions?.openMicrophoneSettings() }}>
             <Settings aria-hidden="true" />{t('surface:onboarding.microphone.openSettings')}
           </button>
         ) : null}

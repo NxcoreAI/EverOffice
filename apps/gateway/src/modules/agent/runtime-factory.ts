@@ -183,23 +183,7 @@ export function createIndexBackfillRuntime(config: GatewayConfig): AgentRuntime 
   });
 }
 
-/** 批量导入归房分类器：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
-export function createImportClassifierRuntime(config: GatewayConfig): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const { mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    includeBashTool: false,
-    builtinTools: [],
-    maxToolCallsPerRun: 1,
-    runtimeRole: "internal",
-    sessionsDir: join(pi.sessionsDir, "import-classifier"),
-    workingDirectory: join(pi.workingDirectory, "import-classifier"),
-    agentDirectory: join(pi.agentDirectory, "import-classifier"),
-  });
-}
-
-/** 会话标题生成：import-classifier 同款隔离内部 runtime（无工具、单次调用）。 */
+/** 会话标题生成：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
 export function createSessionTitleRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
   const { mcp: _mcp, ...pi } = config.backgroundPi!;
