@@ -1225,7 +1225,7 @@ export const documentImportBatches = sqliteTable(
       .notNull()
       .default([]),
     cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
-    /** true：跳过来源去重，同来源一律新建工作区文稿（用户明确选"创建新的"）。 */
+    /** mode=room 且 true：跳过来源去重，同来源一律新建文档（用户明确选"创建新的"）。 */
     forceNew: integer("force_new", { mode: "boolean" }).notNull().default(false),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
