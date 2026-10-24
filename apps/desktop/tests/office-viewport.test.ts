@@ -52,19 +52,36 @@ describe('officeViewport：原生视图显隐时序', () => {
     vi.restoreAllMocks()
   })
 
-  it('挂载双帧确认后上报真实矩形', async () => {
+  it('挂载后立即上报真实矩形（窗口在后台时 rAF 会被节流，不能等双帧）', () => {
     const { setWorkspaceBounds } = installBridge()
     const { host } = installHost(REAL_RECT)
 
     attachment = attachOfficeViewport(host)
-    // 未过双帧前不上报（主进程视图初始即隐藏，不会闪现）。
-    expect(setWorkspaceBounds).not.toHaveBeenCalled()
+    expect(setWorkspaceBounds).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 10, y: 20, width: 300, height: 200 }),
+    )
+  })
 
-    await vi.waitFor(() => {
-      expect(setWorkspaceBounds).toHaveBeenCalledWith(
-        expect.objectContaining({ x: 10, y: 20, width: 300, height: 200 }),
-      )
-    })
+  it('遮挡判定误判后由周期复扫自动恢复（面板动画不产生 DOM 变更）', async () => {
+    vi.useFakeTimers()
+    const { setWorkspaceBounds } = installBridge()
+    const { host, overlay, setTopElement } = installHost(REAL_RECT)
+
+    attachment = attachOfficeViewport(host)
+    setTopElement(overlay)
+    dispatchPointerDown()
+    vi.advanceTimersByTime(200)
+    expect(setWorkspaceBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 0, height: 0 }),
+    )
+
+    // 遮挡消失但没有任何事件/变更：周期复扫要把它救回来。
+    setTopElement(host)
+    vi.advanceTimersByTime(800)
+    expect(setWorkspaceBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ x: 10, y: 20, width: 300, height: 200 }),
+    )
+    vi.useRealTimers()
   })
 
   it('弹层盖住多数采样点 → 发零尺寸隐藏；撤掉后恢复真实矩形', async () => {

@@ -21,7 +21,7 @@ import type {
 } from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -756,6 +756,13 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
       return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
     },
+    // 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开文档：主进程导入后交回渲染层开预览。
+    onOpenFromOs: (listener: (document: OsOpenedDocument) => void) => {
+      const handleOpen = (_event: Electron.IpcRendererEvent, document: OsOpenedDocument) => listener(document)
+      ipcRenderer.on('files:open-from-os', handleOpen)
+      return () => ipcRenderer.removeListener('files:open-from-os', handleOpen)
+    },
+    takePendingOsOpen: () => invoke('files:take-pending-os-open'),
   },
   thesisFormat: {
     listCards: (roomId: string): Promise<Array<{

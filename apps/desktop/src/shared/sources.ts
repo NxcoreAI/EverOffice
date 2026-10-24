@@ -70,7 +70,7 @@ import type {
   AgentPermissionModeState,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -1015,7 +1015,7 @@ export interface NxcoreDesktopApi {
     exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
-     * options.editable：Room 产物 docx 的编辑预览（保存回填版本链）；缺省只读。 */
+     * options.editable：可直接编辑（保存回填同一 fileEntryId 的新版本）；缺省只读。 */
     openOriginal(
       fileId: string,
       originalName?: string,
@@ -1023,7 +1023,8 @@ export interface NxcoreDesktopApi {
       options?: { editable?: boolean; roomId?: string },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
-      | { openedWith: 'external' }
+      /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
+      | { openedWith: 'external'; legacyFallback?: boolean }
     >
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
@@ -1040,6 +1041,10 @@ export interface NxcoreDesktopApi {
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
+    /** 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开 Word/Excel/PPT 后的打开请求。 */
+    onOpenFromOs(listener: (document: OsOpenedDocument) => void): () => void
+    /** 冷启动竞态兜底：取走尚未被渲染层消费的系统打开请求（取后清空）。 */
+    takePendingOsOpen(): Promise<OsOpenedDocument | null>
   }
   thesisFormat: {
     /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */

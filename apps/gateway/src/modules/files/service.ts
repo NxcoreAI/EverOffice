@@ -510,6 +510,28 @@ export class FilesService {
     return FILE_FORMAT_CAPABILITIES;
   }
 
+  /**
+   * 按磁盘路径 + 当前内容指纹查已有条目：系统文件管理器直接打开文件时，
+   * 若该文件已作为「本地文件夹」来源入库且内容未变，直接复用条目打开，
+   * 不再把（可能上百 MB 的）文件重新上传一遍，也不产生重复条目。
+   */
+  findBySourcePath(sourcePath: string, contentHash: string): { fileEntryId: string; originalName: string } | null {
+    if (!sourcePath || !/^[a-f0-9]{64}$/.test(contentHash)) return null;
+    const row = this.db.select({
+      id: fileEntries.id,
+      originalName: fileEntries.originalName,
+      contentHash: fileVersions.contentHash,
+    }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .where(and(
+        eq(fileEntries.sourceKind, "local-folder"),
+        eq(fileEntries.sourcePath, sourcePath),
+        isNull(fileEntries.deletedAt),
+      )).get();
+    if (!row || row.contentHash !== contentHash) return null;
+    return { fileEntryId: row.id, originalName: row.originalName };
+  }
+
   isCatalogEntry(fileEntryId: string): boolean {
     const entry = this.db.select({ sourceKind: fileEntries.sourceKind }).from(fileEntries)
       .where(eq(fileEntries.id, fileEntryId)).get();

@@ -68,9 +68,10 @@ import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
 import { OfficeBridgeServer } from './gateway/office-bridge'
-import type { OfficeAgentFileEvent } from '../shared/office'
+import type { OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { createEverroomMaterialResolver } from './office/office-material-resolver'
+import { openDocumentFromSystem as runSystemOpen, OsOpenQueue, osOpenPathsFromArgv } from './office/os-open'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
 import {
@@ -457,6 +458,10 @@ const FILES_CHANNELS = {
   listHighRiskReviews: 'files:high-risk-reviews:list',
   resolveHighRiskReview: 'files:high-risk-reviews:resolve',
   highRiskReviewsChanged: 'files:high-risk-reviews:changed',
+  /** 系统文件管理器打开文档 → 渲染层（push，非 invoke）。 */
+  openFromOs: 'files:open-from-os',
+  /** 冷启动竞态兜底：渲染层启动时取走暂存的系统打开请求。 */
+  takePendingOsOpen: 'files:take-pending-os-open',
 } as const
 
 const THESIS_FORMAT_CHANNELS = {
@@ -647,6 +652,13 @@ const officePreviewRegistry = new OfficePreviewRegistry(
 /** 论文格式网关桥：网关就绪后赋值；pick 直传共用同一实例。 */
 let thesisFormatBridgeRef: ThesisFormatGatewayBridge | null = null
 
+/** 系统文件管理器派发的打开请求：先排队，等文件桥就绪后串行导入 + 打开。 */
+const osOpenQueue = new OsOpenQueue()
+/** 最近一条尚未被渲染层消费的系统打开请求（冷启动竞态兜底，取走即清空）。 */
+let pendingOsOpen: OsOpenedDocument | null = null
+/** 访达直接打开的文件：fileId → 磁盘原路径；保存后把工作副本写回它。 */
+const osOpenedWriteBackPaths = new Map<string, string>()
+
 /** office:agent-file 事件扇出到所有渲染窗口（生成进度/完成 + 编辑回填结果共用通道）。 */
 function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -681,6 +693,94 @@ function openAgentNotificationTarget(target: AgentNotificationTarget): void {
   window.show()
   window.focus()
   sendPendingAgentNotificationTarget()
+}
+
+/** 把系统打开请求送到渲染层：页面尚未加载完就等首帧，避免事件丢失。 */
+function sendOsOpenToRenderer(document: OsOpenedDocument): void {
+  pendingOsOpen = document
+  let window = BrowserWindow.getAllWindows()[0]
+  if (!window || window.isDestroyed()) {
+    // macOS 关窗不退出应用：系统打开文档时要把主窗口重建出来（与 focusMainWindow 同策略）。
+    window = createWindow()
+  }
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+  const target = window.webContents
+  if (target.isLoadingMainFrame()) {
+    target.once('did-finish-load', () => {
+      if (!window.isDestroyed() && !target.isDestroyed()) target.send(FILES_CHANNELS.openFromOs, document)
+    })
+    return
+  }
+  target.send(FILES_CHANNELS.openFromOs, document)
+}
+
+/** 系统打开失败：走原生错误框（渲染层可能停在别的页面，页内 toast 容易被漏看）。 */
+function showOsOpenFailure(name: string, detail: string): void {
+  const options = {
+    type: 'warning' as const,
+    title: desktopText('dialog.openDocument.title'),
+    message: desktopText('dialog.openDocument.message', { name }),
+    detail,
+    buttons: ['好'],
+    defaultId: 0,
+  }
+  const window = BrowserWindow.getAllWindows()[0]
+  if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
+  else void dialog.showMessageBox(options)
+}
+
+/**
+ * 访达/资源管理器里打开一个 Word/Excel/PPT：先入文件库（同路径重开命中同一
+ * entry，版本级去重），再交给渲染层用内嵌 Office 预览打开。
+ * 旧版 .doc/.xls/.ppt 的转换失败由各视图管理器回退系统默认应用。
+ */
+/** 导入偶发失败（连接被并发扫描打断 / 网关刚重启）时的重试判定。 */
+function isTransientOsImportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Bad Request|文件上传失败（5\d\d）|ECONNRESET|fetch failed|socket hang up/i.test(message)
+}
+
+async function openDocumentFromSystem(filePath: string): Promise<void> {
+  await runSystemOpen(filePath, {
+    importFile: async (path) => {
+      const bridge = officeFilesBridge
+      if (!bridge) return null
+      // 已作为「本地文件夹」来源入库且内容没变：直接复用条目打开，不重复上传。
+      // 大文件（上百 MB 的 Excel/PPT）尤其需要，避免每次访达打开都整包上传。
+      try {
+        const known = await bridge.lookupSourcePath(path, await hashFileBytes(path))
+        if (known) {
+          return { fileId: known.fileId, filename: known.originalName, error: null, skippedReason: null }
+        }
+      } catch (error) {
+        console.warn('[os-open] source lookup skipped', error)
+      }
+      try {
+        return (await bridge.importPathsOnce([path]))[0] ?? null
+      } catch (error) {
+        // 网关偶发拒绝（连接复用与后台扫描撞在一起）：等一拍重试一次再报错。
+        if (!isTransientOsImportError(error)) throw error
+        console.warn('[os-open] import failed; retrying once', error)
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        return (await bridge.importPathsOnce([path]))[0] ?? null
+      }
+    },
+    open: (document) => {
+      // 记下磁盘原路径：保存后除回填库内版本，还要写回外部的这份文件。
+      osOpenedWriteBackPaths.set(document.fileId, filePath)
+      sendOsOpenToRenderer(document)
+    },
+    fail: (name, failure) => {
+      const detail = failure.kind === 'service_unavailable'
+        ? desktopText('dialog.openDocument.serviceUnavailable')
+        : failure.kind === 'unsupported_format'
+          ? desktopText('dialog.openDocument.unsupportedFormat')
+          : failure.message || desktopText('dialog.openDocument.unknownError')
+      showOsOpenFailure(name, detail)
+    },
+  })
 }
 
 app.on('ready', (_event, launchInfo) => {
@@ -814,11 +914,27 @@ app.on('open-url', (event, url) => {
   handleProtocolUrl(url)
 })
 
+// 访达双击/「打开方式」→ EverRoom：open-file 可能在 ready 之前派发，先入队，
+// 等文件桥就绪（启动链装处理器）再串行导入并打开内嵌预览。
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  osOpenQueue.push(...osOpenPathsFromArgv([filePath]))
+})
+
+// Windows/Linux 双击文档时系统把路径写进 argv（冷启动与第二实例都走这里）。
+osOpenQueue.push(...osOpenPathsFromArgv(process.argv))
+
 if (hasSingleInstanceLock) {
   app.on('second-instance', (_event, argv) => {
     const protocolUrl = argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
     if (protocolUrl) handleProtocolUrl(protocolUrl)
-    else focusMainWindow()
+    const documentPaths = osOpenPathsFromArgv(argv)
+    if (documentPaths.length > 0) {
+      focusMainWindow()
+      osOpenQueue.push(...documentPaths)
+      return
+    }
+    if (!protocolUrl) focusMainWindow()
   })
 }
 
@@ -2344,10 +2460,11 @@ function registerFilesHandlers(
     const effectiveHash = contentHash ?? await hashFileBytes(storagePath)
     // 顶栏预览标签支持多开：同 fileId 复用实例，hash 变化原地重建；激活由渲染端驱动。
     // 旧格式依赖本机 LibreOffice：未安装或转换失败时回退外部应用打开。
-    // editable 仅 Room 产物的 docx 编辑预览传 true：注册表把它算进实例身份，
-    // 与顶栏只读标签互不复用；其余调用方缺省只读。
+    // editable：内置编辑器直接编辑（保存回填文件库版本链）。注册表把它算进
+    // 实例身份，与只读标签互不复用；旧格式/PDF 的 editable 会被忽略。
     const editable = options?.editable === true
     const roomId = typeof options?.roomId === 'string' && options.roomId ? options.roomId : undefined
+    const writeBackPath = editable ? osOpenedWriteBackPaths.get(fileId) : undefined
     let descriptor
     try {
       descriptor = await officePreviewRegistry.open(window, {
@@ -2357,6 +2474,7 @@ function registerFilesHandlers(
         storagePath,
         ...(editable ? { editable: true } : {}),
         ...(roomId ? { roomId } : {}),
+        ...(writeBackPath ? { writeBackPath } : {}),
       })
     } catch (error) {
       if (!legacy) throw error
@@ -2366,7 +2484,8 @@ function registerFilesHandlers(
         message: error instanceof Error ? error.message : String(error),
       })
       await bridge.openOriginal(fileId)
-      return { openedWith: 'external' as const }
+      // 旧版格式回退系统应用：渲染层据此提示「内置预览需要 LibreOffice」。
+      return { openedWith: 'external' as const, legacyFallback: true }
     }
     return {
       openedWith: 'office' as const,
@@ -2415,6 +2534,12 @@ function registerFilesHandlers(
       return highRiskImports.resolve(id, accepted)
     },
   )
+  // 冷启动竞态兜底：系统打开事件可能早于渲染层挂载监听，暂存一份供启动时取走。
+  handle(FILES_CHANNELS.takePendingOsOpen, () => {
+    const pending = pendingOsOpen
+    pendingOsOpen = null
+    return pending
+  })
 }
 
 function registerPermissionHandlers(): void {
@@ -3234,6 +3359,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // slides「AI 修改」弹层 → 反查 Room → 渲染层注入对话框（hook 在运行时首用时懒装）。
     officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
+    // 文件桥就位：排空启动前/启动中累积的「访达打开」请求。
+    osOpenQueue.setHandler(openDocumentFromSystem)
     const thesisFormatBridge = new ThesisFormatGatewayBridge(gatewaySupervisor)
     thesisFormatBridgeRef = thesisFormatBridge
     registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry)

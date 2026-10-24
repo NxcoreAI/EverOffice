@@ -1374,5 +1374,9 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "View large previews",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} notes",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "The content draft was archived; you can restore it from the Materials panel.",
-  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app."
+  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app.",
+  "files.legacyPreviewFallbackTitle": "Opened in the default app",
+  "files.legacyPreviewFallbackMessage": "Legacy Office formats (.doc / .xls / .ppt) need LibreOffice installed to open in the built-in preview.",
+  "files.writeBackFailedTitle": "Saved to EverRoom, but the original file was not updated",
+  "files.writeBackFailedMessage": "The library version of “{name}” was updated, but writing back to the original file failed: {error}. Check whether the file was moved, is in use, or is read-only."
 }

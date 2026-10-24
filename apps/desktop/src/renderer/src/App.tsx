@@ -41,6 +41,8 @@ import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
 import './App.css'
 import type { AgentNotificationTarget } from '../../shared/notifications'
+import type { OsOpenedDocument } from '../../shared/office'
+import { isEditableOfficeDocument } from '@/lib/officeEditing'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
@@ -395,6 +397,50 @@ export function App() {
     setActivePage('office-document')
   }, [])
 
+  // 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开 Word/Excel/PPT：
+  // 主进程已把文件导入文件库，这里复用文件页的 openOriginal，开出同一个顶栏预览标签。
+  useEffect(() => {
+    const files = window.nxcore?.files
+    if (!files?.onOpenFromOs) return
+    const openFromSystem = (document: OsOpenedDocument) => {
+      const editable = isEditableOfficeDocument(document.originalName)
+      void files.openOriginal(
+        document.fileId,
+        document.originalName,
+        undefined,
+        editable ? { editable: true } : undefined,
+      )
+        .then((result) => {
+          if (result?.openedWith === 'office') {
+            openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })
+            return
+          }
+          if (result?.openedWith === 'external' && result.legacyFallback) {
+            showToast({
+              title: t('surface:files.legacyPreviewFallbackTitle'),
+              message: t('surface:files.legacyPreviewFallbackMessage'),
+            })
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to open the document from the system file manager.', error)
+        })
+    }
+    const takePending = typeof files.takePendingOsOpen === 'function'
+      ? files.takePendingOsOpen.bind(files)
+      : null
+    // 已消费的事件顺手清掉主进程暂存，避免下次页面重载把旧文件再打开一次。
+    const unsubscribe = files.onOpenFromOs((document) => {
+      openFromSystem(document)
+      void takePending?.().catch(() => undefined)
+    })
+    // 冷启动：系统打开事件可能早于本组件挂载，取走主进程暂存的请求（取后清空）。
+    void takePending?.()
+      .then((document) => { if (document) openFromSystem(document) })
+      .catch(() => undefined)
+    return unsubscribe
+  }, [openOfficeTab, t])
+
   const activateOfficeTab = useCallback((instanceId: string) => {
     setActiveOfficeInstanceId(instanceId)
     setActivePage('office-document')
@@ -452,6 +498,19 @@ export function App() {
     return office.onAgentFile((payload) => {
       if (payload.type === 'edited') {
         // 人手编辑回填落库（版本链 +1）：静默刷新清单，不弹提示、不抢焦点。
+        window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
+        return
+      }
+      if (payload.type === 'write-back-failed') {
+        // 库内版本已更新，但写回访达里的原文件失败：必须让用户知道外部程序看不到这次修改。
+        showToast({
+          title: t('surface:files.writeBackFailedTitle'),
+          message: t('surface:files.writeBackFailedMessage', {
+            name: payload.originalName ?? payload.title,
+            error: payload.message ?? '',
+          }),
+          variant: 'error',
+        })
         window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
         return
       }

@@ -1374,5 +1374,9 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "看大图挑选",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} 条提示",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "内容稿已归档，可在资料面板恢复。",
-  "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。"
+  "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。",
+  "files.legacyPreviewFallbackTitle": "已用系统默认应用打开",
+  "files.legacyPreviewFallbackMessage": "旧版 Office 格式（.doc / .xls / .ppt）需要本机安装 LibreOffice 才能在内置预览中打开。",
+  "files.writeBackFailedTitle": "已保存到 EverRoom，但写回原文件失败",
+  "files.writeBackFailedMessage": "「{name}」的文件库版本已更新；写回磁盘原文件时出错：{error}。请检查文件是否被移动、占用或没有写入权限。"
 }

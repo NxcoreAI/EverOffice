@@ -222,7 +222,48 @@
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
         "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
         "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
-        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app."
+        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Word Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "docx",
+              "doc"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.wordprocessingml.document",
+              "com.microsoft.word.doc"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Excel Workbook",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "xlsx",
+              "xls"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.spreadsheetml.sheet",
+              "com.microsoft.excel.xls"
+            ]
+          },
+          {
+            "CFBundleTypeName": "PowerPoint Presentation",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "pptx",
+              "ppt"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.presentationml.presentation",
+              "com.microsoft.powerpoint.ppt"
+            ]
+          }
+        ]
       },
       "target": [
         "dmg",
@@ -262,6 +303,36 @@
             "LICENSE",
             "prebuilds/win32-x64.node"
           ]
+        }
+      ],
+      "fileAssociations": [
+        {
+          "ext": [
+            "docx",
+            "doc"
+          ],
+          "name": "Word Document",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "xlsx",
+            "xls",
+            "xlsm"
+          ],
+          "name": "Excel Workbook",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "pptx",
+            "ppt"
+          ],
+          "name": "PowerPoint Presentation",
+          "role": "Editor",
+          "rank": "Alternate"
         }
       ]
     },

@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// 打包态的文档类型关联由 electron-builder 从 mac.extendInfo 写进 Info.plist；开发态
+// 直接读同一份清单，让缓存里的 branded Electron 也能在访达「打开方式」里出现
+// （避免两处清单漂移）。
+const documentTypes = JSON.parse(
+  readFileSync(join(desktopRoot, 'package.json'), 'utf8'),
+).build?.mac?.extendInfo?.CFBundleDocumentTypes ?? []
 const workspaceEnvPath = resolve(desktopRoot, '../../.env')
 if (existsSync(workspaceEnvPath)) process.loadEnvFile(workspaceEnvPath)
 const electronExecutable = require('electron').trim()
@@ -91,6 +97,41 @@ function findNewestProfile(directory) {
   return newest ? join(directory, newest) : null
 }
 
+/**
+ * 访达「打开方式」/ 双击文档：把 package.json 的 mac.extendInfo.CFBundleDocumentTypes
+ * 写进开发态 Info.plist。LSHandlerRank=Alternate 表示不抢系统默认打开方式，只出现在
+ * 右键「打开方式」里；用户可自行设为默认。数组/字符串两种值按 PlistBuddy 语法展开。
+ */
+function applyDocumentTypes(plistPath, types) {
+  spawnSync('/usr/libexec/PlistBuddy', ['-c', 'Delete :CFBundleDocumentTypes', plistPath], { stdio: 'ignore' })
+  if (types.length === 0) return
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleDocumentTypes array', plistPath])
+  types.forEach((type, index) => {
+    const base = `:CFBundleDocumentTypes:${index}`
+    run('/usr/libexec/PlistBuddy', ['-c', `Add ${base} dict`, plistPath])
+    for (const [key, value] of Object.entries(type)) {
+      if (Array.isArray(value)) {
+        run('/usr/libexec/PlistBuddy', ['-c', `Add ${base}:${key} array`, plistPath])
+        value.forEach((item, itemIndex) => {
+          run('/usr/libexec/PlistBuddy', ['-c', `Add ${base}:${key}:${itemIndex} string ${item}`, plistPath])
+        })
+      } else {
+        run('/usr/libexec/PlistBuddy', ['-c', `Add ${base}:${key} string ${value}`, plistPath])
+      }
+    }
+  })
+}
+
+/** 让 LaunchServices 立刻认识开发态 app 的文档类型（否则要等系统下次扫描）。 */
+function registerWithLaunchServices(appBundle) {
+  const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+  if (!existsSync(lsregister)) return
+  const result = spawnSync(lsregister, ['-f', appBundle], { stdio: 'ignore' })
+  if (result.status !== 0) {
+    console.warn('[desktop] LaunchServices registration failed; Finder may not list EverRoom under Open With until the next launch.')
+  }
+}
+
 function prepareMacElectron() {
   const sourceApp = resolve(dirname(electronExecutable), '../..')
   const sourcePlist = join(sourceApp, 'Contents/Info.plist')
@@ -99,7 +140,7 @@ function prepareMacElectron() {
   const brandedApp = join(cacheDirectory, 'EverRoom.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
-    brandingVersion: 6,
+    brandingVersion: 8,
     electronExecutable,
     electronPlistModifiedAt: statSync(sourcePlist).mtimeMs,
     iconModifiedAt: statSync(iconPath).mtimeMs,
@@ -137,6 +178,7 @@ function prepareMacElectron() {
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLName string com.nxcore.everroom.auth', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string everroom', plistPath])
+  applyDocumentTypes(plistPath, documentTypes)
   copyFileSync(iconPath, join(brandedApp, 'Contents/Resources/icon.icns'))
   repairFrameworkLayouts(join(brandedApp, 'Contents/Frameworks'))
   // 开发推送验证需要真实 Team 签名 + aps-environment entitlement（ad-hoc 签名无法注册 APNs）。
@@ -233,6 +275,7 @@ function prepareMacElectron() {
     const plain = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', devIdentity || '-', brandedApp], { stdio: 'inherit' })
     if (plain.status === 0 && !electronHealthCheck(brandedExecutable)) {
       writeFileSync(markerPath, marker)
+      registerWithLaunchServices(brandedApp)
       console.log(`[desktop] branded dev Electron ready (no push entitlement): ${brandedApp}`)
       return brandedExecutable
     }
@@ -241,6 +284,7 @@ function prepareMacElectron() {
     return electronExecutable
   }
   writeFileSync(markerPath, marker)
+  registerWithLaunchServices(brandedApp)
   console.log(`[desktop] branded dev Electron ready: ${brandedApp}`)
 
   const devAppPath = brandedApp

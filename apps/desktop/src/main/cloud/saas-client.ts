@@ -995,7 +995,9 @@ export class SaasClient {
       })
       this.loopbackRedirectSupported = probe.status !== 400
     } catch {
-      return OIDC_CALLBACK_URL
+      // 超时/断网 ≠ 未注册：本轮仍用回环，避免落到会被浏览器静默拦截的
+      // everroom:// 回调；不写缓存，下次登录重新探测。
+      return OIDC_LOOPBACK_REDIRECT_URI
     }
     return this.loopbackRedirectSupported ? OIDC_LOOPBACK_REDIRECT_URI : OIDC_CALLBACK_URL
   }

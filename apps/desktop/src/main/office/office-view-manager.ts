@@ -6,6 +6,7 @@ import type { BrowserWindow, Rectangle, WebContentsView } from 'electron'
 
 import type { GenOfficeDocsRuntime } from './office-runtime'
 import { convertLegacyOfficeFile } from './legacy-convert'
+import { ensureWorkingCopyWritable } from './working-copy'
 
 export const OFFICE_WORKSPACE_BOUNDS_CHANNEL = 'office:workspace-bounds'
 
@@ -73,6 +74,8 @@ export async function prepareOfficeDocument(
     if (legacyTarget) await convertLegacyOfficeFile(source, originalName, directory, legacyTarget)
     else copyFileSync(source, target)
   }
+  // 既有缓存也要修：老版本从只读原文件复制出来的工作副本一直是只读的。
+  ensureWorkingCopyWritable(target)
   return target
 }
 

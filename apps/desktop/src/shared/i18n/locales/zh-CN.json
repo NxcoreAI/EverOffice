@@ -48,5 +48,10 @@
   "error.transcript.invalidSource": "无法验证导出请求来源。",
   "error.transcript.invalidRequest": "无效的逐字稿导出请求。",
   "error.memory.fileTooLarge": "文件超过 2MB 导入上限（{size}MB）",
-  "dialog.importFiles.images": "图片"
+  "dialog.importFiles.images": "图片",
+  "dialog.openDocument.title": "无法打开文档",
+  "dialog.openDocument.message": "“{name}”没能导入 EverRoom。",
+  "dialog.openDocument.serviceUnavailable": "本地文件服务尚未就绪，请稍后重试。",
+  "dialog.openDocument.unsupportedFormat": "此文件类型暂不支持在 EverRoom 中打开。",
+  "dialog.openDocument.unknownError": "未知错误，请重试。"
 }
