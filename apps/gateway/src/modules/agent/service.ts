@@ -52,7 +52,6 @@ import {
   agentSessions,
   documents,
   pendingAgentIntents,
-  roomDocumentLinks,
 } from "../../infrastructure/database/schema.js";
 import { AgentEventBroker } from "./event-broker.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
@@ -1067,13 +1066,10 @@ export class AgentService {
       eq(agentRuns.sessionId, input.sessionId),
     )).get();
     if (!run) throw new Error("pending_agent_intent_source_not_found");
-    const allowedRoomIds = [...new Set(input.allowedRoomIds.flatMap((id) => {
-      const resolved = resolveRoomId(this.roomRegistry, id);
-      return resolved ? [resolved] : [];
-    }))];
-    if (allowedRoomIds.length === 0) {
-      throw new Error("pending_agent_intent_resource_not_allowed");
-    }
+    // Phase 2i：Room 维度已删除，文稿是工作区级的，intent 不再要求携带可解析的
+    // Room 归属（旧要求的"至少一个可解析 Room"恒不成立）；allowedRoomIds 仅作
+    // 调用方给的既有标签原样留存，可为空数组。
+    const allowedRoomIds = [...new Set(input.allowedRoomIds.map((id) => id.trim()).filter(Boolean))];
     const allowedDocumentIds = [...new Set((input.allowedDocumentIds ?? []).map((id) => id.trim()).filter(Boolean))];
     if (input.targetCapability !== "document.create"
       && input.targetCapability !== "task.clarify"
@@ -1081,8 +1077,7 @@ export class AgentService {
       throw new Error("pending_agent_intent_resource_required");
     }
     for (const documentId of allowedDocumentIds) {
-      const document = this.findDocumentResource(documentId);
-      if (!document || !allowedRoomIds.includes(document.roomId)) {
+      if (!this.findDocumentResource(documentId)) {
         throw new Error("pending_agent_intent_resource_not_allowed");
       }
     }
@@ -1107,15 +1102,10 @@ export class AgentService {
     const now = new Date();
     if (intent.consumedAt) throw new Error("pending_agent_intent_consumed");
     if (intent.expiresAt <= now) throw new Error("pending_agent_intent_expired");
-    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
+    // Phase 2i：文档库只剩工作区级文稿，intent 的资源闸门改为只校验文档白名单
+    // （原先"roomId 可解析且文档归属该 Room"的两道门恒不成立，已删除）。
     const documentId = input.documentId?.trim();
-    if (!roomId || !intent.allowedRoomIds.includes(roomId)) {
-      throw new Error("pending_agent_intent_resource_not_allowed");
-    }
     if (documentId && !intent.allowedDocumentIds.includes(documentId)) {
-      throw new Error("pending_agent_intent_resource_not_allowed");
-    }
-    if (documentId && this.findDocumentResource(documentId)?.roomId !== roomId) {
       throw new Error("pending_agent_intent_resource_not_allowed");
     }
     if (!documentId && intent.targetCapability !== "document.create"
@@ -1153,11 +1143,11 @@ export class AgentService {
         idempotencyKey: input.idempotencyKey,
         ...(input.responseLanguage ? { responseLanguage: input.responseLanguage } : {}),
         context: {
-          selectedRoomId: roomId,
-          rooms: availableRooms({ prompt: intent.originalPrompt, idempotencyKey: input.idempotencyKey }, this.roomRegistry),
+          // Phase 2i：工作区级文稿没有 Room 归属，续跑不再回填 selectedRoomId / rooms
+          // （合成出的空 rooms 会让 selectedRunRoomId 判为 agent_room_not_available）。
           ...(documentId && selectedDocument ? {
             activeDocument: {
-              roomId,
+              roomId: null,
               documentId,
               title: selectedDocument.title,
               version: selectedDocument.version,
@@ -1742,21 +1732,19 @@ export class AgentService {
     return toPendingIntent(this.db.insert(pendingAgentIntents).values(row).returning().get());
   }
 
+  /** 工作区级文稿快照（Phase 2i：room_doc_links 已删除，文档不再有 Room 归属）。 */
   private findDocumentResource(documentId: string): {
-    roomId: string;
     title: string;
     version: number;
   } | null {
     const result = this.db.select({
-      roomId: roomDocumentLinks.roomId,
       title: documents.title,
       version: documents.version,
       deletedAt: documents.deletedAt,
     }).from(documents)
-      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .where(eq(documents.id, documentId)).get();
     return result && !result.deletedAt
-      ? { roomId: result.roomId, title: result.title, version: result.version }
+      ? { title: result.title, version: result.version }
       : null;
   }
 

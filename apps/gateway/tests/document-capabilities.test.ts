@@ -67,7 +67,7 @@ async function createReviewHarness(name: string) {
 }
 
 describe("document capability registry", () => {
-  it("document_list 每条候选文档都携带 roomId（桌面端选择卡片依赖它过滤）", async () => {
+  it("document_list 回显运行上下文 roomId（桌面选择卡片依赖该字段），Phase 2i 起可为 null", async () => {
     const { documents, registry } = await createReviewHarness("document-list-room-id")
     await documents.import({
       id: "doc-list-a",
@@ -93,7 +93,17 @@ describe("document capability registry", () => {
     const listed = (result.structuredContent as { documents: Array<{ id: string; roomId?: string }> })
       .documents
     expect(listed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
+    // 上下文携带 Room 时按原契约回显（Room 已无过滤语义，仅作元数据）。
     expect(listed.every((document) => document.roomId === "room-1")).toBe(true)
+
+    const workspaceResult = await registry.execute("document_list", {}, {
+      agentSessionId: "session-list-workspace", runId: "run-list-workspace", roomId: null,
+    })
+    const workspaceListed = (workspaceResult.structuredContent as {
+      documents: Array<{ id: string; roomId?: string | null }>
+    }).documents
+    expect(workspaceListed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
+    expect(workspaceListed.every((document) => document.roomId === null)).toBe(true)
   })
 
   it("blocks Agent reads, patches, and selection rewrites after a document enters trash", async () => {
@@ -343,7 +353,7 @@ describe("document capability registry", () => {
       capabilityVersion: 1,
       interactionMode: "atomic_review",
       presenterKey: "atomic-diff",
-      roomId: document.roomId ?? "room-1",
+      roomId: document.roomId,
       documentId: document.id,
       documentTitle: document.title,
       sessionId: "session-review",
@@ -523,7 +533,7 @@ describe("document capability registry", () => {
       capabilityVersion: 1,
       interactionMode: "incremental_review",
       presenterKey: "continuation",
-      roomId: document.roomId ?? "room-1",
+      roomId: document.roomId,
       documentId: document.id,
       documentTitle: document.title,
       sessionId: "session-continuation",
@@ -744,7 +754,7 @@ describe("document capability registry", () => {
     });
 
     expect(documents.get(documentId)).toMatchObject({
-      id: documentId, roomId: "room-create", title: "Operation 创建", version: 1, status: "active",
+      id: documentId, roomId: null, title: "Operation 创建", version: 1, status: "active",
     });
     expect(documents.get(documentId)?.contentJson.content?.some((node) =>
       node.type === "heading" && node.attrs?.level === 1)).toBe(false);
@@ -1022,7 +1032,7 @@ describe("document capability registry", () => {
     const draftDocumentId = String(started.structuredContent.docId);
     expect(documents.get(draftDocumentId)).toMatchObject({ status: "draft", version: 0 });
     await registry.execute("document_write_abort", { operationId, reason: "test" }, context);
-    expect(documents.list("room-abort")).toEqual([]);
+    expect(documents.list()).toEqual([]);
     expect(documents.get(draftDocumentId)).toBeNull();
     expect(operations.get(operationId)).toMatchObject({ status: "cancelled", result: { reason: "test" } });
   });
@@ -1721,7 +1731,7 @@ describe("doc-writer 引用透传（doc-writer-subagent-plan M3/V2）", () => {
     }, context);
     const documentId = String(committed.structuredContent.docId);
     const document = documents.get(documentId);
-    expect(document).toMatchObject({ roomId: "room-1", title: "引用创建", version: 1, status: "active" });
+    expect(document).toMatchObject({ roomId: null, title: "引用创建", version: 1, status: "active" });
     expect(JSON.stringify(document?.contentJson)).toContain("正文甲");
     expect(JSON.stringify(document?.contentJson)).toContain("正文乙");
   });

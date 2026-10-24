@@ -473,46 +473,6 @@ export const agentSessionLinks = sqliteTable(
   ],
 );
 
-export const contextRooms = sqliteTable(
-  "context_rooms",
-  {
-    id: text("id").primaryKey(),
-    title: text("title").notNull(),
-    kind: text("kind"),
-    data: text("data", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    position: integer("position").notNull().default(0),
-    lifecycle: text("lifecycle", { enum: ["active", "merging", "merged"] }).notNull().default("active"),
-    mergedIntoRoomId: text("merged_into_room_id"),
-    mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("context_rooms_deleted_idx").on(table.deletedAt),
-    index("context_rooms_updated_idx").on(table.updatedAt),
-  ],
-);
-
-export const roomOverviews = sqliteTable(
-  "room_overviews",
-  {
-    roomId: text("room_id").primaryKey().references(() => contextRooms.id, { onDelete: "cascade" }),
-    revision: integer("revision").notNull().default(1),
-    baseProjection: text("base_projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    projection: text("projection", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    generatedAt: integer("generated_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-    /** 最近一次 LLM 合成成功时间（regenerate 落；确定性重投影保留旧值）。初始扫描据此识别从未合成过的 Room。 */
-    synthesisAt: integer("synthesis_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [index("room_overviews_updated_idx").on(table.updatedAt)],
-);
-
 export const agentRuns = sqliteTable(
   "agent_runs",
   {
@@ -813,25 +773,6 @@ export const documentSectionPreviews = sqliteTable("document_section_previews", 
 }, (table) => [
   primaryKey({ columns: [table.documentId, table.blockId] }),
 ]);
-
-export const roomDocumentLinks = sqliteTable(
-  "room_doc_links",
-  {
-    roomId: text("room_id").notNull(),
-    documentId: text("document_id")
-      .notNull()
-      .references(() => documents.id, { onDelete: "cascade" }),
-    folderId: text("folder_id"),
-    linkedAt: integer("linked_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("room_doc_links_room_document_idx").on(table.roomId, table.documentId),
-    index("room_doc_links_room_idx").on(table.roomId),
-    index("room_doc_links_folder_idx").on(table.folderId),
-  ],
-);
 
 export const documentVersions = sqliteTable(
   "doc_versions",
@@ -1400,77 +1341,6 @@ export const agentDocumentExports = sqliteTable(
 );
 
 // ═══════════════════ Knowledge 路由层（docs/entity-room-plan.md） ═══════════════════
-// Room 注册表：Room 长期只存在于渲染器 localStorage，gateway 侧此前无实体表。
-// 渲染器 Room 打开/创建/改名时上报 upsert（origin=user），删除时写 deletedAt；
-// 实体晋升产出的 Room 写 origin=auto，渲染器经 REST 拉取显示。
-// 新表对 rooms 一律松引用（存量 roomId 无注册行不阻塞），完整性由 service 层校验。
-export const rooms = sqliteTable("rooms", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull(),
-  /** 对齐渲染器 ContextRoomKind 六值枚举（人物/项目/主题/长期目标/议题/事件）。 */
-  kind: text("kind").notNull().default("议题"),
-  /** user = 渲染器上报；auto = 实体证据累积晋升时自动创建。上报命中 auto 行 = 认领，翻转为 user。 */
-  origin: text("origin", { enum: ["user", "auto"] }).notNull().default("user"),
-  /** Room 简介（晋升时"转正登记"综合产出；user Room 由用户维护）。 */
-  summary: text("summary"),
-  /** 曾用名/同义词（重名去重比对用）；rename/认领时把旧 title 追加。 */
-  aliases: text("aliases", { mode: "json" }).$type<string[]>(),
-  /** Room 的户口实体（ED4：现有 Room 一律种子化为已晋升实体；渲染器上报时同步维护）。 */
-  entityId: text("entity_id"),
-  lifecycle: text("lifecycle", { enum: ["active", "merging", "merged"] }).notNull().default("active"),
-  mergedIntoRoomId: text("merged_into_room_id"),
-  mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
-  /** 软删除（null = 存活）：候选池/auto 同步/wiki 挂载全部过滤。 */
-  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .notNull()
-    .$defaultFn(() => new Date()),
-});
-
-/**
- * Room relation source projection. This is deliberately separate from
- * entity_doc_links: relation indexing must not change routing or recommendation
- * scores. One source can belong to multiple Rooms, while a mail thread remains
- * one evidence group.
- */
-export const roomSourceMemberships = sqliteTable(
-  "room_source_memberships",
-  {
-    id: text("id").primaryKey(),
-    roomId: text("room_id").notNull(),
-    sourceKind: text("source_kind", {
-      enum: ["everroom-doc", "reality-event", "visual-event", "screen-interval", "mail", "file", "cloud-doc", "calendar-event", "todo", "connector-record"],
-    }).notNull(),
-    sourceId: text("source_id").notNull(),
-    sourceVersion: integer("source_version").notNull(),
-    sourceTitle: text("source_title"),
-    /** 任务夹归属：Office 产物（file）等挂 Room 的条目归入任务夹展示。 */
-    folderId: text("folder_id"),
-    evidenceGroupKey: text("evidence_group_key").notNull(),
-    role: text("role", { enum: ["entry", "primary", "mention", "manual", "rule"] }).notNull(),
-    effectiveWeight: real("effective_weight").notNull().default(0),
-    qualityLevel: text("quality_level", {
-      enum: ["excluded", "uncertain", "low", "normal", "high"],
-    }).notNull().default("excluded"),
-    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
-    scoreReasons: text("score_reasons", { mode: "json" }).$type<string[]>(),
-    scoringVersion: integer("scoring_version").notNull().default(1),
-    /** Entity extraction completed for this source version, including an empty result. */
-    entityIndexed: integer("entity_indexed", { mode: "boolean" }).notNull().default(false),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("room_source_memberships_room_source_idx").on(table.roomId, table.sourceKind, table.sourceId),
-    index("room_source_memberships_source_idx").on(table.sourceKind, table.sourceId),
-    index("room_source_memberships_group_idx").on(table.evidenceGroupKey),
-    index("room_source_memberships_room_idx").on(table.roomId),
-  ],
-);
-
 /** ②b 层映射规则：仅 manual（用户显式配置），默认为空，纯可选逃生舱；不做自动回写。 */
 export const routingRules = sqliteTable("routing_rules", {
   id: text("id").primaryKey(),

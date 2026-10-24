@@ -22,7 +22,7 @@ export interface InstallPlan {
 function skillBody(connection: AgentConnectionView, url: string): string {
   return `---
 name: everroom-agent
-description: 在当前工具中继续使用 EverRoom 的积累：搜索 Room/会话/文档/文件/记忆、精读原文、按授权范围回写结果与候选。当任务需要找回历史讨论、核查出处、复用个人知识或把成果保存回 EverRoom 时使用。
+description: 在当前工具中继续使用 EverRoom 的积累：搜索会话/文档/文件、精读原文、按授权范围回写结果与候选。当任务需要找回历史讨论、核查出处、复用个人知识或把成果保存回 EverRoom 时使用。
 compatibility: 需要 MCP 客户端（HTTP 传输）；Claude Code、Cursor、Codex、Cherry Studio 等均支持。
 metadata:
   connection: ${connection.name}
@@ -35,7 +35,7 @@ metadata:
 
 ## 工作流
 
-1. **了解范围**：先调用 \`everroom_get_status\`（或 \`everroom_list_rooms\`）确认授权的 Room 与能力。
+1. **了解范围**：先调用 \`everroom_get_status\` 确认连接能力与授权范围。
 2. **搜索**：\`everroom_search { query, kinds? }\` 跨类型检索。命中带稳定对象 ID、版本与 \`everroom://\` URI；会话命中含 conversationId/messageId。
 3. **精读**：\`everroom_fetch { uri, basedOnVersion?, offset? }\` 读原文；引用时携带返回的 \`version\`。若返回 \`stale\`，说明你手上的副本过期——内容仍是最新版，更新引用即可。
 4. **读文件**：\`everroom_read_file { fileId, variant }\`（markdown 或 base64）。
@@ -58,7 +58,6 @@ function toolsReference(): string {
   return `# everroom 工具速查
 
 - \`everroom_get_status\` — 连接与能力自述（常驻可见）
-- \`everroom_list_rooms\` { } — 授权范围内的 Room（revision/更新时间）[read_metadata]
 - \`everroom_search\` { query, kinds?: room|conversation|document|file|artifact, limit?, offset? } [search]
 - \`everroom_fetch\` { uri, basedOnVersion?, offset?, limit?, variant? } — 精读 everroom:// URI [按目标分能力]
 - \`everroom_read_file\` { fileId, variant?: markdown|content } [read_files]
@@ -67,7 +66,7 @@ function toolsReference(): string {
 - \`everroom_submit\` { submissionId, items[] } — 幂等回写（session_increment/result_text/artifact_file/citation/candidate）[write_session|write_candidates]
 - \`everroom_submit_status\` { submissionId } — 查询提交结果（常驻可见）
 
-URI 空间：\`everroom://rooms/{id}\`、\`everroom://conversations/{sessionId}\`、\`everroom://documents/{id}\`、\`everroom://files/{id}\`；人类可打开位置为 \`everroom://open/{kind}/{id}\`（桌面端注册后可用）。
+URI 空间：\`everroom://conversations/{sessionId}\`、\`everroom://documents/{id}\`、\`everroom://files/{id}\`；人类可打开位置为 \`everroom://open/{kind}/{id}\`（桌面端注册后可用）。
 `;
 }
 

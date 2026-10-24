@@ -11,7 +11,6 @@ import {
   documentBlocks,
   documentVersions,
   documents,
-  roomDocumentLinks,
 } from "../src/infrastructure/database/schema.js";
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
 import { DocumentServiceError } from "../src/modules/documents/errors.js";
@@ -205,9 +204,6 @@ describe("document operation kernel", () => {
     db.insert(documents).values({
       id: "doc-serialized", title: "Serialized", contentJson: { type: "doc", content: [] },
       contentSchemaVersion: 3, version: 1, status: "active", createdAt: now, updatedAt: now,
-    }).run();
-    db.insert(roomDocumentLinks).values({
-      roomId: "room-1", documentId: "doc-serialized", linkedAt: now,
     }).run();
     const first = createReviewOperation(service, {
       id: "serialized-first", documentId: "doc-serialized", status: "running",
@@ -446,7 +442,6 @@ describe("document operation kernel", () => {
       id: "doc-1", title: "Target", contentJson: { type: "doc", content: [] },
       version: 1, status: "active", createdAt: now, updatedAt: now,
     }).run();
-    db.insert(roomDocumentLinks).values({ roomId: "room-1", documentId: "doc-1", linkedAt: now }).run();
     createReviewOperation(service, { id: "winner", documentId: "doc-1", status: "awaiting_review" });
     createReviewOperation(service, { id: "stale", documentId: "doc-1", status: "awaiting_review" });
     createReviewOperation(service, { id: "stale-running", documentId: "doc-1", status: "running" });
@@ -470,7 +465,6 @@ describe("document operation kernel", () => {
       id: "doc-1", title: "Target", contentJson: { type: "doc", content: [] },
       version: 1, status: "active", createdAt: now, updatedAt: now,
     }).run();
-    db.insert(roomDocumentLinks).values({ roomId: "room-1", documentId: "doc-1", linkedAt: now }).run();
     createReviewOperation(service, { id: "winner", documentId: "doc-1", status: "awaiting_review" });
     createReviewOperation(service, { id: "stuck", documentId: "doc-1", status: "awaiting_review" });
     service.conflictOtherActive("doc-1", 2, "winner");
@@ -565,7 +559,6 @@ describe("document operation kernel", () => {
       id: "doc-atomic", title: "Atomic", contentJson: original,
       contentSchemaVersion: 1, version: 1, status: "active", createdAt: now, updatedAt: now,
     }).run();
-    db.insert(roomDocumentLinks).values({ roomId: "room-1", documentId: "doc-atomic", linkedAt: now }).run();
     db.insert(documentVersions).values({
       id: "version-1", documentId: "doc-atomic", version: 1, title: "Atomic",
       contentJson: original, contentSchemaVersion: 1, createdAt: now,
@@ -645,7 +638,6 @@ describe("document operation kernel", () => {
       id: "doc-rollback", title: "Rollback", contentJson: original,
       contentSchemaVersion: 1, version: 1, status: "active", createdAt: now, updatedAt: now,
     }).run();
-    db.insert(roomDocumentLinks).values({ roomId: "room-1", documentId: "doc-rollback", linkedAt: now }).run();
     db.insert(documentVersions).values({
       id: "rollback-version-1", documentId: "doc-rollback", version: 1, title: "Rollback",
       contentJson: original, contentSchemaVersion: 1, createdAt: now,
@@ -695,7 +687,6 @@ describe("document operation kernel", () => {
       id: "doc-hook", title: "Hook", contentJson: { type: "doc", content: [] },
       contentSchemaVersion: 1, version: 1, status: "active", createdAt: now, updatedAt: now,
     }).run();
-    db.insert(roomDocumentLinks).values({ roomId: "room-1", documentId: "doc-hook", linkedAt: now }).run();
     db.insert(documentVersions).values({
       id: "hook-version-1", documentId: "doc-hook", version: 1, title: "Hook",
       contentJson: { type: "doc", content: [] }, contentSchemaVersion: 1, createdAt: now,
@@ -773,7 +764,6 @@ describe("document operation kernel", () => {
     expect(duplicate).toMatchObject({ duplicate: true, document: { version: 1 } });
     expect(memoryHooks).toBe(1);
     expect(db.select().from(documents).all()).toHaveLength(1);
-    expect(db.select().from(roomDocumentLinks).all()).toHaveLength(1);
     expect(db.select().from(documentVersions).all()).toHaveLength(1);
     expect(db.select().from(documentBlocks).all()).toEqual([
       expect.objectContaining({ blockId: "00000000-0000-4000-8000-000000000011", indexedVersion: 1 }),
@@ -818,7 +808,6 @@ describe("document operation kernel", () => {
     }))).rejects.toThrow();
 
     expect(db.select().from(documents).all()).toEqual([]);
-    expect(db.select().from(roomDocumentLinks).all()).toEqual([]);
     expect(db.select().from(documentVersions).all()).toEqual([]);
     expect(db.select().from(documentBlocks).all()).toEqual([]);
     expect(db.select().from(documentOperationCommands).all()).toEqual([]);

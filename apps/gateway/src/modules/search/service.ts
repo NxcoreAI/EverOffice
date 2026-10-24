@@ -5,16 +5,11 @@ import {
   agentMessages,
   agentSessions,
   documents,
-  externalDocumentBindings,
   fileEntries,
   fileVersions,
   jobs,
   parsedContents,
-  roomDocumentLinks,
-  rooms,
-  roomSourceMemberships,
   searchIndex,
-  searchIndexRooms,
 } from "../../infrastructure/database/schema.js";
 import { isSingleCharQuery, tokenizeJoined } from "./tokenizer.js";
 import {
@@ -31,11 +26,14 @@ const PREVIEW_LIMIT = 4 * 1024;
 const SNIPPET_WINDOW = 160;
 const MAX_ATTEMPTS = 3;
 
-const ITEM_TYPES: readonly SearchItemType[] = ["file", "message", "room", "document", "export"];
+const ITEM_TYPES: readonly SearchItemType[] = ["file", "message", "document", "export"];
 
+/**
+ * 检索过滤条件。Phase 2i 起 Room 维度已删除：`roomIds` 过滤会命中空集，
+ * 因此直接从契约里删掉，不再向下传递。
+ */
 export interface SearchFilters {
   types?: string[] | undefined;
-  roomIds?: string[] | undefined;
   timeBasis?: "occurred" | "ingested" | undefined;
   from?: number | undefined;
   to?: number | undefined;
@@ -48,6 +46,10 @@ export interface SearchHit {
   title: string;
   snippet: string;
   sourceKind: string | null;
+  /**
+   * 稳定而恒为空的字段：桌面搜索面板按 roomIds 渲染归属徽标并做命中跳转
+   * （`hit.roomIds[0]`），Phase 2i 删掉 Room 维度后保留空数组避免渲染层崩溃。
+   */
   roomIds: string[];
   occurredAt: string | null;
   ingestedAt: string;
@@ -75,7 +77,6 @@ interface ItemMeta {
   fileVersionId: string | null;
   versionLabel: string | null;
   sessionId: string | null;
-  roomIds: string[];
 }
 
 interface IndexRow {
@@ -140,10 +141,6 @@ export class SearchService {
       } else {
         tx.insert(searchIndex).values(values).run();
       }
-      tx.delete(searchIndexRooms).where(eq(searchIndexRooms.indexId, indexId)).run();
-      for (const roomId of meta.roomIds) {
-        tx.insert(searchIndexRooms).values({ indexId, roomId }).run();
-      }
     });
     this.refreshFts(indexId, values.title, meta.body);
     return hasBody ? "indexed" : "meta_only";
@@ -177,8 +174,6 @@ export class SearchService {
         return this.loadFile(refId);
       case "message":
         return this.loadMessage(refId);
-      case "room":
-        return this.loadRoom(refId);
       case "document":
         return this.loadDocument(refId);
       default:
@@ -195,9 +190,6 @@ export class SearchService {
     const parsed = version?.parsedId
       ? this.db.select({ markdown: parsedContents.markdown }).from(parsedContents).where(eq(parsedContents.id, version.parsedId)).get()
       : undefined;
-    const roomIds = this.db.select({ roomId: roomSourceMemberships.roomId }).from(roomSourceMemberships)
-      .where(and(eq(roomSourceMemberships.sourceKind, "file"), eq(roomSourceMemberships.sourceId, refId))).all()
-      .map((r) => r.roomId);
     const occurredAt = version?.sourceModifiedAt ?? null;
     return {
       title: entry.displayName || entry.originalName,
@@ -209,7 +201,6 @@ export class SearchService {
       fileVersionId: version?.id ?? null,
       versionLabel: version ? `v${version.versionNo}` : null,
       sessionId: null,
-      roomIds,
     };
   }
 
@@ -229,39 +220,12 @@ export class SearchService {
       fileVersionId: null,
       versionLabel: null,
       sessionId: message.sessionId,
-      roomIds: session.roomId ? [session.roomId] : [],
-    };
-  }
-
-  private loadRoom(refId: string): ItemMeta | null {
-    const room = this.db.select().from(rooms).where(eq(rooms.id, refId)).get();
-    if (!room || room.deletedAt) return null;
-    return {
-      title: room.title,
-      body: room.summary ?? "",
-      sourceKind: "room",
-      occurredAt: null,
-      ingestedAt: room.createdAt,
-      timeBasis: "ingested",
-      fileVersionId: null,
-      versionLabel: null,
-      sessionId: null,
-      roomIds: [room.id],
     };
   }
 
   private loadDocument(refId: string): ItemMeta | null {
     const doc = this.db.select().from(documents).where(eq(documents.id, refId)).get();
     if (!doc || doc.deletedAt) return null;
-    const roomIds = new Set<string>();
-    for (const link of this.db.select({ roomId: roomDocumentLinks.roomId }).from(roomDocumentLinks)
-      .where(eq(roomDocumentLinks.documentId, refId)).all()) {
-      roomIds.add(link.roomId);
-    }
-    for (const binding of this.db.select({ roomId: externalDocumentBindings.roomId }).from(externalDocumentBindings)
-      .where(eq(externalDocumentBindings.documentId, refId)).all()) {
-      roomIds.add(binding.roomId);
-    }
     const body = doc.overviewText?.trim() ? doc.overviewText : this.extractPlainText(doc.contentJson);
     return {
       title: doc.title,
@@ -273,7 +237,6 @@ export class SearchService {
       fileVersionId: null,
       versionLabel: doc.version > 0 ? `v${doc.version}` : null,
       sessionId: null,
-      roomIds: [...roomIds],
     };
   }
 
@@ -392,10 +355,6 @@ export class SearchService {
       conditions.push(`si.item_type IN (${types.map(() => "?").join(",")})`);
       params.push(...types);
     }
-    if (filters.roomIds?.length) {
-      conditions.push(`si.id IN (SELECT index_id FROM search_index_rooms WHERE room_id IN (${filters.roomIds.map(() => "?").join(",")}))`);
-      params.push(...filters.roomIds);
-    }
     if (filters.timeBasis && filters.from !== undefined && filters.to !== undefined) {
       // occurred 基准用 COALESCE：无发生时间的条目按收录时间参与（与展示口径一致）。
       const column = filters.timeBasis === "occurred" ? "COALESCE(si.occurred_at, si.ingested_at)" : "si.ingested_at";
@@ -439,12 +398,10 @@ export class SearchService {
       ).get(...params) as { count: number };
     }
 
-    const roomIdsByIndex = this.roomIdsFor(rows.map((row) => row.id));
     const pageIdsBySession = this.pageIdsForSessions(rows.filter((row) => row.item_type === "message" && row.session_id).map((row) => row.session_id!));
     return {
       items: rows.map((row) => this.toHit(
         row,
-        roomIdsByIndex.get(row.id) ?? [],
         trimmed,
         row.session_id ? pageIdsBySession.get(row.session_id) ?? null : null,
       )),
@@ -465,22 +422,7 @@ export class SearchService {
     return map;
   }
 
-  private roomIdsFor(indexIds: string[]): Map<string, string[]> {
-    const map = new Map<string, string[]>();
-    if (indexIds.length === 0) return map;
-    const placeholders = indexIds.map(() => "?").join(",");
-    const rows = this.sqlite.prepare(
-      `SELECT index_id, room_id FROM search_index_rooms WHERE index_id IN (${placeholders})`,
-    ).all(...indexIds) as Array<{ index_id: string; room_id: string }>;
-    for (const row of rows) {
-      const list = map.get(row.index_id) ?? [];
-      list.push(row.room_id);
-      map.set(row.index_id, list);
-    }
-    return map;
-  }
-
-  private toHit(row: IndexRow, roomIds: string[], query: string, pageId: string | null): SearchHit {
+  private toHit(row: IndexRow, query: string, pageId: string | null): SearchHit {
     return {
       id: row.id,
       itemType: row.item_type,
@@ -488,7 +430,8 @@ export class SearchService {
       title: row.title,
       snippet: buildSnippet(row.body_preview, row.title, query),
       sourceKind: row.source_kind,
-      roomIds,
+      // 恒为空：Room 维度已随 Phase 2i 删除，字段仅为桌面渲染契约保留。
+      roomIds: [],
       occurredAt: row.occurred_at ? new Date(row.occurred_at).toISOString() : null,
       ingestedAt: new Date(row.ingested_at).toISOString(),
       timeBasis: row.time_basis,

@@ -10,7 +10,7 @@ export const SEARCH_INDEX_JOB_TYPE = "search.index";
 export const SEARCH_INDEX_HIGH_JOB_TYPE = "search.index.high";
 export const SEARCH_WORKER_JOB_TYPES = [SEARCH_INDEX_JOB_TYPE, SEARCH_INDEX_HIGH_JOB_TYPE] as const;
 
-export type SearchItemType = "file" | "message" | "room" | "document" | "export";
+export type SearchItemType = "file" | "message" | "document" | "export";
 
 export interface SearchIndexJobPayload {
   itemType: SearchItemType;

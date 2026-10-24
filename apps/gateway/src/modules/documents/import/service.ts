@@ -1055,9 +1055,6 @@ export class DocumentImportService {
     const artifact = await this.loadArtifact(snapshot.artifactRef);
     const target = this.documents.get(row.documentId);
     if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
-    if (target.roomId !== row.roomId) {
-      throw new ImportServiceError("ROOM_MISMATCH", "目标文档属于其他 Room", 409);
-    }
     if (target.deletedAt) {
       throw new ImportServiceError("DOCUMENT_TRASHED", "目标文档已在回收站，先恢复再应用", 409);
     }

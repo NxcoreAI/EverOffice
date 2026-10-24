@@ -589,6 +589,13 @@
       "when": 1792746787000,
       "tag": "0084_drop_memory_room_ingest_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "6",
+      "when": 1792747500000,
+      "tag": "0085_drop_room_tables",
+      "breakpoints": true
     }
   ]
 }

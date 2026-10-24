@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRun, AgentSession, TrustedMcpSession } from "@nxcore/agent-contract";
 import type { GatewayConfig } from "../src/config.js";
 import { createServer } from "../src/server/create-server.js";
-import { contextRooms } from "../src/infrastructure/database/schema.js";
 
 const temporaryDirectories: string[] = [];
 if (!process.env.NXCORE_SECRET_STORE_KEY) process.env.NXCORE_SECRET_STORE_KEY = randomBytes(32).toString("base64url");
@@ -199,7 +198,7 @@ describe("gateway server", () => {
     });
     const listedAfterCreate = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete",
+      url: "/v1/documents",
       headers,
     });
     const readAfterCreate = await app.inject({
@@ -229,12 +228,12 @@ describe("gateway server", () => {
     });
     const listedAfterDelete = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete",
+      url: "/v1/documents",
       headers,
     });
     const listedTrash = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete&trashed=true",
+      url: "/v1/documents?trashed=true",
       headers,
     });
     const restored = await app.inject({
@@ -244,7 +243,7 @@ describe("gateway server", () => {
     });
     const listedAfterRestore = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete",
+      url: "/v1/documents",
       headers,
     });
     await app.inject({
@@ -280,18 +279,18 @@ describe("gateway server", () => {
     });
     const emptied = await app.inject({
       method: "DELETE",
-      url: "/v1/documents/trash?roomId=room-delete",
+      url: "/v1/documents/trash",
       headers,
     });
     const trashAfterEmpty = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete&trashed=true",
+      url: "/v1/documents?trashed=true",
       headers,
     });
     await app.close();
 
     expect(imported.statusCode).toBe(201);
-    expect(imported.json()).toMatchObject({ id: "document-to-delete", roomId: "room-delete", version: 1 });
+    expect(imported.json()).toMatchObject({ id: "document-to-delete", roomId: null, version: 1 });
     expect(listedAfterCreate.json()).toEqual([expect.objectContaining({ id: "document-to-delete" })]);
     expect(readAfterCreate.json()).toMatchObject({ id: "document-to-delete", version: 1 });
     expect(updated.statusCode).toBe(200);
@@ -318,7 +317,6 @@ describe("gateway server", () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
-    app.db.insert(contextRooms).values({ id: "room-test", title: "MCP Room", data: {}, position: 0 }).run();
     const session = (await app.inject({
       method: "POST",
       url: "/v1/agent/sessions",
@@ -396,7 +394,6 @@ describe("gateway server", () => {
     const app = await createServer(config);
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
     const headers = { authorization: `Bearer ${config.authToken}` };
-    app.db.insert(contextRooms).values({ id: "room-client-test", title: "Client Room", data: {}, position: 0 }).run();
     const session = (await app.inject({
       method: "POST",
       url: "/v1/agent/sessions",

@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import Fastify from 'fastify'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDatabase, type GatewayDatabase } from '../src/infrastructure/database/client.js'
-import { documentRoomImports, rooms } from '../src/infrastructure/database/schema.js'
+import { documentRoomImports } from '../src/infrastructure/database/schema.js'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentService } from '../src/modules/documents/service.js'
 import {
@@ -95,10 +95,6 @@ function makeServices(actionRunner: ImportActionRunner, ports?: DocumentBatchImp
   })
   const batch = new DocumentBatchImportService(db, imports, null, ports)
   return { documents, imports, batch }
-}
-
-function insertRoom(id: string, title = `Room ${id}`): void {
-  db.insert(rooms).values({ id, title }).run()
 }
 
 async function waitBatch(batch: DocumentBatchImportService, batchId: string) {
@@ -288,7 +284,6 @@ describe('document-import list', () => {
   })
 
   it('imported 标记：已 preview+commit 的来源置 true', async () => {
-    insertRoom('room-list')
     const ids = ['tokA', 'tokB']
     const actions: FakeAction = {
       ...feishuReadActions(ids),
@@ -308,7 +303,6 @@ describe('document-import list', () => {
   })
 
   it('列举缓存：首次拉取落缓存，缓存回显带 fetchedAt 且 imported 标记按当前库重算', async () => {
-    insertRoom('room-cache')
     const actions: FakeAction = {
       ...feishuReadActions(['tokA', 'tokB']),
       'feishu.list_drive_files': {
@@ -348,7 +342,6 @@ describe('document-import list', () => {
 
 describe('document-import batch (room mode)', () => {
   it('逐篇 preview+commit：3 篇全部落 Room', async () => {
-    insertRoom('room-batch')
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA', 'tokB', 'tokC'])))
     const created = await batch.createBatch({
       provider: 'feishu',
@@ -367,7 +360,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('中篇失败不中断：失败项记录 error，其余导入完成', async () => {
-    insertRoom('room-batch')
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA', 'tokB', 'tokC'], new Set(['tokB']))))
     const created = await batch.createBatch({
       provider: 'feishu',
@@ -385,7 +377,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('取消：处理中取消后剩余项 skipped，批状态 cancelled', async () => {
-    insertRoom('room-cancel')
     let batchIdHolder: string | null = null
     const actions: FakeAction = {
       ...feishuReadActions(['tokA', 'tokB', 'tokC']),
@@ -417,7 +408,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('连接级失败短路整批：出错项 failed，其后 skipped，批状态 failed', async () => {
-    insertRoom('room-short')
     const actions: FakeAction = {
       ...feishuReadActions(['tokA', 'tokB', 'tokC']),
       'feishu.fetch_document': (input: Record<string, unknown>) => {
@@ -445,7 +435,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('getActiveBatch：按 provider+连接名找回进行中批次，跨连接隔离，终态后不再返回', async () => {
-    insertRoom('room-active')
     let release: (() => void) | null = null
     const gate = new Promise<void>((resolve) => { release = resolve })
     const actions: FakeAction = {
@@ -473,8 +462,7 @@ describe('document-import batch (room mode)', () => {
     expect(batch.getActiveBatch('feishu', 'vyi')).toBeNull()
   })
 
-  it('入口校验：空列表/超上限/缺 roomId/Room 不存在/auto 未就绪', async () => {
-    insertRoom('room-real')
+  it('入口校验：空列表/超上限/缺 roomId/auto 未就绪（Room 存在性已不再校验）', async () => {
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA'])))
     await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: [], mode: 'room', roomId: 'room-real' }))
       .rejects.toMatchObject({ code: 'BATCH_EMPTY' })
@@ -486,14 +474,11 @@ describe('document-import batch (room mode)', () => {
     })).rejects.toMatchObject({ code: 'BATCH_TOO_LARGE' })
     await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room' }))
       .rejects.toMatchObject({ code: 'BATCH_ROOM_REQUIRED' })
-    await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room', roomId: 'room-missing' }))
-      .rejects.toMatchObject({ code: 'BATCH_ROOM_NOT_FOUND' })
     await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' }))
       .rejects.toMatchObject({ code: 'BATCH_AUTO_UNAVAILABLE' })
   })
 
   it('recoverInterrupted：遗留 running 批置 failed 且 pending 项 skipped', async () => {
-    insertRoom('room-recover')
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA'])))
     const created = await batch.createBatch({
       provider: 'feishu',
@@ -514,8 +499,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('existingInRoom 只报该 Room 已落 primary 的来源；forceNew 跳过去重一律新建', async () => {
-    insertRoom('room-exist')
-    insertRoom('room-other')
     // 可变内容：第二批前改 tokA 内容，避免被无变化守卫拦下（内容相同→noChange 不落候选）。
     const contentOf: Record<string, string> = {
       tokA: '# 文档 tokA\n\n这是 tokA 的导入正文。',
@@ -569,7 +552,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('重复导入同一来源自动转候选版本（方案 §3.1 来源去重）', async () => {
-    insertRoom('room-dup-source')
     let bodySuffix = ''
     const actions: FakeAction = {
       ...feishuReadActions(['tokA']),
@@ -613,7 +595,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('无变化守卫：重复导入内容未变时不落候选（noChange）', async () => {
-    insertRoom('room-nochange')
     let bodySuffix = ''
     const actions: FakeAction = {
       ...feishuReadActions(['tokA']),
@@ -655,7 +636,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('重复 remoteDocumentIds 去重', async () => {
-    insertRoom('room-dedup')
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA'])))
     const created = await batch.createBatch({
       provider: 'feishu',
@@ -667,7 +647,6 @@ describe('document-import batch (room mode)', () => {
   })
 
   it('空文档落 skipped 不算失败，其余文档照常导入', async () => {
-    insertRoom('room-empty')
     const actions: FakeAction = {
       ...feishuReadActions(['tokOk']),
       'feishu.get_document': (input: Record<string, unknown>) => {
@@ -736,7 +715,6 @@ describe('document-import batch (auto mode)', () => {
   }
 
   it('高置信归房：commitToRoom 到判定 Room', async () => {
-    insertRoom('room-alpha')
     const incubated: Array<{ sourceId: string; markdown: string; sourceTag: string }> = []
     const { batch } = makeServices(fakeRunner(autoActions(['tokA'])), autoPorts({
       verdicts: { '文档 tokA': { roomId: 'room-alpha', confidence: 0.9 } },
@@ -807,7 +785,6 @@ describe('createBatch input contract', () => {
 
 describe('document-import batches/active route', () => {
   it('GET active：返回 running 批完整视图（字段不剥），无进行中/非法 provider 的行为', async () => {
-    insertRoom('room-active-route')
     let release: (() => void) | null = null
     const gate = new Promise<void>((resolve) => { release = resolve })
     const actions: FakeAction = {

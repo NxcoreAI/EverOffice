@@ -11,7 +11,6 @@ import {
   documentImportSources,
   documentRoomImports,
   documents,
-  rooms,
 } from '../src/infrastructure/database/schema.js'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentService } from '../src/modules/documents/service.js'

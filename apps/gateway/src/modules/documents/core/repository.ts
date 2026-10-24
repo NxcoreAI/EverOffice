@@ -13,7 +13,6 @@ import {
   documentVersions,
   documentYjsVersions,
   documents,
-  roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { roomScopeId } from "../room-scope.js";
@@ -21,10 +20,15 @@ import { roomScopeId } from "../room-scope.js";
 export type DocumentRow = typeof documents.$inferSelect;
 export type DocumentVersionRow = typeof documentVersions.$inferSelect;
 
-export function toRoomDocument(row: DocumentRow, roomId: string | null): RoomDocument {
+/**
+ * `roomId` 恒为 null：Phase 2i 去掉 Room 维度后 documents 只剩工作区级文稿，
+ * 但 `RoomDocument` 的 DTO 字段由 @nxcore/agent-contract 固定，桌面端按
+ * 「null = 工作区级文稿」渲染，因此保留该字段作为稳定的工作区级契约占位。
+ */
+export function toRoomDocument(row: DocumentRow): RoomDocument {
   return {
     id: row.id,
-    roomId,
+    roomId: null,
     title: row.title,
     contentJson: row.contentJson as TiptapJsonContent,
     contentSchemaVersion: row.contentSchemaVersion,
@@ -41,28 +45,16 @@ export function toRoomDocument(row: DocumentRow, roomId: string | null): RoomDoc
 export class DocumentRepository {
   constructor(readonly db: GatewayDatabase) {}
 
-  /**
-   * `roomId` 为 null 时列出全部工作区级文稿（含仍归属某 Room 的文稿），
-   * 不做 room_doc_links 关联；此时返回的 `roomId` 取自链接表，无链接即 null。
-   */
-  list(roomId: string | null, trashed = false, origin?: "native" | "import"): RoomDocument[] {
+  /** 列出工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。 */
+  list(trashed = false, origin?: "native" | "import"): RoomDocument[] {
     const conditions = [trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt)];
     if (origin) conditions.push(eq(documents.origin, origin));
-    const rows = roomId === null
-      ? this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
-        .from(documents)
-        .leftJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
-        .where(and(...conditions))
-        .orderBy(asc(documents.createdAt))
-        .all()
-        .map(({ document, roomId: linkedRoomId }) => toRoomDocument(document, linkedRoomId ?? null))
-      : this.db.select({ document: documents })
-        .from(roomDocumentLinks)
-        .innerJoin(documents, eq(roomDocumentLinks.documentId, documents.id))
-        .where(and(eq(roomDocumentLinks.roomId, roomId), ...conditions))
-        .orderBy(asc(roomDocumentLinks.linkedAt))
-        .all()
-        .map(({ document }) => toRoomDocument(document, roomId));
+    const rows = this.db.select({ document: documents })
+      .from(documents)
+      .where(and(...conditions))
+      .orderBy(asc(documents.createdAt))
+      .all()
+      .map(({ document }) => toRoomDocument(document));
     // 外部更新候选是版本面板导入历史的临时物化，不作为普通文档出现在 Room
     // 文档列表（应用/未应用均隐藏；diff 与内容查看走导入历史和文档直取）。
     const candidateIds = new Set(
@@ -77,14 +69,12 @@ export class DocumentRepository {
       : rows;
   }
 
-  /** 左连接链接表：未归属任何 Room 的文稿 roomId 为 null，不再不可见。 */
   get(documentId: string): RoomDocument | null {
-    const result = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
+    const result = this.db.select({ document: documents })
       .from(documents)
-      .leftJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .where(eq(documents.id, documentId))
       .get();
-    return result ? toRoomDocument(result.document, result.roomId ?? null) : null;
+    return result ? toRoomDocument(result.document) : null;
   }
 
   updateVersionChangeSummary(

@@ -17,14 +17,14 @@ import type { AgentAccessState, ResolvedAgentConnection } from "./types.js";
  *   而非进程内存的 24h token——网关重启后连接仍有效。
  * - 会话自愈：重启后客户端未重新 initialize 直接调用时自动重建会话
  *   （渠道版此时报错；持久连接的客户端可能带着旧状态直接续用）。
- * - 工具面按连接 capabilities 过滤，数据按 roomIds 过滤（tools 层执行）。
+ * - 工具面按连接 capabilities 过滤；Phase 2i 起 Room 维度已删除，数据不再按 roomIds 过滤。
  * - 每次调用落 agent_access_events（PRD 7.5 调试页；只记工具名/状态/耗时/参数
  *   体积，不记内容）。
  */
 
 const SERVER_INSTRUCTIONS = [
-  "本服务器把 EverRoom 的积累（Room、会话、文档、文件、记忆）按授权范围提供给外部 Agent。",
-  "推荐工作流：everroom_list_rooms 了解范围 → everroom_search 检索 → 命中项用 everroom_fetch 按 everroom:// URI 精读原文 → 引用时携带返回的 version 字段。",
+  "本服务器把 EverRoom 的积累（会话、文档、文件）按授权范围提供给外部 Agent。",
+  "推荐工作流：everroom_get_status 了解范围 → everroom_search 检索 → 命中项用 everroom_fetch 按 everroom:// URI 精读原文 → 引用时携带返回的 version 字段。",
   "所有工具返回 structuredContent.status：ok / empty（换关键词或补问用户）/ no_permission（范围外，附所需能力）/ source_lost（换来源）/ parse_failed（换变体或来源）/ stale（版本过期，data 仍是最新内容）/ duplicate（提交重放，返回原结果）。",
   "回写用 everroom_submit：submissionId 由你生成并在重试时复用（幂等）；候选（记忆/Wiki/偏好）进入待确认队列，未经用户确认不会写入长期记忆。",
   "遇到失败先调用 everroom_get_status 判断是能力未开还是服务暂不可用，避免盲目重试。",

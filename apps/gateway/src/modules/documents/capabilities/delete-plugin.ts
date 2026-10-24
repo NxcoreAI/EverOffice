@@ -49,7 +49,6 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
       }
       const document = backend.get(documentId);
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (context.roomId !== null && document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document does not belong to this Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is already in trash", 409);
 
       await backend.delete(documentId);

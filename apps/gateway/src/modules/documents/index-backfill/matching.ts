@@ -28,8 +28,8 @@ export interface IndexSourceCandidate {
 }
 
 /**
- * 记忆项候选（contextRooms.data.memoryItems 投影）。记忆是蒸馏产物没有
- * 时间戳，方向启发式不适用；逐字包含级匹配本身高精度，精度由匹配算法
+ * 记忆项候选（由 index-backfill 的 listMemoryItems 注入提供）。记忆是蒸馏产物
+ * 没有时间戳，方向启发式不适用；逐字包含级匹配本身高精度，精度由匹配算法
  * 与 LLM 置信护栏兜住。
  */
 export interface IndexMemoryCandidate {

@@ -355,7 +355,8 @@ export function createSelectionRewriteContentResolver(
       : invocation.result?.text;
     if (!selectedText || typeof resultText !== "string") return null;
     const document = getDocument(documentId);
-    if (!document || document.roomId !== roomId || document.deletedAt) return null;
+    // Phase 2i：文稿一律工作区级（roomId 恒 null），roomId 只作调用元数据不再校验。
+    if (!document || document.deletedAt) return null;
     const userEdited = typeof userEditedReplacementText === "string";
     const built = buildSelectionRewriteProposedContent(document.contentJson, {
       selectedText,

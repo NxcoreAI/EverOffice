@@ -94,12 +94,12 @@ describe("document_delete", () => {
     expect(structured.title).toBe("删除测试文档");
 
     // 活动列表不再包含，回收站列表包含；文档本身仍在（trash 非物理删除）。
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(false);
-    expect(documents.list("room-1", true).some((item) => item.id === document.id)).toBe(true);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(false);
+    expect(documents.list(true).some((item) => item.id === document.id)).toBe(true);
 
     // 可恢复：restore 后回到活动列表。
     await documents.restore(document.id);
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(true);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(true);
   });
 
   it("缺 confirm 或 confirm=false 被拒：文档保持原状", async () => {
@@ -115,10 +115,10 @@ describe("document_delete", () => {
       documentId: document.id,
       confirm: false,
     }, { agentSessionId: "s2", runId: "run-c2", roomId: "room-1" }), "DOCUMENT_DELETE_CONFIRM_REQUIRED");
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(true);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(true);
   });
 
-  it("回收站文档、跨房间文档、不存在的文档被拒", async () => {
+  it("回收站文档与不存在的文档被拒；Phase 2i 起 context.roomId 不再构成归属校验", async () => {
     const { registry, documents } = await createHarness("delete-tool-guard");
     const trashedDoc = await seedDocument(documents, "doc-del-3");
     await documents.delete(trashedDoc.id);
@@ -128,10 +128,11 @@ describe("document_delete", () => {
     }, { agentSessionId: "s3", runId: "run-trash", roomId: "room-1" }), "DOCUMENT_TRASHED");
 
     const other = await seedDocument(documents, "doc-del-4");
-    await expectServiceError(registry.execute(TOOL, {
+    const crossRoom = await registry.execute(TOOL, {
       documentId: other.id,
       confirm: true,
-    }, { agentSessionId: "s3", runId: "run-room", roomId: "room-other" }), "ROOM_MISMATCH");
+    }, { agentSessionId: "s3", runId: "run-room", roomId: "room-other" });
+    expect(crossRoom.structuredContent).toMatchObject({ documentId: other.id, deleted: true });
 
     await expectServiceError(registry.execute(TOOL, {
       documentId: "doc-missing",
@@ -149,6 +150,6 @@ describe("document_delete", () => {
     }, { agentSessionId: "s4", runId: "run-workspace", roomId: null });
     expect(result.structuredContent).toMatchObject({ documentId: document.id });
     expect(documents.get(document.id)?.deletedAt).toBeTruthy();
-    expect(documents.list(null).some((item) => item.id === document.id)).toBe(false);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(false);
   });
 });

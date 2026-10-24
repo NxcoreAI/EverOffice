@@ -1,6 +1,5 @@
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { enqueueDocumentIndexBackfill } from "./jobs.js";
-import { roomScopeId } from "../room-scope.js";
 
 interface IndexBackfillReadTriggerLogger {
   warn(bindings: Record<string, unknown>, message: string): void;
@@ -28,7 +27,6 @@ export class DocumentIndexBackfillReadTrigger {
     try {
       enqueueDocumentIndexBackfill(this.db, {
         documentId: document.id,
-        roomId: roomScopeId(document.roomId),
         version: document.version,
       }, new Date());
     } catch (error) {

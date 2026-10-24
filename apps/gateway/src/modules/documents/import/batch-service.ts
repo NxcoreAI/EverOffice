@@ -8,7 +8,7 @@ import type {
   ExternalDocumentProvider,
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
-import { documentImportBatches, rooms } from "../../../infrastructure/database/schema.js";
+import { documentImportBatches } from "../../../infrastructure/database/schema.js";
 import type { DocumentImportService, ImportServiceError } from "./service.js";
 
 /**
@@ -107,12 +107,10 @@ export class DocumentBatchImportService {
     }
     let targetRoomId: string | null = null;
     if (input.mode === "room") {
+      // Phase 2i：Room 表已删除，mode=room 的目标 id 只作为批次归属标签留存
+      // （documentRoomImports.room_id 同样是松引用），不再做存在性校验。
       if (!input.roomId) {
         throw new BatchImportServiceError("BATCH_ROOM_REQUIRED", "导入到 Room 必须指定目标 Room");
-      }
-      const room = this.db.select({ id: rooms.id }).from(rooms).where(eq(rooms.id, input.roomId)).get();
-      if (!room) {
-        throw new BatchImportServiceError("BATCH_ROOM_NOT_FOUND", `目标 Room 不存在：${input.roomId}`, 404);
       }
       targetRoomId = input.roomId;
     } else if (input.mode === "auto") {

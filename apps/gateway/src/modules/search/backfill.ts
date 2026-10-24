@@ -1,14 +1,15 @@
 import { asc, gt, isNull, and, notInArray } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import { agentMessages, documents, fileEntries, rooms } from "../../infrastructure/database/schema.js";
+import { agentMessages, documents, fileEntries } from "../../infrastructure/database/schema.js";
 import { enqueueSearchIndex } from "./jobs.js";
 
 const BATCH_SIZE = 500;
 
 /**
- * 存量回填：启动后异步跑一次，把既有四类内容排进索引队列（normal 优先级，
- * 让位给新内容的 high job）。enqueueSearchIndex(ifAbsent) 以确定性 job id 去重，
- * 重复启动不会刷新已在等待的行。
+ * 存量回填：启动后异步跑一次，把既有三类内容（文件、会话消息、文稿）
+ * 排进索引队列（normal 优先级，让位给新内容的 high job）。
+ * enqueueSearchIndex(ifAbsent) 以确定性 job id 去重，重复启动不会刷新已在等待的行。
+ * Phase 2i：Room 命中类型已删，回填不再扫描房间。
  */
 export class SearchBackfill {
   private ran = false;
@@ -28,7 +29,6 @@ export class SearchBackfill {
   async run(): Promise<void> {
     await this.scanFiles();
     await this.scanMessages();
-    await this.scanRooms();
     await this.scanDocuments();
   }
 
@@ -59,20 +59,6 @@ export class SearchBackfill {
       const last = rows.at(-1);
       if (!last) return;
       for (const row of rows) enqueueSearchIndex(this.db, { itemType: "message", refId: row.id, ifAbsent: true });
-      cursor = last.id;
-      await yieldToEventLoop();
-    }
-  }
-
-  private async scanRooms(): Promise<void> {
-    let cursor = "";
-    for (;;) {
-      const rows = this.db.select({ id: rooms.id }).from(rooms)
-        .where(and(gt(rooms.id, cursor), isNull(rooms.deletedAt)))
-        .orderBy(asc(rooms.id)).limit(BATCH_SIZE).all();
-      const last = rows.at(-1);
-      if (!last) return;
-      for (const row of rows) enqueueSearchIndex(this.db, { itemType: "room", refId: row.id, ifAbsent: true });
       cursor = last.id;
       await yieldToEventLoop();
     }

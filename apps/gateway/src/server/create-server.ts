@@ -721,16 +721,16 @@ export async function createServer(config: GatewayConfig) {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
             // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
             // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
-            resolveDocumentForDraft: (documentId, roomId) => documentService.readDocumentForAgent(documentId, roomId),
+            resolveDocumentForDraft: (documentId) => documentService.readDocumentForAgent(documentId),
             // dispatch 期软租约：agent 修改中文档只读（编辑器 writing 态 + 保存
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
               documentService.setAgentModificationLease(documentId, value),
             inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
               documentReadAuthority,
-              (documentId, docRoomId) => {
+              (documentId) => {
                 try {
-                  return documentService.readDocumentForAgent(documentId, docRoomId);
+                  return documentService.readDocumentForAgent(documentId);
                 } catch {
                   return null;
                 }
@@ -949,9 +949,9 @@ export async function createServer(config: GatewayConfig) {
     pageImageSessions: pageImageSessionsStore,
     pageImageRunner: pageImageRunner,
     // settle 的 outlineRoles 来源：按风格会话绑定的草稿读回页结构（读取失败时省略该输入）。
-    resolveDraftDocument: (documentId, roomId) => {
+    resolveDraftDocument: (documentId) => {
       try {
-        return documentService.readDocumentForAgent(documentId, roomId);
+        return documentService.readDocumentForAgent(documentId);
       } catch {
         return null;
       }
