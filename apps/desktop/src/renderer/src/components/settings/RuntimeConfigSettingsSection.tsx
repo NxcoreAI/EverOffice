@@ -6,12 +6,10 @@ import {
   buildUserPayload,
   configTestErrorMessage,
   emptyAiFields,
-  emptyAsrFields,
   formStateFromSnapshot,
   runtimeConfigFormError,
   TEXT_SCENARIO_IDS,
   type ManualAiConfigFields,
-  type ManualAsrFields,
   type RuntimeConfigFormState,
   type ScenarioMode,
   type TextScenarioId,
@@ -22,7 +20,6 @@ function pretty(value: Record<string, unknown>): string { return `${JSON.stringi
 const SCENARIO_LABEL_KEYS: Record<TextScenarioId, string> = {
   primary: 'rcScenarioPrimary',
   background: 'rcScenarioBackground',
-  transcriptionSummary: 'rcScenarioTranscription',
   lite: 'rcScenarioLite',
   cursorCompletion: 'rcScenarioCursor',
 }
@@ -64,7 +61,7 @@ export function RuntimeConfigSettingsSection() {
       const keyReady = form.webSearch.apiKey.trim() || snapshot?.webSearchCredential?.configured || form.deleteSearchKey
       error = form.webSearch.model.trim() && form.webSearch.baseUrl.trim() && keyReady
         ? null
-        : t('surface:configGate.embeddingIncomplete')
+        : t('surface:configGate.fieldRequired')
     }
     if (error) { setFieldError(error); setBusy(null); return }
     try {
@@ -148,12 +145,8 @@ export function RuntimeConfigSettingsSection() {
     setForm((current) => ({ ...current, generic: { ...current.generic, [key]: value } }))
   const updateScenario = (id: TextScenarioId, patch: Partial<{ mode: ScenarioMode; model: string; baseUrl: string; apiKey: string }>) =>
     setForm((current) => ({ ...current, scenarios: { ...current.scenarios, [id]: { ...current.scenarios[id], ...patch } } }))
-  const updateSpecial = (slot: 'embedding' | 'vlm', key: keyof ManualAiConfigFields, value: string) =>
+  const updateSpecial = (slot: 'vlm', key: keyof ManualAiConfigFields, value: string) =>
     setForm((current) => ({ ...current, [slot]: { ...current[slot], [key]: value } }))
-  const updateAsr = (key: 'model' | 'baseUrl' | 'apiKey', value: string) =>
-    setForm((current) => ({ ...current, asr: { ...current.asr, [key]: value } }))
-  const updateOss = (key: keyof ManualAsrFields['oss'], value: string) =>
-    setForm((current) => ({ ...current, asr: { ...current.asr, oss: { ...current.asr.oss, [key]: value } } }))
   const updateSearch = (key: keyof ManualAiConfigFields, value: string) =>
     setForm((current) => ({ ...current, deleteSearchKey: false, webSearch: { ...current.webSearch, [key]: value } }))
 
@@ -167,9 +160,6 @@ export function RuntimeConfigSettingsSection() {
   const testLines: string[] = []
   if (testResult) {
     if (testResult.valid !== true) testLines.push(configTestErrorMessage(testResult.error, t))
-    if (testResult.embedding && testResult.embedding.valid !== true) {
-      testLines.push(`${t('surface:settings.rcTestLabelEmbedding')}${configTestErrorMessage(testResult.embedding.error, t)}`)
-    }
     if (testResult.vlm && testResult.vlm.valid !== true) {
       testLines.push(`${t('surface:settings.rcTestLabelVlm')}${configTestErrorMessage(testResult.vlm.error, t)}`)
     }
@@ -260,31 +250,6 @@ export function RuntimeConfigSettingsSection() {
       <div className="rc-scenario-list">
         <div className="rc-scenario-item">
           <div className="rc-scenario-row">
-            <span className="rc-scenario-name">{t('surface:settings.rcSpecialEmbedding')}</span>
-            <select value={form.embedding.mode} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialEmbedding')}
-              onChange={(event) => setForm((current) => ({ ...current, embedding: { ...current.embedding, mode: event.target.value as 'custom' | 'official' } }))}>
-              {specialOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            {form.embedding.mode === 'custom' ? <input className="rc-scenario-model" value={form.embedding.model} placeholder="text-embedding-3-small / text-embedding-v4 / …" disabled={busy !== null}
-              onChange={(event) => updateSpecial('embedding', 'model', event.target.value)} /> : null}
-          </div>
-          {form.embedding.mode === 'custom' ? <details className="rc-own-connection">
-            <summary>{t('surface:settings.rcOwnConnection')}</summary>
-            <div className="rc-grid">
-              <label className="rc-form-field"><span>{aiLabels.provider}</span>
-                <input value={form.embedding.provider} disabled={busy !== null} onChange={(event) => updateSpecial('embedding', 'provider', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
-                <input value={form.embedding.baseUrl} placeholder="https://api.example.com/v1" disabled={busy !== null}
-                  onChange={(event) => updateSpecial('embedding', 'baseUrl', event.target.value)} /></label>
-              <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
-                <input type="password" value={form.embedding.apiKey} placeholder="sk-…" disabled={busy !== null}
-                  onChange={(event) => updateSpecial('embedding', 'apiKey', event.target.value)} /></label>
-            </div>
-          </details> : null}
-        </div>
-
-        <div className="rc-scenario-item">
-          <div className="rc-scenario-row">
             <span className="rc-scenario-name">{t('surface:settings.rcSpecialVlm')}</span>
             <select value={form.vlm.mode} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialVlm')}
               onChange={(event) => setForm((current) => ({ ...current, vlm: { ...current.vlm, mode: event.target.value as 'custom' | 'official' } }))}>
@@ -304,40 +269,6 @@ export function RuntimeConfigSettingsSection() {
                   onChange={(event) => updateSpecial('vlm', 'apiKey', event.target.value)} /></label>
             </div>
           </details> : null}
-        </div>
-
-        <div className="rc-scenario-item">
-          <div className="rc-scenario-row">
-            <span className="rc-scenario-name">{t('surface:settings.rcSpecialAsr')}</span>
-            <select value={form.asrCustom ? 'custom' : 'official'} disabled={busy !== null} aria-label={t('surface:settings.rcSpecialAsr')}
-              onChange={(event) => setForm((current) => ({ ...current, asrCustom: event.target.value === 'custom', asr: current.asr.model || current.asr.baseUrl ? current.asr : emptyAsrFields() }))}>
-              {specialOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </div>
-          {form.asrCustom ? <div className="rc-special-fields">
-            <div className="rc-grid">
-              <label className="rc-form-field"><span>{aiLabels.model}</span>
-                <input value={form.asr.model} placeholder="qwen-audio-3.0-asr-flash-filetrans" onChange={(event) => updateAsr('model', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{aiLabels.baseUrl}</span>
-                <input value={form.asr.baseUrl} placeholder="https://dashscope.aliyuncs.com/api/v1" onChange={(event) => updateAsr('baseUrl', event.target.value)} /></label>
-              <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>
-                <input type="password" value={form.asr.apiKey} placeholder="sk-…" onChange={(event) => updateAsr('apiKey', event.target.value)} /></label>
-            </div>
-            <div className="rc-oss-group">
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssRegion')}</span>
-                <input value={form.asr.oss.region} placeholder="oss-cn-beijing" onChange={(event) => updateOss('region', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssBucket')}</span>
-                <input value={form.asr.oss.bucket} onChange={(event) => updateOss('bucket', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeyId')}</span>
-                <input value={form.asr.oss.accessKeyId} onChange={(event) => updateOss('accessKeyId', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssAccessKeySecret')}</span>
-                <input type="password" value={form.asr.oss.accessKeySecret} onChange={(event) => updateOss('accessKeySecret', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssStsToken')}</span>
-                <input type="password" value={form.asr.oss.stsToken} onChange={(event) => updateOss('stsToken', event.target.value)} /></label>
-              <label className="rc-form-field"><span>{t('surface:settings.rcFieldOssPrefix')}</span>
-                <input value={form.asr.oss.prefix} placeholder="nxcore-asr" onChange={(event) => updateOss('prefix', event.target.value)} /></label>
-            </div>
-          </div> : null}
         </div>
 
         <div className="rc-scenario-item">
@@ -367,7 +298,7 @@ export function RuntimeConfigSettingsSection() {
       {fieldError ? <p className="rc-form-error" role="alert">{fieldError}</p> : null}
       {testResult ? (
         testLines.length === 0
-          ? <p className="rc-form-test rc-form-test-ok"><Check aria-hidden="true" />{t('surface:settings.rcTestOk')}{t('surface:settings.rcTestAsrSkipped')}</p>
+          ? <p className="rc-form-test rc-form-test-ok"><Check aria-hidden="true" />{t('surface:settings.rcTestOk')}</p>
           : <div className="rc-form-test" role="alert">{testLines.map((line) => <p key={line}>{line}</p>)}</div>
       ) : null}
 
@@ -379,7 +310,7 @@ export function RuntimeConfigSettingsSection() {
       {message ? <p className="runtime-config-message"><Check aria-hidden="true" />{message}</p> : null}
       {testResult ? (
         testLines.length === 0
-          ? <p className="rc-form-test rc-form-test-ok"><Check aria-hidden="true" />{t('surface:settings.rcTestOk')}{t('surface:settings.rcTestAsrSkipped')}</p>
+          ? <p className="rc-form-test rc-form-test-ok"><Check aria-hidden="true" />{t('surface:settings.rcTestOk')}</p>
           : <div className="rc-form-test" role="alert">{testLines.map((line) => <p key={line}>{line}</p>)}</div>
       ) : null}
     </div>}
