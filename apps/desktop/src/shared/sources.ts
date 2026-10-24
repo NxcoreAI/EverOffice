@@ -23,21 +23,8 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
-  ContextRoomSnapshot,
-  ContextRoomSnapshotItem,
-  CreateContextRoomInput,
-  CreateContextRoomResult,
-  RoomDuplicateCandidate,
-  RoomDuplicateCandidateStatus,
-  RoomDuplicateCheckInput,
-  RoomDuplicateCheckResult,
-  RoomAppliedEntitiesResult,
-  RoomOverviewProjection,
   MovedRoomDocument,
   MoveRoomDocumentsResult,
-  RoomMergeOperation,
-  RoomMergePreview,
-  RoomMail,
   SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -61,7 +48,6 @@ import type {
   ResolveDocumentBlockReferencesInput,
   ResolveDocumentBlockReferencesResult,
   SaveRoomDocumentInput,
-  SaveContextRoomSnapshotInput,
   StartAgentRunInput,
   SubmitPendingAgentIntentInput,
   StartDocumentOperationInput,
@@ -83,7 +69,6 @@ import type {
   AgentPermissionMode,
   AgentPermissionModeState,
 } from '@nxcore/agent-contract'
-import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from './office'
 import type {
@@ -101,8 +86,8 @@ export interface LocalAgentAdapterCheck {
   adapter: LocalAgentAcpAdapterInfo
 }
 import type { MigrationApi } from './migrations'
-import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
-import type { RealityInsights, RealityTag } from '@nxcore/reality-contract'
+import type { BrowserExtensionClipperCapture } from './browser-extension'
+import type { RealityInsights } from '@nxcore/reality-contract'
 import type {
   ConnectorAuthorizationAttempt,
   ConnectorConnection,
@@ -412,28 +397,6 @@ export interface AccountKeyringStatus {
   verificationCode: string | null
 }
 
-export interface PrivateTranscriptionRecord {
-  recordId: string
-  revision: number
-  createdAt: string
-  updatedAt: string
-  transcript: string
-  segments: AsrSegment[]
-  metadata?: Record<string, unknown>
-}
-
-export interface PrivateTranscriptionSyncResult {
-  status: AccountKeyringStatus
-  cursor: number
-  synced: number
-  removed: number
-  records: PrivateTranscriptionRecord[]
-}
-
-export interface PrivateTranscriptionSyncCompletedEvent {
-  completedAt: string
-}
-
 export type CloudOidcProvider = 'apple' | 'google'
 
 /**
@@ -448,38 +411,6 @@ export interface DesktopRequestError {
   message: string
   title?: string
   severity?: 'error' | 'notice'
-}
-
-export type WindowScreenshotResult =
-  | {
-      ok: true
-      filePath: string
-      fileName: string
-      width: number
-      height: number
-      bytes: number
-      capturedAt: string
-      perceptualHash?: string
-    }
-  | {
-      ok: false
-      code: 'window-unavailable' | 'permission-denied' | 'capture-failed' | 'save-failed'
-      message: string
-    }
-
-export interface WindowScreenshotStatus {
-  enabled: boolean
-  intervalMs: number
-  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
-  lastResult: WindowScreenshotResult | null
-}
-
-export interface PerceptionSettings {
-  captureEnabled: boolean
-  captureIntervalSeconds: number
-  onlineVlmEnabled: boolean
-  configVersion: number
-  updatedAt: string
 }
 
 export interface RuntimeConfigSnapshot {
@@ -527,63 +458,6 @@ export interface RuntimeConfigTestResult {
   }
 }
 
-export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo' | 'document' | 'file'
-export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
-
-export interface PerceptionNode {
-  id: string
-  kind: PerceptionNodeKind
-  startAt: string
-  endAt: string
-  title: string
-  summary: string
-  status: string
-  eventType: string | null
-  tags: string[]
-  keyPoints: string[]
-  insightTags: RealityTag[]
-  confidence: number | null
-  model: string | null
-  error: string | null
-  sampleCount: number
-  mediaFileId: string | null
-}
-
-export interface VisualObservation {
-  id: string
-  nodeId: string
-  fileId: string
-  kind: 'screenshot' | 'photo'
-  capturedAt: string
-  perceptualHash: string | null
-  width: number | null
-  height: number | null
-  createdAt: string
-}
-
-export interface PerceptionNodeDetail extends PerceptionNode {
-  observations?: VisualObservation[]
-}
-
-export interface PerceptionNodeQuery {
-  from?: string
-  to?: string
-  kind?: PerceptionNodeKind
-  status?: string
-}
-
-export interface DiarySettings {
-  ownerId: string
-  enabled: boolean
-  localTime: string
-  timezone: string
-  enabledFrom: string | null
-  nextRunAt: string | null
-  configVersion: number
-  createdAt: string
-  updatedAt: string
-}
-
 export interface AgentScheduledTask {
   id: string
   agentId: string
@@ -600,68 +474,6 @@ export interface AgentScheduledTask {
   lastStatus: 'pending' | 'running' | 'completed' | 'failed' | null
   lastError: string | null
   configVersion: number
-}
-
-export type DiaryRunStatus = 'pending' | 'running' | 'completed' | 'failed'
-
-export interface DiaryRun {
-  id: string
-  date: string
-  trigger: 'scheduled' | 'catch_up' | 'manual' | 'refresh'
-  status: DiaryRunStatus
-  attempt: number
-  error: string | null
-  versionId: string | null
-  createdAt: string
-  startedAt: string | null
-  finishedAt: string | null
-}
-
-export interface DiaryContent {
-  headline: string
-  summary: string
-  reflection: string
-  range: { start: string; end: string }
-  events: Array<{
-    time: string
-    endTime?: string
-    title: string
-    summary: string
-    sourceRefs: string[]
-    tags?: string[]
-  }>
-  closing: string
-}
-
-export interface DiaryDayDetails {
-  day: {
-    date: string
-    status: 'pending' | 'generating' | 'ready' | 'stale' | 'failed'
-    eventCount: number
-    lastError: string | null
-  }
-  currentVersion: {
-    id: string
-    date: string
-    version: number
-    content: DiaryContent
-    agentModel: string | null
-    createdAt: string
-  } | null
-  sources: Array<{
-    sourceId: string
-    sourceKind: string
-    occurredAt: string
-    endedAt: string | null
-    timeBasis: string
-    evidenceSummary: string
-    assetFileId: string | null
-    assetKind: 'document' | 'screenshot' | 'photo' | 'audio' | 'other' | null
-    mime: string | null
-    documentId?: string | null
-    roomId?: string | null
-    realityEventId?: string | null
-  }>
 }
 
 export interface ExportDocumentPdfInput {
@@ -751,9 +563,9 @@ export function isArtifactImportFileName(fileName: string): boolean {
   return (ARTIFACT_IMPORT_EXTENSIONS as readonly string[]).includes(extension)
 }
 
-/** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
-export interface RoomAgentSelectionRewriteInput {
-  roomId?: string
+/** doc-writer 子 Agent（划词改写）dispatch 入参，见 gateway POST /v1/documents/selection-rewrite。 */
+export interface SubagentSelectionRewriteInput {
+  documentId?: string
   documentName?: string
   selectedText: string
   instruction?: string
@@ -761,32 +573,6 @@ export interface RoomAgentSelectionRewriteInput {
   contextAfter?: string
   blockType?: string
   responseLanguage?: string
-}
-
-/** Room 本地日程/待办（agent/用户创建，非第三方数据）的对外形状。 */
-export interface RoomLocalAction {
-  id: string
-  roomId: string
-  kind: 'task' | 'schedule'
-  title: string
-  notes: string | null
-  status: string | null
-  priority: string | null
-  dueAt: string | null
-  startedAt: string | null
-  endAt: string | null
-  allDay: boolean
-  location: string | null
-  completedAt: string | null
-  createdBy: 'agent' | 'user'
-  createdAt: string
-  updatedAt: string
-}
-
-/** 本地日程/待办写操作的返回：新行 + 重建后的总览投影（面板据此刷新）。 */
-export interface RoomLocalActionResult {
-  action: RoomLocalAction
-  overview: RoomOverviewProjection
 }
 
 /** Agent 审批表态：bash 命令审批三态。 */
@@ -848,16 +634,6 @@ export interface NxcoreDesktopApi {
     status(): Promise<GatewayStatus>
   }
   migrations: MigrationApi
-  browserExtension: {
-    status(): Promise<BrowserExtensionStatus>
-    install(): Promise<BrowserExtensionStatus>
-    openDirectory(): Promise<void>
-    openBrowserPage(): Promise<void>
-    createPairing(): Promise<BrowserExtensionStatus>
-    revoke(): Promise<BrowserExtensionStatus>
-    onStatus(listener: (status: BrowserExtensionStatus) => void): () => void
-    onMessage(listener: (message: BrowserExtensionMessage) => void): () => void
-  }
   runtimeConfig: {
     get(): Promise<RuntimeConfigSnapshot>
     saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
@@ -989,27 +765,6 @@ export interface NxcoreDesktopApi {
     listUsage(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallUsage>>
     listAudits(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallAudit>>
   }
-  screenCapture: {
-    captureCurrentWindow(): Promise<WindowScreenshotResult>
-    start(intervalMs: number): Promise<WindowScreenshotStatus>
-    updateInterval(intervalMs: number): Promise<WindowScreenshotStatus>
-    stop(): Promise<WindowScreenshotStatus>
-    status(): Promise<WindowScreenshotStatus>
-    appInfo(): Promise<{ appPath: string; appName: string; iconDataUrl: string; devMode: boolean } | null>
-    openPermissionSettings(): Promise<void>
-    startAppDrag(): void
-    relaunchApp(): Promise<void>
-    perceptionSettings(): Promise<PerceptionSettings>
-    updateOnlineVlm(enabled: boolean, configVersion: number): Promise<PerceptionSettings>
-    listPerceptionNodes(query?: PerceptionNodeQuery): Promise<{ items: PerceptionNode[] }>
-    getPerceptionNode(id: string): Promise<PerceptionNodeDetail>
-    retryPerceptionNode(id: string): Promise<{ accepted: boolean }>
-    deletePerceptionNode(id: string, deleteAssets?: boolean): Promise<{
-      deleted: boolean
-      deletedAssets: string[]
-      retainedAssets: string[]
-    }>
-  }
   writingStyle: {
     profile(): Promise<import('./writing-style').WritingStyleProfileDto>
     settings(): Promise<import('./writing-style').WritingStyleSettingsDto>
@@ -1052,34 +807,12 @@ export interface NxcoreDesktopApi {
   slides: {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }
-  contextRooms: {
-    list(): Promise<ContextRoomSnapshot>
-    create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
-    syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
-    checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult>
-    listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
-    updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
-    previewMerge(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
-    startMerge(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
-    suggestMergeNames(input: { sourceAId: string; sourceBId: string; responseLanguage?: string }): Promise<{ names: string[] }>
-    checkRoomDuplicates(roomId: string): Promise<{ newCandidates: number }>
-    getMergeOperation(id: string): Promise<RoomMergeOperation>
-    retryMerge(id: string): Promise<RoomMergeOperation>
-    cancelMerge(id: string): Promise<RoomMergeOperation>
-    dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
+  subagents: {
+    dispatchSelectionRewrite(input: SubagentSelectionRewriteInput): Promise<{ invocationId: string }>
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
     listSubagentInvocationEvents(invocationId: string, afterSeq?: number): Promise<import('@nxcore/agent-contract').SubagentInvocationEvent[]>
-    refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
-    /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
-    promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
-    overview(roomId: string): Promise<RoomOverviewProjection>
-    refreshOverview(roomId: string): Promise<RoomOverviewProjection>
-    listMails(roomId: string): Promise<{ items: RoomMail[] }>
-    readMail(roomId: string, sourceId: string): Promise<import('@nxcore/agent-contract').RoomMailDetail>
-    roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
-    completeLocalAction(roomId: string, actionId: string, completed?: boolean): Promise<RoomLocalActionResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
@@ -1124,8 +857,6 @@ export interface NxcoreDesktopApi {
     requestMicrophoneAccess(): Promise<boolean>
     /** 打开系统「麦克风」隐私设置页。 */
     openMicrophoneSettings(): Promise<void>
-    /** 打开系统「屏幕与系统音频录制」隐私设置页。 */
-    openSystemAudioSettings(): Promise<void>
   }
   search: {
     invoke(request: SearchRequestDto): Promise<SearchPageDto>
@@ -1267,16 +998,12 @@ export interface NxcoreDesktopApi {
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
     catalogEntry(fileId: string): Promise<FileCatalogDto>
-    listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
-    setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
-    getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
     getClipCapture(fileId: string): Promise<BrowserExtensionClipperCapture>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
-    pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
     delete(fileId: string): Promise<{
       deleted: boolean

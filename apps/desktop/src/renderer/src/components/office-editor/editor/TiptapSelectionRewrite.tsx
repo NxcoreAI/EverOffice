@@ -359,7 +359,7 @@ export function useTiptapSelectionRewrite({
     formatContext: SelectionRewriteFormatContext,
   ) => {
     if (!editor || editor.isDestroyed) return
-    const api = window.nxcore?.contextRooms
+    const api = window.nxcore?.subagents
     const position = previewPosition(editor, anchor.to)
     setRewriteDecoration(editor, { ...anchor, variant: 'original' })
     if (!api) {
@@ -412,7 +412,7 @@ export function useTiptapSelectionRewrite({
       Math.min(editor.state.doc.content.size, anchor.to + 600),
     )
     void streamSelectionRewrite(api, {
-      roomId,
+      documentId,
       documentName,
       selectedText: originalText,
       instruction,
@@ -449,7 +449,7 @@ export function useTiptapSelectionRewrite({
         error: rewriteErrorMessage(error),
       } : current)
     })
-  }, [documentName, editor, locale, restoreEditor, rewriteErrorMessage, roomId, startOperation, t])
+  }, [documentId, documentName, editor, locale, restoreEditor, rewriteErrorMessage, startOperation, t])
 
   const requestRewrite = useCallback((instruction: string) => {
     if (!editor || editor.isDestroyed || externallyLocked) return

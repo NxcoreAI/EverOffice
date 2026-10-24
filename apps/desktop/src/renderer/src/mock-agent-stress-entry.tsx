@@ -157,12 +157,12 @@ const stressAgent = {
   setPermissionMode: async () => ({}),
 }
 
-const baseContextRooms = (base.contextRooms ?? {}) as Record<string, unknown>
+const baseSubagents = (base.subagents ?? {}) as Record<string, unknown>
 window.nxcore = {
   ...base,
   agent: stressAgent,
-  contextRooms: {
-    ...baseContextRooms,
+  subagents: {
+    ...baseSubagents,
     listRunSubagentInvocations: async () => [],
     listSubagentInvocationEvents: async () => [],
   },
