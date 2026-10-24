@@ -59,7 +59,6 @@ describe('FilesPage catalog refresh', () => {
     vi.stubGlobal('window', {
       nxcore: {
         files: { list },
-        ingest: { listEvents: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
       },
       setInterval: vi.fn((callback: () => void) => { tick = callback; return 1 }),
       clearInterval: vi.fn(),
@@ -105,7 +104,6 @@ describe('FilesPage catalog refresh', () => {
     vi.stubGlobal('window', {
       nxcore: {
         files: { list, reveal },
-        ingest: { listEvents: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
       },
       setInterval: vi.fn(() => 1),
       clearInterval: vi.fn(),
@@ -154,11 +152,9 @@ describe('FilesPage catalog refresh', () => {
       error: null,
     }])
     const list = vi.fn().mockResolvedValue({ items: [], total: 0 })
-    const listEvents = vi.fn().mockResolvedValue({ items: [], total: 0 })
     vi.stubGlobal('window', {
       nxcore: {
         files: { list, importDropped },
-        ingest: { listEvents },
       },
       setInterval: vi.fn(() => 1),
       clearInterval: vi.fn(),
@@ -195,7 +191,6 @@ describe('FilesPage catalog refresh', () => {
     vi.stubGlobal('window', {
       nxcore: {
         files: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), importDropped },
-        ingest: { listEvents: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
       },
       setInterval: vi.fn(() => 1),
       clearInterval: vi.fn(),

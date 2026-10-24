@@ -7,8 +7,6 @@ import type {
   FileCatalogDto,
   FileImportOutcome,
   FileImportProgressEvent,
-  IngestEventDto,
-  IngestPipelines,
 } from '../../../../shared/ingest'
 import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-extension'
 import { isRoomArtifactSourceKind, type OfficePreviewTab } from '../../../../shared/sources'
@@ -16,27 +14,8 @@ import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
 import type { PageId } from '@/data/navigation'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
-import { useLocale, type Translate } from '@/i18n/LocaleContext'
+import { useLocale } from '@/i18n/LocaleContext'
 
-type FilesView = 'files' | 'events'
-
-const PIPELINE_KEYS: { key: keyof IngestPipelines; label: string }[] = [
-  { key: 'room', label: 'surface:files.room' },
-  { key: 'wiki', label: 'surface:files.wiki' },
-  { key: 'memory', label: 'surface:files.memory' },
-]
-
-/** 展示用类型标签（策略本身在 gateway 代码注册表 + 部署期配置文件，桌面端只读展示）。 */
-const DATA_TYPE_LABELS: Record<string, string> = {
-  'document': 'surface:files.document',
-  'meeting-minutes': 'surface:files.meetingMinutes',
-  'office-doc': 'surface:files.officeDocument',
-  'spreadsheet': 'surface:files.spreadsheet',
-  'slides': 'surface:files.slides',
-  'html': 'surface:files.webPage',
-}
-
-const dataTypeLabel = (key: string): string => DATA_TYPE_LABELS[key] ?? key
 const CATALOG_PAGE_SIZE = 200
 const FILES_REFRESH_INTERVAL_MS = 2_000
 
@@ -143,11 +122,8 @@ export function FilesPage({
 }) {
   const { locale, t } = useLocale()
   const filesApi = window.nxcore?.files
-  const ingestApi = window.nxcore?.ingest
-  const [view, setView] = useState<FilesView>('files')
   const [files, setFiles] = useState<FileCatalogDto[]>(() => fileCatalogCache.items)
   const [loading, setLoading] = useState(Boolean(filesApi) && !fileCatalogCache.complete)
-  const [events, setEvents] = useState<IngestEventDto[]>([])
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState<FileImportProgressEvent | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -222,27 +198,15 @@ export function FilesPage({
     }
   }, [filesApi])
 
-  const loadEvents = useCallback(async () => {
-    if (!ingestApi) return
-    try {
-      // 文件页只看文件源台账（全源台账在记忆页「导入记录」——那是理解引擎的观测面）
-      setEvents((await ingestApi.listEvents({ limit: 100, sourceKind: 'file' })).items)
-    } catch {
-    }
-  }, [ingestApi])
-
   useEffect(() => {
     void loadFiles(!fileCatalogCache.complete)
-    void loadEvents()
     const tick = () => {
       if (document.hidden) return
       void loadFiles()
-      void loadEvents()
     }
     const handleVisibilityChange = () => {
       if (document.hidden) return
       void loadFiles()
-      void loadEvents()
     }
     const timer = window.setInterval(tick, FILES_REFRESH_INTERVAL_MS)
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -250,7 +214,7 @@ export function FilesPage({
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [loadEvents, loadFiles])
+  }, [loadFiles])
 
   useEffect(() => {
     if (!filesApi || typeof filesApi.onImportProgress !== 'function') return
@@ -266,7 +230,6 @@ export function FilesPage({
     void loadFiles(true).then(() => {
       const file = filesSnapshot.current.find((item) => item.id === focusRequest.fileId)
       if (!file) return
-      setView('files')
       setSearchQuery('')
       setSelectedCategoryKey(categoryForFile(file).key)
       setFocusedFileId(file.id)
@@ -316,8 +279,8 @@ export function FilesPage({
     setMessage(entered === 0 && firstError
       ? firstError
       : t('surface:files.importCompleteEnteredTotalFilesEnteredThePipeline', { entered, total: counted.length }))
-    await Promise.all([loadFiles(), loadEvents()])
-  }, [loadEvents, loadFiles, t])
+    await loadFiles()
+  }, [loadFiles, t])
 
   const importFiles = async () => {
     if (!filesApi || importing) return
@@ -509,12 +472,6 @@ export function FilesPage({
         action={t('surface:files.importFiles')}
         actionDisabled={!filesApi || importing}
         onAction={() => void importFiles()}
-        extraAction={
-          <div className="segmented-control" aria-label={t('surface:files.fileView')}>
-            <button type="button" data-active={String(view === 'files')} onClick={() => setView('files')}>{t('surface:files.files')}</button>
-            <button type="button" data-active={String(view === 'events')} onClick={() => { setView('events'); void loadEvents() }}>{t('surface:files.importHistory')}</button>
-          </div>
-        }
       />
       {!filesApi ? (
         <div className="source-notice"><HardDrive aria-hidden="true" strokeWidth={1.8} /><div><strong>{t('surface:files.importFilesInTheDesktopApp')}</strong><span>{t('surface:files.theWebVersionNeverRequestsOrReadsLocal')}</span></div></div>
@@ -539,7 +496,7 @@ export function FilesPage({
         </div>
       ) : message ? <div className="source-feedback" role="status">{message}</div> : null}
 
-      {view === 'files' && filesApi ? (
+      {filesApi ? (
         <section className="file-recognition" aria-labelledby="file-recognition-heading">
           <div className="file-recognition-toolbar">
             {selectedCategory ? <div className="file-category-detail-heading">
@@ -647,28 +604,6 @@ export function FilesPage({
             </div>
           ) : null}
         </section>
-      ) : null}
-
-      {view === 'events' && ingestApi ? (
-        <div className="data-table files-table ingest-table">
-          <div className="table-head"><span>{t('surface:files.title')}</span><span>{t('surface:files.type')}</span><span>{t('surface:files.pipeline')}</span><span>{t('surface:files.memory')}</span><span>{t('surface:files.time')}</span></div>
-          {events.length === 0 ? <div className="source-files-empty">{t('surface:files.noImportHistoryYet')}</div> : null}
-          {events.map((event) => (
-            <div key={event.id} className="table-row">
-              <span className="name-cell"><strong>{event.title}</strong><small>{event.sourceKind} · {event.sourceId.slice(0, 8)}</small></span>
-              <span>{t(dataTypeLabel(event.dataType))}</span>
-              <span className="pipeline-badges">
-                {PIPELINE_KEYS.filter(({ key }) => event.pipelines[key]).map(({ key, label }) => (
-                  <em key={key} className="pipeline-badge">{t(label)}</em>
-                ))}
-              </span>
-              <span title={'error' in (event.memoryResult ?? {}) ? String((event.memoryResult as { error: string }).error) : undefined}>
-                {describeMemory(event.memoryResult, t)}
-              </span>
-              <span>{formatDate(event.createdAt, locale, t)}</span>
-            </div>
-          ))}
-        </div>
       ) : null}
 
       {clipperPreview ? (
@@ -812,10 +747,4 @@ function FileDocumentCard({ file, tone, focused, busy, onPreviewImage, onOpenFil
       <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busy} onClick={() => onReveal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busy} onClick={() => onDelete(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
     </article>
   )
-}
-
-function describeMemory(memory: FileImportOutcome['memoryResult'], t: Translate): string {
-  if (!memory) return '—'
-  if ('error' in memory) return t('surface:files.failed')
-  return memory.deduplicated ? t('surface:files.registeredDeduplicated') : t('surface:files.countChunks', { count: memory.chunkCount })
 }

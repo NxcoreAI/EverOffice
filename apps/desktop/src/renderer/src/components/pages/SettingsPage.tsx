@@ -59,7 +59,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
-type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'admission' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'admission' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -97,13 +97,6 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): string {
-  if (!value) return t('surface:settings.notSyncedYet')
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return t('surface:settings.syncTimeUnknown')
-  return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
-}
-
 export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
   const { locale, preference, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
@@ -113,15 +106,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [conversationSuggestionSettings, setConversationSuggestionSettings] =
     useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
-  const [syncedCount, setSyncedCount] = useState<number | null>(null)
-  const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => {
-    try {
-      return window.localStorage.getItem('everroom:last-private-sync-at')
-    } catch {
-      return null
-    }
-  })
   const [devices, setDevices] = useState<CloudDevice[]>([])
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
@@ -181,18 +165,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     })
     return () => { cancelled = true; removeListener() }
   }, [account?.authenticated, account?.user?.id])
-
-  useEffect(() => {
-    const removeListener = window.nxcore?.transcriptions.onSyncCompleted(({ completedAt }) => {
-      setLastSyncAt(completedAt)
-      try {
-        window.localStorage.setItem('everroom:last-private-sync-at', completedAt)
-      } catch {
-        // Storage may be unavailable in a restricted renderer context.
-      }
-    })
-    return () => removeListener?.()
-  }, [])
 
   useEffect(() => {
     if (!pairing || !window.nxcore) return
@@ -343,31 +315,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         admissionToken: account.admission.admissionToken,
         replaceDeviceId,
       }))
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const syncPrivate = async () => {
-    if (!window.nxcore) return
-    setPending('sync')
-    try {
-      const [result, audio] = await Promise.all([
-        window.nxcore.transcriptions.syncPrivate(),
-        window.nxcore.privateAudio.list(0),
-      ])
-      setKeyring(result.status)
-      setSyncedCount(result.synced)
-      setSyncedAudioCount(audio.assets.filter((asset) => asset.status === 'uploaded').length)
-      const syncedAt = new Date().toISOString()
-      setLastSyncAt(syncedAt)
-      try {
-        window.localStorage.setItem('everroom:last-private-sync-at', syncedAt)
-      } catch {
-        // Storage may be unavailable in a restricted renderer context.
-      }
     } catch {
       // The preload request interceptor reports the error globally.
     } finally {
@@ -640,30 +587,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                   })}
                 </div>
               ) : <small className="cloud-device-empty">{t('surface:settings.noConnectedDevicesFound')}</small>}
-            </div>
-
-            <div className="cloud-keyring" aria-label={t('surface:settings.cloudSync')}>
-              <div className="cloud-keyring-main">
-                <div className="cloud-keyring-heading">
-                  <span><ShieldCheck aria-hidden="true" /></span>
-                  <div>
-                    <strong>{t('surface:settings.cloudSync')}</strong>
-                  </div>
-                </div>
-                {syncedCount !== null ? <small className="cloud-keyring-result">{t('surface:settings.syncedCountTranscriptsAndFoundAudiocountAudioClips', { count: syncedCount, audioCount: syncedAudioCount ?? 0 })}</small> : null}
-              </div>
-              <div className="cloud-keyring-actions">
-                <button
-                  className="secondary-button cloud-keyring-sync"
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void syncPrivate()}
-                >
-                  {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                  {t('surface:settings.syncDeviceData')}
-                </button>
-                <small className="cloud-keyring-last-sync">{formatSyncTime(lastSyncAt, locale, t)}</small>
-              </div>
             </div>
           </div>
         ) : (
