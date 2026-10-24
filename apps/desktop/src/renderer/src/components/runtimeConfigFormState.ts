@@ -7,13 +7,15 @@ import type { RuntimeConfigSnapshot } from '../../../shared/sources'
  *   生效快照在中转激活时含代理地址与令牌，摊进保存值会把官方出口冻结进
  *   用户配置；
  * - payload 里「不出现的槽位 = 用官方」；文本场景可选择跟随通用模型、
- *   单独配模型名或整段用官方；特殊模型（embedding/vlm）自定义时连接
- *   留空同样继承通用连接；
+ *   单独配模型名或整段用官方；特殊模型（vlm）自定义时连接留空同样继承
+ *   通用连接；
  * - 快照里的 secret 掩码 "********" 播种为空（gateway 侧 preserveMasked
- *   会在保存时保留库中原值，空串提交不清空已存 secret）。
+ *   会在保存时保留库中原值，空串提交不清空已存 secret）；
+ * - 已删子系统（ASR/转写摘要/记忆/知识）的历史槽位由 gateway 读取与保存时
+ *   静默剥离，本模块不再管理。
  */
 
-/** AI 段表单四要素（primary/embedding/vlm 同形）。 */
+/** AI 段表单四要素（primary/vlm 同形）。 */
 export interface ManualAiConfigFields {
   provider: string
   model: string
@@ -21,42 +23,14 @@ export interface ManualAiConfigFields {
   apiKey: string
 }
 
-/** ASR 表单：标量 + 阿里云 OSS 子表单（提交转写必须 OSS）。 */
-export interface ManualAsrFields {
-  provider: string
-  model: string
-  baseUrl: string
-  apiKey: string
-  oss: ManualAsrOssFields
-}
-
-export interface ManualAsrOssFields {
-  region: string
-  bucket: string
-  accessKeyId: string
-  accessKeySecret: string
-  stsToken: string
-  prefix: string
-}
-
 export function emptyAiFields(provider = 'openai-compatible'): ManualAiConfigFields {
   return { provider, model: '', baseUrl: '', apiKey: '' }
 }
 
-export function emptyAsrFields(): ManualAsrFields {
-  return {
-    provider: 'aliyun',
-    model: '',
-    baseUrl: '',
-    apiKey: '',
-    oss: { region: '', bucket: '', accessKeyId: '', accessKeySecret: '', stsToken: '', prefix: '' },
-  }
-}
+/** 文本场景槽位：主对话/后台任务/轻量档/光标补全共用通用文本模型。 */
+export type TextScenarioId = 'primary' | 'background' | 'lite' | 'cursorCompletion'
 
-/** 文本场景槽位：主对话/后台任务/转写摘要/轻量档/光标补全共用通用文本模型。 */
-export type TextScenarioId = 'primary' | 'background' | 'transcriptionSummary' | 'lite' | 'cursorCompletion'
-
-export const TEXT_SCENARIO_IDS: readonly TextScenarioId[] = ['primary', 'background', 'transcriptionSummary', 'lite', 'cursorCompletion']
+export const TEXT_SCENARIO_IDS: readonly TextScenarioId[] = ['primary', 'background', 'lite', 'cursorCompletion']
 
 /** 场景启用方式：跟随通用模型 / 单独配置（可只换模型，也可独立连接）/ 整段用官方。 */
 export type ScenarioMode = 'generic' | 'custom' | 'official'
@@ -69,7 +43,7 @@ export interface ScenarioAssignment {
   apiKey: string
 }
 
-/** 特殊模型（embedding/vlm）启用方式：官方 / 自定义。
+/** 特殊模型（vlm）启用方式：官方 / 自定义。
  * 自定义时连接留空 = 继承通用连接（解析层从 primary 继承）；填全 = 独立连接。 */
 export interface SpecialModelAssignment extends ManualAiConfigFields {
   mode: 'official' | 'custom'
@@ -79,10 +53,7 @@ export interface RuntimeConfigFormState {
   /** 通用文本模型四要素；场景启用（跟随通用/单独配置）时必须填全。 */
   generic: ManualAiConfigFields
   scenarios: Record<TextScenarioId, ScenarioAssignment>
-  embedding: SpecialModelAssignment
   vlm: SpecialModelAssignment
-  asr: ManualAsrFields
-  asrCustom: boolean
   webSearch: ManualAiConfigFields
   webSearchCustom: boolean
   /** 本次保存是否顺带删除本地已存搜索密钥。 */
@@ -90,9 +61,7 @@ export interface RuntimeConfigFormState {
   /** 各段已存密钥（掩码播种为空后，重存不必重输；空串提交保留库中原值）。 */
   keyConfigured: {
     generic: boolean
-    embedding: boolean
     vlm: boolean
-    asr: boolean
     /** 单独配置了独立连接的场景。 */
     scenarios: Partial<Record<TextScenarioId, boolean>>
   }
@@ -122,11 +91,6 @@ function aiFieldsOf(value: Record<string, unknown>, providerFallback = 'openai-c
 
 /** AI 段是否完全未填（provider 预置值不算填写）。 */
 export function isAiFieldsEmpty(fields: ManualAiConfigFields): boolean {
-  return !fields.model.trim() && !fields.baseUrl.trim() && !fields.apiKey.trim()
-}
-
-/** ASR 标量是否完全未填。 */
-export function isAsrScalarEmpty(fields: ManualAsrFields): boolean {
   return !fields.model.trim() && !fields.baseUrl.trim() && !fields.apiKey.trim()
 }
 
@@ -182,25 +146,7 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
     if (rawApiKey.trim()) scenarioKeys[id] = true
   }
 
-  const knowledge = userConfig ? sectionOf(userConfig, 'knowledge') : {}
-  const embeddingFields = aiFieldsOf(sectionOf(knowledge, 'embedding'))
   const vlmFields = aiFieldsOf(userConfig ? sectionOf(userConfig, 'vlm') : {})
-  const asrSlot = userConfig ? sectionOf(userConfig, 'asr') : {}
-  const oss = sectionOf(asrSlot, 'oss')
-  const asr: ManualAsrFields = {
-    provider: textOf(asrSlot, 'provider', 'aliyun'),
-    model: textOf(asrSlot, 'model'),
-    baseUrl: textOf(asrSlot, 'baseUrl'),
-    apiKey: '',
-    oss: {
-      region: textOf(oss, 'region'),
-      bucket: textOf(oss, 'bucket'),
-      accessKeyId: textOf(oss, 'accessKeyId'),
-      accessKeySecret: textOf(oss, 'accessKeySecret'),
-      stsToken: textOf(oss, 'stsToken'),
-      prefix: textOf(oss, 'prefix'),
-    },
-  }
   const webSearch = aiFieldsOf(userConfig ? sectionOf(userConfig, 'webSearch') : {}, 'openai-compatible')
   // 脱敏快照里已配置的密钥是掩码串（"********"），空串才是未配置——
   // 非空即「库里有值」，重存时表单里留空沿用原值。
@@ -212,18 +158,13 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
   return {
     generic,
     scenarios,
-    embedding: { ...embeddingFields, mode: embeddingFields.model || embeddingFields.baseUrl ? 'custom' : 'official' },
     vlm: { ...vlmFields, mode: vlmFields.model || vlmFields.baseUrl ? 'custom' : 'official' },
-    asr,
-    asrCustom: Boolean(asr.model || asr.baseUrl || Object.values(asr.oss).some((value) => value)),
     webSearch,
     webSearchCustom: Boolean(webSearch.model || webSearch.baseUrl),
     deleteSearchKey: false,
     keyConfigured: {
       generic: userConfig ? rawKeyOf(primary) : false,
-      embedding: rawKeyOf(sectionOf(knowledge, 'embedding')),
       vlm: rawKeyOf(userConfig ? sectionOf(userConfig, 'vlm') : {}),
-      asr: rawKeyOf(userConfig ? sectionOf(userConfig, 'asr') : {}),
       scenarios: scenarioKeys,
     },
   }
@@ -244,32 +185,16 @@ export function primaryFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null
   return aiFieldsOf(userConfig ? sectionOf(userConfig, 'primary') : {})
 }
 
-/** 启动 gate 手动表单播种：读 user 源原始 knowledge.embedding。 */
-export function embeddingFieldsFromSnapshot(snapshot: RuntimeConfigSnapshot | null): ManualAiConfigFields {
-  const userConfig = (snapshot?.userConfig ?? null) as Record<string, unknown> | null
-  const knowledge = userConfig ? sectionOf(userConfig, 'knowledge') : {}
-  return aiFieldsOf(sectionOf(knowledge, 'embedding'))
-}
-
 /**
- * 启动 gate 手动入口专用：只覆盖 primary（与可选的 embedding），其余槽位
- * 原样保留——gate 只展示两个字段，不能顺手清掉用户在设置页配好的其他模型。
- * embedding 留空 = 回落官方（payload 删除该键）。
+ * 启动 gate 手动入口专用：只覆盖 primary，其余槽位原样保留——gate 只展示
+ * 通用模型字段，不能顺手清掉用户在设置页配好的其他模型。
  */
 export function buildManualEntryPayload(
   snapshot: RuntimeConfigSnapshot | null,
-  input: { primary: ManualAiConfigFields; embedding?: ManualAiConfigFields },
+  input: { primary: ManualAiConfigFields },
 ): Record<string, unknown> {
   const base = { ...((snapshot?.userConfig ?? {}) as Record<string, unknown>) }
   base.primary = trimmedAiFields(input.primary)
-  const knowledge = (base.knowledge ?? {}) as Record<string, unknown>
-  if (input.embedding && !isAiFieldsEmpty(input.embedding)) {
-    base.knowledge = { ...knowledge, embedding: trimmedAiFields(input.embedding) }
-  } else {
-    const { embedding: _embedding, ...rest } = knowledge
-    if (Object.keys(rest).length > 0) base.knowledge = rest
-    else delete base.knowledge
-  }
   return { ...base, schemaVersion: 1 }
 }
 
@@ -282,8 +207,9 @@ function specialSlotPayload(slot: SpecialModelAssignment, generic: ManualAiConfi
 
 /**
  * 表单 → user 源 payload。只写配置过的槽位，其余槽位从 payload 删除
- * （= 用官方）；不管理的键（memory、knowledge 服务字段与 knowledge.llm）
- * 原样保留。webSearch 的 apiKey 走 mutation envelope（set/keep/delete）。
+ * （= 用官方）；已删子系统的历史槽位（asr/transcriptionSummary/memory/
+ * knowledge）不在这里管理，由 gateway 读取与保存时静默剥离。
+ * webSearch 的 apiKey 走 mutation envelope（set/keep/delete）。
  */
 export function buildUserPayload(
   snapshot: RuntimeConfigSnapshot | null,
@@ -292,13 +218,7 @@ export function buildUserPayload(
   const base = { ...((snapshot?.userConfig ?? {}) as Record<string, unknown>) }
   for (const id of TEXT_SCENARIO_IDS) delete base[id]
   delete base.vlm
-  delete base.asr
   delete base.webSearch
-  if (base.knowledge && typeof base.knowledge === 'object' && !Array.isArray(base.knowledge)) {
-    const { embedding: _embedding, ...knowledge } = base.knowledge as Record<string, unknown>
-    if (Object.keys(knowledge).length > 0) base.knowledge = knowledge
-    else delete base.knowledge
-  }
 
   const genericActive = TEXT_SCENARIO_IDS.some((id) => state.scenarios[id].mode !== 'official')
   if (genericActive) {
@@ -329,32 +249,7 @@ export function buildUserPayload(
       }
     }
   }
-  if (state.embedding.mode === 'custom') {
-    const knowledge = (base.knowledge ?? {}) as Record<string, unknown>
-    base.knowledge = { ...knowledge, embedding: specialSlotPayload(state.embedding, state.generic) }
-  }
   if (state.vlm.mode === 'custom') base.vlm = specialSlotPayload(state.vlm, state.generic)
-  if (state.asrCustom) {
-    const { oss, ...scalar } = state.asr
-    base.asr = {
-      ...scalar,
-      provider: scalar.provider.trim() || 'aliyun',
-      model: scalar.model.trim(),
-      baseUrl: scalar.baseUrl.trim(),
-      apiKey: scalar.apiKey.trim(),
-      // oss 全空写空串：阿里云 provider 无 OSS 提交转写直接抛错，构造分支
-      // 在 gateway 侧要求必填项齐全才生效；oss secrets 空串经 preserveMasked
-      // 保留库中原值。
-      oss: {
-        region: oss.region.trim(),
-        bucket: oss.bucket.trim(),
-        accessKeyId: oss.accessKeyId.trim(),
-        accessKeySecret: oss.accessKeySecret.trim(),
-        stsToken: oss.stsToken.trim(),
-        prefix: oss.prefix.trim(),
-      },
-    }
-  }
   if (state.webSearchCustom) {
     base.webSearch = {
       provider: state.webSearch.provider.trim() || 'openai-compatible',
@@ -372,31 +267,8 @@ export function buildUserPayload(
 }
 
 /**
- * ASR 段校验：标量全空 OK；填了则标量必填全 + OSS 必填四项（region/
- * bucket/accessKeyId/accessKeySecret；stsToken/prefix 可选）。gateway 构造
- * 分支同样只认"标量+OSS 必填项齐全"，这里提前拦截给出可读文案。
- * hasStoredKey：已存 apiKey 时留空沿用原值。OSS 子密钥（accessKeySecret/
- * stsToken）同样空串保留原值，校验只看必填四项是否「曾填或现填」——OSS
- * 必填项以现填为准（region/bucket/accessKeyId 无掩码语义，播种即为原值）。
- */
-export function asrFieldsError(fields: ManualAsrFields, t: (key: string) => string, hasStoredKey = false): string | null {
-  if (isAsrScalarEmpty(fields)) {
-    // 标量空但 OSS 填了一半也提示（顺手填了 OSS 的人显然想配 ASR）。
-    const ossFilled = [fields.oss.region, fields.oss.bucket, fields.oss.accessKeyId, fields.oss.accessKeySecret]
-      .filter((value) => value.trim()).length
-    return ossFilled > 0 ? t('surface:configGate.embeddingIncomplete') : null
-  }
-  const scalarReady = fields.model.trim() && fields.baseUrl.trim() && (fields.apiKey.trim() || hasStoredKey)
-  if (!scalarReady) {
-    return t('surface:configGate.embeddingIncomplete')
-  }
-  const required = [fields.oss.region, fields.oss.bucket, fields.oss.accessKeyId, fields.oss.accessKeySecret]
-  return required.every((value) => value.trim()) ? null : t('surface:settings.rcAsrOssRequired')
-}
-
-/**
  * 新版表单整体验证：任一场景启用时通用模型必填全；单独配置的场景必须有
- * 模型名；特殊模型段各自 all-or-nothing。
+ * 模型名；vlm 段 all-or-nothing。
  */
 export function runtimeConfigFormError(state: RuntimeConfigFormState, t: (key: string) => string): string | null {
   const genericActive = TEXT_SCENARIO_IDS.some((id) => state.scenarios[id].mode !== 'official')
@@ -426,18 +298,12 @@ export function runtimeConfigFormError(state: RuntimeConfigFormState, t: (key: s
       ? null
       : t('surface:settings.rcScenarioConnectionIncomplete')
   }
-  const embeddingError = specialSlotError(state.embedding, state.keyConfigured.embedding)
-  if (embeddingError) return embeddingError
   const vlmError = specialSlotError(state.vlm, state.keyConfigured.vlm)
   if (vlmError) return vlmError
-  if (state.asrCustom) {
-    const error = asrFieldsError(state.asr, t, state.keyConfigured.asr)
-    if (error) return error
-  }
   return null
 }
 
-/** 连通测试失败原因 → 用户可读文案（primary/embedding/vlm 共用 taxonomy）。
+/** 连通测试失败原因 → 用户可读文案（primary/vlm 共用 taxonomy）。
  * 兜底分支（5xx/429 等未分类状态）必须带上服务端原始错误——端点应答了但
  * 报错时，用户和排障都需要知道它说了什么，不能只剩一句「未通过」。 */
 export function configTestErrorMessage(error: string | undefined, t: (key: string) => string): string {

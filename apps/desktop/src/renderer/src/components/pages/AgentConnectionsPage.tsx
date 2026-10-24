@@ -3,7 +3,7 @@ import { LoaderCircle, PlugZap, RefreshCw, Settings2 } from 'lucide-react'
 import type { AgentAccessCreateInput, AgentAccessSettingsDto, AgentConnectionDto } from '../../../../shared/agent-access'
 import { useLocale } from '@/i18n/LocaleContext'
 import { AgentConnectionCard } from './AgentConnectionCard'
-import { AgentConnectionCreateForm, type CreateFormRoomsLoader } from './AgentConnectionCreateForm'
+import { AgentConnectionCreateForm } from './AgentConnectionCreateForm'
 import { PageHeader } from './PageHeader'
 import './AgentConnectionsPage.css'
 
@@ -48,11 +48,6 @@ export function AgentConnectionsPage() {
     } finally {
       setLoading(false)
     }
-  }
-
-  const loadRooms: CreateFormRoomsLoader = async () => {
-    const response = await window.nxcore!.knowledge.listRooms()
-    return response.items.map((room) => ({ id: room.id, title: room.title }))
   }
 
   const applyPort = async (port: number | null) => {
@@ -153,7 +148,6 @@ export function AgentConnectionsPage() {
 
     {creating ? (
       <AgentConnectionCreateForm
-        loadRooms={loadRooms}
         onCancel={() => setCreating(false)}
         onCreated={onCreated}
       />
