@@ -134,18 +134,17 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
       }
     });
 
-    app.post("/v1/rooms/:roomId/documents/:documentId/check-external-update", {
+    app.post("/v1/documents/:documentId/check-external-update", {
       schema: {
         tags: ["document-import"],
         params: Type.Object({
-          roomId: Type.String(idText),
           documentId: Type.String(idText),
         }),
       },
     }, async (request, reply) => {
-      const { roomId, documentId } = request.params;
+      const { documentId } = request.params;
       try {
-        return await service.checkExternalUpdate(roomId, documentId);
+        return await service.checkExternalUpdate(documentId);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);
@@ -153,18 +152,17 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
       }
     });
 
-    app.get("/v1/rooms/:roomId/documents/:documentId/import-history", {
+    app.get("/v1/documents/:documentId/import-history", {
       schema: {
         tags: ["document-import"],
         params: Type.Object({
-          roomId: Type.String(idText),
           documentId: Type.String(idText),
         }),
       },
     }, async (request, reply) => {
-      const { roomId, documentId } = request.params;
+      const { documentId } = request.params;
       try {
-        return await service.importHistory(roomId, documentId);
+        return await service.importHistory(documentId);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);

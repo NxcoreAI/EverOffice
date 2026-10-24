@@ -206,11 +206,10 @@ export function DocumentHistoryPanel({
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   useEffect(() => {
     if (!open || !currentDocument) return
-    // 外部导入历史按 Room 归档；工作区级文稿（roomId 为 null）暂无外部导入来源。
-    const roomId = currentDocument.roomId
-    if (roomId === null) return
+    // 外部导入历史按文档归档（`/v1/documents/:documentId/import-history`）：
+    // 工作区级文稿同样可能带外部导入来源，不再按 Room 归属判断。
     let cancelled = false
-    void window.nxcore?.externalDocuments?.importHistory(roomId, currentDocument.id)
+    void window.nxcore?.externalDocuments?.importHistory(currentDocument.id)
       .then((result) => {
         if (cancelled) return
         setPendingImports(result.entries
@@ -246,10 +245,8 @@ export function DocumentHistoryPanel({
   const checkExternalUpdate = () => {
     const external = window.nxcore?.externalDocuments
     if (!external || !currentDocument || checkingUpdate) return
-    const roomId = currentDocument.roomId
-    if (roomId === null) return
     setCheckingUpdate(true)
-    void external.checkExternalUpdate(roomId, currentDocument.id)
+    void external.checkExternalUpdate(currentDocument.id)
       .then((result) => {
         showToast({
           title: result.noChange

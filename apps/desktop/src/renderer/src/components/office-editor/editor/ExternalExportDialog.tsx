@@ -117,7 +117,7 @@ export function ExternalExportDialog({
       .catch(() => setVersions([]))
     // 导入来源绑定 = 最近一次已应用的导入（primary 必有 importedVersion，候选
     // 应用后才有）。未应用的候选没有改写文档内容，不构成覆盖目标。
-    void external?.importHistory(roomId, documentId)
+    void external?.importHistory(documentId)
       .then((result) => {
         if (!result) return
         const applied = result.entries.find((entry) => entry.importedVersion !== null && entry.provider === provider) ?? null

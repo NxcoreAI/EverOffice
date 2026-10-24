@@ -639,7 +639,7 @@ exit 1
     const preview = await imports.preview('feishu', 'tokA')
     const primary = await imports.commitToRoom({ runId: preview.runId, roomId })
     bodySuffix = '\n\n结构化 diff 专用新段落。'
-    const check = await imports.checkExternalUpdate(roomId, primary.documentId)
+    const check = await imports.checkExternalUpdate(primary.documentId)
     expect(check.noChange).toBeUndefined()
     const structured = await imports.candidateStructuredDiff(check.roomImportId!)
     expect(structured.candidate.provider).toBe('feishu')
@@ -679,7 +679,7 @@ exit 1
     expect(rows).toHaveLength(1)
     expect(rows[0]!.relation).toBe('primary')
     expect(rows[0]!.importedVersion).toBe(1)
-    const history = await imports.importHistory(roomId, result.documentId)
+    const history = await imports.importHistory(result.documentId)
     expect(history.entries).toHaveLength(1)
     expect(history.entries[0]!.relation).toBe('primary')
   })
@@ -728,10 +728,10 @@ exit 1
     const before = documents.get(documentId)!
 
     // 同内容检查 → noChange；内容变化后检查 → 候选。
-    const unchanged = await imports.checkExternalUpdate(roomId, documentId)
+    const unchanged = await imports.checkExternalUpdate(documentId)
     expect(unchanged.noChange).toBe(true)
     bodySuffix = '\n\n远端更新段落。'
-    const check = await imports.checkExternalUpdate(roomId, documentId)
+    const check = await imports.checkExternalUpdate(documentId)
     expect(check.relation).toBe('candidate')
     // 目标文档未被覆盖
     expect(documents.get(documentId)!.version).toBe(before.version)
@@ -740,7 +740,7 @@ exit 1
     const candidate = documents.get(check.documentId)!
     expect(candidate.title).toContain('外部更新候选')
 
-    const history = await imports.importHistory(roomId, documentId)
+    const history = await imports.importHistory(documentId)
     expect(history.entries.some((entry) => entry.relation === 'candidate')).toBe(true)
     // 评论两侧 complete 才可比
     expect(history.commentDiff?.comparable).toBe(true)
@@ -930,7 +930,7 @@ describe('agent document export service', () => {
     const preview = await imports.preview('feishu', 'tokA')
     const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
     const commit = await imports.commitToRoom({ runId: preview.runId, roomId })
-    const history = await imports.importHistory(roomId, commit.documentId)
+    const history = await imports.importHistory(commit.documentId)
     expect(history.comments).toHaveLength(2)
     expect(history.comments[0]!.body).toBe('第一段评论')
   })

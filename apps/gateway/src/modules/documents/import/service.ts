@@ -587,9 +587,10 @@ export class DocumentImportService {
   }
 
   /**
-   * 工作区「已导入」预检（兼容旧版桌面构建的 `/v1/document-import/existing-in-room`
-   * 路由）：返回这批远端文档中已作为工作区文稿落过 primary 的 remoteDocumentId
-   * 集合。Room 维度已删，路由 body 里的 roomId 仅为兼容保留、不参与判定。
+   * 工作区「已导入」预检（`/v1/document-import/existing-in-workspace` 路由）：
+   * 返回这批远端文档中已作为工作区文稿落过的 remoteDocumentId 集合。判定只看
+   * 导入任务是否已落到工作区文稿（`document_import_runs.targetDocumentId`），
+   * 不再有任何 Room 维度入参。
    */
   importedInWorkspace(
     provider: ExternalDocumentProvider,
@@ -999,7 +1000,8 @@ export class DocumentImportService {
    * 来源去重按正文哈希：同来源上一次成功导入的文稿仍在工作区时，哈希未变则不
    * 落新版本（`noChange`，批量项记 skipped），变了则在该文稿上追加新版本——
    * 工作区文稿本身就是可编辑正本，不再产生 Room 时代的"候选文稿"中间态
-   * （候选/应用那条链路仍服务于 `/v1/rooms/...` 旧路由，走 commitToRoom）。
+   * （候选/应用那条链路仍服务于单篇导入的 `/v1/documents/:documentId/*` 路由，
+   * 走 commitToRoom）。
    * `forceNewDocument=true` 跳过去重，同来源一律新建。
    */
   async commitToWorkspace(input: CommitWorkspaceImportInput): Promise<CommitWorkspaceImportResult> {
@@ -1087,13 +1089,16 @@ export class DocumentImportService {
   }
 
   /**
-   * "检查外部更新"：对已挂接外部来源的 Room 文档重新读取远端并生成候选版本。
+   * "检查外部更新"：对已挂接外部来源的工作区文档重新读取远端并生成候选版本。
    * 与"应用此版本"（applyCandidate）是两个独立动作。
+   *
+   * 归属按文档（`/v1/documents/:documentId/check-external-update`），Room 维度已删；
+   * 新写入的关联行沿用该文档已有导入关联的 scope id，不伪造 Room。
    */
-  async checkExternalUpdate(roomId: string, documentId: string): Promise<CommitImportResult> {
+  async checkExternalUpdate(documentId: string): Promise<CommitImportResult> {
     const rows = this.db.select()
       .from(documentRoomImports)
-      .where(and(eq(documentRoomImports.roomId, roomId), eq(documentRoomImports.documentId, documentId)))
+      .where(eq(documentRoomImports.documentId, documentId))
       .orderBy(desc(documentRoomImports.createdAt))
       .all();
     if (rows.length === 0) {
@@ -1111,7 +1116,7 @@ export class DocumentImportService {
     const preview = await this.preview(source.provider, source.remoteDocumentId);
     return this.commitToRoom({
       runId: preview.runId,
-      roomId,
+      roomId: latest.roomId,
       targetDocumentId: documentId,
     });
   }
@@ -1153,7 +1158,9 @@ export class DocumentImportService {
     return { document: saved, version: saved.version };
   }
 
-  async importHistory(roomId: string, documentId: string): Promise<{
+  /** 文档的外部导入历史（按 documentId 归属；`/v1/documents/:documentId/import-history`）。
+   *  快照/候选/评论都挂在这条文档上，Room 维度已删，不再按房过滤。 */
+  async importHistory(documentId: string): Promise<{
     entries: DocumentImportHistoryEntry[];
     commentDiff: DocumentImportCommentDiffSummary | null;
     comments: ExternalDocumentCommentView[];
@@ -1168,7 +1175,7 @@ export class DocumentImportService {
       .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
       .innerJoin(documentImportSnapshots, eq(documentRoomImports.snapshotId, documentImportSnapshots.id))
       .innerJoin(documentImportSources, eq(documentImportRuns.sourceId, documentImportSources.id))
-      .where(and(eq(documentRoomImports.roomId, roomId), eq(documentRoomImports.documentId, documentId)))
+      .where(eq(documentRoomImports.documentId, documentId))
       .orderBy(desc(documentRoomImports.createdAt))
       .all();
     const entries: DocumentImportHistoryEntry[] = rows.map(({ roomImport, snapshot, source }) => ({

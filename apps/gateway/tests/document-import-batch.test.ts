@@ -650,11 +650,11 @@ describe('document-import batch routes (compat contract)', () => {
     })
     expect(bogus.statusCode).toBe(400)
 
-    // existing-in-room 兼容路由：roomId 不参与判定，返回工作区已导入集合。
+    // existing-in-workspace 预检路由：只按工作区已导入集合判定，无房间维度入参。
     const existing = await app.inject({
       method: 'POST',
-      url: '/v1/document-import/existing-in-room',
-      payload: { provider: 'feishu', roomId: 'room-whatever', remoteDocumentIds: ['tokA', 'tokC'] },
+      url: '/v1/document-import/existing-in-workspace',
+      payload: { provider: 'feishu', remoteDocumentIds: ['tokA', 'tokC'] },
     })
     expect(existing.statusCode).toBe(200)
     expect(existing.json()).toMatchObject({ provider: 'feishu', existingRemoteIds: ['tokA'] })

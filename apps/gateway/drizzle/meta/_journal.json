@@ -596,6 +596,13 @@
       "when": 1792747500000,
       "tag": "0085_drop_room_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "6",
+      "when": 1792748200000,
+      "tag": "0086_drop_room_compat_tables",
+      "breakpoints": true
     }
   ]
 }

@@ -150,7 +150,6 @@ export class SearchService {
     const indexId = `${itemType}:${refId}`;
     const row = this.sqlite.prepare("SELECT rowid FROM search_index WHERE id=?").get(indexId) as { rowid: number } | undefined;
     this.sqlite.transaction(() => {
-      this.sqlite.prepare("DELETE FROM search_index_rooms WHERE index_id=?").run(indexId);
       if (row) this.sqlite.prepare("DELETE FROM search_index_fts WHERE rowid=?").run(row.rowid);
       this.sqlite.prepare("DELETE FROM search_index WHERE id=?").run(indexId);
     })();

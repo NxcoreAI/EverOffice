@@ -1793,7 +1793,6 @@ export function TiptapDocumentEditor({
             一旦用它做挂载条件，面板会被反复卸载并把正文标记擦掉。编辑器在就常驻。 */}
         <ImportedCommentsPanel
           editor={editor}
-          roomId={backendDocument?.roomId ?? room.id}
           documentId={documentId}
           collapsed={!commentsOpen}
           onOpen={() => setCommentsOpen(true)}
