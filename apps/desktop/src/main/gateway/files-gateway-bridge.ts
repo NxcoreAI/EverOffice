@@ -222,6 +222,21 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}`)
   }
 
+  /**
+   * 按磁盘路径 + 当前内容指纹查已有「本地文件夹」条目。系统文件管理器直接打开
+   * 文件时优先复用它：内容未变就不必把整份文件重新上传（大文件尤其明显）。
+   */
+  async lookupSourcePath(
+    sourcePath: string,
+    contentHash: string,
+  ): Promise<{ fileId: string; originalName: string } | null> {
+    const query = `path=${encodeURIComponent(sourcePath)}&contentHash=${encodeURIComponent(contentHash)}`
+    const result = await this.request<{ file: { fileId: string; originalName: string } | null }>(
+      `/v1/files/lookup?${query}`,
+    )
+    return result.file
+  }
+
   /** 文件当前解析产物的 markdown（渲染器预览用；未进过链路 404）。 */
   async readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }> {
     const waitMs = Math.min(Math.max(options?.waitMs ?? 0, 0), 120_000)
@@ -744,8 +759,18 @@ export class FilesGatewayBridge {
       signal: AbortSignal.timeout(180_000),
     })
     if (!response.ok) {
-      const body = await response.json().catch(() => null) as { error?: unknown } | null
-      throw new Error(typeof body?.error === 'string' ? body.error : `文件上传失败（${response.status}）`)
+      const body = await response.json().catch(() => null) as
+        | { error?: unknown; message?: unknown }
+        | null
+      const base = typeof body?.error === 'string'
+        ? body.error
+        : `文件上传失败（${response.status}）`
+      // Fastify 的默认错误体把真实原因放在 message（error 只有 "Bad Request"）：
+      // 带上它，设置页/访达入口的报错才说得清是哪个环节拒的。
+      const detail = typeof body?.message === 'string' && body.message && body.message !== base
+        ? `${base}: ${body.message}`
+        : base
+      throw new Error(detail)
     }
     return response.json() as Promise<FileImportAcceptedDto>
   }

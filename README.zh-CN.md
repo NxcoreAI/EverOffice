@@ -89,10 +89,16 @@ Everroom 刻意收窄范围：不做自治多 Agent 集群、不做企业管理�
 | 桌面工作空间 | 已可用 | Electron + React 工作空间，包含首页、文档、数据源、文件、Office、定时任务、Agent 连接和设置 |
 | NxCore Gateway | 已可用 | 由 Electron 管理的独立 Fastify 服务，覆盖 REST / WebSocket / OpenAPI 边界、健康与就绪检查 |
 | Office 文档 | 已可用，持续完善 | Word 文档、表格与演示文稿的内置编辑器、版本化提交、可审阅的 Agent patch 和 PDF 导出 |
-| 文件与导入 | 已可用，持续完善 | 本地文件浏览、文件夹与 Obsidian 导入、Markdown / 文本与 Office / Web 内容解析、内容哈希和溯源 |
+| 文件与导入 | 已可用，持续完善 | 本地文件浏览、文件夹与 Obsidian 导入、Markdown / 文本与 Office / Web 内容解析、内容哈希与溯源，以及访达「打开方式」直接打开 Word / Excel / PPT |
 | Agent 服务 | 已可用 | 持久化会话、run 记录、流式事件、取消，以及文档与文件范围的工具 |
 | Agent 工作管理 | 已可用，持续完善 | Agent Office 状态、定时 run、dispatch-only 子 Agent、通知和手动执行 |
 | Connectors | 基础能力已可用 | 托管本地 OpenConnector、`oo` bridge、可选 Nango 集成与飞书 Issue 自动化，连接器覆盖持续扩展 |
+
+### 在访达中直接打开 Word / Excel / PPT
+
+桌面端把 EverRoom 注册为 `.docx`、`.doc`、`.xlsx`、`.xls`、`.pptx`、`.ppt` 的备选打开方式。在访达里右键文档，选择**打开方式 → EverRoom**（也可以把它设为该类文件的默认程序）。EverRoom 会把文件导入本地文件库，并用内置 Office 编辑器打开——`.docx`、`.xlsx`、`.xlsm`、`.pptx` 可直接编辑。保存会把编辑结果写回磁盘上的原文件（Word、WPS、Keynote 打开也能看到新内容），同时在文件库为该条目生成新版本。之后它也会出现在「文件」页里。
+
+> 开发态首次 `pnpm dev` 会重建带品牌信息的 Electron 应用并注册文档类型。若访达的「打开方式」里仍没有 EverRoom，再重启一次开发应用，让 LaunchServices 重新扫描。
 
 ## 快速开始
 

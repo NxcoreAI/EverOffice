@@ -4,6 +4,7 @@ import { app, ipcMain } from 'electron'
 import type { BrowserWindow, Rectangle, WebContentsView } from 'electron'
 import type { GenOfficeSlidesRuntime } from './office-runtime'
 import { convertLegacyOfficeFile } from './legacy-convert'
+import { ensureWorkingCopyWritable } from './working-copy'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
 
 async function preparePresentation(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
@@ -24,6 +25,8 @@ async function preparePresentation(fileId: string, hash: string, name: string, s
     if (legacyTarget) await convertLegacyOfficeFile(source, name, dir, legacyTarget)
     else copyFileSync(source, target)
   }
+  // 既有缓存也要修：老版本从只读原文件复制出来的工作副本一直是只读的。
+  ensureWorkingCopyWritable(target)
   return target
 }
 

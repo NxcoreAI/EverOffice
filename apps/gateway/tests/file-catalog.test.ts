@@ -37,6 +37,32 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe("unified file catalog", () => {
+  it("reuses a local-folder entry when the disk path and content still match", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# lookup", "utf8");
+    const sourcePath = join(test.dataDir, "lookup.md");
+    await writeFile(sourcePath, buffer);
+    const hash = createHash("sha256").update(buffer).digest("hex");
+    const imported = await test.service.importLocalFileReference({
+      sourceKind: "local-folder",
+      sourceKey: "local:source:lookup",
+      originalName: "lookup.md",
+      sourcePath,
+      contentHash: hash,
+      byteSize: buffer.byteLength,
+      localSourceId: "source",
+      localItemId: "lookup",
+    });
+
+    expect(test.service.findBySourcePath(sourcePath, hash)).toEqual({
+      fileEntryId: imported.fileEntryId,
+      originalName: "lookup.md",
+    });
+    // 磁盘内容变了就不要再复用旧条目：交给正常导入走版本链。
+    expect(test.service.findBySourcePath(sourcePath, "0".repeat(64))).toBeNull();
+    expect(test.service.findBySourcePath(join(test.dataDir, "other.md"), hash)).toBeNull();
+  });
+
   it("references local files without retaining an internal original mirror", async () => {
     const test = await catalogForTest();
     const buffer = Buffer.from("# shared", "utf8");

@@ -16,6 +16,7 @@ import {
   type PreparedGenOfficeRuntime,
 } from './office-runtime'
 import { OfficeViewManager, prepareOfficeDocument } from './office-view-manager'
+import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
@@ -36,6 +37,11 @@ export interface OfficePreviewFile {
   editable?: boolean
   /** 版本链回填的 Room 投影归属（不传则按导入落点默认决策）。 */
   roomId?: string | null
+  /**
+   * 从系统文件管理器直接打开的磁盘路径：保存后除回填版本链外，还把工作副本
+   * 写回这份原文件，保证 Word/WPS 等外部程序能看到编辑结果。
+   */
+  writeBackPath?: string
 }
 
 /** The lifecycle surface the three view managers expose to the registry. */
@@ -85,6 +91,8 @@ interface EditSyncState {
   /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets → docx/pptx/xlsx）。 */
   kind: 'docx' | 'slides' | 'spreadsheet'
   roomId: string | null
+  /** 访达直接打开时的原文件路径：保存后写回它（库内版本照常 +1）。 */
+  writeBackPath: string | null
   pending: boolean
   timer: NodeJS.Timeout | null
   runner: Promise<void> | null
@@ -202,6 +210,9 @@ export class OfficePreviewRegistry {
     const runtime = this.ensureRuntime(window)
     const editable = file.editable === true && kind !== 'pdf'
     const roomId = typeof file.roomId === 'string' && file.roomId ? file.roomId : null
+    const writeBackPath = editable && typeof file.writeBackPath === 'string' && file.writeBackPath
+      ? file.writeBackPath
+      : null
 
     const existing = this.instances.get(file.id)
     if (existing && existing.descriptor.contentHash === file.contentHash && existing.editable === editable) {
@@ -235,6 +246,7 @@ export class OfficePreviewRegistry {
         originalName: file.originalName,
         kind,
         roomId,
+        writeBackPath,
         pending: false,
         timer: null,
         runner: null,
@@ -490,6 +502,24 @@ export class OfficePreviewRegistry {
       } catch (finalError) {
         fail(finalError)
         return
+      }
+    }
+    // 访达直接打开的文件：库内版本已回填，再把工作副本写回磁盘原文件，
+    // 否则外部程序（Word/WPS/Keynote）看到的还是编辑前的内容。
+    if (state.writeBackPath) {
+      try {
+        await writeBackEditedDocument(state.filePath, state.writeBackPath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error('[office] write-back failed', fileId, state.writeBackPath, message)
+        bindings.broadcast({
+          type: 'write-back-failed',
+          format,
+          title: state.originalName,
+          fileId,
+          roomId: state.roomId,
+          message,
+        })
       }
     }
     bindings.broadcast({

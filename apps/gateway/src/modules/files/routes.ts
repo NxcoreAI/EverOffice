@@ -137,6 +137,32 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
       async () => ({ items: [...service.capabilities()] }),
     );
 
+    // 系统文件管理器直接打开：按磁盘路径 + 内容指纹复用已入库的「本地文件夹」条目。
+    app.get(
+      "/v1/files/lookup",
+      {
+        schema: {
+          tags: ["files"],
+          querystring: Type.Object({
+            path: Type.String({ minLength: 1, maxLength: 4096 }),
+            contentHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+          }),
+          response: {
+            200: Type.Object({
+              file: Type.Union([
+                Type.Object({ fileId: Type.String(), originalName: Type.String() }),
+                Type.Null(),
+              ]),
+            }),
+          },
+        },
+      },
+      async (request) => {
+        const hit = service.findBySourcePath(request.query.path, request.query.contentHash);
+        return { file: hit ? { fileId: hit.fileEntryId, originalName: hit.originalName } : null };
+      },
+    );
+
     app.patch(
       "/v1/file-entries/:id",
       {

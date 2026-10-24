@@ -22,7 +22,9 @@ interface OfficeViewportBounds {
 
 const OCCLUSION_HIDE_THRESHOLD = 3
 const SCAN_QUIET_MS = 150
-const CORNER_INSET = 4
+/** 周期复扫：布局动画（面板展开/收起）不产生 DOM 变更，只靠事件会在错误状态里卡死。 */
+const SCAN_INTERVAL_MS = 700
+const CORNER_INSET = 12
 const ZERO_BOUNDS: OfficeViewportBounds = { x: 0, y: 0, width: 0, height: 0 }
 
 function sendBounds(bounds: OfficeViewportBounds): void {
@@ -111,14 +113,17 @@ export function attachOfficeViewport(host: HTMLElement): OfficeViewportAttachmen
   window.addEventListener('pointerdown', scheduleScan, true)
   window.addEventListener('focusin', scheduleScan, true)
 
+  // 先立即上报一次：窗口在后台/被遮挡时 rAF 会被节流，等下一帧才上报会让
+  // 内嵌视图一直不显示（访达双击打开时的典型现场）。
+  report()
   const nextFrame = (callback: () => void): void => {
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(callback)
     else callback()
   }
-  nextFrame(() => nextFrame(() => {
-    scan()
-    report()
-  }))
+  nextFrame(() => nextFrame(report))
+  // 周期复扫兜底：遮挡判定是「采样点 + 棘轮状态」，面板展开动画/弹层关闭
+  // 不一定触发 DOM 变更，只靠事件会让视图永久停在隐藏态。
+  const scanInterval = window.setInterval(scan, SCAN_INTERVAL_MS)
 
   return {
     detach(): void {
@@ -128,6 +133,7 @@ export function attachOfficeViewport(host: HTMLElement): OfficeViewportAttachmen
         window.clearTimeout(scanTimer)
         scanTimer = null
       }
+      window.clearInterval(scanInterval)
       observer?.disconnect()
       mutationObserver?.disconnect()
       window.removeEventListener('resize', report)

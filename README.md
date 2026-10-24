@@ -89,10 +89,16 @@ The main branch now contains the Office + Agent surface. Some features require o
 | Desktop workspace | Available | Electron + React workspace with Home, Documents, Sources, Files, Office, Schedules, Agent connections, and Settings |
 | Local Gateway | Available | Fastify 5 service supervised by Electron, REST/WebSocket/OpenAPI boundary, health and readiness checks |
 | Office documents | Available, evolving | Word documents, spreadsheets, and slide decks with a built-in editor, versioned commits, reviewable Agent patches, and PDF export |
-| Files and import | Available, evolving | Local file browser, folder and Obsidian import, Markdown/text and Office/web normalization, content hashes, and provenance |
+| Files and import | Available, evolving | Local file browser, folder and Obsidian import, Markdown/text and Office/web normalization, content hashes, provenance, and Finder "Open With" for Word/Excel/PowerPoint files |
 | Agent sessions | Available | Persistent sessions, runs, streaming events, cancellation, and scoped document and file tools |
 | Agent work management | Available, evolving | Agent Office presence, scheduled runs, dispatch-only subagents, notifications, and explicit run-now controls |
 | Connectors | Foundation available | Managed local OpenConnector + `oo` bridge, optional Nango integrations, and Feishu issue automation; provider coverage is still expanding |
+
+### Open Word, Excel, and PowerPoint files from Finder
+
+The desktop build registers EverRoom as an alternate handler for `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, and `.ppt`. Right-click a document in Finder and pick **Open With → EverRoom** (or make it the default opener for that type). EverRoom imports the file into the local library and opens it in the embedded Office editor — `.docx`, `.xlsx`, `.xlsm`, and `.pptx` are editable. Saving writes the edited bytes back to the original file on disk (so Word, WPS, or Keynote see the change too) and records a new version of that library entry. The file also shows up in the Files page from then on.
+
+> Dev builds register themselves the first time `pnpm dev` starts the branded Electron app. If Finder still does not list EverRoom, restart the dev app once more so LaunchServices picks up the updated bundle.
 
 ## Quick start
 

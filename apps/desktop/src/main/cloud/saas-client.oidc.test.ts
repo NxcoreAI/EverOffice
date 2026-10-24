@@ -93,7 +93,7 @@ describe('SaasClient OIDC 登录（direct_sign_in / 回环探测 / 取消）', (
     expect(http.get).toHaveBeenCalledTimes(1)
   })
 
-  it('探测网络失败（代理/VPN 断连）只影响当次：本轮回落 everroom://，下次重新探测', async () => {
+  it('探测网络失败（代理/VPN 断连）不降级回自定义协议：本轮用回环，下次重新探测', async () => {
     let failProbe = true
     http.get.mockImplementation(async () => {
       if (failProbe) throw new Error('fetch failed')
@@ -101,11 +101,14 @@ describe('SaasClient OIDC 登录（direct_sign_in / 回环探测 / 取消）', (
     })
 
     const client = createClient(async (url) => { openedUrls.push(url) })
+    // 只验证 redirect_uri 选择，不真正占用回环端口（与 loopback 套件并行时避免端口互斥）。
+    vi.spyOn(client as unknown as { listenOidcLoopback: () => Promise<void> }, 'listenOidcLoopback')
+      .mockResolvedValue(undefined)
 
-    // 第一次：网络故障 → everroom://（不缓存）
+    // 第一次：网络故障无法证明回环未注册 → 仍用回环（自定义协议会被浏览器拦截）
     const first = startOidcLogin(client, 'apple')
     await vi.waitFor(() => expect(openedUrls).toHaveLength(1))
-    expect(new URL(openedUrls[0]).searchParams.get('redirect_uri')).toBe('everroom://auth/callback')
+    expect(new URL(openedUrls[0]).searchParams.get('redirect_uri')).toBe(LOOPBACK_URI)
     client.cancelOidcLogin()
     await first.settle()
 

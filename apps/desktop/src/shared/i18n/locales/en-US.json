@@ -48,5 +48,10 @@
   "error.transcript.invalidSource": "The export request source could not be verified.",
   "error.transcript.invalidRequest": "The transcript export request is invalid.",
   "error.memory.fileTooLarge": "The file exceeds the 2 MB import limit ({size} MB).",
-  "dialog.importFiles.images": "Images"
+  "dialog.importFiles.images": "Images",
+  "dialog.openDocument.title": "Unable to open the document",
+  "dialog.openDocument.message": "“{name}” could not be imported into EverRoom.",
+  "dialog.openDocument.serviceUnavailable": "The local file service is not ready yet. Try again shortly.",
+  "dialog.openDocument.unsupportedFormat": "This file type cannot be opened in EverRoom yet.",
+  "dialog.openDocument.unknownError": "Unknown error. Try again."
 }

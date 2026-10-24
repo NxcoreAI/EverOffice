@@ -12,6 +12,8 @@ import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition
 import type { PageId } from '@/data/navigation'
 import { formatBytes, formatDate } from './sources/sourceFormatters'
 import { useLocale } from '@/i18n/LocaleContext'
+import { showToast } from '@/state/toast'
+import { isEditableOfficeDocument } from '@/lib/officeEditing'
 
 const CATALOG_PAGE_SIZE = 200
 const FILES_REFRESH_INTERVAL_MS = 2_000
@@ -415,10 +417,22 @@ export function FilesPage({
     }
     void runFileAction(file.id, async () => {
       try {
-        const result = await filesApi.openOriginal(file.id, file.originalName, file.contentHash)
+        const editable = isEditableOfficeDocument(file.originalName)
+        const result = await filesApi.openOriginal(
+          file.id,
+          file.originalName,
+          file.contentHash,
+          editable ? { editable: true } : undefined,
+        )
         if (result.openedWith === 'office') {
           // 顶栏预览标签（可多开）：不切页，由 App 聚焦到新建/复用的标签。
           onOpenOfficePreview({ id: result.instanceId, title: file.originalName, kind: result.kind })
+        } else if (result.openedWith === 'external' && result.legacyFallback) {
+          // 旧版格式转换失败已回退系统应用：明确告知原因，不要静默切走。
+          showToast({
+            title: t('surface:files.legacyPreviewFallbackTitle'),
+            message: t('surface:files.legacyPreviewFallbackMessage'),
+          })
         }
       } catch (error) {
         setMessage(error instanceof Error ? error.message : t('surface:files.unableToOpenOriginal'))
