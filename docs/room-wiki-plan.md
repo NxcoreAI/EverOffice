@@ -1,5 +1,7 @@
 # Room × Wiki：Room 级知识空间与自动归类 — 实施方案
 
+> **已废弃（Phase 2/3 已移除）**：Room × Wiki 知识空间与自动归类已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：M0/M1/M2 已实现（2026-08-16，含路由瀑布 ①-⑤、待归类队列与 create_new 自动建 Room）；M3a/M3b 已实现（2026-08-16，渲染器 Room 上报与 auto Room 同步/认领、Room 知识库 Tab、md 文件上传自动归类、待归类确认/撤销 UI）；资料模型修订已实现（2026-08-16，§3.3：uploaded_files/parsed_contents + 对象库 + 确定性身份 + 四道判重闸门，WikiPane 来源文件分区）；M3c（预检索注入、auto Room 合并与手动规则编辑）未实现
 > 日期：2026-08-16
 > 范围：`apps/desktop`、`apps/gateway`、`packages/agent-runtime-pi`；依赖 TencentDB-Agent-Memory 的 **MemoryKnowledge**（下称 KS，Knowledge Service，本地 8421，已由 `KnowledgeServiceSupervisor` 托管）

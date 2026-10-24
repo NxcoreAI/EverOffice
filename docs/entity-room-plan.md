@@ -1,5 +1,7 @@
 # 实体先行的 Room 晋升制 — Room × Wiki 路由层重构方案（v2 草案）
 
+> **已废弃（Phase 2/3 已移除）**：实体先行的 Room 晋升制与 Room × Wiki 路由层已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：**已实现**（E1/E2 落地；2026-08 修订：推荐确认制 + 沉淀多对多）
 > 日期：2026-08-17
 > 范围：`apps/gateway/src/modules/knowledge/`（主体重构）、`apps/gateway/src/infrastructure/database/`、渲染器资料归类面板

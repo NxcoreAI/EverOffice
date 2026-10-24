@@ -1,5 +1,7 @@
 # 飞书 / Notion 导入导出 · 实施落地说明
 
+> **已废弃（Phase 2/3 已移除）**：导入链路中的 AI 自动归类（AI 归房）与 Room 目标选择已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 实施日期：2026-09-03　方案：[feishu-notion-document-export-plan.md](../feishu-notion-document-export-plan.md)
 > 本文记录按方案 M0–M2 落地的代码范围、关键实现决策与遗留事项。M3（真实账号回归）尚未执行。
 

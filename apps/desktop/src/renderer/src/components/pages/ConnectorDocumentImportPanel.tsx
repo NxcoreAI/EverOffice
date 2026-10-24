@@ -678,11 +678,11 @@ export function ConnectorDocumentImportPanel({
                 type="button"
                 className="primary-button"
                 disabled={selected.size === 0 || autoDisabled || batchStarting}
-                title={autoDisabled ? t('surface:connectorSync.autoClassifyUnavailable') : undefined}
+                title={autoDisabled ? t('surface:connectorSync.importToWorkspaceUnavailable') : t('surface:connectorSync.importToWorkspaceTooltip')}
                 onClick={() => void startBatch()}
               >
                 {batchStarting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Bot aria-hidden="true" />}
-                {t('surface:connectorSync.aiAutoClassify')}
+                {t('surface:connectorSync.importToWorkspace')}
               </button>
             )}
           </div>

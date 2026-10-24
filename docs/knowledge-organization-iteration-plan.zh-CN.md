@@ -1,5 +1,7 @@
 # 知识整理 / Context Room 合并机制优化 —— 迭代规划
 
+> **已废弃（Phase 2/3 已移除）**：知识整理 / Context Room 合并机制已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：**方案评审稿 v1（2026-09-02，待评审）**
 > 关联文档：`entity-room-plan.md`、`unified-ingest-plan.md`、`ingest-filter-agent-plan.md`、`writing-style-profile-plan.zh-CN.md`、`agent-document-development-sop.md`
 > 代码基线：feat/contextroom @ `2392c4b`（新建式合并唯一路径 + merge-name 命名推荐已合入）

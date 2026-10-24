@@ -15,7 +15,6 @@ import type {
   HighRiskImportResolution,
   IngestPipelines,
 } from '../../shared/ingest'
-import type { BrowserExtensionClipperCapture } from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
 import { isArtifactImportFileName } from '../../shared/sources'
@@ -692,22 +691,6 @@ export class FilesGatewayBridge {
     sourceModifiedAt: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({ ...input, sourceKind: 'connector' })
-  }
-
-  getClipCapture(fileEntryId: string): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/files/${encodeURIComponent(fileEntryId)}`)
-  }
-
-  async readClipAsset(assetId: string): Promise<{ buffer: Buffer; mime: string }> {
-    const connection = this.supervisor.getConnection()
-    const response = await fetch(`${connection.baseUrl}/v1/clipper/assets/${encodeURIComponent(assetId)}/content`, {
-      headers: { Authorization: `Bearer ${connection.token}` },
-    })
-    if (!response.ok) throw new Error(`网页剪藏图片读取失败（${response.status}）`)
-    return {
-      buffer: Buffer.from(await response.arrayBuffer()),
-      mime: response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream',
-    }
   }
 
   private async importPath(input: {

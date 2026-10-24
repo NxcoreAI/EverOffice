@@ -31,10 +31,10 @@ describe('renderer i18n', () => {
   })
 
   it('translates semantic namespace keys and interpolates dynamic values', () => {
-    expect(translate('en-US', 'diaryReality:recording.desktopPerceptionTitle', { time: '09:30' })).toBe('Desktop perception · 09:30')
-    expect(translate('zh-CN', 'diaryReality:recording.desktopPerceptionTitle', { time: '09:30' })).toBe('桌面感知 · 09:30')
-    expect(translate('en-US', 'memory:memoryOverview.generated')).toBe('Generated')
-    expect(translate('en-US', 'diaryReality:perception.screenActivity')).toBe('Screen activity')
+    expect(translate('en-US', 'contextRoom:display.fromDocument', { title: '交付方案' })).toBe('From “交付方案”')
+    expect(translate('zh-CN', 'contextRoom:display.fromDocument', { title: '交付方案' })).toBe('来自《交付方案》')
+    expect(translate('en-US', 'surface:connectorSync.importToWorkspace')).toBe('Import to workspace')
+    expect(translate('zh-CN', 'surface:connectorSync.importToWorkspace')).toBe('导入到工作区')
     expect(i18n.getFixedT('en-US')('contextRoom:documentOperationReview.documentChange', { sequence: 2 })).toBe('Document change 2')
   })
 
@@ -70,7 +70,7 @@ describe('renderer i18n', () => {
   it('keeps locale namespace keys in parity without a legacy runtime dictionary', () => {
     expect(i18nResources['zh-CN'].common).toEqual({})
     expect(i18nResources['en-US'].common).toEqual({})
-    for (const namespace of ['contextRoom', 'diaryReality', 'memory', 'surface'] as const) {
+    for (const namespace of ['contextRoom', 'surface'] as const) {
       expect(Object.keys(i18nResources['en-US'][namespace]).sort()).toEqual(
         Object.keys(i18nResources['zh-CN'][namespace]).sort(),
       )
@@ -78,11 +78,20 @@ describe('renderer i18n', () => {
     }
   })
 
+  it('keeps zh-CN and en-US identical in namespace and key sets', () => {
+    expect(Object.keys(i18nResources['en-US']).sort()).toEqual(Object.keys(i18nResources['zh-CN']).sort())
+    for (const namespace of ['contextRoom', 'surface'] as const) {
+      expect(Object.keys(i18nResources['en-US'][namespace]).sort()).toEqual(
+        Object.keys(i18nResources['zh-CN'][namespace]).sort(),
+      )
+    }
+  })
+
   it('does not define duplicate locale keys', () => {
     const localeRoot = fileURLToPath(new URL('../src/renderer/src/i18n/locales', import.meta.url))
     const duplicates: string[] = []
     for (const locale of ['zh-CN', 'en-US']) {
-      for (const namespace of ['contextRoom', 'diaryReality', 'memory', 'surface']) {
+      for (const namespace of ['contextRoom', 'surface']) {
         const source = readFileSync(`${localeRoot}/${locale}/${namespace}.json`, 'utf8')
         const keys = [...source.matchAll(/^\s*"([^"]+)":/gm)].map((match) => match[1])
         for (const key of new Set(keys)) {
@@ -102,13 +111,16 @@ describe('renderer i18n', () => {
 
   it('defines every statically referenced semantic key in both locales', () => {
     const sourceRoot = fileURLToPath(new URL('../src/renderer/src', import.meta.url))
-    const keyPattern = /(['"`])((contextRoom|diaryReality|memory|surface):([A-Za-z0-9_.-]+))\1/g
+    const keyPattern = /(['"`])((contextRoom|surface):([A-Za-z0-9_.-]+))\1/g
     const references = sourceFiles(sourceRoot).flatMap((path) => {
       const source = readFileSync(path, 'utf8')
-      return [...source.matchAll(keyPattern)].map((match) => ({ path, namespace: match[3], key: match[4] }))
+      return [...source.matchAll(keyPattern)]
+        .map((match) => ({ path, namespace: match[3]!, key: match[4]! }))
+        // 前缀常量（如 `surface:agentChat.`）以 . 结尾，不是完整的语义键。
+        .filter(({ key }) => !key.endsWith('.'))
     })
     const missing = references.flatMap(({ path, namespace, key }) => {
-      const localizedNamespace = namespace as 'contextRoom' | 'diaryReality' | 'memory' | 'surface'
+      const localizedNamespace = namespace as 'contextRoom' | 'surface'
       return (['zh-CN', 'en-US'] as const).flatMap((locale) => (
         Object.prototype.hasOwnProperty.call(i18nResources[locale][localizedNamespace], key)
           ? []

@@ -1,5 +1,7 @@
 # 统一理解引擎：Room / Wiki / 记忆三链路归一接入 — 实施方案（v1 草案）
 
+> **已废弃（Phase 2/3 已移除）**：统一理解引擎（Room / Wiki / 记忆三链路归一）已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：**草案，待拍板**（未写任何实现代码）
 > 日期：2026-08-18
 > 范围：`apps/gateway`（新增 `modules/ingest` 理解引擎模块，主体）、`apps/desktop`（统一导入入口）、既有 `modules/knowledge` / `modules/memory` 少量重构
