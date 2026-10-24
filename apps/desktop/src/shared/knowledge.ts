@@ -137,7 +137,7 @@ export interface KnowledgeWikiPageDto {
   description?: string
 }
 
-/** Room wiki 页面清单 + 状态（GET /v1/knowledge/rooms/:id/wiki/pages）。 */
+/** Wiki 页面清单 + 状态（网关接口已随知识库模块下线，此处仅保留类型形状）。 */
 export interface KnowledgeWikiPagesResultDto {
   status: string
   items: KnowledgeWikiPageDto[]
@@ -151,7 +151,7 @@ export interface KnowledgeWikiPagesResultDto {
   totalSources?: number | null
 }
 
-/** Room ↔ wiki 映射行（GET /v1/knowledge/wikis）。 */
+/** Room ↔ wiki 映射行（网关接口已下线，此处仅保留类型形状）。 */
 export interface KnowledgeWikiDto {
   roomId: string
   knowledgeId: string
@@ -405,7 +405,7 @@ export interface KnowledgeRoomProposalDto {
   sourceCount: number | null
 }
 
-/* ============ 思路 · 知识涌现（POST /v1/knowledge/rooms/:roomId/emergence） ============ */
+/* ============ 思路 · 知识涌现（网关接口已下线，此处仅保留类型形状） ============ */
 
 export type EmergenceMode = 'focus' | 'wander'
 
@@ -530,7 +530,7 @@ export interface EmergenceProjectionResultDto {
   generatedAt: string
 }
 
-/* ============ 写作路线导图（GET/POST /v1/knowledge/rooms/:roomId/route-mindmap） ============ */
+/* ============ 写作路线导图（网关接口已下线，此处仅保留类型形状） ============ */
 
 export type RouteMindmapStatus = 'missing' | 'expanding' | 'active' | 'failed' | 'finalized'
 
