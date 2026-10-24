@@ -1,7 +1,3 @@
-import type { MemoryOverviewDto } from '../../../../shared/memory'
-
-import { memoryOverviewIsEmpty } from './memoryOnboardingState'
-
 export const FULL_ONBOARDING_STORAGE_KEY = 'everroom:onboarding:full:v1'
 
 export function readFullOnboardingCompleted(
@@ -24,22 +20,13 @@ export function writeFullOnboardingCompleted(
   }
 }
 
-export function hasExistingOnboardingData(input: {
-  memoryOverview?: Pick<MemoryOverviewDto, 'l0' | 'l1'> | null
-  roomCount?: number
-  deletedRoomCount?: number
-  sourceCount?: number
-}): boolean {
-  return Boolean(
-    (input.memoryOverview && !memoryOverviewIsEmpty(input.memoryOverview))
-      || (input.roomCount ?? 0) > 0
-      || (input.deletedRoomCount ?? 0) > 0
-      || (input.sourceCount ?? 0) > 0,
-  )
+/** 首启探测是否有「已有数据」：现存数据源即可判定用户不是首次使用。 */
+export function hasExistingOnboardingData(input: { sourceCount?: number }): boolean {
+  return (input.sourceCount ?? 0) > 0
 }
 
-/** 首启探测在保存 runtime config 后会撞上 MemoryCore 为加载 AI 环境重启的
- *  数秒窗口；与 MemoryOnboardingGate 的 overview 重试同一策略，短暂失败先重试。 */
+/** 首启探测在保存 runtime config 后会撞上网关为加载 AI 环境重启的数秒窗口，
+ *  短暂失败先重试。 */
 export const ONBOARDING_PROBE_RETRY_ATTEMPTS = 3
 
 export function onboardingProbeRetryDelayMs(attempt: number): number {
@@ -54,7 +41,7 @@ export type OnboardingProbeAction =
   | 'advance'
 
 /** 首启数据探测的下一步决策。核心契约：
- *  - 短暂失败先重试（保存 runtime config 会触发 MemoryCore 重启数秒）；
+ *  - 短暂失败先重试（保存 runtime config 会触发网关重启数秒）；
  *  - 重试用尽返回 'stand-down'：停止探测但既不推进也不持久化完成，
  *    首次用户绝不能被留在「引导 stage 已推进但面板未打开」的空壳里，
  *    也不该因一次慢启动被永久跳过引导——后续检查仍可推进。 */

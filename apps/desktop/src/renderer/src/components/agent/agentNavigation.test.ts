@@ -17,10 +17,10 @@ const link: AgentSessionLink = {
   sourcePageLabel: '文档',
   sourceRoomId: null,
   target: {
-    pageId: 'rooms',
+    pageId: 'docs',
     title: 'Release notes',
     action: 'created',
-    roomId: 'room-1',
+    roomId: null,
     objectId: 'document-1',
     objectType: 'document',
   },
@@ -33,16 +33,16 @@ describe('agent navigation target', () => {
     expect(parseAgentNavigationTarget({
       details: {
         navigation: {
-          pageId: 'rooms',
+          pageId: 'docs',
           title: 'Release notes',
           action: 'created',
-          roomId: 'room-1',
           objectId: 'document-1',
           objectType: 'document',
         },
       },
-    })).toMatchObject({ pageId: 'rooms', roomId: 'room-1', objectId: 'document-1' })
+    })).toMatchObject({ pageId: 'docs', objectId: 'document-1' })
 
+    // Room 已随本次清理移除：指向 Room 的导航目标一律丢弃。
     expect(parseAgentNavigationTarget({
       details: {
         navigation: {
@@ -54,14 +54,9 @@ describe('agent navigation target', () => {
           objectType: 'room',
         },
       },
-    })).toMatchObject({
-      pageId: 'rooms',
-      title: 'Campus Life',
-      roomId: 'room-campus-life',
-      objectType: 'room',
-    })
-
-    expect(parseAgentNavigationTarget({ details: { navigation: { pageId: 'rooms', title: 'Missing room', action: 'created' } } })).toBeNull()
+    })).toBeNull()
+    // 文稿导航必须带 objectId，否则落不了位置。
+    expect(parseAgentNavigationTarget({ details: { navigation: { pageId: 'docs', title: 'Missing document', action: 'created', objectType: 'document' } } })).toBeNull()
     expect(parseAgentNavigationTarget({ details: { navigation: { pageId: 'settings', title: 'Unsupported', action: 'opened' } } })).toBeNull()
     expect(parseAgentNavigationTarget({ content: 'created room-1' })).toBeNull()
   })
@@ -78,8 +73,8 @@ describe('agent navigation target', () => {
       documentId: null,
     })
     expect(resolveAgentSessionLinkRoute(link, 'target')).toMatchObject({
-      pageId: 'rooms',
-      roomId: 'room-1',
+      pageId: 'docs',
+      roomId: null,
       sessionId: 'target-session',
       documentId: 'document-1',
     })

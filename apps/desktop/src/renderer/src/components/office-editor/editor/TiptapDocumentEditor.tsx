@@ -23,7 +23,7 @@ import { GitCompare, ListTree, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { stripDocumentTitle } from '@nxcore/document-model'
 
-import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
+import { useWorkspaceDocuments } from '@/components/documents/WorkspaceDocumentsProvider'
 import { cursorAnchorCandidateFromEditorState } from '@/components/agent/activeDocumentContext'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
@@ -376,7 +376,7 @@ export function TiptapDocumentEditor({
   const [cursorCompletionParagraphEnabled, setCursorCompletionParagraphEnabled] = useState(
     () => loadDocumentCursorCompletionSettings().paragraphEnabled,
   )
-  const roomDocuments = useRoomDocumentsState()
+  const { documents: workspaceDocuments } = useWorkspaceDocuments()
   const { activateDocument } = useActiveDocument()
   const { appliedDocumentsById, setOperationPresentationPending } = useDocumentOperations()
   const documentOperations = useDocumentEditorOperations(documentId)
@@ -1837,9 +1837,9 @@ export function TiptapDocumentEditor({
       />
       {editor && referencePickerOpen && !editorLocked ? (
         <DocumentBlockReferencePicker
-          roomId={room.id}
+          roomId={null}
           currentDocumentId={documentId}
-          documents={roomDocuments.documentsByRoom[room.id] ?? []}
+          documents={workspaceDocuments}
           listBlocks={listDocumentBlocks}
           onClose={() => setReferencePickerOpen(false)}
           onSelect={(reference) => {

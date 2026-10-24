@@ -1,16 +1,12 @@
 import * as Sentry from '@sentry/electron/renderer'
 import React from 'react'
 
-import { clearContextRoomLocalState } from '@/components/context-room/ported/contextRoomLocalState'
-
 /**
- * 全局渲染错误兜底（针对"合并后 Room 白屏"这类整页崩溃）：
- * 数据闸（gateway 快照过滤 + isContextRoomRecord 校验）挡住了已知来源，
- * 但任何残余的渲染异常此前仍以白屏收场。本 Boundary 把崩溃降级为
- * 可恢复的错误页——保留两条出路：
+ * 全局渲染错误兜底：任何残留的渲染异常此前都以白屏收场。本 Boundary 把
+ * 崩溃降级为可恢复的错误页——保留两条出路：
  *   ① 重载界面（常规瞬时状态损坏）；
- *   ② 重置本地工作区数据后重载（localStorage 持久化状态导致的崩溃轮回；
- *      网关快照会在下次刷新时重建本地 state，仅丢失未同步的本地草稿）。
+ *   ② 清空本地界面状态后重载（localStorage 持久化状态导致的崩溃轮回；
+ *      文稿与设置都以网关/主进程为准，下次启动会重建）。
  * fallback 完全内联样式、不依赖 i18n/样式系统——Boundary 触发时它们
  * 的可用性不可信。Sentry 已在 main.tsx 初始化，此处上报；未初始化时
  * captureException 为 no-op。
@@ -42,9 +38,9 @@ export class GlobalErrorBoundary extends React.Component<
     window.location.reload()
   }
 
-  private resetWorkspaceAndReload = (): void => {
+  private resetLocalStateAndReload = (): void => {
     try {
-      clearContextRoomLocalState()
+      window.localStorage.clear()
     } catch {
       // localStorage 不可用时直接重载。
     }
@@ -69,8 +65,8 @@ export class GlobalErrorBoundary extends React.Component<
         <div style={{ fontSize: '40px', lineHeight: 1 }} aria-hidden="true">⚠️</div>
         <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>界面渲染出现异常 / A rendering error occurred</h1>
         <p style={{ margin: 0, fontSize: '13px', color: '#57606a', maxWidth: '480px' }}>
-          界面进入异常状态。可以先尝试重载；若重载后仍复现（通常是本地工作区数据损坏），
-          请使用「重置并重载」，本地 Room 布局会从网关数据自动重建。
+          界面进入异常状态。可以先尝试重载；若重载后仍复现（通常是本地界面数据损坏），
+          请使用「重置并重载」，本地界面状态会被清空并重新载入。
         </p>
         <div style={{ display: 'flex', gap: '12px' }}>
           <button
@@ -82,7 +78,7 @@ export class GlobalErrorBoundary extends React.Component<
           </button>
           <button
             type="button"
-            onClick={this.resetWorkspaceAndReload}
+            onClick={this.resetLocalStateAndReload}
             style={{ padding: '8px 18px', fontSize: '13px', border: '1px solid #d0d7de', borderRadius: '8px', background: '#fff', color: '#b62324', cursor: 'pointer' }}
           >
             重置并重载

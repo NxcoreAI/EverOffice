@@ -38,11 +38,6 @@ const seedHits: SearchHitDto[] = [
   },
 ]
 
-const rooms = [
-  { id: 'room-1', title: '产品调研' },
-  { id: 'room-2', title: '设计系统' },
-]
-
 let pending = 3
 
 function installSearchMock(): void {
@@ -100,9 +95,8 @@ function MockSearchApp() {
       <SearchPalette
         open={open}
         onClose={() => setOpen(false)}
-        rooms={rooms}
         onOpenFile={(fileId) => push(`openFile(${fileId})`)}
-        onOpenRoom={(roomId, title) => push(`openRoom(${roomId},${title})`)}
+        onOpenDocument={(documentId) => push(`openDocument(${documentId})`)}
         onOpenSession={(hit) => push(`openSession(${hit.sessionId})`)}
         onAttach={(hit) => push(`attach(${hit.refId})`)}
         onDispatch={(hit, agent, instruction) => push(`dispatch(${hit.refId},${agent?.displayName ?? 'main'},${instruction})`)}

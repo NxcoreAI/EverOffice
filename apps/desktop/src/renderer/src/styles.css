@@ -1309,7 +1309,17 @@ summary:focus-visible {
   color: var(--subtle);
 }
 
-/* 文稿页工具栏:搜索 + 两个下拉筛选(本页不加载 ContextRoom.css,FilterSelect 样式自带)。 */
+/* 文稿库行只做定位展示（无打开动作）：不显示手型光标，Agent 定位到的行给出高亮。 */
+.doc-row[data-focused='true'] {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.doc-row:not(button) {
+  cursor: default;
+}
+
+/* 文稿页工具栏：搜索（筛选已随 Room 一并移除）。 */
 .doc-toolbar {
   display: flex;
   align-items: center;

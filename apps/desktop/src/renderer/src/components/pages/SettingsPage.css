@@ -1660,30 +1660,6 @@
   opacity: 0.8;
 }
 
-.screen-memory-app-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.screen-memory-app-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
-.screen-memory-app-list li button { font-size: 12px; }
-.screen-memory-app-add { display: flex; gap: 6px; margin-top: 6px; }
-.screen-memory-app-add input { flex: 1; min-width: 160px; }
-
-.screen-memory-scope-switch { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
-.screen-memory-scope-switch button { border: none; border-radius: 0; background: transparent; padding: 6px 14px; }
-.screen-memory-scope-switch button[data-active='true'] { background: var(--border); }
-
-.screen-permission-row { display: block; }
-.screen-permission-card { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid color-mix(in srgb, #3d6ff6 35%, var(--border)); border-radius: 8px; background: color-mix(in srgb, #3d6ff6 5%, var(--surface)); }
-.screen-permission-card[data-state='granted'] { border-color: color-mix(in srgb, #22a06b 45%, var(--border)); background: color-mix(in srgb, #22a06b 6%, var(--surface)); }
-.screen-permission-card-main { display: flex; min-width: 0; align-items: center; gap: 14px; }
-.screen-permission-card-text { display: grid; gap: 4px; }
-.screen-permission-drag-icon { width: 44px; height: 44px; border-radius: 10px; cursor: grab; }
-.screen-permission-drag-icon:active { cursor: grabbing; }
-.screen-permission-card > button { flex: none; }
-.reality-setting-row small.screen-capture-error { color: #b42318; }
-@media (max-width: 720px) {
-  .screen-permission-card { flex-direction: column; align-items: stretch; }
-  .screen-permission-card > button { width: 100%; }
-}
-
 /* —— 控制件规范：与「+新建文档」弹窗（.room-picker-*）保持一致 ——
    参考值：40px 控件高度、10px 控件圆角、24px 级内边距、柔和阴影、浅蓝强调。
    全部规则限定在 .settings-page 内，避免波及应用其它页面。 */

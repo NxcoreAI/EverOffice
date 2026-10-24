@@ -31,25 +31,20 @@ describe('full onboarding state', () => {
   })
 
   it('treats any existing workspace data as completed onboarding', () => {
-    expect(hasExistingOnboardingData({ memoryOverview: { l0: { total: 1 }, l1: null } })).toBe(true)
-    expect(hasExistingOnboardingData({ roomCount: 1 })).toBe(true)
-    expect(hasExistingOnboardingData({ deletedRoomCount: 1 })).toBe(true)
+    // Room / MemoryCore 已移除：现存数据源是唯一判据。
     expect(hasExistingOnboardingData({ sourceCount: 1 })).toBe(true)
+    expect(hasExistingOnboardingData({ sourceCount: 3 })).toBe(true)
   })
 
   it('allows onboarding only for a completely empty workspace', () => {
-    expect(hasExistingOnboardingData({
-      memoryOverview: { l0: { total: 0 }, l1: null },
-      roomCount: 0,
-      deletedRoomCount: 0,
-      sourceCount: 0,
-    })).toBe(false)
+    expect(hasExistingOnboardingData({ sourceCount: 0 })).toBe(false)
+    expect(hasExistingOnboardingData({})).toBe(false)
   })
 })
 
 describe('onboarding probe action (first-run check timing)', () => {
-  it('retries transient failures during the MemoryCore restart window', () => {
-    // Regression: saving the runtime config restarts MemoryCore (~3s); the
+  it('retries transient failures during the gateway restart window', () => {
+    // Regression: saving the runtime config restarts the gateway (~3s); the
     // first probe often fails and used to strand the user on an empty shell.
     expect(nextOnboardingProbeAction({ failed: true, apisAvailable: true, hasData: false, attempt: 1 })).toBe('retry')
     expect(onboardingProbeRetryDelayMs(1)).toBe(1_000)

@@ -11,9 +11,9 @@ import './SearchPalette.css'
 export interface SearchPaletteProps {
   open: boolean
   onClose: () => void
-  rooms: Array<{ id: string; title: string }>
   onOpenFile: (fileId: string) => void
-  onOpenRoom: (roomId: string, title: string) => void
+  /** 文稿命中：跳文稿库并高亮该文稿（Room 已移除，没有 Room 详情可开）。 */
+  onOpenDocument: (documentId: string) => void
   onOpenSession: (hit: SearchHitDto) => void
   onAttach: (hit: SearchHitDto) => void
   onDispatch: (hit: SearchHitDto, agent: LocalAgentInstallation | null, instruction: string) => void
@@ -26,7 +26,6 @@ const TYPE_FILTERS: Array<{ value: TypeFilter; key: string }> = [
   { value: 'all', key: 'search:type.all' },
   { value: 'file', key: 'search:type.file' },
   { value: 'message', key: 'search:type.message' },
-  { value: 'room', key: 'search:type.room' },
   { value: 'document', key: 'search:type.document' },
 ]
 
@@ -45,9 +44,8 @@ function rangeToFromTo(range: TimeRange): { from?: number; to?: number } {
 export function SearchPalette({
   open,
   onClose,
-  rooms,
   onOpenFile,
-  onOpenRoom,
+  onOpenDocument,
   onOpenSession,
   onAttach,
   onDispatch,
@@ -55,7 +53,6 @@ export function SearchPalette({
   const { t } = useLocale()
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
-  const [roomFilter, setRoomFilter] = useState('')
   const [timeBasis, setTimeBasis] = useState<'occurred' | 'ingested'>('ingested')
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const [page, setPage] = useState<SearchPageDto | null>(null)
@@ -82,7 +79,6 @@ export function SearchPalette({
       const result = await api.invoke({
         query: currentQuery,
         ...(typeFilter !== 'all' ? { types: [typeFilter] } : {}),
-        ...(roomFilter ? { roomIds: [roomFilter] } : {}),
         timeBasis,
         ...(from !== undefined && to !== undefined ? { from, to } : {}),
         limit: 30,
@@ -97,13 +93,13 @@ export function SearchPalette({
     } finally {
       if (seqRef.current === seq) setLoading(false)
     }
-  }, [roomFilter, timeBasis, timeRange, typeFilter])
+  }, [timeBasis, timeRange, typeFilter])
 
   useEffect(() => {
     if (!open) return
     void fetchPage(query)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, typeFilter, roomFilter, timeBasis, timeRange])
+  }, [open, typeFilter, timeBasis, timeRange])
 
   useEffect(() => {
     if (!open) return
@@ -142,10 +138,9 @@ export function SearchPalette({
   const openHit = useCallback((hit: SearchHitDto) => {
     if (hit.itemType === 'file') onOpenFile(hit.refId)
     else if (hit.itemType === 'message') onOpenSession(hit)
-    else if (hit.itemType === 'room') onOpenRoom(hit.refId, hit.title)
-    else if (hit.itemType === 'document' && hit.roomIds[0]) onOpenRoom(hit.roomIds[0], hit.title)
+    else if (hit.itemType === 'document') onOpenDocument(hit.refId)
     onClose()
-  }, [onClose, onOpenFile, onOpenRoom, onOpenSession])
+  }, [onClose, onOpenDocument, onOpenFile, onOpenSession])
 
   const expandContext = useCallback(async (hit: SearchHitDto) => {
     const api = window.nxcore?.search
@@ -184,7 +179,6 @@ export function SearchPalette({
     onClose()
   }, [dispatchAgentId, dispatchAgents, dispatchInstruction, dispatchPick, onClose, onDispatch])
 
-  const roomTitleById = useMemo(() => new Map(rooms.map((room) => [room.id, room.title])), [rooms])
   const items = page?.items ?? []
   const state = loading ? 'loading' : error ? 'error' : query.trim() && items.length === 0 ? 'empty' : 'initial'
 
@@ -216,12 +210,6 @@ export function SearchPalette({
               onClick={() => setTypeFilter(item.value)}
             >{t(item.key)}</button>
           ))}
-          <FilterSelect
-            value={roomFilter}
-            options={[{ value: '', label: t('search:filter.roomAll') }, ...rooms.map((room) => ({ value: room.id, label: room.title }))]}
-            onChange={setRoomFilter}
-            ariaLabel={t('search:filter.roomAll')}
-          />
           <FilterSelect
             value={timeRange}
             options={[
@@ -255,7 +243,6 @@ export function SearchPalette({
               key={hit.id}
               hit={hit}
               query={query}
-              roomTitleById={roomTitleById}
               prioritized={prioritized.has(hit.id)}
               context={expanded.get(hit.id)}
               onOpen={openHit}
@@ -309,7 +296,6 @@ export function SearchPalette({
 interface SearchHitRowProps {
   hit: SearchHitDto
   query: string
-  roomTitleById: Map<string, string>
   prioritized: boolean
   context?: SearchMessageContextDto
   onOpen: (hit: SearchHitDto) => void
@@ -322,7 +308,6 @@ interface SearchHitRowProps {
 const SearchHitRow = memo(function SearchHitRow({
   hit,
   query,
-  roomTitleById,
   prioritized,
   context,
   onOpen,
@@ -334,9 +319,6 @@ const SearchHitRow = memo(function SearchHitRow({
   const { t } = useLocale()
   const time = hit.timeBasis === 'occurred' && hit.occurredAt ? hit.occurredAt : hit.ingestedAt
   const basisLabel = hit.timeBasis === 'occurred' ? t('search:hit.basisOccurred') : t('search:hit.basisIngested')
-  const roomBadges = hit.roomIds.slice(0, 2)
-    .map((roomId) => roomTitleById.get(roomId))
-    .filter((title): title is string => Boolean(title))
 
   return (
     <div className="search-hit">
@@ -352,7 +334,6 @@ const SearchHitRow = memo(function SearchHitRow({
         <div className="search-hit-meta">
           <span>{t(`search:type.${hit.itemType === 'document' ? 'document' : hit.itemType}`)}</span>
           {hit.versionLabel && <span>{hit.versionLabel}</span>}
-          {roomBadges.map((title) => <span key={title} className="search-hit-room">{title}</span>)}
           <span>{basisLabel} {new Date(time).toLocaleDateString()}</span>
         </div>
       </button>

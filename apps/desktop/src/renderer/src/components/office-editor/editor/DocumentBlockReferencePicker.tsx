@@ -7,7 +7,8 @@ import type { DocumentBlockReferenceAttrs } from './documentBlockReferenceLink'
 import './DocumentBlockReference.css'
 
 export interface DocumentBlockReferencePickerProps {
-  roomId: string
+  /** 归属频道：null = 工作区文稿（P0-2d 起文稿不再按 Room 归属）。 */
+  roomId: string | null
   documents: RoomDocument[]
   currentDocumentId?: string | null
   listBlocks: (documentId: string) => Promise<DocumentBlockList>
@@ -25,7 +26,8 @@ export function DocumentBlockReferencePicker({
 }: DocumentBlockReferencePickerProps) {
   const { t } = useLocale()
   const availableDocuments = useMemo(
-    () => documents.filter((document) => document.roomId === roomId && !document.deletedAt),
+    () => documents.filter((document) => !document.deletedAt
+      && (roomId ? document.roomId === roomId : document.roomId === null)),
     [documents, roomId],
   )
   const [selectedDocumentId, setSelectedDocumentId] = useState(
@@ -126,7 +128,8 @@ export function DocumentBlockReferencePicker({
                   onClick={() => {
                     if (!selectedDocument) return
                     onSelect({
-                      roomId,
+                      // 工作区文稿没有 Room 归属，引用属性里用空串表示「工作区」。
+                      roomId: roomId ?? '',
                       documentId: selectedDocument.id,
                       blockId: block.blockId,
                       fallbackTitle: selectedDocument.title,
