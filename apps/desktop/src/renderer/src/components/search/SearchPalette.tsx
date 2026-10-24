@@ -5,7 +5,6 @@ import type { SearchHitDto, SearchItemType, SearchMessageContextDto, SearchPageD
 import { useLocale } from '@/i18n/LocaleContext'
 import { FilterSelect } from '@/components/ui/FilterSelect'
 import { splitHighlight } from './search-highlight'
-import './search-i18n'
 import './SearchPalette.css'
 
 export interface SearchPaletteProps {
