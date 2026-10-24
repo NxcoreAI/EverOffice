@@ -63,6 +63,7 @@ import {
   createDocumentOverviewRuntime,
   createConversationSuggestionRuntime,
   createIndexBackfillRuntime,
+  createImportClassifierRuntime,
   createSessionTitleRuntime,
   createVersionSummaryRuntime,
   isPiRuntimeConfigured,
@@ -1141,9 +1142,11 @@ export async function createServer(config: GatewayConfig) {
   await app.register(filesRoutes(filesService));
   await app.register(documentUnderstandingRoutes(documentUnderstandingService));
   // 连接器页批量导入（fire-and-forget + DB 状态行，蓝本 runFrom）；启动时把
-  // 进程死亡遗留的 running 批置 failed。Phase 2i-3：归房分类器与知识孵化已随
-  // Room/knowledge 域删除，批量导入只剩「导入工作区文档库」一种行为，不再需要
-  // 端口注入。
+  // 进程死亡遗留的 running 批置 failed。auto 模式 = 归房+孵化混合：分类器用
+  // 隔离内部 runtime（缺席则 UI 侧按 BATCH_AUTO_UNAVAILABLE 禁用），孵化走
+  // ingestConnector cloud-doc（knowledge 弱实体 → 待处理面板晋升）。
+  // Phase 2：Room 自动归类与知识孵化已退役，批量导入只剩显式目标（auto 模式
+  // 在服务内按「分类器/孵化端口未配置」拒绝，与功能删除语义一致）。
   const documentBatchImportService = new DocumentBatchImportService(
     db,
     documentImportService,
@@ -1151,9 +1154,9 @@ export async function createServer(config: GatewayConfig) {
   );
   documentBatchImportService.recoverInterrupted();
   await app.register(documentImportBatchRoutes(documentBatchImportService, documentImportService));
-  // SaaS 登录后 runtime 配置才到达：boot 快照的文档速览/章节预览/会话标题
-  // runtime 是 null，配置热替换时同步重建（此前首次登录后这些能力一直 503 或
-  // 静默降级，直到重启）。
+  // SaaS 登录后 runtime 配置才到达：boot 快照的文档速览/章节预览/归房分类器/
+  // 会话标题 runtime 是 null，配置热替换时同步重建（此前首次登录后这些能力
+  // 一直 503 或静默降级，直到重启）。
   runtimeConfigManager.onChange(() => {
     documentOverviewRuntime = createDocumentOverviewRuntime(config);
     sessionTitleService.replaceRuntime(createSessionTitleRuntime(config));

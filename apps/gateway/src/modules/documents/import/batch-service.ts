@@ -12,31 +12,67 @@ import { documentImportBatches } from "../../../infrastructure/database/schema.j
 import type { DocumentImportService, ImportServiceError } from "./service.js";
 
 /**
- * 连接器页批量导入：外部/连接器文档全量列表 → 批量勾选 → 导入工作区文档库。
- *
- * Phase 2i-3：Room 维度已删，批量导入不再有「归房还是孵化」的决策点——每一项
- * 都落成一篇工作区文稿（`origin=import`、`roomId=null`），来源去重按正文哈希
- * （同来源正文未变则跳过该篇），`forceNew` 跳过去重一律新建。
- *
- * HTTP 请求里的 `mode`/`roomId` 只为兼容旧版桌面构建保留：`'room'` 与 `'auto'`
- * 语义相同（都是导入工作区），`roomId` 一律忽略。视图 DTO 的
- * `targetRoomId`/`roomId` 字段形状冻结（桌面仍在读），网关恒定填 null。
+ * 连接器页批量导入（方案：连接器页全量列表 → 批量勾选 → 入指定 Room / AI 归类）。
  *
  * 异步模型沿用 AgentDocumentExportService.runFrom 蓝本：DB 行存状态 +
  * void processBatch(id) 后台跑 + 调用方轮询。逐篇串行执行 preview→commit
- * （完整继承快照/评论/附件物化语义）；单项失败不中断，
+ * （完整继承快照/评论/附件物化/候选版本语义）；单项失败不中断，
  * IMPORT_CONNECTION_REQUIRED / OPEN_CONNECTOR_UNAVAILABLE 短路整批。
+ *
+ * auto 模式（归房+孵化混合）通过端口注入，M1 装配缺省时返回
+ * BATCH_AUTO_UNAVAILABLE：
+ * - roster：Room 名册（一次/批）
+ * - classifier：归房判定（≥阈值 → commitToRoom 到判定 Room，显式归房不依赖
+ *   knowledge router）
+ * - incubate：孵化投喂（cloud-doc 全文 → knowledge 弱实体管线；router 关闭
+ *   时由装配层降级 memory-only，不在此处拒绝——拒绝会让授权后的导入入口
+ *   整个不可用，且错误提示曾指向不存在的设置开关）
  */
 
 const BATCH_MAX_ITEMS = 50;
+
+/** 归房置信阈值：低于 IndexBackfillLlm 的 0.8——归房是开放分类，错归房的
+ * 搬运清理代价高于走孵化人工兜底，宁低勿错。 */
+export const IMPORT_ROOM_CONFIDENCE_THRESHOLD = 0.7;
+
+export interface BatchRoomRosterEntry {
+  id: string;
+  title: string;
+  kind: string;
+  aliases: string[];
+}
+
+export interface ImportClassifierVerdict {
+  roomId: string | null;
+  confidence: number;
+}
+
+export interface RoomAssignmentClassifierPort {
+  classify(input: {
+    rooms: BatchRoomRosterEntry[];
+    title: string;
+    excerpt: string;
+  }): Promise<ImportClassifierVerdict>;
+}
+
+export interface DocumentBatchImportPorts {
+  incubate?: (unit: {
+    sourceId: string;
+    title: string;
+    markdown: string;
+    sourceTag: string;
+  }) => Promise<void>;
+  roster?: () => Promise<BatchRoomRosterEntry[]>;
+  classifier?: RoomAssignmentClassifierPort | null;
+}
 
 export interface CreateBatchImportInput {
   provider: ExternalDocumentProvider;
   connectionName?: string;
   remoteDocumentIds: string[];
-  /** 兼容字段：'room'/'auto' 语义相同——都导入工作区文档库（Room 已删除）。 */
   mode: DocumentImportBatchMode;
-  /** true：跳过来源去重，同来源一律新建工作区文稿（UI「创建新的」）。 */
+  roomId?: string;
+  /** mode=room 且 true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
   forceNew?: boolean;
 }
 
@@ -58,6 +94,7 @@ export class DocumentBatchImportService {
     private readonly db: GatewayDatabase,
     private readonly imports: DocumentImportService,
     private readonly logger?: { warn: (obj: object, msg: string) => void } | null,
+    private readonly ports: DocumentBatchImportPorts = {},
   ) {}
 
   async createBatch(input: CreateBatchImportInput): Promise<{ batchId: string; total: number }> {
@@ -68,8 +105,19 @@ export class DocumentBatchImportService {
     if (ids.length > BATCH_MAX_ITEMS) {
       throw new BatchImportServiceError("BATCH_TOO_LARGE", `单批最多 ${String(BATCH_MAX_ITEMS)} 篇文档`);
     }
-    // 兼容旧版桌面构建：mode 只接受这两个历史取值，语义都是「导入工作区」。
-    if (input.mode !== "auto" && input.mode !== "room") {
+    let targetRoomId: string | null = null;
+    if (input.mode === "room") {
+      // Phase 2i：Room 表已删除，mode=room 的目标 id 只作为批次归属标签留存
+      // （documentRoomImports.room_id 同样是松引用），不再做存在性校验。
+      if (!input.roomId) {
+        throw new BatchImportServiceError("BATCH_ROOM_REQUIRED", "导入到 Room 必须指定目标 Room");
+      }
+      targetRoomId = input.roomId;
+    } else if (input.mode === "auto") {
+      if (!this.ports.classifier || !this.ports.incubate) {
+        throw new BatchImportServiceError("BATCH_AUTO_UNAVAILABLE", "AI 自动归类当前不可用（分类器或孵化链路未配置）");
+      }
+    } else {
       throw new BatchImportServiceError("BATCH_MODE_INVALID", `未知批量模式：${String(input.mode)}`);
     }
     const batchId = randomUUID();
@@ -88,8 +136,8 @@ export class DocumentBatchImportService {
       provider: input.provider,
       connectionName: input.connectionName ?? null,
       mode: input.mode,
-      targetRoomId: null,
-      forceNew: input.forceNew === true,
+      targetRoomId,
+      forceNew: input.mode === "room" && input.forceNew === true,
       total: items.length,
       itemsJson: items,
     }).run();
@@ -179,7 +227,6 @@ export class DocumentBatchImportService {
     if (!row || row.status !== "running") return;
     const items = transformItems ? row.itemsJson.map(transformItems) : row.itemsJson;
     const processed = items.filter((item) => item.status !== "pending" && item.status !== "skipped").length;
-    // incubated 是已删归房/孵化链路的遗留终态，旧批行仍可能带它，继续计入。
     const succeeded = items.filter((item) => item.status === "imported" || item.status === "incubated").length;
     const failed = items.filter((item) => item.status === "failed").length;
     this.db.update(documentImportBatches).set({
@@ -198,6 +245,19 @@ export class DocumentBatchImportService {
   private async processBatch(batchId: string): Promise<void> {
     let row = this.readRow(batchId);
     if (!row || row.status !== "running") return;
+
+    let roster: BatchRoomRosterEntry[] = [];
+    if (row.mode === "auto") {
+      try {
+        roster = await this.ports.roster?.() ?? [];
+      } catch (error) {
+        this.logger?.warn(
+          { batchId, message: error instanceof Error ? error.message : String(error) },
+          "document import batch roster unavailable; all items go incubation",
+        );
+        roster = [];
+      }
+    }
 
     const items = [...row.itemsJson];
     let processed = 0;
@@ -218,17 +278,36 @@ export class DocumentBatchImportService {
       try {
         const preview = await this.imports.preview(row.provider, item.remoteDocumentId, row.connectionName ?? undefined);
         item.title = preview.title;
-        const committed = await this.imports.commitToWorkspace({
-          runId: preview.runId,
-          ...(row.forceNew ? { forceNewDocument: true } : {}),
-        });
-        item.importRunId = preview.runId;
-        if (committed.noChange) {
-          // 远端内容未变：不落新版本，跳过该篇（防空转版本堆积）。
-          item.status = "skipped";
+        const commitRoomId = row.mode === "room"
+          ? row.targetRoomId
+          : await this.resolveAutoRoomId(batchId, roster, preview.title, preview.bodyExcerpt);
+        if (commitRoomId) {
+          const committed = await this.imports.commitToRoom({
+            runId: preview.runId,
+            roomId: commitRoomId,
+            ...(row.forceNew ? { forceNewDocument: true } : {}),
+          });
+          if (committed.noChange) {
+            // 远端无变化：不落候选，跳过该篇（防空候选堆积）。
+            item.status = "skipped";
+            item.roomId = commitRoomId;
+          } else {
+            item.status = "imported";
+            item.roomId = commitRoomId;
+            item.documentId = committed.documentId;
+            item.importRunId = preview.runId;
+          }
         } else {
-          item.status = "imported";
-          item.documentId = committed.documentId;
+          // 归房无置信匹配 → 孵化：全文投喂 knowledge 弱实体管线（待处理面板晋升）。
+          const full = await this.imports.getRunMarkdown(preview.runId);
+          await this.ports.incubate!({
+            sourceId: `import:${full.provider}:${full.remoteDocumentId}`,
+            title: full.title,
+            markdown: full.bodyMarkdown,
+            sourceTag: `connector:${full.provider}:${row.connectionName ?? "default"}`,
+          });
+          item.status = "incubated";
+          item.importRunId = preview.runId;
         }
         succeeded += 1;
       } catch (error) {
@@ -263,6 +342,29 @@ export class DocumentBatchImportService {
     }
 
     this.finalize(batchId, "completed");
+  }
+
+  /** auto 模式归房判定：名册为空或分类器异常时返回 null（全部走孵化，不阻断）。 */
+  private async resolveAutoRoomId(
+    batchId: string,
+    roster: BatchRoomRosterEntry[],
+    title: string,
+    excerpt: string,
+  ): Promise<string | null> {
+    if (roster.length === 0 || !this.ports.classifier) return null;
+    try {
+      const verdict = await this.ports.classifier.classify({ rooms: roster, title, excerpt });
+      if (!verdict.roomId) return null;
+      if (!roster.some((room) => room.id === verdict.roomId)) return null;
+      if (verdict.confidence < IMPORT_ROOM_CONFIDENCE_THRESHOLD) return null;
+      return verdict.roomId;
+    } catch (error) {
+      this.logger?.warn(
+        { batchId, message: error instanceof Error ? error.message : String(error) },
+        "document import batch classify failed; falling back to incubation",
+      );
+      return null;
+    }
   }
 
   private toView(row: BatchRow): DocumentImportBatchView {

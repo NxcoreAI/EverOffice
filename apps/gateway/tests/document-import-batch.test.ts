@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import Fastify from 'fastify'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDatabase, type GatewayDatabase } from '../src/infrastructure/database/client.js'
-import { documentImportRuns, documentRoomImports, documents } from '../src/infrastructure/database/schema.js'
+import { documentRoomImports } from '../src/infrastructure/database/schema.js'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentService } from '../src/modules/documents/service.js'
 import {
@@ -12,7 +12,10 @@ import {
 } from '../src/modules/documents/import/service.js'
 import {
   DocumentBatchImportService,
+  type BatchRoomRosterEntry,
   type CreateBatchImportInput,
+  type DocumentBatchImportPorts,
+  type ImportClassifierVerdict,
 } from '../src/modules/documents/import/batch-service.js'
 import { documentImportBatchRoutes } from '../src/modules/documents/import/batch-routes.js'
 import type { ImportActionRunner } from '../src/modules/documents/import/oo-runner.js'
@@ -82,7 +85,7 @@ afterAll(() => {
   closeDatabase?.()
 })
 
-function makeServices(actionRunner: ImportActionRunner) {
+function makeServices(actionRunner: ImportActionRunner, ports?: DocumentBatchImportPorts) {
   const documents = new DocumentService(db, new DocumentEventBroker())
   // larkActionFn 是飞书换轨 lark-cli 后的测试缝：同一 fake 双注入，
   // 既有断言零改动（feishu 走 larkActionFn，notion 走 actionRunner）。
@@ -90,7 +93,7 @@ function makeServices(actionRunner: ImportActionRunner) {
     actionRunner,
     larkActionFn: (call) => actionRunner(connectorConfig, call),
   })
-  const batch = new DocumentBatchImportService(db, imports, null)
+  const batch = new DocumentBatchImportService(db, imports, null, ports)
   return { documents, imports, batch }
 }
 
@@ -335,48 +338,25 @@ describe('document-import list', () => {
   })
 })
 
-// ── 批量导入：工作区文档导入（唯一行为，无归房/孵化端口）─────────────────────
+// ── 批量导入（room 模式 + M1 守卫）──────────────────────────────────────────
 
-describe('document-import batch (workspace import)', () => {
-  it('auto 模式无需分类器/孵化端口：全部落成工作区文稿（roomId=null）', async () => {
+describe('document-import batch (room mode)', () => {
+  it('逐篇 preview+commit：3 篇全部落 Room', async () => {
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA', 'tokB', 'tokC'])))
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokA', 'tokB', 'tokC'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-batch',
     })
     expect(created.total).toBe(3)
     const view = await waitBatch(batch, created.batchId)
     expect(view.status).toBe('completed')
     expect(view.succeeded).toBe(3)
     expect(view.failed).toBe(0)
-    expect(view.targetRoomId).toBeNull()
-    expect(view.items.every((item) => item.status === 'imported' && item.roomId === null && item.documentId)).toBe(true)
-    // 落地产物是工作区文稿：origin=import。
-    const landed = db.select().from(documents).all()
-    expect(landed).toHaveLength(3)
-    expect(landed.every((row) => row.origin === 'import')).toBe(true)
-    // 不再写 Room 时代的 document_room_imports。
-    expect(db.select().from(documentRoomImports).all()).toHaveLength(0)
-    // 每条都追得到成功的 import run，且 run 的目标是工作区文稿。
-    const runs = db.select().from(documentImportRuns).all()
-    expect(runs).toHaveLength(3)
-    expect(runs.every((row) => row.status === 'succeeded' && row.targetDocumentId && row.targetRoomId === null)).toBe(true)
-  })
-
-  it('mode=room 与 mode=auto 语义相同：都导入工作区，显式目标不再写库', async () => {
-    const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA'])))
-    const created = await batch.createBatch({
-      provider: 'feishu',
-      remoteDocumentIds: ['tokA'],
-      mode: 'room',
-    })
-    const view = await waitBatch(batch, created.batchId)
-    expect(view.status).toBe('completed')
-    expect(view.mode).toBe('room')
-    expect(view.targetRoomId).toBeNull()
-    expect(view.items[0]).toMatchObject({ status: 'imported', roomId: null })
-    expect(db.select().from(documentRoomImports).all()).toHaveLength(0)
+    expect(view.items.every((item) => item.status === 'imported' && item.roomId === 'room-batch' && item.documentId)).toBe(true)
+    const roomImports = db.select().from(documentRoomImports).all()
+    expect(roomImports).toHaveLength(3)
   })
 
   it('中篇失败不中断：失败项记录 error，其余导入完成', async () => {
@@ -384,7 +364,8 @@ describe('document-import batch (workspace import)', () => {
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokA', 'tokB', 'tokC'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-batch',
     })
     const view = await waitBatch(batch, created.batchId)
     expect(view.status).toBe('completed')
@@ -414,7 +395,8 @@ describe('document-import batch (workspace import)', () => {
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokA', 'tokB', 'tokC'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-cancel',
     })
     batchIdHolder = created.batchId
     const view = await waitBatch(batch, created.batchId)
@@ -440,7 +422,8 @@ describe('document-import batch (workspace import)', () => {
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokA', 'tokB', 'tokC'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-short',
     })
     const view = await waitBatch(batch, created.batchId)
     expect(view.status).toBe('failed')
@@ -467,7 +450,8 @@ describe('document-import batch (workspace import)', () => {
       provider: 'feishu',
       connectionName: 'vyi',
       remoteDocumentIds: ['tokA', 'tokB'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-active',
     })
     // 首篇卡在 fetch：批进行中，同 provider+连接名可找回；默认连接/其他连接名找不到。
     expect(batch.getActiveBatch('feishu', 'vyi')?.id).toBe(created.batchId)
@@ -478,15 +462,20 @@ describe('document-import batch (workspace import)', () => {
     expect(batch.getActiveBatch('feishu', 'vyi')).toBeNull()
   })
 
-  it('入口校验：空列表/超上限（Room 存在性与显式目标已不再校验）', async () => {
+  it('入口校验：空列表/超上限/缺 roomId/auto 未就绪（Room 存在性已不再校验）', async () => {
     const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA'])))
-    await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: [], mode: 'auto' }))
+    await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: [], mode: 'room', roomId: 'room-real' }))
       .rejects.toMatchObject({ code: 'BATCH_EMPTY' })
     await expect(batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: Array.from({ length: 51 }, (_value, index) => `tok${index}`),
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-real',
     })).rejects.toMatchObject({ code: 'BATCH_TOO_LARGE' })
+    await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room' }))
+      .rejects.toMatchObject({ code: 'BATCH_ROOM_REQUIRED' })
+    await expect(batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' }))
+      .rejects.toMatchObject({ code: 'BATCH_AUTO_UNAVAILABLE' })
   })
 
   it('recoverInterrupted：遗留 running 批置 failed 且 pending 项 skipped', async () => {
@@ -494,11 +483,12 @@ describe('document-import batch (workspace import)', () => {
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokA'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-recover',
     })
     await waitBatch(batch, created.batchId)
     // 手工造一行 running 残留，模拟进程死亡。
-    rawDb!.exec("INSERT INTO document_import_batches (id, request_id, provider, mode, status, total, items_json, created_at, updated_at) VALUES ('batch-stuck', 'req-stuck', 'feishu', 'auto', 'running', 2, '[{\"remoteDocumentId\":\"x\",\"title\":null,\"status\":\"pending\",\"roomId\":null,\"documentId\":null,\"importRunId\":null,\"error\":null},{\"remoteDocumentId\":\"y\",\"title\":null,\"status\":\"imported\",\"roomId\":null,\"documentId\":\"d\",\"importRunId\":null,\"error\":null}]', strftime('%s','now')*1000, strftime('%s','now')*1000)")
+    rawDb!.exec("INSERT INTO document_import_batches (id, request_id, provider, mode, status, total, items_json, created_at, updated_at) VALUES ('batch-stuck', 'req-stuck', 'feishu', 'room', 'running', 2, '[{\"remoteDocumentId\":\"x\",\"title\":null,\"status\":\"pending\",\"roomId\":null,\"documentId\":null,\"importRunId\":null,\"error\":null},{\"remoteDocumentId\":\"y\",\"title\":null,\"status\":\"imported\",\"roomId\":\"r\",\"documentId\":\"d\",\"importRunId\":null,\"error\":null}]', strftime('%s','now')*1000, strftime('%s','now')*1000)")
     const recovered = batch.recoverInterrupted()
     expect(recovered).toBe(1)
     const view = batch.getBatch('batch-stuck')
@@ -508,7 +498,60 @@ describe('document-import batch (workspace import)', () => {
     expect(view.items[1]?.status).toBe('imported')
   })
 
-  it('重导同一来源：内容未变 → skipped 不落新版本；内容变化 → 同一文稿追加版本', async () => {
+  it('existingInRoom 只报该 Room 已落 primary 的来源；forceNew 跳过去重一律新建', async () => {
+    // 可变内容：第二批前改 tokA 内容，避免被无变化守卫拦下（内容相同→noChange 不落候选）。
+    const contentOf: Record<string, string> = {
+      tokA: '# 文档 tokA\n\n这是 tokA 的导入正文。',
+      tokB: '# 文档 tokB\n\n这是 tokB 的导入正文。',
+    }
+    const actions: FakeAction = {
+      'feishu.get_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { documentId: id, revisionId: 7, title: `文档 ${id}` }
+      },
+      'feishu.fetch_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, url: `https://f.cn/docx/${id}`, content: contentOf[id] ?? '' } }
+      },
+      'feishu.list_drive_comments': { items: [], hasMore: false },
+    }
+    const { imports, batch } = makeServices(fakeRunner(actions))
+    const first = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA', 'tokB'],
+      mode: 'room',
+      roomId: 'room-other',
+    })
+    expect((await waitBatch(batch, first.batchId)).status).toBe('completed')
+    // 跨 Room 隔离：room-exist 没导过为空；room-other 两篇都在。
+    expect(imports.existingInRoom('feishu', 'room-exist', ['tokA', 'tokB'])).toEqual([])
+    expect(new Set(imports.existingInRoom('feishu', 'room-other', ['tokA', 'tokB'])))
+      .toEqual(new Set(['tokA', 'tokB']))
+    // 内容变化后默认重导：转候选。
+    contentOf.tokA = '# 文档 tokA\n\n这是 tokA 的导入正文。（远端已修改）'
+    const second = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA'],
+      mode: 'room',
+      roomId: 'room-other',
+    })
+    expect((await waitBatch(batch, second.batchId)).status).toBe('completed')
+    expect(db.select().from(documentRoomImports).all().filter((row) => row.relation === 'candidate')).toHaveLength(1)
+    // forceNew=true：同来源仍新建 primary 文档（跳过去重）。
+    const third = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA'],
+      mode: 'room',
+      roomId: 'room-other',
+      forceNew: true,
+    })
+    const thirdView = await waitBatch(batch, third.batchId)
+    expect(thirdView.status).toBe('completed')
+    const primaries = db.select().from(documentRoomImports).all().filter((row) => row.relation === 'primary')
+    expect(primaries).toHaveLength(3)
+  })
+
+  it('重复导入同一来源自动转候选版本（方案 §3.1 来源去重）', async () => {
     let bodySuffix = ''
     const actions: FakeAction = {
       ...feishuReadActions(['tokA']),
@@ -517,47 +560,79 @@ describe('document-import batch (workspace import)', () => {
         return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, url: `https://f.cn/docx/${id}`, content: `# 文档 ${id}\n\n${id} 的导入正文。${bodySuffix}` } }
       },
     }
-    const { batch } = makeServices(fakeRunner(actions))
-    const first = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
+    const { imports, batch } = makeServices(fakeRunner(actions))
+    // 第一次：primary，Room 内新建文档版本 1。
+    const first = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA'],
+      mode: 'room',
+      roomId: 'room-dup-source',
+    })
     const firstView = await waitBatch(batch, first.batchId)
+    expect(firstView.status).toBe('completed')
     const firstDocumentId = firstView.items[0]!.documentId!
-    expect(db.select().from(documents).all()).toHaveLength(1)
-    expect(db.select().from(documents).all()[0]!.version).toBe(1)
+    const firstRoomImports = db.select().from(documentRoomImports).all()
+    expect(firstRoomImports).toHaveLength(1)
+    expect(firstRoomImports[0]!.relation).toBe('primary')
 
-    // 内容未变再导：noChange → 该篇 skipped，不落新版本、不新增文稿。
-    const second = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
+    // 远端内容变化后，第二次导入同一篇：物化候选（标题带"外部更新候选"），
+    // roomImport 指向原目标文档，可在版本面板 diff 后应用。
+    bodySuffix = '\n\n远端新增段落。'
+    const second = await batch.createBatch({
+      provider: 'feishu',
+      remoteDocumentIds: ['tokA'],
+      mode: 'room',
+      roomId: 'room-dup-source',
+    })
+    const secondView = await waitBatch(batch, second.batchId)
+    expect(secondView.status).toBe('completed')
+    const secondRoomImports = db.select().from(documentRoomImports).all()
+    expect(secondRoomImports).toHaveLength(2)
+    const candidateRow = secondRoomImports.find((row) => row.relation === 'candidate')!
+    expect(candidateRow.documentId).toBe(firstDocumentId)
+    expect(candidateRow.candidateDocumentId).toBeTruthy()
+    expect(candidateRow.importedVersion).toBeNull()
+  })
+
+  it('无变化守卫：重复导入内容未变时不落候选（noChange）', async () => {
+    let bodySuffix = ''
+    const actions: FakeAction = {
+      ...feishuReadActions(['tokA']),
+      'feishu.list_drive_files': { items: [{ token: 'tokA', type: 'docx', name: '文档甲' }], hasMore: false },
+      'feishu.list_wiki_spaces': { items: [], hasMore: false },
+      'feishu.fetch_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, content: `# ${id}\n\n内容。${bodySuffix}` } }
+      },
+    }
+    const { imports, batch } = makeServices(fakeRunner(actions))
+    const first = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room', roomId: 'room-nochange' })
+    const firstView = await waitBatch(batch, first.batchId)
+    expect(firstView.items[0]).toMatchObject({ status: 'imported' })
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(1)
+
+    // 内容未变再导：noChange，不新增候选/roomImport，批量项 skipped。
+    const second = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room', roomId: 'room-nochange' })
     const secondView = await waitBatch(batch, second.batchId)
     expect(secondView.items[0]).toMatchObject({ status: 'skipped' })
-    expect(db.select().from(documents).all()).toHaveLength(1)
-    expect(db.select().from(documents).all()[0]!.version).toBe(1)
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(1)
 
-    // 远端真的变了：同一篇工作区文稿追加版本（不新建文稿）。
-    bodySuffix = '\n\n远端新增段落。'
-    const third = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
+    // 远端真的变了：正常物化候选。
+    bodySuffix = '\n\n新段落。'
+    const third = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room', roomId: 'room-nochange' })
     const thirdView = await waitBatch(batch, third.batchId)
-    expect(thirdView.items[0]).toMatchObject({ status: 'imported', documentId: firstDocumentId })
-    const landed = db.select().from(documents).all()
-    expect(landed).toHaveLength(1)
-    expect(landed[0]!.version).toBe(2)
-  })
+    expect(thirdView.items[0]).toMatchObject({ status: 'imported' })
+    const rows = db.select().from(documentRoomImports).all()
+    expect(rows).toHaveLength(2)
+    expect(rows.filter((row) => row.relation === 'candidate')).toHaveLength(1)
 
-  it('forceNew 跳过去重与无变化守卫：同来源内容未变也新建一篇', async () => {
-    const { batch } = makeServices(fakeRunner(feishuReadActions(['tokA'])))
-    const first = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
-    const firstView = await waitBatch(batch, first.batchId)
-    const second = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto', forceNew: true })
-    const secondView = await waitBatch(batch, second.batchId)
-    expect(secondView.items[0]!.status).toBe('imported')
-    expect(secondView.items[0]!.documentId).not.toBe(firstView.items[0]!.documentId)
-    expect(db.select().from(documents).all()).toHaveLength(2)
-  })
-
-  it('importedInWorkspace：只报已落地工作区的来源', async () => {
-    const { imports, batch } = makeServices(fakeRunner(feishuReadActions(['tokA', 'tokB'])))
-    expect(imports.importedInWorkspace('feishu', ['tokA', 'tokB'])).toEqual([])
-    const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
-    expect((await waitBatch(batch, created.batchId)).status).toBe('completed')
-    expect(imports.importedInWorkspace('feishu', ['tokA', 'tokB'])).toEqual(['tokA'])
+    // 应用候选后再查：无变化 → noChange。
+    const candidateRow = rows.find((row) => row.relation === 'candidate')!
+    await imports.applyCandidate(candidateRow.id)
+    const applied = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'room', roomId: 'room-nochange' })
+    const appliedView = await waitBatch(batch, applied.batchId)
+    expect(appliedView.items[0]).toMatchObject({ status: 'skipped' })
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(2)
   })
 
   it('重复 remoteDocumentIds 去重', async () => {
@@ -565,7 +640,8 @@ describe('document-import batch (workspace import)', () => {
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokA', 'tokA'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-dedup',
     })
     expect(created.total).toBe(1)
   })
@@ -594,7 +670,8 @@ describe('document-import batch (workspace import)', () => {
     const created = await batch.createBatch({
       provider: 'feishu',
       remoteDocumentIds: ['tokEmpty', 'tokOk'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-empty',
     })
     const view = await waitBatch(batch, created.batchId)
     expect(view.status).toBe('completed')
@@ -606,62 +683,104 @@ describe('document-import batch (workspace import)', () => {
   })
 })
 
+// ── 批量导入（auto 模式，M2 端口注入）──────────────────────────────────────
+
+describe('document-import batch (auto mode)', () => {
+  function autoPorts(options?: {
+    verdicts?: Record<string, ImportClassifierVerdict>
+    roster?: BatchRoomRosterEntry[]
+    incubated?: Array<{ sourceId: string; markdown: string; sourceTag: string }>
+  }): DocumentBatchImportPorts {
+    const roster = options?.roster ?? [{ id: 'room-alpha', title: 'Alpha 项目', kind: 'project', aliases: [] }]
+    return {
+      roster: async () => roster,
+      classifier: {
+        classify: async ({ title }) => options?.verdicts?.[title] ?? { roomId: null, confidence: 0 },
+      },
+      incubate: async (unit) => {
+        options?.incubated?.push({ sourceId: unit.sourceId, markdown: unit.markdown, sourceTag: unit.sourceTag })
+      },
+    }
+  }
+
+  function autoActions(ids: string[]): FakeAction {
+    return {
+      'feishu.get_document': (input: Record<string, unknown>) => ({ documentId: String(input.documentId), revisionId: 7, title: `文档 ${String(input.documentId)}` }),
+      'feishu.fetch_document': (input: Record<string, unknown>) => {
+        const id = String(input.documentId)
+        return { document: { document_id: id, revision_id: 7, title: `文档 ${id}`, url: `https://f.cn/docx/${id}`, content: `# 文档 ${id}\n\n${id} 的完整正文。` } }
+      },
+      'feishu.list_drive_comments': { items: [], hasMore: false },
+    }
+  }
+
+  it('高置信归房：commitToRoom 到判定 Room', async () => {
+    const incubated: Array<{ sourceId: string; markdown: string; sourceTag: string }> = []
+    const { batch } = makeServices(fakeRunner(autoActions(['tokA'])), autoPorts({
+      verdicts: { '文档 tokA': { roomId: 'room-alpha', confidence: 0.9 } },
+      incubated,
+    }))
+    const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
+    const view = await waitBatch(batch, created.batchId)
+    expect(view.items[0]).toMatchObject({ status: 'imported', roomId: 'room-alpha' })
+    expect(incubated).toHaveLength(0)
+  })
+
+  it('低置信/无匹配：全文投喂孵化（cloud-doc 源 id + sourceTag）', async () => {
+    const incubated: Array<{ sourceId: string; markdown: string; sourceTag: string }> = []
+    const { batch } = makeServices(fakeRunner(autoActions(['tokB'])), autoPorts({
+      verdicts: { '文档 tokB': { roomId: 'room-alpha', confidence: 0.3 } },
+      incubated,
+    }))
+    const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokB'], mode: 'auto', connectionName: 'vyi' })
+    const view = await waitBatch(batch, created.batchId)
+    expect(view.items[0]?.status).toBe('incubated')
+    expect(incubated).toHaveLength(1)
+    expect(incubated[0]).toMatchObject({
+      sourceId: 'import:feishu:tokB',
+      sourceTag: 'connector:feishu:vyi',
+    })
+    expect(incubated[0]?.markdown).toContain('tokB 的完整正文')
+  })
+
+  it('分类器抛错降级孵化；名册空全部孵化；白名单外 roomId 拒绝归房', async () => {
+    const incubated: Array<{ sourceId: string; markdown: string; sourceTag: string }> = []
+    const ports: DocumentBatchImportPorts = {
+      roster: async () => [{ id: 'room-alpha', title: 'Alpha', kind: 'project', aliases: [] }],
+      classifier: {
+        classify: async ({ title }) => {
+          if (title === '文档 tokA') throw new Error('llm unavailable')
+          if (title === '文档 tokB') return { roomId: 'room-hacked', confidence: 0.99 }
+          return { roomId: null, confidence: 0 }
+        },
+      },
+      incubate: async (unit) => { incubated.push(unit) },
+    }
+    const { batch } = makeServices(fakeRunner(autoActions(['tokA', 'tokB', 'tokC'])), ports)
+    const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA', 'tokB', 'tokC'], mode: 'auto' })
+    const view = await waitBatch(batch, created.batchId)
+    expect(view.items.map((item) => item.status)).toEqual(['incubated', 'incubated', 'incubated'])
+    expect(incubated.map((unit) => unit.sourceId)).toEqual(['import:feishu:tokA', 'import:feishu:tokB', 'import:feishu:tokC'])
+  })
+
+  it('roster 为空 → 全部孵化（router 关闭不再拒绝，降级由装配层管线处理）', async () => {
+    const incubated: Array<{ sourceId: string; markdown: string; sourceTag: string }> = []
+    const { batch } = makeServices(fakeRunner(autoActions(['tokA'])), autoPorts({ roster: [], incubated }))
+    const created = await batch.createBatch({ provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' })
+    const view = await waitBatch(batch, created.batchId)
+    expect(view.items[0]?.status).toBe('incubated')
+    expect(incubated).toHaveLength(1)
+  })
+})
+
 // CreateBatchImportInput 冒烟：类型契约由 agent-contract 提供
 describe('createBatch input contract', () => {
-  it('accepts provider/connectionName/mode/forceNew shape（无 roomId）', () => {
-    const input: CreateBatchImportInput = { provider: 'notion', remoteDocumentIds: ['p1'], mode: 'room' }
+  it('accepts provider/connectionName/mode/roomId shape', () => {
+    const input: CreateBatchImportInput = { provider: 'notion', remoteDocumentIds: ['p1'], mode: 'room', roomId: 'r1' }
     expect(input.mode).toBe('room')
   })
 })
 
-// ── 批量导入路由：兼容契约（旧版桌面构建发的 mode/roomId 不得 400）─────────────
-
-describe('document-import batch routes (compat contract)', () => {
-  it('POST batch：mode=auto 无端口即成功；mode=room+roomId 仍 200 且忽略目标；未知 mode 400', async () => {
-    const { batch, imports } = makeServices(fakeRunner(feishuReadActions(['tokA', 'tokB'])))
-    const app = Fastify()
-    await app.register(documentImportBatchRoutes(batch, imports))
-    await app.ready()
-
-    const auto = await app.inject({
-      method: 'POST',
-      url: '/v1/document-import/batch',
-      payload: { provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'auto' },
-    })
-    expect(auto.statusCode).toBe(200)
-    const autoBody = auto.json() as { batchId: string; total: number }
-    expect(autoBody.total).toBe(1)
-    expect((await waitBatch(batch, autoBody.batchId)).items[0]?.status).toBe('imported')
-
-    const legacy = await app.inject({
-      method: 'POST',
-      url: '/v1/document-import/batch',
-      payload: { provider: 'feishu', remoteDocumentIds: ['tokB'], mode: 'room', roomId: 'room-legacy' },
-    })
-    expect(legacy.statusCode).toBe(200)
-    const legacyView = await waitBatch(batch, (legacy.json() as { batchId: string }).batchId)
-    expect(legacyView.targetRoomId).toBeNull()
-    expect(legacyView.items[0]).toMatchObject({ status: 'imported', roomId: null })
-
-    const bogus = await app.inject({
-      method: 'POST',
-      url: '/v1/document-import/batch',
-      payload: { provider: 'feishu', remoteDocumentIds: ['tokA'], mode: 'bogus' },
-    })
-    expect(bogus.statusCode).toBe(400)
-
-    // existing-in-room 兼容路由：roomId 不参与判定，返回工作区已导入集合。
-    const existing = await app.inject({
-      method: 'POST',
-      url: '/v1/document-import/existing-in-room',
-      payload: { provider: 'feishu', roomId: 'room-whatever', remoteDocumentIds: ['tokA', 'tokC'] },
-    })
-    expect(existing.statusCode).toBe(200)
-    expect(existing.json()).toMatchObject({ provider: 'feishu', existingRemoteIds: ['tokA'] })
-
-    await app.close()
-  })
-})
 // ── 找回进行中批次（面板重挂载恢复导入进度）──────────────────────────────────
 
 describe('document-import batches/active route', () => {
@@ -690,7 +809,8 @@ describe('document-import batches/active route', () => {
       provider: 'feishu',
       connectionName: 'vyi',
       remoteDocumentIds: ['tokA', 'tokB'],
-      mode: 'auto',
+      mode: 'room',
+      roomId: 'room-active-route',
     })
     const running = await app.inject({ method: 'GET', url: `/v1/document-import/batches/active?provider=feishu&connectionName=vyi` })
     expect(running.statusCode).toBe(200)
