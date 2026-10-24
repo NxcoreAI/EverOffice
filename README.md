@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" width="100%" alt="EverRoom — a local-first personal context workspace: files, conversations, memory, and a scoped Agent working from one Context Room">
+<img src="./everroom_logo/everroom_full.png" width="320" alt="EverRoom">
 
-**A local-first personal context workspace for your files, conversations, memory, and AI agents.**
+**A local-first workspace for producing Office documents with a governed AI Agent.**
 
-Connect information · Understand context · Move work forward
+Draft with an Agent · Review every change · Export real Office files
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [Website](https://r.nxcore.ai/)
 
@@ -22,95 +22,76 @@ Connect information · Understand context · Move work forward
 
 ## What is Everroom?
 
-Everroom gives your work a place where information, memory, and action stay connected. Bring in the files, conversations, meetings, repositories, and services that matter; organize them into a **Context Room**; then write, decide, and delegate with an Agent that can see the right context.
+Everroom is a local-first desktop workspace for producing real Office documents with an AI Agent. Bring in the local files, repositories, and connected services that matter, then create and edit Word documents, spreadsheets, and slide decks — yourself in the built-in Office editor, or through Agent sessions that draft, rewrite, and fill them in.
 
-It is the layer between your data and AI: more alive than a file store, more grounded than a chat box, and designed to help you take the next step instead of merely generating another answer.
+The Agent is not a chat box bolted onto a file store. It works inside explicit sessions and runs, receives only the tools and documents needed for the current request, and proposes document changes as reviewable operations. You decide what lands in the file.
 
-> **Let AI keep understanding you, so everything you build can keep working for you.**
+> **Let the Agent do the drafting; keep the final say.**
 
 ### The product loop
 
-<p align="center">
-  <img src="./assets/readme/product-loop.svg" width="100%" alt="The EverRoom loop: connect information, build a Context Room, write and remember, and let the Agent move work forward; decisions and new evidence flow back.">
-</p>
-
-1. **Connect information** from local files, repositories, meetings, audio, and optional services such as Feishu, Slack, Notion, or Gmail.
-2. **Build a Context Room** for a project, topic, person, or responsibility. Sources, decisions, Wiki pages, tasks, and memory stay together without becoming one unbounded prompt.
-3. **Write and remember** in Context Docs, capture real-world conversations, and keep important knowledge traceable to its source.
-4. **Move work forward** with scoped Agent sessions, scheduled tasks, diary automation, and the Agent Office view.
+1. **Bring in your material** from local files and folders, repositories, and connected services such as Feishu, Slack, Notion, or Gmail.
+2. **Produce Office artifacts.** Create Word documents, spreadsheets, and slide decks in the built-in Office editor, or let an Agent draft them.
+3. **Review every change.** Agent writes and edits arrive as patches and document operations you can inspect before they become part of the document.
+4. **Keep work moving.** Scoped Agent sessions, scheduled runs, dispatch-only subagents, and notifications carry recurring and long-running work.
 
 ## Why Everroom exists
 
-AI agents are good at producing a useful next step when they have the right context. The hard part is everything before that moment: finding the relevant material, separating facts from guesses, remembering what has already been decided, and keeping generated work connected to its sources.
+AI agents are good at producing a useful next step when they have the right material and a real place to put it. The hard part is everything around that moment: getting source material in, producing a file colleagues can actually open, and keeping automated edits reviewable instead of letting them silently rewrite your document.
 
-Everroom is built around that missing context layer. It is a personal workspace for documents, repositories, conversations, meetings, and connected applications. It is not intended to be another chat client, a thin RAG screen, or a notebook that quietly accumulates unreviewed summaries.
+Everroom is built around that gap. It is a local workspace for documents, files, and connected services, with an Agent that works on real Office artifacts. It is not another chat client, a thin RAG screen, or an automation that quietly accumulates unreviewed output.
 
 The product thesis is simple:
 
-> **Context should be assembled from evidence, scoped to a place of work, and made visible enough for a person to govern.**
+> **Agent work should land in real documents, stay scoped to the task, and remain reviewable by the person who owns the file.**
 
 Four principles follow from it:
 
-- **Local-first.** Data, indexes, working memory, and documents stay on the user's device by default.
-- **Evidence before conclusions.** Key memories and generated content should be traceable back to their sources.
-- **Automated, but governable.** Agents receive explicit, temporary, and revocable context and tool permissions.
-- **Replaceable foundations.** Models, memory engines, connectors, and agent runtimes all plug in through Everroom's own interfaces.
+- **Local-first.** Data, documents, indexes, and credentials stay on the user's device by default.
+- **Review before it lands.** Agent edits are proposed as operations and patches, not silent overwrites.
+- **Automated, but governable.** Agents receive explicit, temporary, and revocable tool permissions.
+- **Replaceable foundations.** Models, connectors, and agent runtimes all plug in through Everroom's own interfaces.
 
-The loop is deliberately reversible. A generated summary is useful only when a person can inspect where it came from, correct it, and let the correction flow back into the next task.
+A generated draft is useful only when a person can inspect what changed, correct it, and let the correction flow into the next task.
 
 ## Product model
 
 | Concept | Product role | What it protects |
 | --- | --- | --- |
-| **Evidence** | Versioned, addressable source material with positions and provenance | The difference between a source and a model's interpretation |
-| **Knowledge** | Wiki pages, entities, links, and route decisions built from evidence | Durable project vocabulary without silently ingesting everything |
-| **Memory** | Conversation capture and layered MemoryCore derivations (L0-L3) | Useful continuity across sessions, with a visible lifecycle |
-| **Context Room** | The working surface for a project, person, topic, or ongoing responsibility | A bounded context window instead of a global prompt dump |
-| **Context Docs** | Versioned documents that agents can create or edit through reviewable operations | Human ownership of the final artifact |
+| **Documents** | Word documents, spreadsheets, and slide decks with versioned, block-aware editing | Human ownership of the final artifact |
 | **Agent** | A scoped worker with explicit tools, sessions, runs, and cancellation | Automation that can be inspected, stopped, and replaced |
+| **Sources** | Local files, folders, repositories, and connector records brought into one library | A single place for the material an Agent may read |
+| **Connectors** | The managed OpenConnector/`oo` bridge, optional Nango integrations, and Feishu automation | External systems reached through explicit, approved actions |
+| **Schedules** | Recurring Agent runs and dispatch-only subagents | Long-running work that stays visible and interruptible |
 
-Every source is normalized once into versioned, content-addressed evidence; Knowledge, Memory, and Rooms reference that one asset instead of copying it.
+Original files and parsed Markdown have one storage owner: documents and Agent runs keep stable references, hashes, and provenance instead of copying the same source into several places.
 
-<p align="center">
-  <img src="./assets/readme/evidence-pipeline.svg" width="100%" alt="One asset, many references: each source is normalized once into an evidence ledger holding its content hash, version history, and provenance; Knowledge, Memory, and Room links reference it instead of copying.">
-</p>
+### How an Agent session works
 
-### How a Room works
+An Agent does not edit documents by remote control. It works through the same commit path a person does:
 
-A Room is more than a folder. It is a progressively assembled view of one area of work:
-
-<p align="center">
-  <img src="./assets/readme/room-anatomy.svg" width="100%" alt="Anatomy of a Context Room: linked sources route through evidence checks into wiki pages, entities, memory documents, or plain links; the Room profile summarizes goal, status, people, risks, decisions, and timeline; the Agent works with Room-scoped tools, and reviewed changes flow back as new evidence.">
-</p>
-
-1. Sources are linked to the Room and preserved with stable identity and version history.
-2. Routing and evidence checks decide whether material becomes a Room wiki page, an entity candidate, a memory document, or only a link.
-3. The Room profile summarizes the current goal, status, people, risks, decisions, and timeline from settled material.
-4. An Agent receives only the Room-scoped tools and documents needed for the current request.
-5. Document changes are committed through the document kernel, recorded as operations, and sent back through the same ingest path.
-
-The result is a workspace that can become more useful over time without turning every source into permanent memory.
+1. A session is scoped to a workspace, a tool set, and the documents in play.
+2. Document writes and edits are opened as explicit operations or patches against the versioned document.
+3. Proposed hunks appear in the editor for review, and you accept or reject them.
+4. Accepted changes commit through the document kernel, producing a new version with its operation history.
+5. Focused jobs can be dispatched to subagents, which report their own invocation timeline and can be cancelled.
 
 ### Product boundaries
 
-Everroom intentionally does not begin with continuous screen recording, an autonomous multi-agent swarm, enterprise administration, or mandatory cloud synchronization. Those features may be valuable later, but the first release is focused on trustworthy local context and reviewable work.
+Everroom is deliberately narrow: no autonomous multi-agent swarm, no enterprise administration, and no mandatory cloud synchronization. The focus is trustworthy local document work with an Agent you can review.
 
 ## Current state
 
-The main branch now contains the first integrated product loop. Some features require optional local services or model credentials; the desktop can still start with the isolated development runtime.
+The main branch now contains the Office + Agent surface. Some features require optional local services or model credentials; the desktop can still start with the isolated development runtime.
 
 | Area | Status | Available today |
 | --- | --- | --- |
-| Desktop workspace | Available | Electron + React workspace with Home, Rooms, Documents, Memory, Sources, Files, Diary, and Agent Office |
+| Desktop workspace | Available | Electron + React workspace with Home, Documents, Sources, Files, Office, Schedules, Agent connections, and Settings |
 | Local Gateway | Available | Fastify 5 service supervised by Electron, REST/WebSocket/OpenAPI boundary, health and readiness checks |
-| Evidence and ingest | Available, evolving | Unified intake, Markdown/text and office/web normalization, content hashes, versions, provenance, policy snapshots, and ingest ledger |
-| Knowledge Rooms | Available, evolving | Room registry, per-Room Wiki, entity routing, evidence accumulation, promotion, source attach/revert, and Wiki search/read tools |
-| Memory | Available when enabled | Pi Agent capture plus MemoryCore L0-L3 pipeline; desktop overview, conversations, atomic memories, scenarios, profile, search, and graceful unavailable states |
-| Agent sessions | Available | Persistent sessions, runs, streaming events, cancellation, independent runtime sessions, and scoped memory/knowledge/document tools |
-| Context Docs | Available, evolving | Versioned Tiptap documents, block-aware operations, reviewable Agent edits, MCP access, and transactional downstream ingest |
-| Reality Perception | Available, evolving | User-triggered microphone/system-audio capture, transcription, and reviewable conversation records |
-| Agent work management | Available, evolving | Agent Office presence, scheduled runs, diary tasks, and explicit run-now controls |
-| Files and understanding | Available, evolving | Local file browser, parsing and indexing pipeline, office/web document understanding, and source-linked artifacts |
+| Office documents | Available, evolving | Word documents, spreadsheets, and slide decks with a built-in editor, versioned commits, reviewable Agent patches, and PDF export |
+| Files and import | Available, evolving | Local file browser, folder and Obsidian import, Markdown/text and Office/web normalization, content hashes, and provenance |
+| Agent sessions | Available | Persistent sessions, runs, streaming events, cancellation, and scoped document and file tools |
+| Agent work management | Available, evolving | Agent Office presence, scheduled runs, dispatch-only subagents, notifications, and explicit run-now controls |
 | Connectors | Foundation available | Managed local OpenConnector + `oo` bridge, optional Nango integrations, and Feishu issue automation; provider coverage is still expanding |
 
 ## Quick start
@@ -147,7 +128,7 @@ NXCORE_AI_API=openai-responses
 
 The same boundary can target compatible OpenAI-style providers. Keep credentials in the Gateway environment; they are never sent to the renderer.
 
-Generative model calls in the Gateway are resolved through `AgentResolver` using stable Agent IDs. Primary chat, connector sync, transcription summaries, Cursor Completion, Knowledge workflows, and Web Search use independent runtime and workspace directories. Business modules do not call model APIs directly; embeddings remain a non-generative infrastructure capability outside Agent Resolver.
+Generative model calls in the Gateway are resolved through `AgentResolver` using stable Agent IDs. Primary chat, connector sync, Cursor Completion, document subagents, and Web Search each use independent runtime and workspace directories. Business modules do not call model APIs directly.
 
 NxCore Gateway also exposes the bearer-protected `/v1/mcp/documents/:sessionId` Streamable HTTP MCP endpoint for authenticated clients.
 
@@ -166,19 +147,6 @@ Each first-level directory represents one Agent and contains an `agent.yaml`, it
 Every `SKILL.md` requires `name` and `description` YAML frontmatter. Subagents can read only their own skill snapshot through the restricted `read` tool, not arbitrary workspace or device files. See [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md) for the full schema and policy model.
 
 </details>
-
-### Optional local MemoryCore and Knowledge services
-
-The desktop supervises compatible local services when their feature flags are enabled. The defaults are loopback endpoints:
-
-```dotenv
-NXCORE_MEMORY_ENABLED=true
-NXCORE_MEMORY_BASE_URL=http://127.0.0.1:8420
-NXCORE_KNOWLEDGE_ENABLED=true
-NXCORE_KNOWLEDGE_BASE_URL=http://127.0.0.1:8421
-```
-
-MemoryCore is packaged from the Everroom-maintained fork of [TencentDB-Agent-Memory](https://github.com/NxcoreAI/TencentDB-Agent-Memory). Service-specific LLM settings remain service-side. If either service is disabled or unavailable, the desktop shows an explicit degraded state and the rest of the local workspace remains usable.
 
 ### Useful commands
 
@@ -207,20 +175,15 @@ The unsigned installer is written to `release/EverRoom-<version>-windows-x64.exe
 
 ## Architecture
 
-Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns durable orchestration; specialized services own their own data contracts.
-
-<p align="center">
-  <img src="./assets/readme/architecture.svg" width="100%" alt="EverRoom architecture: the Electron desktop reaches the local NxCore Gateway through typed IPC with an ephemeral bearer token; the Gateway runs unified ingest, knowledge and rooms, memory proxy, document core, and agent services over SQLite, content-addressed objects, and daily logs, with replaceable engines — Pi runtime, MemoryCore, knowledge service, OpenConnector — attached.">
-</p>
+Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns durable orchestration; connectors and Agent runtimes sit behind their own contracts.
 
 ### The implementation strategy
 
-- **Normalize once, understand in the right place.** The ingest layer identifies and normalizes a source once, then fans it out to Knowledge, Memory, or Room links according to a recorded policy snapshot. It does not become a fourth LLM pipeline.
-- **One asset, many references.** Original files and parsed Markdown have one storage owner. Downstream systems keep stable references, hashes, and provenance instead of copying the same source into several databases.
-- **Room-scoped context.** Knowledge tools resolve the current Room or session before reading Wiki pages, sources, or materials. Agents do not receive a global unbounded corpus by default.
-- **Commit before side effects.** Document edits go through a transactional commit core and outbox. Knowledge and Memory fan-out happens after the authoritative document version is committed, so an external service failure cannot corrupt the document.
+- **One asset, many references.** Original files and parsed Markdown have one storage owner. Documents and Agent runs keep stable references, hashes, and provenance instead of duplicating the source.
+- **Scoped context.** An Agent receives only the documents, files, and tools needed for the current request, not a global unbounded corpus.
+- **Commit before side effects.** Document edits go through a transactional commit core and outbox, so an external service failure cannot corrupt the document.
 - **Deterministic external actions.** Connector calls are prepared against real Action Schemas and real connections before execution. Tokens remain in trusted processes, and destructive or externally visible actions are designed to require approval.
-- **Graceful degradation.** The fake Agent runtime, disabled MemoryCore, unavailable connectors, and model failures have explicit fallback states. A missing optional service should not make local documents inaccessible.
+- **Graceful degradation.** The fake Agent runtime, unavailable connectors, and model failures have explicit fallback states. A missing optional service should not make local documents inaccessible.
 
 ### Technology stack
 
@@ -230,8 +193,8 @@ Everroom keeps the product boundary stable while allowing the underlying engines
 | Gateway | Node.js 22+, Fastify 5, TypeBox, REST, WebSocket, OpenAPI |
 | Storage | SQLite WAL, better-sqlite3, Drizzle ORM, FTS5, content-addressed objects |
 | Documents | Tiptap document model, versioned commits, block references, operation kernel |
+| Office output | Bundled GenOffice runtimes for docx, xlsx, and pptx generation |
 | Agent boundary | Shared Agent contracts, Pi runtime adapter, MCP document endpoint |
-| Memory | MemoryCore HTTP client and L0-L3 pipeline |
 | Connectors | OpenConnector sidecar, `oo` CLI bridge, optional Nango supervisor |
 | Observability | Pino structured logs, readable console output, rotating daily JSON files |
 | Verification | Vitest, strict TypeScript checks, Gateway and runtime integration tests |
@@ -269,19 +232,15 @@ On macOS, runtime data is stored under:
 
 On Windows, the same layout lives under `%APPDATA%\EverRoom\` (that is `C:\Users\<user>\AppData\Roaming\EverRoom\`). Set `NXCORE_DATA_DIR` to relocate it.
 
-See [`apps/gateway/README.md`](./apps/gateway/README.md) for ASR, mail connector, and standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
+See [`apps/gateway/README.md`](./apps/gateway/README.md) for the mail connector and standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
 
 ## Security and privacy model
 
-<p align="center">
-  <img src="./assets/readme/security-boundary.svg" width="100%" alt="Local-first by default: documents, evidence, indexes, rooms, the loopback gateway, and redacted logs stay on the device; cloud model providers, connectors, and external agents are opt-in and only receive the approved scope.">
-</p>
-
-- Data, indexes, working memory, and documents stay on the user's device by default.
+- Data, documents, indexes, and credentials stay on the user's device by default.
 - The Gateway listens on loopback and uses a fresh high-entropy token for each desktop session.
-- The renderer receives typed preload APIs only; filesystem, database, provider tokens, and MemoryCore credentials stay in trusted processes.
-- Original sources are versioned and content-addressed. Derived knowledge and memory retain source references where the downstream engine supports them.
-- Cloud providers, remote models, and external Agents are opt-in. Everroom should send only the approved Room or task scope.
+- The renderer receives typed preload APIs only; filesystem, database, provider tokens, and connector credentials stay in trusted processes.
+- Original sources are versioned and content-addressed, and document history records every accepted operation.
+- Cloud providers, remote models, and external Agents are opt-in. Everroom should send only the approved document or task scope.
 - Credentials and sensitive headers are redacted from logs. Managed connector configuration files use restricted permissions.
 - External side effects are separated from read-only context gathering and are intended to pass through explicit preparation and approval boundaries.
 
@@ -295,10 +254,11 @@ Everroom/
 ├── packages/
 │   ├── agent-contract/   # Shared Agent protocol and event types
 │   ├── agent-runtime/    # Runtime interface and development adapter
-│   ├── agent-runtime-pi/ # Pi runtime, memory, knowledge, and connector tools
-│   ├── connector-contract/ # Shared connector sync and normalized data contracts
+│   ├── agent-runtime-pi/ # Pi runtime adapter and Agent tools
 │   ├── document-model/   # Pure document normalization and block references
-│   └── reality-contract/ # Shared reality/event contracts
+│   └── reality-contract/ # Shared protocol and event types
+├── submodules/
+│   └── everroom-connectors/  # Connector contract, gateway module, and desktop host
 └── docs/                 # Product, architecture, and implementation notes
 ```
 
@@ -306,15 +266,15 @@ Everroom/
 
 The next milestones are about making the loop more dependable and portable, rather than adding more surfaces:
 
-1. Finish the unified file management and ingest experience for local files, GitHub, Feishu, web content, and connector records.
-2. Improve evidence review: conflict display, provenance navigation, manual attach/revert, and source-level diagnostics.
-3. Make Room profiles and Wiki retrieval more useful for long-running projects while keeping routing conservative.
-4. Complete Context Docs operation recovery, conflict handling, and richer citation-aware Agent workflows.
+1. Deepen Office production: richer Word, spreadsheet, and slide generation, template fidelity, and reliable export.
+2. Improve review: clearer patch review, conflict handling, and operation recovery for Agent edits.
+3. Expand the file and import experience across local folders, GitHub, Feishu, web content, and connector records.
+4. Make Agent sessions more dependable: long-running runs, subagent handoffs, schedules, and notifications.
 5. Expand replaceable Agent adapters beyond Pi, including Codex, Claude Code, and OpenCode integrations where their contracts permit.
 6. Expand bidirectional desktop/mobile sync and remote Agent control while keeping local permission boundaries explicit.
 7. Improve Windows support, privacy exclusions, installation, and release reliability.
 
-Continuous screen recording, autonomous multi-agent DAGs, enterprise administration, and mandatory cloud synchronization remain outside the first release scope.
+Autonomous multi-agent swarms, enterprise administration, and mandatory cloud synchronization remain outside the first release scope.
 
 ## Acknowledgements
 
@@ -322,7 +282,6 @@ Everroom builds on a number of open-source projects and ideas:
 
 - [Electron](https://www.electronjs.org/) and [React](https://react.dev/) for the desktop application foundation.
 - [Fastify](https://fastify.dev/), [TypeBox](https://github.com/sinclairzx81/typebox), [Drizzle ORM](https://orm.drizzle.team/), and [SQLite](https://www.sqlite.org/) for the local service and storage layer.
-- [TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory), maintained for Everroom through the [NxcoreAI fork](https://github.com/NxcoreAI/TencentDB-Agent-Memory), for the layered MemoryCore pipeline.
 - [Pi](https://github.com/earendil-works/pi) and the surrounding Model Context Protocol ecosystem for the replaceable Agent runtime direction.
 - [OpenConnector](https://github.com/oomol-lab/open-connector) and [`oo-cli`](https://github.com/oomol-lab/oo-cli) from OOMOL for the local connector bridge.
 - [Liminon](https://liminon.ai/) for inspiration around AI workflows and context products.
@@ -332,6 +291,6 @@ Everroom is released under the [Apache License 2.0](./LICENSE). Upstream license
 
 ## License and contributing
 
-The intended community edition includes the desktop client, core Room and Doc experiences, the Agent boundary, the local memory and knowledge integrations, local connectors, and extension SDKs. Hosted synchronization, team administration, enterprise controls, and managed connector infrastructure may be delivered separately.
+The intended community edition includes the desktop client, the Office document experience, the Agent boundary, local connectors, and extension SDKs. Hosted synchronization, team administration, enterprise controls, and managed connector infrastructure may be delivered separately.
 
-Interfaces are still moving. Useful contribution areas include connectors, Agent adapters, memory and knowledge evaluators, Room templates, document operations, tests, documentation, and privacy reviews. Please open an issue before starting a large architectural change so it can align with the current contracts and roadmap.
+Interfaces are still moving. Useful contribution areas include connectors, Agent adapters, Office document and export quality, document operations, tests, documentation, and privacy reviews. Please open an issue before starting a large architectural change so it can align with the current contracts and roadmap.

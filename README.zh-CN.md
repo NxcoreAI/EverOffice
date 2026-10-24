@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" width="100%" alt="EverRoom — 本地优先的个人上下文工作空间：文件、对话、记忆与 Agent 在同一个 Context Room 中协作">
+<img src="./everroom_logo/everroom_full.png" width="320" alt="EverRoom">
 
-**一个本地优先的个人上下文工作空间，把文件、对话、记忆和 AI Agent 放回同一个工作现场。**
+**本地优先的工作空间：用可治理的 AI Agent 生产真正的 Office 文档。**
 
-连接信息 · 理解上下文 · 推进下一步
+Agent 起草 · 逐条审阅 · 导出可交付的 Office 文件
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [官网](https://r.nxcore.ai/)
 
@@ -22,101 +22,77 @@
 
 ## Everroom 是什么？
 
-Everroom 是面向个人的上下文工作空间：把文件、代码仓库、沟通记录、会议、记忆和 Agent 放在同一个工作现场。你可以把它理解为下一代 Notion / Obsidian，但核心不是存放内容，而是让内容持续理解你的工作，并帮助你推进下一步。
+Everroom 是一个本地优先的桌面工作空间，用来和 AI Agent 一起生产真正的 Office 文档。导入本地文件、代码仓库和已连接的服务，然后在内置 Office 编辑器里自己撰写 Word 文档、表格和演示文稿，或者交给 Agent 会话起草、改写和填充。
 
-它位于个人数据与 AI Agent 之间：将信息变成可追溯证据，将证据沉淀为受治理的记忆，再把与目标相关的上下文组织进 **Context Room**，让文档和 Agent 获得完成任务所需的信息，而不是一份失控的全量提示词。
+这里的 Agent 不是接在文件库旁边的聊天框：它在明确的会话与 run 中工作，只拿到当前请求需要的工具和文档，并把文档改动作为可审阅的操作提交，最终是否落到文件里由你决定。
 
-> **让 AI 持续理解你，让你的积累随时发挥作用。**
+> **让 Agent 起草，把最终决定权留给自己。**
 
 ### 产品闭环
 
-<p align="center">
-  <img src="./assets/readme/product-loop.svg" width="100%" alt="EverRoom 产品闭环：连接信息、建立 Context Room、写作与记忆、让 Agent 推进工作，决策与新证据回流到闭环起点。">
-</p>
-
-1. **连接信息：** 导入本地文件、代码仓库、会议和录音，也可以按需连接飞书、Slack、Notion、Gmail 等服务。
-2. **建立 Context Room：** 为项目、主题、人物或长期职责建立一个工作空间，把文档、决策、任务、Wiki 和记忆放在一起。
-3. **写作与记忆：** 在 Context Doc 中写作和修改，使用现实感知记录真实对话，让重要内容始终能回到来源。
-4. **推进工作：** 启动有边界的 Agent 会话，使用 Agent Office 查看执行状态，并通过日记和定时任务处理重复工作。
-
-Everroom 不是另一个聊天窗口，也不是被动堆积文件的笔记库。它是一张可以被你检查、修正和持续使用的上下文工作台。
+1. **导入素材：** 引入本地文件与文件夹、代码仓库，以及飞书、Slack、Notion、Gmail 等已连接服务。
+2. **生产 Office 产物：** 在内置 Office 编辑器里创建 Word 文档、表格和演示文稿，或让 Agent 起草。
+3. **逐条审阅改动：** Agent 的写入与修改以 patch 和文档操作的形式呈现，确认后才成为文档的一部分。
+4. **持续推进工作：** 有边界的 Agent 会话、定时 run、dispatch-only 子 Agent 和通知承担重复与长耗时任务。
 
 ## 为什么需要 Everroom？
 
-当 AI 拥有正确的上下文时，给出下一步并不难。真正困难的是此前的工作：找到相关材料，区分事实与推测，记住已经做过的决定，并让生成结果始终能够关联回原始来源。
+当 AI 拿到正确的素材、并且有一个真正能落地的地方时，给出下一步并不难。真正困难的是此前的工作：把源材料导进来，产出同事能直接打开的文件，并让自动改动始终可审阅，而不是悄悄重写你的文档。
 
-Everroom 补上的正是这一层。它围绕文档、代码仓库、对话、会议和已连接应用构建个人工作空间，而不是一个通用聊天客户端、简单的 RAG 界面，或默默堆积未经审阅摘要的笔记库。
+Everroom 补上的正是这一层。它面向文档、文件和已连接服务构建本地工作空间，并让 Agent 作用于真实的 Office 产物；它不是另一个聊天客户端、简单的 RAG 界面，也不是默默堆积未审阅产出的自动化工具。
 
 产品主张很简单：
 
-> **上下文应当由证据组装，被限定在具体的工作空间中，并且清晰到足以由人来治理。**
+> **Agent 的产出应当落进真实文档，被限定在具体任务内，并且清晰到足以由文件所有者审阅。**
 
 产品遵循四项原则：
 
-- **本地优先：** 数据、索引、工作记忆和文档默认保存在用户设备上。
-- **证据先于结论：** 关键记忆和生成内容应当能够回到原始来源。
-- **自动化但可治理：** Agent 获得明确、临时且可撤销的上下文和工具权限。
-- **底座可替换：** 模型、记忆引擎、连接器和 Agent runtime 均通过 Everroom 自有接口接入。
+- **本地优先：** 数据、文档、索引和凭据默认保存在用户设备上。
+- **先审阅再落地：** Agent 改动以操作和 patch 的形式提出，而不是静默覆盖。
+- **自动化但可治理：** Agent 获得明确、临时且可撤销的工具权限。
+- **底座可替换：** 模型、连接器和 Agent runtime 均通过 Everroom 自有接口接入。
 
-这个闭环是可逆的。只有当人能够检查生成摘要来自哪里、修正它，并让修正进入下一次任务时，摘要才真正有用。
+只有当人能够检查改了什么、修正它，并让修正进入下一次任务时，生成稿才真正有用。
 
 ## 产品模型
 
 | 概念 | 在产品中的作用 | 它所保护的边界 |
 | --- | --- | --- |
-| **Evidence** | 带位置与溯源信息、可寻址且有版本的源材料 | 区分原始来源和模型解释 |
-| **Knowledge** | 从证据建立的 Wiki 页面、实体、链接和路由决策 | 在不静默吸收全部数据的前提下形成稳定项目知识 |
-| **Memory** | 对话捕获和 MemoryCore L0-L3 分层推导 | 形成跨会话连续性，同时保留可见的生命周期 |
-| **Context Room** | 面向项目、人物、主题或长期职责的工作界面 | 使用有边界的上下文，而不是全局 Prompt 堆积 |
-| **Context Docs** | Agent 可通过可审阅操作创建或编辑的版本化文档 | 确保最终产物仍由人掌控 |
-| **Agent** | 拥有明确工具、会话、运行记录和取消能力的任务执行者 | 让自动化能够被检查、停止和替换 |
+| **Documents** | 支持版本化、块级编辑的 Word 文档、表格和演示文稿 | 确保最终产物仍由人掌控 |
+| **Agent** | 拥有明确工具、会话、run 记录和取消能力的任务执行者 | 让自动化能够被检查、停止和替换 |
+| **Sources** | 汇集本地文件、文件夹、代码仓库和连接器记录的统一素材库 | 让 Agent 可读的素材只有一个入口 |
+| **Connectors** | 托管 OpenConnector/`oo` bridge、可选 Nango 集成与飞书自动化 | 通过明确且经确认的操作触达外部系统 |
+| **Schedules** | 周期性 Agent run 与 dispatch-only 子 Agent | 长耗时工作始终可见、可中断 |
 
-每份来源只做一次规范化，沉淀为带版本、内容寻址的证据；Knowledge、Memory 和 Room 引用这份资产，而不是复制它。
+原始文件和解析后的 Markdown 只有一个存储所有者：文档与 Agent run 通过稳定引用、哈希和溯源信息使用它们，而不是复制多份。
 
-<p align="center">
-  <img src="./assets/readme/evidence-pipeline.svg" width="100%" alt="一份资产多处引用：来源一次规范化进入证据台账，记录内容哈希、版本历史与溯源；Knowledge、Memory 与 Room 链接以引用方式使用它。">
-</p>
+### 一次 Agent 会话如何工作？
 
-### 一个 Room 如何工作？
+Agent 不会绕过你远程改文档，它走的是和人一样的提交路径：
 
-Room 不只是文件夹，而是围绕一项工作逐步组装出的上下文视图：
-
-<p align="center">
-  <img src="./assets/readme/room-anatomy.svg" width="100%" alt="Context Room 解剖图：关联来源经路由与证据检查后成为 Wiki 页面、实体、记忆文档或仅链接；Room Profile 汇总目标、状态、人物、风险、决策与时间线；Agent 使用 Room 范围的工具工作，经审阅的修改作为新证据回流。">
-</p>
-
-1. 来源被关联到 Room，并保留稳定身份和版本历史。
-2. 路由与证据检查决定材料应成为 Room Wiki、实体候选、记忆文档，还是仅保留链接。
-3. Room Profile 从已确认材料中整理当前目标、状态、人物、风险、决策和时间线。
-4. Agent 只会获得当前请求需要的 Room 范围工具和文档。
-5. 文档修改通过文档内核提交、记录为操作，并重新进入统一摄取链路。
-
-因此，Room 可以随着使用持续变得更有价值，同时不会把每一份来源都强行变成永久记忆。
+1. 会话被限定在某个工作区、一组工具和当前涉及的文档上。
+2. 文档写入与修改以版本化文档上的显式操作或 patch 打开。
+3. 待定 hunk 出现在编辑器里供审阅，由你接受或拒绝。
+4. 接受后的改动通过文档内核提交，生成带操作历史的新版本。
+5. 聚焦的任务可以派发给子 Agent，它们会汇报自己的调用时间线，也可以被取消。
 
 ### 产品边界
 
-Everroom 当前不会从连续屏幕录制、自治多 Agent 集群、企业管理或强制云端同步开始。首个版本聚焦可信的本地上下文和可审阅的工作闭环。
+Everroom 刻意收窄范围：不做自治多 Agent 集群、不做企业管理，也不强制云端同步。重点是可信的本地文档工作，以及一个你能审阅的 Agent。
 
 ## 当前进度
 
-仓库已经具备首个本地工作流所需的桌面端和后端基础设施。
+仓库当前保留 Office + Agent 这一产品面。部分能力需要可选的本地服务或模型配置；使用隔离的开发 runtime 时，桌面应用仍可正常启动。
 
 | 模块 | 状态 | 当前能力 |
 | --- | --- | --- |
-| 桌面工作空间 | 已可用 | Electron + React 工作空间，包含首页、Context Room、文档、记忆、数据源、文件、日记和 Agent Office |
-| NxCore Gateway | 已可用 | 由 Electron 管理的独立 Fastify 服务，覆盖开发和打包运行方式 |
-| API 边界 | 已可用 | TypeBox 校验、OpenAPI 文档、Bearer 鉴权、健康检查和 WebSocket |
-| 本地存储 | 已可用 | SQLite WAL、Drizzle migration、内容寻址对象与 FTS5 证据检索 |
-| 数据源与文件 | 已可用，持续完善 | 本地文件浏览、文件夹导入、GitHub 与可选外部连接器 |
-| OpenConnector | 已可用 | 通过 oo CLI 搜索、检查并执行 Action，提供桌面控制台与 Agent 工具 |
-| 证据与理解 | 已可用，持续完善 | Markdown、纯文本、Office / Web 内容解析，文件版本、来源位置和可追溯证据块 |
-| Context Room 与 Wiki | 已可用，持续完善 | Room 注册、项目 Wiki、实体路由、来源挂载和搜索读取 |
-| Agent 服务 | 已可用，持续完善 | Pi 与开发 runtime、持久化会话、运行记录、流式事件、取消和上下文工具 |
-| Memory | 已可用，按配置启用 | MemoryCore L0-L3 分层记忆、对话、原子记忆、搜索和降级状态 |
-| Context Docs | 已可用，持续完善 | Tiptap 版本化文档、块级操作、可审阅 Agent 修改、MCP 接口和事务化下游摄取 |
-| 现实感知 | 已可用，持续完善 | 麦克风 / 系统音频采集、转写和可审阅的对话记录 |
-| Agent 工作管理 | 已可用，持续完善 | Agent Office、定时任务、日记任务和手动执行 |
-| Connectors | 基础能力已可用 | 托管本地 OpenConnector、`oo` bridge、可选 Nango 集成，连接器覆盖持续扩展 |
+| 桌面工作空间 | 已可用 | Electron + React 工作空间，包含首页、文档、数据源、文件、Office、定时任务、Agent 连接和设置 |
+| NxCore Gateway | 已可用 | 由 Electron 管理的独立 Fastify 服务，覆盖 REST / WebSocket / OpenAPI 边界、健康与就绪检查 |
+| Office 文档 | 已可用，持续完善 | Word 文档、表格与演示文稿的内置编辑器、版本化提交、可审阅的 Agent patch 和 PDF 导出 |
+| 文件与导入 | 已可用，持续完善 | 本地文件浏览、文件夹与 Obsidian 导入、Markdown / 文本与 Office / Web 内容解析、内容哈希和溯源 |
+| Agent 服务 | 已可用 | 持久化会话、run 记录、流式事件、取消，以及文档与文件范围的工具 |
+| Agent 工作管理 | 已可用，持续完善 | Agent Office 状态、定时 run、dispatch-only 子 Agent、通知和手动执行 |
+| Connectors | 基础能力已可用 | 托管本地 OpenConnector、`oo` bridge、可选 Nango 集成与飞书 Issue 自动化，连接器覆盖持续扩展 |
 
 ## 快速开始
 
@@ -141,9 +117,9 @@ pnpm dev
 
 ### Agent 服务
 
-Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。默认使用隔离的 `fake` runtime，确保没有模型密钥时桌面应用仍可启动。需要真实 Agent 时，配置内置 Pi runtime；Context Room 文档工具会直接注入 Agent：
+Gateway 会读取仓库根目录的 `.env`，也兼容 `apps/gateway/.env` 和通过 `NXCORE_ENV_FILE` 指定的文件。默认使用隔离的 `fake` runtime，确保没有模型密钥时桌面应用仍可启动。需要真实 Agent 时，配置内置 Pi runtime：
 
-Gateway 中的生成式模型调用统一通过 `AgentResolver` 按稳定 ID 选择 Agent。主对话、Connector 同步、转写总结、Cursor Completion、Knowledge 抽取/判定/登记和 Web Search 都拥有独立的 Runtime 与 `config/sessions/workspace` 目录；业务模块不直接调用 LLM API。向量 Embedding 是非生成式基础设施能力，不经过 Agent Resolver。
+Gateway 中的生成式模型调用统一通过 `AgentResolver` 按稳定 ID 选择 Agent。主对话、Connector 同步、Cursor Completion、文档子 Agent 和 Web Search 都拥有独立的 Runtime 与 `config/sessions/workspace` 目录；业务模块不直接调用 LLM API。
 
 ```dotenv
 NXCORE_AGENT_RUNTIME=pi
@@ -154,7 +130,7 @@ NXCORE_AI_API_KEY=
 NXCORE_AI_API=openai-responses
 ```
 
-NxCore Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。已废弃的远端聊天传输不再属于 runtime 配置。
+NxCore Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessionId` Streamable HTTP MCP 入口，供经过认证的 MCP 客户端使用。
 
 <details>
 <summary><b>文件驱动的子 Agent（目录结构、agent.yaml 与约束）</b></summary>
@@ -205,19 +181,6 @@ policy:
 
 </details>
 
-### 可选的本地 MemoryCore 与 Knowledge 服务
-
-功能开关启用后，Desktop 会管理兼容的本地服务。默认使用以下 loopback 地址：
-
-```dotenv
-NXCORE_MEMORY_ENABLED=true
-NXCORE_MEMORY_BASE_URL=http://127.0.0.1:8420
-NXCORE_KNOWLEDGE_ENABLED=true
-NXCORE_KNOWLEDGE_BASE_URL=http://127.0.0.1:8421
-```
-
-MemoryCore 来自 EverRoom 维护的 [TencentDB-Agent-Memory Fork](https://github.com/NxcoreAI/TencentDB-Agent-Memory)，服务所需的模型配置留在服务侧。服务被关闭或暂时不可用时，Desktop 会显示明确的降级状态，其余本地工作空间仍可使用。
-
 ### 常用命令
 
 ```bash
@@ -245,20 +208,15 @@ pnpm package:win  # 生成 Windows x64 NSIS 安装包
 
 ## 技术架构
 
-Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责持久化编排；专门服务各自维护数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
-
-<p align="center">
-  <img src="./assets/readme/architecture.svg" width="100%" alt="EverRoom 架构：Electron 桌面端通过类型化 IPC 携临时 Bearer Token 访问本地 NxCore Gateway；Gateway 运行统一摄取、Knowledge 与 Room、Memory 代理、文档内核与 Agent 服务，底层是 SQLite、内容寻址对象与按日切分日志，并可挂接可替换引擎——Pi runtime、MemoryCore、Knowledge service、OpenConnector。">
-</p>
+Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责持久化编排；连接器和 Agent runtime 各自维护自己的数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
 
 ### 实现策略
 
-- **一次规范化，在合适位置完成理解。** 摄取层识别并规范化来源，再依据已记录的策略快照分发给 Knowledge、Memory 或 Room 链接，不额外制造一条 LLM 管道。
-- **一份资产，多处引用。** 原始文件与解析后的 Markdown 只有一个存储所有者，下游通过稳定引用、哈希和溯源信息使用它们。
-- **Room 范围上下文。** Knowledge 工具先解析当前 Room 或会话，再读取 Wiki、来源和材料；Agent 默认不会获得无边界的全局语料。
-- **先提交，再执行副作用。** 文档修改先通过事务化提交内核与 outbox 落盘，再分发给 Knowledge 和 Memory，外部服务失败不会破坏权威文档版本。
+- **一份资产，多处引用。** 原始文件与解析后的 Markdown 只有一个存储所有者，文档与 Agent run 通过稳定引用、哈希和溯源信息使用它们，而不是复制多份。
+- **有边界的上下文。** Agent 只会获得当前请求需要的文档、文件和工具，而不是无边界的全局语料。
+- **先提交，再执行副作用。** 文档修改先通过事务化提交内核与 outbox 落盘，外部服务失败不会破坏权威文档版本。
 - **确定性的外部操作。** Connector 调用基于真实 Action Schema 和连接准备，凭据留在可信进程中；破坏性或对外可见的操作需要确认边界。
-- **优雅降级。** Fake Agent、未启用的 MemoryCore、不可用连接器和模型错误都有明确状态，可选服务缺失不会让本地文档不可访问。
+- **优雅降级。** Fake Agent、不可用连接器和模型错误都有明确状态，可选服务缺失不会让本地文档不可访问。
 
 ### 技术栈
 
@@ -268,8 +226,8 @@ Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端�
 | Gateway | Node.js 22+、Fastify 5、TypeBox、REST、WebSocket、OpenAPI |
 | 存储 | SQLite WAL、better-sqlite3、Drizzle ORM、FTS5、内容寻址对象 |
 | 文档 | Tiptap 文档模型、版本化提交、块引用、操作内核 |
+| Office 产物 | 内置 GenOffice runtime，生成 docx、xlsx 与 pptx |
 | Agent 边界 | 共享 Agent 契约、Pi runtime adapter、MCP 文档端点 |
-| 记忆 | MemoryCore HTTP 客户端与 L0-L3 管道 |
 | 连接器 | OpenConnector sidecar、`oo` CLI bridge、可选 Nango supervisor |
 | 可观测性 | Pino 结构化日志、可读终端输出、按日切分的 JSON 日志 |
 | 验证 | Vitest、严格 TypeScript 检查、Gateway 与 runtime 集成测试 |
@@ -313,15 +271,11 @@ Gateway 日志命名为 `gateway.YYYY-MM-DD.N.log`，每天零点切分，保留
 
 ## 安全模型
 
-<p align="center">
-  <img src="./assets/readme/security-boundary.svg" width="100%" alt="本地优先边界：文档、证据、索引、Room、回环 Gateway 与脱敏日志默认留在设备上；云模型、连接器与外部 Agent 均为可选，只获得批准的范围。">
-</p>
-
-- 数据、索引、工作记忆和文档默认保存在用户设备上。
+- 数据、文档、索引和凭据默认保存在用户设备上。
 - Gateway 只监听本地回环地址，每次桌面会话使用新的高熵 Token。
-- Renderer 只能访问类型化 preload API；文件系统、数据库、模型 Token 和 MemoryCore 凭据保留在可信进程中。
-- 原始来源以内容寻址方式保存版本；下游能力支持时，派生知识和记忆会保留来源引用。
-- 云服务、远程模型和外部 Agent 均为可选能力，并且只应获得用户批准的 Room 或任务范围。
+- Renderer 只能访问类型化 preload API；文件系统、数据库、模型 Token 和连接器凭据保留在可信进程中。
+- 原始来源以内容寻址方式保存版本，文档历史记录每一次被接受的改动。
+- 云服务、远程模型和外部 Agent 均为可选能力，并且只应获得用户批准的文档或任务范围。
 - 日志会自动脱敏敏感请求头与凭据，托管连接器配置文件使用受限权限。
 - 对外产生影响的操作与只读上下文收集相互分离，并应经过明确的准备与确认边界。
 
@@ -335,10 +289,11 @@ Everroom/
 ├── packages/
 │   ├── agent-contract/   # 共享 Agent 协议与事件类型
 │   ├── agent-runtime/    # Runtime 接口与开发 adapter
-│   ├── agent-runtime-pi/ # Pi runtime、记忆、知识和连接器工具
-│   ├── connector-contract/ # 共享 Connector 同步与标准化数据协议
+│   ├── agent-runtime-pi/ # Pi runtime adapter 与 Agent 工具
 │   ├── document-model/   # 纯文档规范化与块引用
-│   └── reality-contract/ # 现实感知与事件共享协议
+│   └── reality-contract/ # 共享协议与事件类型
+├── submodules/
+│   └── everroom-connectors/  # 连接器契约、Gateway 模块与桌面宿主
 └── docs/                 # 产品、架构和实施说明
 ```
 
@@ -346,15 +301,15 @@ Everroom/
 
 当前重点是让本地工作闭环更可靠、更容易扩展：
 
-1. 完善本地文件、GitHub、飞书、网页和连接器数据的统一导入体验。
-2. 增强证据审阅：冲突展示、来源跳转、手动挂载 / 撤销和源级诊断。
-3. 提升长期项目中的 Room Profile、Wiki 检索和记忆治理能力。
-4. 完善 Context Doc 的操作恢复、冲突处理和带引用的 Agent 工作流。
+1. 深化 Office 生产能力：更丰富的 Word、表格与演示文稿生成、模板保真度和可靠的导出。
+2. 改善审阅体验：更清晰的 patch 审阅、冲突处理和 Agent 改动的操作恢复。
+3. 扩展文件与导入体验，覆盖本地文件夹、GitHub、飞书、网页内容和连接器数据。
+4. 让 Agent 会话更可靠：长耗时 run、子 Agent 交接、定时任务和通知。
 5. 扩展可替换 Agent adapter，逐步接入 Codex、Claude Code 和 OpenCode。
 6. 扩大移动端与桌面端的双向同步和 Agent 控制能力，同时保持本地权限边界清晰。
 7. 提升 Windows 支持、隐私排除、安装体验和发布稳定性。
 
-连续屏幕录制、自治多 Agent DAG、企业管理和强制云端同步仍不属于当前首版范围。
+自治多 Agent 集群、企业管理和强制云端同步仍不属于当前首版范围。
 
 ## 致谢
 
@@ -362,7 +317,6 @@ Everroom 建立在众多开源项目和理念之上：
 
 - [Electron](https://www.electronjs.org/) 与 [React](https://react.dev/) 提供桌面应用基础。
 - [Fastify](https://fastify.dev/)、[TypeBox](https://github.com/sinclairzx81/typebox)、[Drizzle ORM](https://orm.drizzle.team/) 和 [SQLite](https://www.sqlite.org/) 提供本地服务与存储层。
-- [TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) 通过 [NxcoreAI Fork](https://github.com/NxcoreAI/TencentDB-Agent-Memory) 为 Everroom 提供分层 MemoryCore 管道。
 - [Pi](https://github.com/earendil-works/pi) 与 Model Context Protocol 生态为可替换 Agent runtime 方向提供基础。
 - OOMOL 的 [OpenConnector](https://github.com/oomol-lab/open-connector) 与 [`oo-cli`](https://github.com/oomol-lab/oo-cli) 提供本地 Connector Bridge。
 - [Liminon](https://liminon.ai/) 为 AI 工作流和上下文产品方向提供启发。
@@ -372,6 +326,6 @@ Everroom 建立在众多开源项目和理念之上：
 
 Everroom 以 [Apache License 2.0](./LICENSE) 开源。第三方组件仍适用各自的上游许可证；请以对应目录中的许可证和声明文件为准。
 
-社区版计划包含桌面客户端、基础 Room 与 Doc 体验、Agent runtime 边界、基础 Memory Kernel、本地 Connector 和扩展 SDK。托管同步、团队管理、企业控制与托管连接器基础设施可能单独提供。
+社区版计划包含桌面客户端、Office 文档体验、Agent runtime 边界、本地 Connector 和扩展 SDK。托管同步、团队管理、企业控制与托管连接器基础设施可能单独提供。
 
-Everroom 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、记忆评估器、Room 模板、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。
+Everroom 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、Office 文档与导出质量、文档操作、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。
