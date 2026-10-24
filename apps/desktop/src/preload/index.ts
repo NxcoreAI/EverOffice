@@ -712,7 +712,6 @@ const api: NxcoreDesktopApi = {
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),
     readDataUrl: (fileId: string) => invokeQuietly('files:read-data-url', fileId),
-    getClipCapture: (fileId: string) => invoke('files:clipper-capture:get', fileId),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),

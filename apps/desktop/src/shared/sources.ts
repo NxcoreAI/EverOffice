@@ -86,7 +86,6 @@ export interface LocalAgentAdapterCheck {
   adapter: LocalAgentAcpAdapterInfo
 }
 import type { MigrationApi } from './migrations'
-import type { BrowserExtensionClipperCapture } from './browser-extension'
 import type { RealityInsights } from '@nxcore/reality-contract'
 import type {
   ConnectorAuthorizationAttempt,
@@ -1002,7 +1001,6 @@ export interface NxcoreDesktopApi {
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
-    getClipCapture(fileId: string): Promise<BrowserExtensionClipperCapture>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
     delete(fileId: string): Promise<{

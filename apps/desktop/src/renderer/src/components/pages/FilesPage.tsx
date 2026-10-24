@@ -1,14 +1,11 @@
-import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Image as ImageIcon, Search, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Image as ImageIcon, Search, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 
 import type {
   FileCatalogDto,
   FileImportOutcome,
   FileImportProgressEvent,
 } from '../../../../shared/ingest'
-import type { BrowserExtensionClipperCapture } from '../../../../shared/browser-extension'
 import { isRoomArtifactSourceKind, type OfficePreviewTab } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
@@ -132,7 +129,6 @@ export function FilesPage({
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dragActive, setDragActive] = useState(false)
-  const [clipperPreview, setClipperPreview] = useState<{ capture: BrowserExtensionClipperCapture; markdown: string } | null>(null)
   const [imagePreview, setImagePreview] = useState<FileCatalogDto | null>(null)
   const [imagePreviewFailed, setImagePreviewFailed] = useState(false)
   const [focusedFileId, setFocusedFileId] = useState<string | null>(null)
@@ -256,7 +252,6 @@ export function FilesPage({
 
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
   const categoryCards = useMemo(() => FILE_CATEGORY_DEFINITIONS
-    .filter((definition) => definition.key !== 'clipper')
     .map((definition) => ({
     ...definition,
     files: (classifiedFilesByCategory.get(definition.key) ?? []).filter(({ file }) => {
@@ -442,17 +437,6 @@ export function FilesPage({
     })
   }
 
-  const openFile = (file: FileCatalogDto) => {
-    if (!filesApi || file.sourceKind !== 'web-clipper') return openOriginal(file)
-    void runFileAction(file.id, async () => {
-      const [capture, content] = await Promise.all([
-        filesApi.getClipCapture(file.id),
-        filesApi.readMarkdown(file.id, { waitMs: 30_000 }),
-      ])
-      setClipperPreview({ capture, markdown: content.markdown })
-    })
-  }
-
   return (
     <div
       className="page files-page-drop-target"
@@ -594,7 +578,7 @@ export function FilesPage({
                       focused={focusedFileId === file.id}
                       busy={busyId === file.id}
                       onPreviewImage={openImagePreview}
-                      onOpenFile={openFile}
+                      onOpenFile={openOriginal}
                       onReveal={revealOriginal}
                       onDelete={deleteFile}
                     />
@@ -604,51 +588,6 @@ export function FilesPage({
             </div>
           ) : null}
         </section>
-      ) : null}
-
-      {clipperPreview ? (
-        <div className="evidence-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setClipperPreview(null)
-        }}>
-          <section className="evidence-dialog clipper-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="clipper-preview-title">
-            <header className="evidence-dialog-head">
-              <div>
-                <span>{t('surface:files.categoryClipper')}</span>
-                <h2 id="clipper-preview-title">{clipperPreview.capture.title}</h2>
-                <small>{clipperPreview.capture.author || new URL(clipperPreview.capture.sourceUrl).hostname} · {formatDate(clipperPreview.capture.capturedAt, locale, t)}</small>
-              </div>
-              <button type="button" className="icon-button" title={t('surface:files.close')} aria-label={t('surface:files.close')} onClick={() => setClipperPreview(null)}><X aria-hidden="true" /></button>
-            </header>
-            <div className="clipper-preview-meta">
-              <span>{t(`surface:files.clipperStatus.${clipperPreview.capture.status}`)}</span>
-              <span>{t('surface:files.clipperAssetSummary', { stored: clipperPreview.capture.storedAssetCount, total: clipperPreview.capture.assetCount })}</span>
-              <a href={clipperPreview.capture.sourceUrl} target="_blank" rel="noreferrer noopener"><ExternalLink aria-hidden="true" />{t('surface:files.openSourcePage')}</a>
-            </div>
-            <div className="evidence-dialog-body clipper-preview-body">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                urlTransform={(url) => url.startsWith('nxcore-clipper-asset://') ? url : defaultUrlTransform(url)}
-                components={{
-                  a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>,
-                  img: ({ src, alt, ...props }) => <img {...props} src={src} alt={alt ?? ''} onError={(event) => {
-                    const fallback = clipperPreview.capture.assets.find((asset) => asset.localUrl === src)?.originalUrl
-                    if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback
-                  }} />,
-                }}
-              >
-                {clipperPreview.markdown}
-              </ReactMarkdown>
-              {clipperPreview.capture.failedAssetCount > 0 ? (
-                <aside className="clipper-missing-assets">
-                  <strong>{t('surface:files.clipperMissingAssets')}</strong>
-                  {clipperPreview.capture.assets.filter((asset) => asset.status === 'failed').map((asset) => (
-                    <a key={asset.id} href={asset.originalUrl} target="_blank" rel="noreferrer noopener">{asset.altText || new URL(asset.originalUrl).hostname}</a>
-                  ))}
-                </aside>
-              ) : null}
-            </div>
-          </section>
-        </div>
       ) : null}
 
       {imagePreview ? (
@@ -726,7 +665,7 @@ function FileDocumentCard({ file, tone, focused, busy, onPreviewImage, onOpenFil
       <button
         type="button"
         className={showCover ? 'file-document-main has-cover' : 'file-document-main'}
-        title={showCover ? t('surface:files.previewImage') : file.sourceKind === 'web-clipper' ? t('surface:files.openClipperPreview') : t('surface:files.openOriginal')}
+        title={showCover ? t('surface:files.previewImage') : t('surface:files.openOriginal')}
         disabled={busy}
         onClick={() => (showCover ? onPreviewImage(file) : onOpenFile(file))}
       >
@@ -744,7 +683,7 @@ function FileDocumentCard({ file, tone, focused, busy, onPreviewImage, onOpenFil
         <span className="file-document-copy"><strong title={file.originalName}>{file.sharedTitle}</strong></span>
       </button>
       <div className="file-document-meta"><span className="file-document-status"><span className={`status-dot${file.processingState === 'ready' ? ' active' : ''}`} />{file.processingState === 'ready' ? t('surface:files.parsed') : file.processingState === 'failed' ? t('surface:files.failed') : file.processingState === 'missing' ? t('surface:files.originalMissing') : t('surface:files.processing')}</span><span>{formatBytes(file.bytes)}</span><span>{formatDate(file.updatedAt, locale, t)}</span></div>
-      <div className="file-document-actions"><span>{file.sourceKind === 'web-clipper' ? t('surface:files.clipperSource') : file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busy} onClick={() => onReveal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busy} onClick={() => onDelete(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
+      <div className="file-document-actions"><span>{file.sourceLabel}</span><span className="files-actions"><button type="button" className="icon-button" aria-label={t(window.nxcore?.platform === 'win32' ? 'surface:files.revealName.windows' : 'surface:files.revealName', { name: file.originalName })} title={t(window.nxcore?.platform === 'win32' ? 'surface:files.showInFileManager.windows' : 'surface:files.showInFileManager')} disabled={busy} onClick={() => onReveal(file)}><FolderOpen aria-hidden="true" strokeWidth={1.8} /></button><button type="button" className="icon-button danger" aria-label={t('surface:files.deleteName', { name: file.originalName })} title={t('surface:files.deleteAndRemovePipelineData')} disabled={busy} onClick={() => onDelete(file)}><Trash2 aria-hidden="true" strokeWidth={1.8} /></button></span></div>
     </article>
   )
 }

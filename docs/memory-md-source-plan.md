@@ -1,5 +1,7 @@
 # MemoryCore md 文档链路 + 记忆溯源 — 实施方案（v2）
 
+> **已废弃（Phase 2/3 已移除）**：MemoryCore md 文档链路与记忆溯源已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：v2 已全量落地（M0–M4，commit 81c3ef7）；2026-08-18 修订：L2/L3 排除文档派生原子（§5.4）+ 文档 type 限定收紧为 work_*（§5.3），fork a5dabc5；2026-08-18 再修订：L2 恢复消费文档派生原子（仅 L3 触发计数排除，§5.4）+ 召回带 scene_name + atomic/search 时间范围，fork 3c5a571
 > 日期：2026-08-17；v2 修订：文档子系统整体下沉 MemoryCore 实现，gateway 退为薄代理（用户拍板）
 > 前置：`docs/pi-agent-memory-plan.md`（已实施，pi agent 接入 MemoryCore）、`docs/memory-app-plan.md`（已实施，MemoryPage 查看链路）

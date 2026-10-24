@@ -107,7 +107,6 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from '../shared/agent-auth'
-import { CLIPPER_ASSET_SCHEME } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME, type ObsidianImportResult, type ObsidianImportTarget } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
 import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
@@ -177,10 +176,6 @@ if (process.platform === 'darwin') process.title = APP_NAME
 protocol.registerSchemesAsPrivileged([
   {
     scheme: DOCUMENT_ASSET_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
-  },
-  {
-    scheme: CLIPPER_ASSET_SCHEME,
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
@@ -448,7 +443,6 @@ const FILES_CHANNELS = {
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
-  getClipCapture: 'files:clipper-capture:get',
   rename: 'files:rename',
   delete: 'files:delete',
   reveal: 'files:reveal',
@@ -603,7 +597,6 @@ let agentAccessSettingsStore: AgentAccessSettingsStore | null = null
 let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
 let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
-let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
@@ -2316,7 +2309,6 @@ function registerFilesHandlers(
     (_event, fileId: string, options?: { waitMs?: number; pollMs?: number }) => bridge.readMarkdown(fileId, options),
   )
   handle(FILES_CHANNELS.readDataUrl, (_event, fileId: string) => bridge.readDataUrl(fileId))
-  handle(FILES_CHANNELS.getClipCapture, (_event, fileId: string) => bridge.getClipCapture(fileId))
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
@@ -2951,21 +2943,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     console.error('Failed to initialize Obsidian Vault service', error)
   })
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
-  protocol.handle(CLIPPER_ASSET_SCHEME, async (request) => {
-    try {
-      const url = new URL(request.url)
-      const assetId = decodeURIComponent(url.pathname.replace(/^\//, ''))
-      if (url.hostname !== 'local' || !/^[a-zA-Z0-9_-]{8,200}$/.test(assetId) || !clipperAssetBridge) {
-        return new Response('Not found', { status: 404 })
-      }
-      const asset = await clipperAssetBridge.readClipAsset(assetId)
-      return new Response(new Uint8Array(asset.buffer), {
-        headers: { 'Content-Type': asset.mime, 'Cache-Control': 'private, max-age=31536000, immutable' },
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-  })
   protocol.handle(OBSIDIAN_VAULT_ASSET_SCHEME, async (request) => {
     try {
       const url = new URL(request.url)
@@ -3245,7 +3222,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     await migrationCoordinator.initialize()
     registerMigrationHandlers(migrationCoordinator)
     void migrationCoordinator.restoreCherrySync()
-    clipperAssetBridge = filesGatewayBridge
     officeFilesBridge = filesGatewayBridge
     // Room 产物 docx 人手编辑：保存 → 去抖重导入（fileEntryId 钉条目走版本链）→ 广播刷新。
     officePreviewRegistry.setEditSync({
@@ -3425,7 +3401,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     documentGatewayBridge = null
     agentSchedulerGatewayBridge = null
     connectorGatewayBridge = null
-    clipperAssetBridge = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
     await cursorCompletionSupervisor?.shutdown()
@@ -3486,7 +3461,6 @@ app.on('before-quit', (event) => {
   documentGatewayBridge = null
   agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
-  clipperAssetBridge = null
   officeFilesBridge = null
   saasClient = null
   agentNotificationBridgeServer = null

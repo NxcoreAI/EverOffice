@@ -1,5 +1,7 @@
 # Pi Agent 接入 MemoryCore 记忆服务 — 实施方案
 
+> **已废弃（Phase 2/3 已移除）**：Pi Agent 的 MemoryCore 记忆服务接入已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：已实施（v1：配置链路 + 薄客户端 + 内联扩展 + 记忆工具；`noTools` 已按评审结论移除，改为显式 `tools` 白名单）
 > 日期：2026-08-15
 > 范围：`packages/agent-runtime-pi`、`apps/gateway/src/config.ts`；不涉及 MemoryCore 本身的部署与运维（用户自建，当前已有一个运行中的实例）。

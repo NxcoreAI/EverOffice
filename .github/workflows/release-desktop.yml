@@ -26,11 +26,7 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
-      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
-      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
       NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
-      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
-      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
       NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
       NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
       NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
@@ -225,14 +221,9 @@ jobs:
             grep -Ei "$forbidden" "$RUNNER_TEMP/asar-files.txt" >&2
             exit 1
           fi
-          unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" | grep -Eiv '[\\/]node_modules[\\/]@tencentdb-agent-memory[\\/](memory-tencentdb-v2|knowledge-service)[\\/]src[\\/]' || true)"
+          unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
-          grep -Fq 'memory-tencentdb-v2/bin/memory-gateway.mjs' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq 'memory-tencentdb-v2/src/gateway/server.ts' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq 'knowledge-service/src/server.ts' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq '@node-rs/jieba-darwin-arm64' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq '@colbymchenry/codegraph-darwin-arm64' "$RUNNER_TEMP/asar-files.txt"
           test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild"
           test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
           test -f "$resources/open-connector/src/server/index.ts"
@@ -270,11 +261,7 @@ jobs:
     env:
       NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
-      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
-      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
       NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
-      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
-      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
       NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
       NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
       NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
