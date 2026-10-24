@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentModelPreference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, PendingAgentIntent, ExternalConversationSummary } from '@nxcore/agent-contract'
+import type { AgentModelPreference, AgentNavigationTarget, AgentRoomReference, AgentSessionLink, ExternalConversationSummary } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
-import { WritingStyleInsightBanner } from '@/components/agent/WritingStyleInsightBanner'
 import {
   agentSessionLinkDestination,
   navigationKey,
   navigationRequiresSessionHandoff,
   parseAgentNavigationTarget,
-  replayNavigationMode,
   type AgentNavigationRequest,
   type AgentSessionRouteRequest,
 } from '@/components/agent/agentNavigation'
@@ -19,19 +17,7 @@ import { useAgentSession } from '@/components/agent/useAgentSession'
 import { LocalAgentAdapterWizard } from '@/components/agent/LocalAgentAdapterWizard'
 import type { MentionedAgent, MentionedItem } from '@/components/agent/agentMentions'
 import type { LocalAgentAdapterCheck } from '../../../shared/sources'
-import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import type { LocalAgentInstallation } from '../../../shared/local-agents'
-import {
-  buildRoomOverviewCitationContext,
-  buildRoomOverviewCitationPrompt,
-  type RoomOverviewCitation,
-} from '@/components/context-room/roomOverviewCitation'
-import {
-  isRoomOverviewProjectionToolName,
-  publishRoomOverviewChanged,
-} from '@/components/context-room/roomOverviewChange'
-import { recordRoomOverviewDiagnostic } from '@/components/context-room/roomOverviewDiagnostics'
-import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import {
   loadConversationSuggestionSettings,
   onConversationSuggestionSettingsChanged,
@@ -43,19 +29,17 @@ import { showToast } from '@/state/toast'
 import { useActiveDocument } from '@/state/ActiveDocumentContext'
 import {
   buildAgentDocumentSelectionRunRequest,
-  type AgentDocumentSelectionItem,
   type AgentDocumentSelectionSubmission,
 } from '@/components/agent/agentDocumentSelection'
 
 import './agent/AgentPanel.css'
 import './agent/AgentChat.css'
 
+const NO_ROOMS: AgentRoomReference[] = []
+
 export function AgentPanel({
   pageId,
   pageLabel,
-  roomId,
-  rooms,
-  roomBackendReady,
   navigationRequest,
   sessionRouteRequest,
   askRequest,
@@ -63,26 +47,18 @@ export function AgentPanel({
   onPrefillConsumed,
   onNavigate,
   onNavigatePage,
-  onRestoreRoomTab,
   onNavigationConsumed,
   onOpenSessionLink,
-  onOpenDocument,
   onSessionRouteConsumed,
   onAskConsumed,
   onOpenMentionFile,
   focusRequest = 0,
-  roomCitations,
-  onRemoveRoomCitation,
-  onClearRoomCitations,
 }: {
   pageId: PageId
   pageLabel: string
-  roomId: string | null
-  rooms: ContextRoomWorkspaceTab[]
-  roomBackendReady: boolean
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
-  askRequest: { key: string; roomId: string; message: string; displayMessage?: string } | null
+  askRequest: { key: string; message: string; displayMessage?: string } | null
   /** 统一搜索「加入上下文/交给 Agent」预填：注入文本与可选附件，不自动发送。 */
   prefillRequest: {
     key: string
@@ -93,21 +69,18 @@ export function AgentPanel({
   onNavigate: (request: AgentNavigationRequest) => void
   /** 应用级页面跳转（与 Sidebar 同源）；用于「去设置」类提示动作。 */
   onNavigatePage?: (page: PageId) => void
-  onRestoreRoomTab: (target: AgentNavigationRequest['target']) => void
   onNavigationConsumed: (key: string) => void
   onOpenSessionLink: (link: AgentSessionLink, destination: 'source' | 'target') => void
-  onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
   onSessionRouteConsumed: (key: string) => void
   onAskConsumed: (key: string) => void
   onOpenMentionFile?: (fileId: string) => void
   focusRequest?: number
-  roomCitations: RoomOverviewCitation[]
-  onRemoveRoomCitation: (citationId: string) => void
-  onClearRoomCitations: () => void
 }) {
+  // 工作区级会话：Room 已从网关与渲染层移除，Agent 会话不再有 Room 作用域。
+  // useAgentSession 的 Room 参数随 Agent 运行时那一轮一并收窄。
+  const workspaceRoomScope: AgentRoomReference[] = NO_ROOMS
   const { t, locale } = useLocale()
   const [draft, setDraft] = useState('')
-  const { refreshFromBackend } = useContextRoomState()
   const [submitting, setSubmitting] = useState(false)
   const [pendingNavigationByRun, setPendingNavigationByRun] = useState<Record<string, AgentNavigationTarget>>({})
   const [composerResetKey, setComposerResetKey] = useState(0)
@@ -122,33 +95,7 @@ export function AgentPanel({
   const handledRequestKeysRef = useRef(new Set<string>())
   const handledSessionRouteKeysRef = useRef(new Set<string>())
   const handledAskKeysRef = useRef(new Set<string>())
-  const handledOverviewToolIdsRef = useRef(new Set<string>())
-  const citationSectionLabel = (citation: RoomOverviewCitation) => t(citation.section === 'overview'
-      ? 'contextRoom:overviewDashboard.roomOverview'
-      : citation.section === 'status'
-        ? 'contextRoom:overviewDashboard.currentStatus'
-        : citation.section === 'next_steps'
-          ? 'contextRoom:overviewDashboard.suggestedNextSteps'
-          : citation.section === 'entities'
-            ? 'contextRoom:overviewDashboard.relatedMemoryEntities'
-            : 'contextRoom:overviewDashboard.roomTimeline')
-  const citationItems = roomCitations.map((citation) => {
-    const summary = citation.text.replace(/\s+/g, ' ').trim()
-    return {
-      id: citation.id,
-      label: `${citationSectionLabel(citation)} · “${summary}”`,
-      detail: citation.comment ? `${summary}\n${t('surface:agentComposer.referenceComment')}${locale === 'zh-CN' ? '：' : ': '}${citation.comment}` : summary,
-    }
-  })
-  // 仅在有引用时展示（composer 侧空态不渲染文案）。
-  const contextSummary = roomCitations.length
-    ? `${roomCitations[0]?.roomTitle ?? pageLabel} · ${t('surface:agentComposer.countReferences', { count: roomCitations.length })}`
-    : ''
-  const currentRoomTitle = roomId
-    ? rooms.find((room) => room.id === roomId)?.title ?? t('contextRoom:creation.emptyRoomTitle')
-    : undefined
-  const citationPrompt = buildRoomOverviewCitationPrompt(roomCitations, locale)
-  const session = useAgentSession(pageLabel, roomId, rooms)
+  const session = useAgentSession(pageLabel, null, workspaceRoomScope)
   const agentAvailable = Boolean(window.nxcore?.agent)
   // 「重试」仅用于强制重渲染以重读 agent 桥可用性；桥就绪/恢复后引导 effect 会因 api 变化自动重跑。
   const [, setAvailabilityNonce] = useState(0)
@@ -203,7 +150,7 @@ export function AgentPanel({
       api.suggestConversationPrompt({
         sessionId: session.sessionId,
         pageLabel,
-        roomTitle: currentRoomTitle ?? null,
+        roomTitle: null,
         messages: recentMessages,
         ...(recentMessages.length === 0 ? { recentSessions } : {}),
         language: locale,
@@ -220,7 +167,7 @@ export function AgentPanel({
         .catch(() => undefined)
     }, 400)
     return () => { window.clearTimeout(timer) }
-  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, session.messages, session.sessionId, session.sessions, session.scopeReady, ghostContextKey, pageLabel, currentRoomTitle, locale])
+  }, [conversationSuggestionSettings.completionEnabled, session.activeRunId, session.messages, session.sessionId, session.sessions, session.scopeReady, ghostContextKey, pageLabel, locale])
 
   // 新对话空态：按最近会话标题生成开场推荐（5 分钟 TTL 缓存，失败静默回退静态文案）。
   const newConversationEmpty = session.scopeReady && session.messages.length === 0
@@ -231,7 +178,7 @@ export function AgentPanel({
       .sort((a, b) => Date.parse(b.updatedAt ?? '') - Date.parse(a.updatedAt ?? ''))
       .slice(0, 8)
       .map((item) => ({ title: item.title, updatedAt: item.updatedAt }))
-    const key = `${pageLabel}|${roomId ?? ''}|${locale}|${currentRoomTitle ?? ''}|${recentSessions.map((item) => item.title ?? '').join('/')}`
+    const key = `${pageLabel}|${locale}|${recentSessions.map((item) => item.title ?? '').join('/')}`
     const cached = starterPromptsCacheRef.current
     if (cached && cached.key === key && Date.now() - cached.at < 5 * 60_000) {
       setStarterPrompts(cached.prompts)
@@ -240,7 +187,7 @@ export function AgentPanel({
     let cancelled = false
     api.suggestStarterPrompts({
       pageLabel,
-      roomTitle: currentRoomTitle ?? null,
+      roomTitle: null,
       recentSessions,
       language: locale,
     })
@@ -251,7 +198,7 @@ export function AgentPanel({
       })
       .catch(() => undefined)
     return () => { cancelled = true }
-  }, [conversationSuggestionSettings.starterPromptsEnabled, newConversationEmpty, session.sessions, session.scopeReady, pageLabel, roomId, locale, currentRoomTitle])
+  }, [conversationSuggestionSettings.starterPromptsEnabled, newConversationEmpty, session.sessions, session.scopeReady, pageLabel, locale])
 
   const { activeDocument, prepareActiveDocumentRun } = useActiveDocument()
   const agentNamesById = useMemo(() => Object.fromEntries(
@@ -312,40 +259,19 @@ export function AgentPanel({
     if (previousSessionIdRef.current === session.sessionId) return
     if (previousSessionIdRef.current !== null) {
       setDraft('')
-      if (roomCitations.length) onClearRoomCitations()
       setComposerResetKey((current) => current + 1)
     }
     previousSessionIdRef.current = session.sessionId
     setSelectedExternalConversation(null)
     setPendingNavigationByRun({})
-  }, [onClearRoomCitations, roomCitations.length, session.sessionId])
+  }, [session.sessionId])
 
   const selectExternalConversation = useCallback((conversation: ExternalConversationSummary | null) => {
     setSelectedExternalConversation(conversation)
   }, [])
 
-  /** 消息区点击 @ 条目跳转：Room 走导航管线开房间标签，文件跳文件页聚焦，本应用会话切回该对话。 */
+  /** 消息区点击 @ 条目跳转：文件跳文件页聚焦，本应用会话切回该对话。 */
   const openMention = useCallback((item: MentionedItem) => {
-    if (item.kind === 'room') {
-      onNavigate({
-        key: `mention:room:${item.id}:${Date.now()}`,
-        source: {
-          sessionId: session.sessionId ?? '',
-          pageId,
-          pageLabel,
-          roomId,
-          runId: '',
-        },
-        target: {
-          pageId: 'rooms',
-          title: item.displayName,
-          action: 'referenced',
-          roomId: item.id,
-          objectType: 'room',
-        },
-      })
-      return
-    }
     if (item.kind === 'file') {
       onOpenMentionFile?.(item.id)
       return
@@ -354,13 +280,12 @@ export function AgentPanel({
     void session.selectSessionById(item.id).catch(() => {
       showToast({ title: t('surface:agentChat.mentionTargetUnavailable') })
     })
-  }, [onNavigate, onOpenMentionFile, pageId, pageLabel, roomId, session, t])
+  }, [onOpenMentionFile, session, t])
 
 
   useEffect(() => {
     if (!session.sessionId || navigationRequest) return
     const tools = Object.values(session.toolCallsByRun).flat()
-    const roomIds = new Set(rooms.map((room) => room.id))
     for (const tool of tools) {
       if (tool.status !== 'completed') continue
       const target = parseAgentNavigationTarget(tool.result)
@@ -378,104 +303,36 @@ export function AgentPanel({
         handledNavigationKeysRef.current.add(key)
         continue
       }
-      const replayMode = replayNavigationMode({
-        toolRunId: tool.runId,
-        activeRunId: session.activeRunId,
-        target,
-        roomIds,
-      })
-      if (replayMode === 'skip') {
+      // 历史工具调用只在面板重挂载/换会话后回放：只有当前活跃 run 的工具触发实时跳转。
+      if (tool.runId !== session.activeRunId) {
         handledNavigationKeysRef.current.add(key)
-        continue
-      }
-      if (replayMode === 'defer') continue
-      if (replayMode === 'restore-tab') {
-        handledNavigationKeysRef.current.add(key)
-        onRestoreRoomTab(target)
         continue
       }
       handledNavigationKeysRef.current.add(key)
-      const request = {
+      onNavigate({
         key,
         source: {
           sessionId: session.sessionId,
           pageId,
           pageLabel,
-          roomId,
+          roomId: null,
           runId: tool.runId,
         },
         target,
-      }
-      if (tool.name === 'context_room_create') {
-        void refreshFromBackend()
-          .catch(() => null)
-          .finally(() => onNavigate(request))
-      } else {
-        onNavigate(request)
-      }
+      })
       return
     }
-  }, [navigationRequest, onNavigate, onRestoreRoomTab, pageId, pageLabel, refreshFromBackend, roomId, rooms, session.activeRunId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
-
-  useEffect(() => {
-    for (const tool of Object.values(session.toolCallsByRun).flat()) {
-      const createsProposal = tool.name === 'context_room_correction_propose'
-      const projectionToolName = isRoomOverviewProjectionToolName(tool.name) ? tool.name : null
-      if (!createsProposal && !projectionToolName) continue
-      if (handledOverviewToolIdsRef.current.has(tool.id)) continue
-      // 只重放当前活跃 run 的实时结果；会话水合载入的历史工具（重启/换会话
-      // 恢复）不再重发——面板需要时会自行拉取最新投影，而陈旧结果的重发会
-      // 触发全量快照刷新，重启后首次进 Room 曾因此被弹回首页。语义与上方
-      // 导航重放的 live 判定（replayNavigationMode）保持一致。
-      if (tool.runId !== session.activeRunId) {
-        if (tool.status === 'completed' || tool.status === 'error' || tool.status === 'stopped') {
-          handledOverviewToolIdsRef.current.add(tool.id)
-          recordRoomOverviewDiagnostic('replay.skipped_historical_tool', {
-            roomId,
-            toolName: tool.name,
-            toolId: tool.id,
-            runId: tool.runId,
-            status: tool.status,
-          })
-        }
-        continue
-      }
-      if (tool.status === 'error' || tool.status === 'stopped') {
-        handledOverviewToolIdsRef.current.add(tool.id)
-        recordRoomOverviewDiagnostic('correction.tool_failed', {
-          roomId,
-          toolName: tool.name,
-          toolId: tool.id,
-          runId: tool.runId,
-          status: tool.status,
-          errorPresent: Boolean(tool.error),
-        }, tool.status === 'error' ? 'error' : 'warn')
-        continue
-      }
-      if (tool.status !== 'completed') continue
-      handledOverviewToolIdsRef.current.add(tool.id)
-      if (createsProposal) {
-        recordRoomOverviewDiagnostic('correction.proposal_created', {
-          roomId,
-          toolId: tool.id,
-          runId: tool.runId,
-        })
-        continue
-      }
-      if (projectionToolName) publishRoomOverviewChanged(tool.result, roomId, projectionToolName)
-    }
-  }, [roomId, session.activeRunId, session.toolCallsByRun])
+  }, [navigationRequest, onNavigate, pageId, pageLabel, session.activeRunId, session.sessionId, session.sessionLinks, session.toolCallsByRun])
 
   useEffect(() => {
     if (!navigationRequest || navigationRequest.target.pageId !== pageId) return
-    if ((navigationRequest.target.roomId ?? null) !== roomId) return
     if (handledRequestKeysRef.current.has(navigationRequest.key)) return
     if (!navigationRequiresSessionHandoff(navigationRequest)) {
       handledRequestKeysRef.current.add(navigationRequest.key)
       onNavigationConsumed(navigationRequest.key)
       return
     }
-    if (!roomBackendReady || !session.scopeReady || session.loading || session.activeRunId || submitting) return
+    if (!session.scopeReady || session.loading || session.activeRunId || submitting) return
     handledRequestKeysRef.current.add(navigationRequest.key)
     setSubmitting(true)
     void (async () => {
@@ -502,11 +359,11 @@ export function AgentPanel({
         onNavigationConsumed(navigationRequest.key)
       })
       .finally(() => setSubmitting(false))
-  }, [navigationRequest, onNavigationConsumed, pageId, roomBackendReady, roomId, session, submitting])
+  }, [navigationRequest, onNavigationConsumed, pageId, session, submitting])
 
   useEffect(() => {
     if (!sessionRouteRequest || sessionRouteRequest.pageId !== pageId) return
-    if (sessionRouteRequest.roomId !== roomId || session.loading) return
+    if (session.loading) return
     if (!session.sessions.some((item) => item.id === sessionRouteRequest.sessionId)) return
     if (handledSessionRouteKeysRef.current.has(sessionRouteRequest.key)) return
     handledSessionRouteKeysRef.current.add(sessionRouteRequest.key)
@@ -519,7 +376,7 @@ export function AgentPanel({
         handledSessionRouteKeysRef.current.delete(sessionRouteRequest.key)
         setNotificationRunTarget((current) => current?.key === sessionRouteRequest.key ? null : current)
       })
-  }, [onSessionRouteConsumed, pageId, roomId, session, sessionRouteRequest])
+  }, [onSessionRouteConsumed, pageId, session, sessionRouteRequest])
 
   const [adapterWizard, setAdapterWizard] = useState<{
     checks: LocalAgentAdapterCheck[]
@@ -550,20 +407,15 @@ export function AgentPanel({
     /** 用户可见文案：prompt 是技术指令时用它渲染气泡/标题。 */
     displayPrompt?: string,
   ) => {
-    if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
+    if ((!prompt.trim() && files.length === 0) || !agentAvailable) return
     const mentionedAgents: MentionedAgent[] = mentioned
       .filter((item) => item.kind === 'agent')
       .map((item) => ({ id: item.id, displayName: item.displayName }))
     if (mentionedAgents?.length && !await ensureLocalAgentAdapters(mentionedAgents)) return
-    // @ 引用的 Room：本次运行按该 Room 解析（覆盖页面所在 Room 的默认聚焦）。
-    const mentionedRoomId = [...mentioned].reverse().find((item) => item.kind === 'room')?.id
     // @ 引用的对话记录：取最后一条作为 referencedConversationId 注入运行上下文。
     const mentionedConversationId = [...mentioned].reverse().find((item) => item.kind === 'conversation')?.id
     const mentionedFileIds = mentioned.filter((item) => item.kind === 'file').map((item) => item.id)
-    const submittedPrompt = prompt.trim() || citationPrompt
-    const submittedContext = roomCitations.length
-      ? buildRoomOverviewCitationContext(roomCitations)
-      : ''
+    const submittedPrompt = prompt.trim()
     setDraft('')
     setSubmitting(true)
     try {
@@ -573,7 +425,7 @@ export function AgentPanel({
       if (files.length > 0) {
         const filesApi = window.nxcore?.files
         if (!filesApi) throw new Error(t('surface:agentComposer.filesServiceUnavailable'))
-        const outcomes = await filesApi.importDropped(files, { pipelines: { room: false, wiki: false, memory: false }, ...(roomId ? { roomId } : {}) })
+        const outcomes = await filesApi.importDropped(files)
         const imported = outcomes?.filter((item) => item.fileId && item.fileVersionId && !item.error) ?? []
         if (imported.length !== files.length) {
           throw new Error(t('surface:agentComposer.someFilesFailedToImport'))
@@ -618,16 +470,10 @@ export function AgentPanel({
           }
         }
       }
-      // selectedRoomId 只在 Room 仍存在时提交：Room 已合并/删除/同步丢失时
-      // 提交死 id 会被网关 409 拒绝（room_not_available），转而以全局会话运行。
-      const validRoomId = roomId && rooms.some((room) => room.id === roomId) ? roomId : undefined
-      const effectiveRoomId = mentionedRoomId && rooms.some((room) => room.id === mentionedRoomId)
-        ? mentionedRoomId
-        : validRoomId
       await session.sendPrompt(
         submittedPrompt || t('surface:agentComposer.analyzeUploadedFiles'),
-        submittedContext,
-        effectiveRoomId,
+        '',
+        undefined,
         activeDocumentContext,
         replaceRunId,
         attachments,
@@ -638,7 +484,6 @@ export function AgentPanel({
         displayPrompt,
       )
       if (externalConversation) setSelectedExternalConversation(null)
-      if (roomCitations.length) onClearRoomCitations()
       setPendingExternalAttachment(null)
       setComposerResetKey((current) => current + 1)
     } catch {
@@ -654,17 +499,17 @@ export function AgentPanel({
     await sendPrompt(hiddenPrompt, undefined, [], [], displayText)
   }
 
-  // slides「AI 修改」/产物库建文件转发注入：roomId 对上、会话就绪后自动发送（key 去重防重放）。
+  // slides「AI 修改」转发注入：会话就绪后自动发送（key 去重防重放）。
   // message 是内部指令（runtime 用），displayMessage 是用户能看懂的人话（气泡用）。
   useEffect(() => {
-    if (!askRequest || askRequest.roomId !== roomId || session.loading) return
+    if (!askRequest || session.loading) return
     if (handledAskKeysRef.current.has(askRequest.key)) return
     handledAskKeysRef.current.add(askRequest.key)
     void sendAgentAction(askRequest.message, askRequest.displayMessage ?? askRequest.message)
       .then(() => onAskConsumed(askRequest.key))
       .catch(() => handledAskKeysRef.current.delete(askRequest.key))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [askRequest, roomId, session.loading])
+  }, [askRequest, session.loading])
 
   // 停止/中断回执：中性提示（info toast），不伪装成失败。
   useEffect(() => {
@@ -686,7 +531,6 @@ export function AgentPanel({
   }, [prefillRequest, onPrefillConsumed])
 
   const selectDocument = async ({ document, originalPrompt }: AgentDocumentSelectionSubmission) => {
-    if (!roomBackendReady) return
     setSubmitting(true)
     try {
       const documents = window.nxcore?.documents
@@ -696,31 +540,6 @@ export function AgentPanel({
       await session.sendPrompt(request.prompt, undefined, undefined, request.activeDocument)
     } catch {
       // useAgentSession exposes the request error inside the conversation.
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const selectDocumentRoom = async (
-    room: AgentRoomReference,
-    intent: PendingAgentIntent,
-    document?: AgentDocumentSelectionItem,
-  ) => {
-    if (!roomBackendReady) return
-    setSubmitting(true)
-    try {
-      const runId = await session.submitPendingIntent(intent.id, room.id, document?.documentId)
-      if (!runId) throw new Error(t('surface:agent.thisRequestIsStillBeingProcessed'))
-      setPendingNavigationByRun((current) => ({
-        ...current,
-        [runId]: {
-          pageId: 'rooms',
-          title: document?.title ?? room.title,
-          action: document ? 'updated' : 'created',
-          roomId: room.id,
-          ...(document ? { objectId: document.documentId, objectType: 'document' as const } : {}),
-        },
-      }))
     } finally {
       setSubmitting(false)
     }
@@ -769,14 +588,9 @@ export function AgentPanel({
   const composer = (
     <AgentComposer
       ref={composerRef}
-      contextSummary={contextSummary}
-      contextItems={citationItems}
-      hasSelectedText={roomCitations.length > 0}
-      hasSubmittableContext={Boolean(citationPrompt)}
       resetKey={composerResetKey}
       selectedExternalConversation={selectedExternalConversation}
       localAgents={localAgents}
-      rooms={rooms}
       modelPreference={effectiveModelPreference}
       modelPreferenceLocked={modelTierLocked}
       contextUsage={session.contextUsage}
@@ -800,8 +614,6 @@ export function AgentPanel({
       available={agentAvailable}
       onChange={setDraft}
       onSelectExternalConversation={selectExternalConversation}
-      onClearContext={onClearRoomCitations}
-      onRemoveContext={onRemoveRoomCitation}
       onStop={() => void session.stop()}
       onSubmit={(files, mentioned) => void sendPrompt(draft, undefined, files, mentioned)}
     />
@@ -819,7 +631,6 @@ export function AgentPanel({
           onCreate={async () => {
             setNotificationRunTarget(null)
             setDraft('')
-            if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
             // 懒创建：只回到草稿态，首条消息发出时才用当前档位/渠道默认建会话。
             return session.startNewConversation()
@@ -829,7 +640,6 @@ export function AgentPanel({
           onSelect={async (selectedSession) => {
             setNotificationRunTarget(null)
             setDraft('')
-            if (roomCitations.length) onClearRoomCitations()
             setComposerResetKey((current) => current + 1)
             await session.selectSession(selectedSession)
           }}
@@ -853,15 +663,12 @@ export function AgentPanel({
         </div>
       ) : null}
 
-      <WritingStyleInsightBanner />
-
       <AgentChatView
         activeDocument={activeDocument}
         activeRunId={session.activeRunId}
         agentIdByRun={session.agentIdByRun}
         agentNamesById={agentNamesById}
         activityByRun={session.activityByRun}
-        availableRooms={rooms}
         composer={composer}
         currentSessionId={session.sessionId}
         scopeReady={session.scopeReady}
@@ -874,25 +681,19 @@ export function AgentPanel({
         onNotificationRunLocated={handleNotificationRunLocated}
         onRetryError={() => session.reload()}
         pendingApprovals={session.pendingApprovals}
-        onRejectDocumentIntent={focusComposer}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
-        onOpenDraft={(documentId, roomIdHint) => {
-          // 草稿卡带所属 roomId：不在 Room 页时也能打开对应内容稿，不再静默 no-op。
-          const targetRoomId = roomIdHint ?? roomId
-          if (targetRoomId) onOpenDocument({ roomId: targetRoomId, documentId })
-          else {
-            showToast({
-              title: t('surface:agentChat.slidesOpenDraft'),
-              message: t('surface:agentChat.slidesDraftNoRoomNotice'),
-            })
-          }
+        onOpenDraft={() => {
+          // 文稿编辑面尚未在渲染层重新落位（Room 详情随本次清理删除），先给出明确出口。
+          showToast({
+            title: t('surface:agentChat.slidesOpenDraft'),
+            message: t('surface:agentChat.slidesDraftNoRoomNotice'),
+          })
         }}
         onSlidesAction={(prompt, displayText) => void sendAgentAction(prompt, displayText)}
         cancelledRunIds={session.cancelledRunIds}
         interruptedRunIds={session.interruptedRunIds}
         onOpenMention={openMention}
-        onSelectRoom={selectDocumentRoom}
         onSelectDocument={(selection) => void selectDocument(selection)}
         onSelectPrompt={(prompt) => {
           setDraft(prompt)
@@ -904,7 +705,7 @@ export function AgentPanel({
         runStartedAtByRun={session.runStartedAtByRun}
         resolvingApprovalIds={session.resolvingApprovalIds}
         sessionLinks={session.sessionLinks}
-        submitting={submitting || !roomBackendReady}
+        submitting={submitting}
         toolCallsByRun={session.toolCallsByRun}
         onResolveApproval={(approvalId, decision, feedback) => void session.resolveApproval(approvalId, decision, feedback)}
         composerNotice={adapterWizard ? (

@@ -1,26 +1,6 @@
-import type { PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
 import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const document: RoomDocument = {
-  id: 'document-1',
-  roomId: 'room-1',
-  title: '发布计划',
-  contentJson: { type: 'doc', content: [] },
-  contentSchemaVersion: 3,
-  version: 2,
-  status: 'active',
-  origin: 'native',
-  activeTransactionId: null,
-  deletedAt: null,
-  createdAt: '2026-08-20T00:00:00.000Z',
-  updatedAt: '2026-08-20T00:00:00.000Z',
-}
-
-vi.mock('../context-room/RoomDocumentsProvider', () => ({
-  useRoomDocumentsState: () => ({ documentsByRoom: { 'room-1': [document] } }),
-}))
 
 vi.mock('./useLinkedAgentRun', () => ({
   useLinkedAgentRun: () => ({
@@ -58,21 +38,6 @@ vi.mock('../../i18n/LocaleContext', async (importOriginal) => {
 
 import { AgentChatView } from './AgentChatView'
 
-function pendingIntent(targetCapability: 'document.edit' | 'document.continue'): PendingAgentIntent {
-  return {
-    id: `intent-${targetCapability}`,
-    sessionId: 'session-1',
-    sourceRunId: 'run-1',
-    originalPrompt: '更新发布计划',
-    targetCapability,
-    allowedRoomIds: ['room-1'],
-    allowedDocumentIds: ['document-1'],
-    expiresAt: '2026-08-20T01:00:00.000Z',
-    consumedAt: null,
-    createdAt: '2026-08-20T00:00:00.000Z',
-  }
-}
-
 describe('AgentChatView', () => {
   beforeEach(() => {
     vi.stubGlobal('window', {
@@ -94,72 +59,6 @@ describe('AgentChatView', () => {
     vi.unstubAllGlobals()
   })
 
-  it.each(['document.edit', 'document.continue'] as const)(
-    'selects an allowed document before submitting %s',
-    async (targetCapability) => {
-      const intent = pendingIntent(targetCapability)
-      const onSelectRoom = vi.fn().mockResolvedValue(undefined)
-      let renderer!: TestRenderer.ReactTestRenderer
-      await act(async () => {
-        renderer = TestRenderer.create(<AgentChatView
-          activeDocument={null}
-          activeRunId={null}
-          agentIdByRun={{}}
-          agentNamesById={{}}
-          activityByRun={{}}
-          availableRooms={[{ id: 'room-1', title: '产品 Room' }]}
-          composer={null}
-          currentSessionId="session-1"
-          draftHasContent={false}
-          error={null}
-          loading={false}
-          messages={[]}
-          onOpenSessionLink={vi.fn()}
-          onRejectDocumentIntent={vi.fn()}
-          onRetryPrompt={vi.fn()}
-          onSelectDocument={vi.fn()}
-          onSelectPrompt={vi.fn()}
-          onSelectRoom={onSelectRoom}
-          pendingNavigationByRun={{}}
-          runCompletedAtByRun={{}}
-          runStartedAtByRun={{}}
-          scopeReady
-          sessionLinks={[]}
-          submitting={false}
-          toolCallsByRun={{
-            'run-1': [{
-              id: 'tool-1',
-              runId: 'run-1',
-              name: 'context_room_list',
-              status: 'completed',
-              args: {},
-              result: {
-                rooms: [{ id: 'room-1', title: '产品 Room' }],
-                selectionRequired: true,
-                pendingIntent: intent,
-              },
-              startedAt: '2026-08-20T00:00:00.000Z',
-              completedAt: '2026-08-20T00:00:01.000Z',
-            }],
-          }}
-        />)
-      })
-
-      act(() => renderer.root.findByProps({ title: '产品 Room' }).props.onClick())
-      expect(onSelectRoom).not.toHaveBeenCalled()
-
-      await act(async () => {
-        renderer.root.findByProps({ title: '发布计划' }).props.onClick()
-        await Promise.resolve()
-      })
-      expect(onSelectRoom).toHaveBeenCalledWith(
-        { id: 'room-1', title: '产品 Room' },
-        intent,
-        expect.objectContaining({ documentId: 'document-1', roomId: 'room-1' }),
-      )
-    },
-  )
-
   it('scrolls to and highlights a notification run after its messages load', async () => {
     const scrollIntoView = vi.fn()
     const onNotificationRunLocated = vi.fn()
@@ -179,7 +78,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -189,11 +87,9 @@ describe('AgentChatView', () => {
         notificationRunTarget={{ key: 'notification-1', runId: 'run-2' }}
         onNotificationRunLocated={onNotificationRunLocated}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{ 'run-2': '2026-08-20T00:00:01.000Z' }}
         runStartedAtByRun={{ 'run-2': '2026-08-20T00:00:00.000Z' }}
@@ -253,7 +149,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -261,11 +156,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -334,7 +227,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -342,11 +234,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -415,7 +305,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -423,11 +312,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -507,7 +394,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -515,11 +401,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -611,7 +495,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -619,11 +502,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -712,7 +593,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -720,11 +600,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -786,7 +664,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -794,11 +671,9 @@ describe('AgentChatView', () => {
         loading={false}
         messages={messages}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -862,7 +737,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{ 'run-openclaw': 'openclaw:/usr/local/bin/openclaw', 'run-main': 'main' }}
         agentNamesById={{ 'openclaw:/usr/local/bin/openclaw': 'OpenClaw', main: 'Main Agent' }}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -889,11 +763,9 @@ describe('AgentChatView', () => {
           },
         ]}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{
           'run-openclaw': '2026-08-20T00:00:01.000Z',
@@ -923,7 +795,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -950,11 +821,9 @@ describe('AgentChatView', () => {
           },
         ]}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{ 'run-1': '2026-08-20T00:00:01.000Z' }}
         runStartedAtByRun={{}}
@@ -986,7 +855,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -1001,11 +869,9 @@ describe('AgentChatView', () => {
           createdAt: '2026-08-20T00:00:00.000Z',
         }]}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -1035,7 +901,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -1061,11 +926,9 @@ describe('AgentChatView', () => {
           },
         ]}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}
@@ -1098,7 +961,6 @@ describe('AgentChatView', () => {
         agentIdByRun={{}}
         agentNamesById={{}}
         activityByRun={{}}
-        availableRooms={[]}
         composer={null}
         currentSessionId="session-1"
         draftHasContent={false}
@@ -1115,11 +977,9 @@ describe('AgentChatView', () => {
         }]}
         onOpenMention={onOpenMention}
         onOpenSessionLink={vi.fn()}
-        onRejectDocumentIntent={vi.fn()}
         onRetryPrompt={vi.fn()}
         onSelectDocument={vi.fn()}
         onSelectPrompt={vi.fn()}
-        onSelectRoom={vi.fn().mockResolvedValue(undefined)}
         pendingNavigationByRun={{}}
         runCompletedAtByRun={{}}
         runStartedAtByRun={{}}

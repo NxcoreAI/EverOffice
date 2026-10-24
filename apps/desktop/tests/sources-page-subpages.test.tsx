@@ -13,21 +13,6 @@ vi.mock('react-dom', async (importOriginal) => ({
 
 import { SourcesPage } from '../src/renderer/src/components/pages/SourcesPage'
 import type { DataSourceSummary } from '../src/shared/sources'
-import type { IngestEventDto } from '../src/shared/ingest'
-
-function event(index: number): IngestEventDto {
-  return {
-    id: `evt-${index}`,
-    sourceKind: 'file',
-    title: `事件 ${index}`,
-    filterStatus: 'passed',
-    createdAt: '2026-09-01T10:00:00.000Z',
-    updatedAt: '2026-09-01T10:00:00.000Z',
-  } as IngestEventDto
-}
-
-const EVENTS = Array.from({ length: 8 }, (_, index) => event(index))
-
 /** 页面挂载所需的 window.nxcore 最小实现（happy-dom 提供 document/localStorage 等;缺的 API 走可选链兜底）。 */
 function mockWindow(
   sources: DataSourceSummary[] = [],
@@ -35,7 +20,6 @@ function mockWindow(
   startAuthorization?: ReturnType<typeof vi.fn>,
   oauthConfigs?: () => Promise<string[] | null>,
 ) {
-  const listEvents = vi.fn(async (query: { limit: number }) => ({ items: EVENTS.slice(0, query.limit), total: EVENTS.length }))
   Object.assign(globalThis.window, {
     nxcore: {
       sources: {
@@ -48,7 +32,6 @@ function mockWindow(
         startAuthorization: startAuthorization ?? vi.fn(async () => ({ id: 'auth-x' })),
         ...(oauthConfigs ? { oauthConfigs } : {}),
       },
-      ingest: { listEvents },
       migrations: {
         discover: vi.fn(async () => []),
         importNotionZip: vi.fn(async () => null),
@@ -61,7 +44,7 @@ function mockWindow(
       },
     },
   })
-  return { listEvents }
+  return {}
 }
 
 async function mount(): Promise<TestRenderer.ReactTestRenderer> {
@@ -94,7 +77,7 @@ describe('SourcesPage second-level pages', () => {
     Reflect.deleteProperty(globalThis.window, 'nxcore')
   })
 
-  it('main page shows at most 6 connect tiles and 5 feed rows, each with a view-all affordance', async () => {
+  it('main page shows at most 6 connect tiles plus a view-all affordance', async () => {
     mockWindow()
     renderer = await mount()
 
@@ -103,28 +86,6 @@ describe('SourcesPage second-level pages', () => {
     expect(tiles).toHaveLength(6)
     // 超出 6 项 → 查看全部入口存在
     expect(renderer.root.findAllByProps({ className: 'src-connect-more' })).toHaveLength(1)
-    // feed 只显示 5 行
-    expect(renderer.root.findAllByProps({ className: 'src-feed-row' })).toHaveLength(5)
-    expect(renderer.root.findAllByProps({ className: 'src-feed-more' })).toHaveLength(1)
-  })
-
-  it('ingest view-all enters a full-list second-level page and back returns to main', async () => {
-    const { listEvents } = mockWindow()
-    renderer = await mount()
-
-    click(renderer.root.findByProps({ className: 'src-feed-more' }))
-
-    // 二级页：拉全量（网关上限 200）,不再有查看全部按钮
-    expect(listEvents).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }))
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
-    const rows = renderer.root.findAllByProps({ className: 'src-feed-row' })
-    expect(rows).toHaveLength(EVENTS.length)
-    expect(renderer.root.findAllByProps({ className: 'src-feed-more' })).toHaveLength(0)
-
-    // 返回主页 → 恢复 5 行预览
-    await clickAsync(renderer.root.findByProps({ className: 'src-back' }))
-    expect(renderer.root.findAllByProps({ className: 'src-feed-row' })).toHaveLength(5)
-    expect(renderer.root.findAllByProps({ className: 'src-connect-grid' })).toHaveLength(1)
   })
 
   it('connect view-all enters the grouped full list (includes items beyond the first 6) and back returns', async () => {

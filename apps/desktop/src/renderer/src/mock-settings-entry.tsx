@@ -96,36 +96,6 @@ window.nxcore = new Proxy(base, {
         }
       case 'privateAudio':
         return { list: async () => ({ assets: [{ status: 'uploaded' }, { status: 'uploaded' }, { status: 'pending' }] }) }
-      case 'screenMemory':
-        return {
-          settings: async () => ({ enabled: false, paused: false, allowedApps: ['com.apple.Safari'], excludedApps: [] }),
-          updateSettings: async (patch: Record<string, unknown>) => ({ enabled: false, paused: false, allowedApps: [], excludedApps: [], ...patch }),
-          status: async () => ({
-            running: false, permission: 'not-determined', helperAvailable: true, paused: false, enabled: false,
-            currentBundleId: null, currentAppName: null, openIntervalSince: null, currentKeyframes: 0,
-            heartbeatMs: 5000, lastBeatAt: null, lastError: null,
-            directory: '/Users/xjwang/Library/Application Support/EverRoom/screen-memory',
-            deviceReady: { archOk: true, memoryOk: true, diskOk: true },
-          }),
-          storage: async () => ({ imagesBytes: 0 }),
-          frontmost: async () => null,
-          backfillEstimate: async () => ({ count: 0 }),
-          backfillRun: async () => ({ processed: 0, intervals: 0 }),
-        }
-      case 'screenCapture':
-        return {
-          status: async () => ({ enabled: true, intervalMs: 300_000, permission: 'not-determined' as const, lastResult: null }),
-          perceptionSettings: async () => ({ captureEnabled: true, captureIntervalSeconds: 300, onlineVlmEnabled: true, configVersion: 3, updatedAt: iso(3600_000) }),
-          start: async () => ({ enabled: true, intervalMs: 300_000, permission: 'not-determined' as const, lastResult: null }),
-          stop: async () => ({ enabled: false, intervalMs: 300_000, permission: 'not-determined' as const, lastResult: null }),
-          updateInterval: async (ms: number) => ({ enabled: true, intervalMs: ms, permission: 'not-determined' as const, lastResult: null }),
-          updateOnlineVlm: async (_enabled: boolean, configVersion: number) => ({ captureEnabled: true, captureIntervalSeconds: 300, onlineVlmEnabled: true, configVersion: configVersion + 1, updatedAt: new Date().toISOString() }),
-          captureCurrentWindow: async () => ({ ok: true, filePath: '/Users/xjwang/EverRoom/screenshots/2026-09-10-15-30-01.png' }),
-          appInfo: async () => ({ appPath: '/Applications/EverRoom.app', appName: 'EverRoom', iconDataUrl: '', devMode: false }),
-          openPermissionSettings: async () => {},
-          startAppDrag: () => {},
-          relaunchApp: async () => {},
-        }
       case 'browserExtension':
         return {
           status: async () => ({ state: 'paired', mode: 'production', pairedExtensionId: 'chrome-extension://abc123', pairing: null, lastMessage: { type: 'PING' } }),

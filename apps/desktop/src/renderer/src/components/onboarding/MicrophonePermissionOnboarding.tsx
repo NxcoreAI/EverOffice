@@ -1,6 +1,7 @@
 import { Check, Mic, MicOff, Settings } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import type { OnboardingFlowStage } from './OnboardingFlowChrome'
 import { useLocale } from '@/i18n/LocaleContext'
 import './MicrophonePermissionOnboarding.css'
 
@@ -8,7 +9,7 @@ type MicrophonePermissionStatus = 'not-determined' | 'granted' | 'denied' | 'res
 type PermissionView = 'checking' | 'undetermined' | 'requesting' | 'granted' | 'denied'
 
 interface MicrophonePermissionOnboardingProps {
-  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
+  onNavigateStage?: (stage: OnboardingFlowStage) => void
   onFinished: () => void
 }
 

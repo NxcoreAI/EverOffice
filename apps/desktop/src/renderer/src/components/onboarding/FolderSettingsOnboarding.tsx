@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { ProductBrand } from '@/components/ui/ProductBrand'
 import { WindowControls } from '@/components/WindowControls'
+import type { OnboardingFlowStage } from './OnboardingFlowChrome'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { DefaultLocalFolder } from '../../../../shared/sources'
 import type { ObsidianVaultCandidate } from '../../../../shared/obsidian'
@@ -21,9 +22,8 @@ import './FolderSettingsOnboarding.css'
 interface FolderSettingsOnboardingProps {
   open: boolean
   onClose: () => void
-  memoryReady?: boolean
   showReady?: boolean
-  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
+  onNavigateStage?: (stage: OnboardingFlowStage) => void
 }
 
 const DEFAULT_FOLDERS: DefaultLocalFolder[] = ['documents', 'desktop']
@@ -34,7 +34,7 @@ const folderLabelKey = (folder: DefaultLocalFolder): string =>
     ? 'surface:settings.folderGuide.documents.windows'
     : `surface:settings.folderGuide.${folder}`
 
-export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, showReady = false, onNavigateStage }: FolderSettingsOnboardingProps) {
+export function FolderSettingsOnboarding({ open, onClose, showReady = false, onNavigateStage }: FolderSettingsOnboardingProps) {
   const { locale, preference, setLocale, t } = useLocale()
   const [selectedFolders, setSelectedFolders] = useState<DefaultLocalFolder[]>([])
   const [connectedFolders, setConnectedFolders] = useState<DefaultLocalFolder[]>([])
@@ -207,10 +207,6 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
       </header>
       <main className="folder-settings-onboarding-main" aria-live="polite">
         <nav className="folder-settings-onboarding-sequence" aria-label={t('surface:settings.folderGuide.eyebrow')}>
-          <span role="button" tabIndex={0} data-state="complete" onClick={() => onNavigateStage?.('memory')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onNavigateStage?.('memory') }}><Check aria-hidden="true" />{t('memory:onboarding.memorySetup')}</span>
-          <ChevronRight aria-hidden="true" />
-          <span role="button" tabIndex={0} data-state="complete" onClick={() => onNavigateStage?.('room')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onNavigateStage?.('room') }}><Check aria-hidden="true" />{t('contextRoom:onboarding.eyebrow')}</span>
-          <ChevronRight aria-hidden="true" />
           <span data-state={mode === 'ready' ? 'complete' : 'active'}><ShieldCheck aria-hidden="true" />{t('surface:settings.folderGuide.eyebrow')}</span>
           <ChevronRight aria-hidden="true" />
           <span role="button" tabIndex={0} data-state={mode === 'ready' ? 'active' : 'upcoming'} onClick={() => onNavigateStage?.('ready')} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onNavigateStage?.('ready') }}><Check aria-hidden="true" />{t('surface:settings.folderGuide.readyTitle')}</span>
@@ -287,7 +283,6 @@ export function FolderSettingsOnboarding({ open, onClose, memoryReady = false, s
           </section>
         )}
       </main>
-      {memoryReady ? <div className="folder-settings-onboarding-memory-status"><Check aria-hidden="true" />{t('memory:onboarding.memoryGenerated')}</div> : null}
     </div>
   )
 }

@@ -1,8 +1,13 @@
 import type { AgentEvent, AgentSessionSnapshot } from '@nxcore/agent-contract'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('../context-room/RoomDocumentsProvider', () => ({
-  useRoomDocumentsState: () => ({ documentsByRoom: {}, eventsByDocument: {} }),
+vi.mock('../documents/WorkspaceDocumentsProvider', () => ({
+  useWorkspaceDocuments: () => ({
+    documents: [],
+    documentsLoading: false,
+    upsertDocument: () => {},
+    refresh: async () => {},
+  }),
 }))
 
 import { buildLinkedAgentRunState, linkedRunPollChanged } from './useLinkedAgentRun'

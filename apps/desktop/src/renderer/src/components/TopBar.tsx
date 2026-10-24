@@ -1,5 +1,4 @@
 import {
-  BookOpen,
   Search,
   FileSpreadsheet,
   FileText,
@@ -13,7 +12,6 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
 import { WindowControls } from '@/components/WindowControls'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { OfficePreviewKind, OfficePreviewTab } from '../../../shared/sources'
@@ -26,34 +24,26 @@ const officeTabIcons: Record<OfficePreviewKind, LucideIcon> = {
 }
 
 export function TopBar({
-  contextRoomTabs,
-  activeContextRoomId,
   officeTabs,
   activeOfficeId,
   agentOpen,
   onActivateWorkbench,
-  onActivateContextRoom,
-  onCloseContextRoom,
   onActivateOfficeTab,
   onCloseOfficeTab,
   onToggleAgent,
   onOpenSearch,
 }: {
-  contextRoomTabs: ContextRoomWorkspaceTab[]
-  activeContextRoomId: string | null
   officeTabs: OfficePreviewTab[]
   activeOfficeId: string | null
   agentOpen: boolean
   onActivateWorkbench: () => void
-  onActivateContextRoom: (roomId: string) => void
-  onCloseContextRoom: (roomId: string) => void
   onActivateOfficeTab: (instanceId: string) => void
   onCloseOfficeTab: (instanceId: string) => void
   onToggleAgent: () => void
   onOpenSearch: () => void
 }) {
   const { t } = useLocale()
-  const workbenchActive = activeContextRoomId === null && activeOfficeId === null
+  const workbenchActive = activeOfficeId === null
   return (
     <header className="topbar">
       <div className="tabs" role="tablist" aria-label={t('surface:topBar.openPages')}>
@@ -71,33 +61,6 @@ export function TopBar({
             <LockKeyhole className="tab-lock" aria-hidden="true" strokeWidth={1.8} />
           </button>
         </div>
-        {contextRoomTabs.map((room) => {
-          const isActive = activeContextRoomId === room.id
-          return (
-            <div
-              key={room.id}
-              className="tab"
-              data-active={String(isActive)}
-              data-room-id={room.id}
-              role="tab"
-              aria-label={room.title}
-              aria-selected={isActive}
-            >
-              <button type="button" onClick={() => onActivateContextRoom(room.id)}>
-                <BookOpen aria-hidden="true" strokeWidth={1.8} />
-                <span>{room.title}</span>
-              </button>
-              <button
-                type="button"
-                className="tab-close"
-                aria-label={t('surface:topBar.closeTitle', { title: room.title })}
-                onClick={() => onCloseContextRoom(room.id)}
-              >
-                <X aria-hidden="true" strokeWidth={1.8} />
-              </button>
-            </div>
-          )
-        })}
         {officeTabs.map((tab) => {
           const isActive = activeOfficeId === tab.id
           const OfficeIcon = officeTabIcons[tab.kind]

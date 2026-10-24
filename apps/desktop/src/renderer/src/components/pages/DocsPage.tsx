@@ -1,19 +1,10 @@
-import { ChevronRight, FileSpreadsheet, FileText, FolderKanban, LoaderCircle, Presentation, Search } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { FileText, FolderOpen, Search } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PageId } from '@/data/navigation'
-import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
-import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
-import { FilterSelect } from '@/components/office-editor/shared'
+import { useWorkspaceDocuments } from '@/components/documents/WorkspaceDocumentsProvider'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
-import { officePreviewKindForFileName, type OfficePreviewKind, type OfficePreviewTab } from '../../../../shared/sources'
-import { requestArtifactCreateIntent } from '@/components/context-room/artifactCreateIntent'
-import { saveRoomWorkspaceState } from '@/components/context-room/ported/roomWorkspaceState'
-import { showToast } from '@/state/toast'
-import { useRoomAgentFiles } from './useRoomAgentFiles'
 import { PageHeader } from './PageHeader'
-import { RoomPickerDialog } from './RoomPickerDialog'
 
 function formatDocumentTime(iso: string, locale: AppLocale, t: Translate): string {
   const time = new Date(iso).getTime()
@@ -31,218 +22,39 @@ function formatDocumentTime(iso: string, locale: AppLocale, t: Translate): strin
   })
 }
 
-/** 文稿类型：云文档 + Office 产物四类（officePreviewKindForFileName 白名单）。 */
-type ManuscriptType = 'document' | OfficePreviewKind
-
-const TYPE_ICON: Record<ManuscriptType, LucideIcon> = {
-  document: FileText,
-  docx: FileText,
-  slides: Presentation,
-  spreadsheet: FileSpreadsheet,
-  pdf: FileText,
-}
-
-interface ManuscriptRow {
-  key: string
-  roomId: string
-  roomTitle: string
-  title: string
-  updatedAt: string
-  type: ManuscriptType
-  documentId?: string
-  /** Office 产物：最新版本号（无版本链/旧网关为 null），行内角标用。 */
-  versionNo?: number | null
-  office?: { fileId: string; originalName: string; editable: boolean }
-}
-
+/**
+ * 文稿库（P0-2c）：直接消费工作区文稿清单（`documents.list(null)` + 工作区订阅），
+ * 不再按 Room 分组、也不再列 Room 产物。行只做「定位」——Agent 建好/改动文稿后会
+ * 带着 documentId 跳到本页，这里按 `focusRequest` 高亮对应行。
+ */
 export function DocsPage({
+  focusRequest,
   onNavigate,
-  onOpenDocument,
-  onOpenOfficePreview,
-  onOpenRoom,
 }: {
+  focusRequest?: { documentId: string; requestId: number } | null
   onNavigate: (page: PageId) => void
-  onOpenDocument: (target: { roomId: string; documentId: string }) => void
-  onOpenOfficePreview: (tab: OfficePreviewTab) => void
-  /** 「+新建文档」选完 Room 后的跳转：直达该 Room 详情（工作台）。 */
-  onOpenRoom?: (roomId: string) => void
 }) {
   const { locale, t } = useLocale()
-  const { state } = useContextRoomState()
-  const { documentsByRoom, documentsLoading } = useRoomDocumentsState()
-  const roomIds = useMemo(() => state.rooms.map((room) => room.id), [state.rooms])
-  const { filesByRoom, loading: agentFilesLoading } = useRoomAgentFiles(roomIds)
+  const { documents, documentsLoading } = useWorkspaceDocuments()
   const [search, setSearch] = useState('')
-  const [roomFilter, setRoomFilter] = useState<string>('all')
-  const [typeFilter, setTypeFilter] = useState<ManuscriptType | 'all'>('all')
-  const [busyKey, setBusyKey] = useState<string | null>(null)
-  // 打开失败的行内原因：留在该行直到下次发起打开，避免静默吞掉失败。
-  const [openError, setOpenError] = useState<{ key: string; message: string } | null>(null)
-  const [roomPickerOpen, setRoomPickerOpen] = useState(false)
-
-  // 「+新建文档」：选 Room → 预写工作现场为产物库板块 → 登记自动展开新建产物面板的
-  // 一次性意图 → 直达该 Room 详情（产物库挂载时消费意图，直接停在创建界面）。
-  const pickRoomForNewDocument = (roomId: string) => {
-    requestArtifactCreateIntent(roomId)
-    saveRoomWorkspaceState(roomId, { board: 'artifacts' })
-    if (onOpenRoom) onOpenRoom(roomId)
-    else onNavigate('rooms')
-  }
-
-  const roomTitleById = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const room of state.rooms) map.set(room.id, room.title)
-    return map
-  }, [state.rooms])
-
-  const rows = useMemo<ManuscriptRow[]>(() => {
-    const collected: ManuscriptRow[] = []
-    for (const [roomId, documents] of Object.entries(documentsByRoom)) {
-      const roomTitle = roomTitleById.get(roomId) ?? t('surface:docs.unknownRoom')
-      for (const document of documents) {
-        collected.push({
-          key: `doc:${document.id}`,
-          documentId: document.id,
-          roomId,
-          roomTitle,
-          title: document.title || t('surface:docs.untitledDocument'),
-          updatedAt: document.updatedAt,
-          type: 'document',
-        })
-      }
-    }
-    for (const [roomId, files] of Object.entries(filesByRoom)) {
-      const roomTitle = roomTitleById.get(roomId) ?? t('surface:docs.unknownRoom')
-      for (const file of files) {
-        const kind = officePreviewKindForFileName(file.originalName)
-        // 非 Office 产物（异常扩展名）不进文稿列表，仍归 Room 产物库。
-        if (!kind) continue
-        collected.push({
-          key: `file:${file.id}`,
-          roomId,
-          roomTitle,
-          title: file.originalName,
-          // 目录文件有版本链时 updatedAt = 最新版本时间；旧网关/legacy 回落上传时间
-          updatedAt: file.updatedAt ?? file.uploadedAt,
-          type: kind,
-          versionNo: file.versionNo ?? null,
-          office: {
-            fileId: file.id,
-            originalName: file.originalName,
-            editable: /\.(docx|pptx|xlsx)$/.test(file.originalName.toLowerCase()),
-          },
-        })
-      }
-    }
-    // ISO 倒序；同刻按 key 稳定排序（云文档无 versionNo，不因新字段换位）
-    return collected.sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt) || left.key.localeCompare(right.key))
-  }, [documentsByRoom, filesByRoom, roomTitleById, t])
-
-  // 筛选选项只列出真实存在文稿的 Room，避免演示 Room 干扰。
-  const roomOptions = useMemo(() => {
-    const byRoom = new Map<string, { roomId: string; roomTitle: string; count: number }>()
-    for (const row of rows) {
-      const entry = byRoom.get(row.roomId) ?? { roomId: row.roomId, roomTitle: row.roomTitle, count: 0 }
-      entry.count += 1
-      byRoom.set(row.roomId, entry)
-    }
-    return [...byRoom.values()].sort((left, right) => right.count - left.count)
-  }, [rows])
-
-  const roomSelectOptions = useMemo(() => [
-    { id: 'all', label: t('surface:docs.filterAllRooms') },
-    ...roomOptions.map((option) => ({ id: option.roomId, label: option.roomTitle })),
-  ], [roomOptions, t])
-
-  const typeSelectOptions = useMemo(() => [
-    { id: 'all' as const, label: t('surface:docs.filterAllTypes') },
-    { id: 'document' as const, label: t('surface:docs.type.document') },
-    { id: 'docx' as const, label: t('surface:docs.type.docx') },
-    { id: 'slides' as const, label: t('surface:docs.type.slides') },
-    { id: 'spreadsheet' as const, label: t('surface:docs.type.spreadsheet') },
-    { id: 'pdf' as const, label: t('surface:docs.type.pdf') },
-  ], [t])
+  const rowRefs = useRef(new Map<string, HTMLDivElement>())
 
   const keyword = search.trim().toLowerCase()
-  const visibleRows = useMemo(() => rows.filter((row) => (
-    (roomFilter === 'all' || row.roomId === roomFilter)
-    && (typeFilter === 'all' || row.type === typeFilter)
-    && (!keyword || row.title.toLowerCase().includes(keyword))
-  )), [keyword, roomFilter, rows, typeFilter])
+  const visibleDocuments = useMemo(() => (
+    keyword
+      ? documents.filter((document) => (document.title || t('surface:docs.untitledDocument')).toLowerCase().includes(keyword))
+      : documents
+  ), [documents, keyword, t])
 
-  const groupedRows = useMemo(() => {
-    if (roomFilter !== 'all') return visibleRows.length ? [{ roomTitle: roomTitleById.get(roomFilter) ?? t('surface:docs.unknownRoom'), rows: visibleRows }] : []
-    const groups: { roomTitle: string; rows: ManuscriptRow[] }[] = []
-    for (const row of visibleRows) {
-      const group = groups.find((item) => item.roomTitle === row.roomTitle)
-      if (group) group.rows.push(row)
-      else groups.push({ roomTitle: row.roomTitle, rows: [row] })
-    }
-    return groups
-  }, [roomFilter, roomTitleById, t, visibleRows])
-
-  // Office 产物：与 Room 内嵌编辑预览同参数（OOXML 可编辑并携带 roomId 回填版本链），
-  // 打开为顶栏预览标签（复用 FilesPage 的通道）。
-  const openOfficeFile = (row: ManuscriptRow) => {
-    const files = window.nxcore?.files
-    const office = row.office
-    if (!files) {
-      // 无桌面文件服务：直接说明原因，不再静默 return。
-      setOpenError({ key: row.key, message: t('surface:docs.fileServiceUnavailable') })
-      showToast({ title: t('surface:docs.unableToOpenFile'), message: t('surface:docs.fileServiceUnavailable'), variant: 'error' })
-      return
-    }
-    if (!office) {
-      setOpenError({ key: row.key, message: t('surface:docs.unableToOpenFile') })
-      return
-    }
-    if (busyKey) {
-      // 按钮已 disabled，这里只是兜底：告知正在打开另一份，不吞点击。
-      showToast({ title: t('surface:docs.openingAnotherDocument') })
-      return
-    }
-    setOpenError(null)
-    setBusyKey(row.key)
-    void files.openOriginal(
-      office.fileId,
-      office.originalName,
-      undefined,
-      office.editable ? { editable: true, roomId: row.roomId } : undefined,
-    )
-      .then((result) => {
-        if (result.openedWith === 'office') {
-          onOpenOfficePreview({ id: result.instanceId, title: office.originalName, kind: row.type as OfficePreviewKind })
-          return
-        }
-        // 主进程内嵌预览不可用时会把原件交给系统默认应用：如实说明，别留无反馈的空白。
-        setOpenError({ key: row.key, message: t('surface:docs.openedWithSystemApp') })
-      })
-      .catch((error) => {
-        setOpenError({ key: row.key, message: error instanceof Error ? error.message : t('surface:docs.unableToOpenFile') })
-        showToast({
-          title: t('surface:docs.unableToOpenFile'),
-          message: error instanceof Error ? error.message : undefined,
-          variant: 'error',
-        })
-      })
-      .finally(() => setBusyKey(null))
-  }
-
-  const filtered = keyword || roomFilter !== 'all' || typeFilter !== 'all'
+  const focusedDocumentId = focusRequest?.documentId ?? null
+  useEffect(() => {
+    if (!focusedDocumentId) return
+    rowRefs.current.get(focusedDocumentId)?.scrollIntoView({ block: 'nearest' })
+  }, [focusedDocumentId, focusRequest?.requestId])
 
   return (
     <div className="page doc-page">
-      <PageHeader
-        title={t('surface:docs.documents')}
-        action={t('surface:docs.newDocument')}
-        onAction={() => setRoomPickerOpen(true)}
-      />
-      <RoomPickerDialog
-        open={roomPickerOpen}
-        onOpenChange={setRoomPickerOpen}
-        onPick={pickRoomForNewDocument}
-      />
+      <PageHeader title={t('surface:docs.documents')} />
       <div className="doc-toolbar">
         <label className="doc-search">
           <Search aria-hidden="true" strokeWidth={1.8} />
@@ -253,27 +65,9 @@ export function DocsPage({
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
-        <div className="doc-toolbar-filters">
-          <FilterSelect
-            className="doc-filter-trigger"
-            contentClassName="doc-filter-menu"
-            value={roomFilter}
-            options={roomSelectOptions}
-            onChange={setRoomFilter}
-            ariaLabel={t('surface:docs.filterByRoom')}
-          />
-          <FilterSelect
-            className="doc-filter-trigger"
-            contentClassName="doc-filter-menu"
-            value={typeFilter}
-            options={typeSelectOptions}
-            onChange={setTypeFilter}
-            ariaLabel={t('surface:docs.filterByType')}
-          />
-        </div>
       </div>
 
-      {documentsLoading || agentFilesLoading ? (
+      {documentsLoading ? (
         <div className="doc-list" aria-busy="true" aria-label={t('surface:docs.loadingDocuments')}>
           {Array.from({ length: 5 }, (_, index) => (
             <div key={index} className="doc-row doc-row-skeleton" aria-hidden="true">
@@ -285,72 +79,45 @@ export function DocsPage({
             </div>
           ))}
         </div>
-      ) : visibleRows.length === 0 ? (
+      ) : visibleDocuments.length === 0 ? (
         <div className="doc-empty">
-          <FolderKanban aria-hidden="true" strokeWidth={1.6} />
-          <strong>{t(filtered ? 'surface:docs.noMatchingDocuments' : 'surface:docs.noDocuments')}</strong>
-          <small>{t(filtered
-            ? 'surface:docs.tryAnotherSearch'
-            : 'surface:docs.contextRoomEmptyHint')}</small>
-          <button type="button" className="primary-button" onClick={() => onNavigate('rooms')}>
-            {t('surface:docs.goToContextRoom')}
+          <FolderOpen aria-hidden="true" strokeWidth={1.6} />
+          <strong>{t(keyword ? 'surface:docs.noMatchingDocuments' : 'surface:docs.noDocuments')}</strong>
+          {keyword ? <small>{t('surface:docs.tryAnotherSearch')}</small> : null}
+          <button type="button" className="primary-button" onClick={() => onNavigate('home')}>
+            {t('surface:navigation.home')}
           </button>
         </div>
       ) : (
-        groupedRows.map((group) => (
-          <section key={group.roomTitle} className="doc-group">
-            <header>
-              <FolderKanban aria-hidden="true" strokeWidth={1.6} />
-              <strong>{group.roomTitle}</strong>
-              <small>{t('surface:docs.countDocuments', { count: group.rows.length })}</small>
-            </header>
-            <div className="doc-list">
-              {group.rows.map((row) => {
-                const Icon = TYPE_ICON[row.type]
-                const opening = busyKey === row.key
-                const rowError = openError?.key === row.key ? openError.message : null
-                return (
-                  <button
-                    key={row.key}
-                    type="button"
-                    className="doc-row"
-                    // 打开是单通道：有 Office 行在打开中时其余 Office 行一并禁用，
-                    // 否则点击会撞上 busyKey 守卫被吞掉。
-                    disabled={Boolean(row.office) && busyKey !== null}
-                    aria-busy={opening}
-                    onClick={() => (row.office
-                      ? openOfficeFile(row)
-                      : onOpenDocument({ roomId: row.roomId, documentId: row.documentId! }))}
-                  >
-                    <span className="item-icon">
-                      {opening
-                        ? <LoaderCircle aria-hidden="true" strokeWidth={1.8} className="is-spinning" />
-                        : <Icon aria-hidden="true" strokeWidth={1.8} />}
-                    </span>
-                    <span>
-                      <strong>{row.title}</strong>
-                      <small
-                        role={rowError ? 'alert' : undefined}
-                        aria-live={opening || rowError ? 'polite' : undefined}
-                      >
-                        {opening
-                          ? t('surface:docs.opening')
-                          : rowError ?? [
-                              row.roomTitle,
-                              t(`surface:docs.type.${row.type}`),
-                              // 版本角标：同一份 PPT 再生成/被 AI 修改后能看见 +1
-                              row.versionNo != null ? `v${row.versionNo}` : null,
-                            ].filter((part): part is string => Boolean(part)).join(' · ')}
-                      </small>
-                    </span>
-                    <time>{formatDocumentTime(row.updatedAt, locale, t)}</time>
-                    <ChevronRight aria-hidden="true" strokeWidth={1.8} />
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-        ))
+        <div className="doc-list">
+          {visibleDocuments.map((document) => {
+            const focused = document.id === focusedDocumentId
+            return (
+              <div
+                key={document.id}
+                ref={(node) => {
+                  if (node) rowRefs.current.set(document.id, node)
+                  else rowRefs.current.delete(document.id)
+                }}
+                className="doc-row"
+                data-focused={focused ? 'true' : undefined}
+                aria-current={focused ? 'true' : undefined}
+              >
+                <span className="item-icon">
+                  <FileText aria-hidden="true" strokeWidth={1.8} />
+                </span>
+                <span>
+                  <strong>{document.title || t('surface:docs.untitledDocument')}</strong>
+                  <small>{[
+                    t('surface:docs.type.document'),
+                    document.version ? `v${document.version}` : null,
+                  ].filter((part): part is string => Boolean(part)).join(' · ')}</small>
+                </span>
+                <time>{formatDocumentTime(document.updatedAt, locale, t)}</time>
+              </div>
+            )
+          })}
+        </div>
       )}
     </div>
   )

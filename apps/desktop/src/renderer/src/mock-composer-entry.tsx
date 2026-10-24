@@ -87,9 +87,6 @@ function ComposerHarness() {
   return (
     <div style={{ width: 460, margin: '40px auto', padding: 16, border: '1px solid #ddd', borderRadius: 12 }}>
       <AgentComposer
-        contextSummary=""
-        contextItems={[]}
-        hasSelectedText={false}
         resetKey={0}
         value={value}
         active={false}
@@ -102,8 +99,6 @@ function ComposerHarness() {
         onSelectModelPreference={() => {}}
         onChange={setValue}
         onSelectExternalConversation={() => setLog((current) => [...current, 'select conversation'])}
-        onClearContext={() => {}}
-        onRemoveContext={() => {}}
         onStop={() => {}}
         onSubmit={(_files, mentionedAgents) => setLog((current) => [
           ...current,

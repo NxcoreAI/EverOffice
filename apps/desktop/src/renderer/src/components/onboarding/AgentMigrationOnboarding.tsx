@@ -2,6 +2,7 @@ import { ArrowRight, Check, LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { LocalAgentInstallation } from '../../../../shared/local-agents'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
+import type { OnboardingFlowStage } from './OnboardingFlowChrome'
 import { useLocale } from '@/i18n/LocaleContext'
 import './AgentMigrationOnboarding.css'
 
@@ -10,7 +11,7 @@ type AgentMigrationView = 'scanning' | 'empty' | 'select' | 'importing' | 'done'
 const MIGRATABLE_PROVIDERS = new Set(['codex', 'claude', 'openclaw'])
 
 interface AgentMigrationOnboardingProps {
-  onNavigateStage?: (stage: 'memory' | 'room' | 'folder' | 'ready') => void
+  onNavigateStage?: (stage: OnboardingFlowStage) => void
   onFinished: () => void
 }
 

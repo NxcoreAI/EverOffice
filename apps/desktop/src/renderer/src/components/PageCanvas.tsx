@@ -1,78 +1,41 @@
-import { lazy, Suspense } from 'react'
 import { FilePenLine } from 'lucide-react'
 
 import type { OfficePreviewTab } from '../../../shared/sources'
 import type { PageId } from '@/data/navigation'
-import type { ContextRoomWorkspaceTab } from './context-room/contextRoomTabs'
-import { ContextRoomHomeSkeleton } from './context-room/ContextRoomHomeSkeleton'
-import { DiaryPageSkeleton } from './diary/DiaryPageSkeleton'
 import { DocsPage } from './pages/DocsPage'
 import { FilesPage } from './pages/FilesPage'
-import { InspirationPage } from './pages/InspirationPage'
 import { HomePage } from './pages/HomePage'
-import { MemoryPage } from './pages/MemoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SourcesPage } from './pages/SourcesPage'
-import { WikiPage } from './pages/WikiPage'
 import { AgentStatusPage } from './pages/AgentStatusPage'
 import { AgentSchedulesPage } from './pages/AgentSchedulesPage'
 import { AgentConnectionsPage } from './pages/AgentConnectionsPage'
 import { useLocale } from '@/i18n/LocaleContext'
 
-const ContextRoomPage = lazy(() =>
-  import('./context-room/ContextRoomPage').then((module) => ({ default: module.ContextRoomPage })),
-)
-const DiaryPage = lazy(() =>
-  import('./diary/DiaryPage').then((module) => ({ default: module.DiaryPage })),
-)
-const RealityPage = lazy(() =>
-  import('./reality/RealityPage').then((module) => ({ default: module.RealityPage })),
-)
-
 export function PageCanvas({
   page,
-  activeContextRoomId,
   agentDocumentFocus,
-  contextRoomHomeRequest,
-  onContextRoomDetailFocusChange,
-  onContextRoomOpenTab,
-  onContextRoomRoomsChange,
-  onContextRoomShowHome,
   onNavigate,
   onFocusAgent,
-  onOpenDocument,
-  onOpenRoom,
   onOpenOfficePreview,
-  memoryFocusId,
   agentFileFocus,
   onStartFullOnboarding,
 }: {
   page: PageId
-  activeContextRoomId: string | null
   agentDocumentFocus: {
-    /** 工作区级文稿为 null（P0-2d）。 */
-    roomId: string | null
     documentId: string
     blockId?: string | null
     requestId: number
   } | null
-  contextRoomHomeRequest: number
-  onContextRoomDetailFocusChange: (focused: boolean) => void
-  onContextRoomOpenTab: (room: ContextRoomWorkspaceTab) => void
-  onContextRoomRoomsChange: (rooms: ContextRoomWorkspaceTab[]) => void
-  onContextRoomShowHome: () => void
   onNavigate: (page: PageId) => void
   onFocusAgent: () => void
-  onOpenDocument: (target: { roomId: string; documentId: string; blockId?: string | null }) => void
-  onOpenRoom: (roomId: string) => void
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
-  memoryFocusId?: string | null
   agentFileFocus?: { fileId: string; requestId: number } | null
   onStartFullOnboarding?: () => void
 }) {
   const { t } = useLocale()
   let content = null
-  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} onOpenDocument={onOpenDocument} onOpenRoom={onOpenRoom} />
+  if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
   if (page === 'office') content = <AgentStatusPage />
   if (page === 'office-document') {
     // 页体不承载内容：Office 文档由主进程 WebContentsView 叠在 workspace-main 上显示
@@ -93,64 +56,22 @@ export function PageCanvas({
   }
   if (page === 'schedules') content = <AgentSchedulesPage />
   if (page === 'agent-connections') content = <AgentConnectionsPage />
-  if (page === 'rooms') {
+  if (page === 'docs') {
     content = (
-      <Suspense fallback={<ContextRoomHomeSkeleton />}>
-        <ContextRoomPage
-          activeRoomId={activeContextRoomId}
-          focusedDocumentId={agentDocumentFocus?.roomId === activeContextRoomId
-            ? agentDocumentFocus.documentId
-            : null}
-          focusedBlockId={agentDocumentFocus?.roomId === activeContextRoomId
-            ? agentDocumentFocus.blockId ?? null
-            : null}
-          documentFocusRequestId={agentDocumentFocus?.roomId === activeContextRoomId
-            ? agentDocumentFocus.requestId
-            : null}
-          homeRequest={contextRoomHomeRequest}
-          onDetailFocusChange={onContextRoomDetailFocusChange}
-          onOpenRoomTab={onContextRoomOpenTab}
-          onRoomsChange={onContextRoomRoomsChange}
-          onShowHome={onContextRoomShowHome}
-          onFocusAgent={onFocusAgent}
-        />
-      </Suspense>
+      <DocsPage
+        focusRequest={agentDocumentFocus
+          ? { documentId: agentDocumentFocus.documentId, requestId: agentDocumentFocus.requestId }
+          : null}
+        onNavigate={onNavigate}
+      />
     )
   }
-  if (page === 'docs') content = <DocsPage onNavigate={onNavigate} onOpenDocument={onOpenDocument} onOpenOfficePreview={onOpenOfficePreview} onOpenRoom={onOpenRoom} />
   if (page === 'sources') content = <SourcesPage />
   if (page === 'files') content = <FilesPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} focusRequest={agentFileFocus} />
-  if (page === 'inspiration') content = <InspirationPage />
-  if (page === 'memory') content = <MemoryPage focusAtomicId={memoryFocusId} />
-  if (page === 'wiki') content = <WikiPage />
-  if (page === 'diary') {
-    content = (
-      <Suspense fallback={<DiaryPageSkeleton />}>
-        <DiaryPage
-          onNavigate={onNavigate}
-          onOpenDocument={onOpenDocument}
-          onFocusRealityEvent={(eventId) => window.dispatchEvent(new CustomEvent('nxcore:reality:focus-event', { detail: { eventId } }))}
-        />
-      </Suspense>
-    )
-  }
   if (page === 'settings') content = <SettingsPage onStartFullOnboarding={onStartFullOnboarding} />
   return (
-    <>
-      <div
-        className="reality-page-host workspace-page-transition"
-        data-page="recording"
-        hidden={page !== 'recording'}
-      >
-        <Suspense fallback={<div className="page"><div className="evidence-viewer-state">{t('surface:pageCanvas.loadingPerception')}</div></div>}>
-          <RealityPage onOpenSettings={() => onNavigate('settings')} />
-        </Suspense>
-      </div>
-      {page === 'recording' ? null : (
-        <div key={page} className="workspace-page-transition" data-page={page}>
-          {content}
-        </div>
-      )}
-    </>
+    <div key={page} className="workspace-page-transition" data-page={page}>
+      {content}
+    </div>
   )
 }
