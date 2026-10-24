@@ -4,8 +4,8 @@ import type { AppLocale } from '@/i18n/resources'
 import type { RoomAgentSelectionRewriteInput } from '../../../../../shared/sources'
 
 /**
- * 划词改写已迁入 context-room dispatch_only 子 Agent：dispatch 后轮询 invocation 至终态。
- * 见 gateway POST /v1/context-rooms/selection-rewrite 与 GET /v1/subagent-invocations/:id。
+ * 划词改写派发到 doc-writer 的 rewrite task：dispatch 后轮询 invocation 至终态。
+ * 见 gateway POST /v1/documents/selection-rewrite 与 GET /v1/subagent-invocations/:id。
  */
 export interface SelectionRewriteAgentApi {
   dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>

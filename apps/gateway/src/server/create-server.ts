@@ -637,6 +637,9 @@ export async function createServer(config: GatewayConfig) {
     subagentRuntimeManager,
     app.log,
   );
+  // doc-writer 的 rewrite task 派发器：唯一消费方是 POST /v1/documents/selection-rewrite
+  // （Phase 2i-2 把划词改写从已删的 context-rooms 模块接回家，见文档路由装配处）。
+  const docWriterDispatcher = new DocWriterAgentDispatcher(subagentOrchestrator);
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
@@ -1127,7 +1130,14 @@ export async function createServer(config: GatewayConfig) {
       config.documentIndexBackfill?.readTriggerCooldownMs ?? 1_800_000,
     )
     : null;
-  await app.register(documentRoutes(documentService, () => versionSummaryRuntime, indexBackfillReadTrigger));
+  await app.register(documentRoutes(
+    documentService,
+    () => versionSummaryRuntime,
+    indexBackfillReadTrigger,
+    // 划词改写（Phase 2i-2）：documents 路由只收派发函数，doc-writer 的
+    // subagent 依赖仍留在装配点这一处。
+    (taskInput) => docWriterDispatcher.dispatchDetached({ task: "rewrite", taskInput }),
+  ));
   await app.register(documentCommentRoutes(documentCommentService));
   await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
   await app.register(documentSectionPreviewRoutes(documentService, () => documentOverviewRuntime));
