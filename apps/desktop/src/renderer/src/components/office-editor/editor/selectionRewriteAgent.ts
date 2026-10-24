@@ -1,20 +1,21 @@
 import type { SubagentInvocation } from '@nxcore/agent-contract'
 import i18n from '@/i18n/i18next'
 import type { AppLocale } from '@/i18n/resources'
-import type { RoomAgentSelectionRewriteInput } from '../../../../../shared/sources'
+import type { SubagentSelectionRewriteInput } from '../../../../../shared/sources'
 
 /**
  * 划词改写派发到 doc-writer 的 rewrite task：dispatch 后轮询 invocation 至终态。
  * 见 gateway POST /v1/documents/selection-rewrite 与 GET /v1/subagent-invocations/:id。
  */
 export interface SelectionRewriteAgentApi {
-  dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
+  dispatchSelectionRewrite(input: SubagentSelectionRewriteInput): Promise<{ invocationId: string }>
   getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
   cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
 }
 
 export interface SelectionRewriteRequest {
-  roomId: string
+  /** 文稿一律工作区级：gateway 侧入参只有 documentId，不再带 roomId。 */
+  documentId: string
   documentName: string
   selectedText: string
   instruction: string
@@ -119,7 +120,7 @@ export async function streamSelectionRewrite(
     throwIfAborted(options.signal)
     const t = i18n.getFixedT(options.responseLanguage ?? 'zh-CN', 'common')
     const dispatched = await api.dispatchSelectionRewrite({
-      roomId: input.roomId,
+      documentId: input.documentId,
       documentName: input.documentName,
       selectedText: input.selectedText,
       instruction: input.instruction.trim() || t('contextRoom:selectionRewriteAgent.defaultInstruction'),

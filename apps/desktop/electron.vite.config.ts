@@ -62,7 +62,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          'permission-card': resolve('src/renderer/permission-card.html'),
         },
       },
     },

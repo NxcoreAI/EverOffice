@@ -1,59 +1,6 @@
+// 网页剪藏（浏览器扩展 → 网关）落库后的读取契约；扩展本体在 apps/browser-extension，桌面只消费剪藏结果。
+
 export const CLIPPER_ASSET_SCHEME = 'nxcore-clipper-asset'
-
-export type BrowserExtensionConnectionState =
-  | 'unavailable'
-  | 'idle'
-  | 'waiting-for-extension'
-  | 'paired'
-  | 'error'
-
-export interface BrowserExtensionPairing {
-  id: string
-  status: 'pending' | 'paired'
-  expiresAt: string
-  extensionId: string | null
-  extensionName: string | null
-}
-
-export interface BrowserExtensionMessage {
-  type: string
-  payload: Record<string, unknown>
-  receivedAt: string
-}
-
-export interface BrowserExtensionCapture {
-  captureId: string
-  url: string
-  canonicalUrl: string
-  title: string
-  author?: string
-  publishedAt?: string
-  extractionMode: 'selection' | 'article' | 'full-page'
-  markdown: string
-  capturedAt: string
-  extractorVersion: string
-  assets: BrowserExtensionCaptureAsset[]
-}
-
-export interface BrowserExtensionCaptureAsset {
-  id: string
-  referenceKey: string
-  originalUrl: string
-  altText?: string
-  width?: number
-  height?: number
-}
-
-export interface BrowserExtensionCaptureResult {
-  fileEntryId: string
-  fileVersionId: string
-  jobId: string
-  contentHash: string
-  blobDeduped: boolean
-  versionDeduped: boolean
-  pendingAssetIds: string[]
-  capture: BrowserExtensionClipperCapture
-}
 
 export interface BrowserExtensionClipperCapture {
   id: string
@@ -123,29 +70,3 @@ export interface BrowserExtensionClipperCapture {
   }>
 }
 
-export interface BrowserExtensionClipperListInput {
-  query?: string
-  filter?: 'all' | 'favorite' | 'processing'
-  sort?: 'newest' | 'oldest'
-  limit?: number
-  offset?: number
-}
-
-export interface BrowserExtensionClipperListResult {
-  items: BrowserExtensionClipperCapture[]
-  total: number
-  counts: { all: number; favorite: number; processing: number }
-}
-
-export interface BrowserExtensionStatus {
-  mode: 'development' | 'production'
-  state: BrowserExtensionConnectionState
-  bridgeUrl: string | null
-  storeUrl: string
-  extensionDirectory: string | null
-  pairing: BrowserExtensionPairing | null
-  pairedExtensionId: string | null
-  pairedAt: string | null
-  lastMessage: BrowserExtensionMessage | null
-  error: string | null
-}

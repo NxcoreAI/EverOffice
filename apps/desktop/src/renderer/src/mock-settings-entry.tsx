@@ -89,23 +89,6 @@ window.nxcore = new Proxy(base, {
           verdict: async () => ({ quotaExhausted: false }),
           onEvent: () => () => {},
         }
-      case 'transcriptions':
-        return {
-          onSyncCompleted: () => () => {},
-          syncPrivate: async () => ({ status: { enabled: true, initialized: true, umkId: 'umk-1', activeVersion: 2, deviceStatus: 'active', verificationCode: null }, synced: 12 }),
-        }
-      case 'privateAudio':
-        return { list: async () => ({ assets: [{ status: 'uploaded' }, { status: 'uploaded' }, { status: 'pending' }] }) }
-      case 'browserExtension':
-        return {
-          status: async () => ({ state: 'paired', mode: 'production', pairedExtensionId: 'chrome-extension://abc123', pairing: null, lastMessage: { type: 'PING' } }),
-          onStatus: () => () => {},
-          install: async () => ({ state: 'waiting-for-extension', mode: 'production', pairedExtensionId: null, pairing: { expiresAt: new Date(now + 300_000).toISOString(), extensionId: null }, lastMessage: null }),
-          createPairing: async () => ({ state: 'waiting-for-extension', mode: 'production', pairedExtensionId: null, pairing: { expiresAt: new Date(now + 300_000).toISOString(), extensionId: null }, lastMessage: null }),
-          revoke: async () => ({ state: 'not-connected', mode: 'production', pairedExtensionId: null, pairing: null, lastMessage: null }),
-          openDirectory: async () => {},
-          openBrowserPage: async () => {},
-        }
       case 'agent':
         return new Proxy((face ?? {}) as object, {
           get(agentFace, key) {

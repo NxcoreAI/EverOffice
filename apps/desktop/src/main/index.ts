@@ -1,5 +1,5 @@
 import { createReadStream, readFileSync } from 'node:fs'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { basename, dirname, extname, join, parse, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, Notification, protocol, screen, session, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -19,9 +19,9 @@ import type {
   StartDocumentOperationInput,
 } from '@nxcore/agent-contract'
 
-import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
+import type { AccountKeyringStatus, CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult, SubagentSelectionRewriteInput } from '../shared/sources'
 import type { SearchItemType, SearchRequestDto } from '../shared/search'
-import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
+import type { RuntimeConfigSnapshot } from '../shared/sources'
 import { officePreviewKindForFileName } from '../shared/sources'
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
@@ -36,52 +36,32 @@ import { HighRiskImportCoordinator } from './high-risk-import-coordinator'
 import { CredentialStore } from './security/credential-store'
 import { AccountKeyringService } from './security/account-keyring-service'
 import { AgentGatewayBridge } from './gateway/agent-gateway-bridge'
-import { AsrGatewayBridge } from './gateway/asr-gateway-bridge'
 import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { AgentAccessSettingsStore, isValidFixedPort } from './agent-access/settings-store'
 import { AgentAccessInstaller } from './agent-access/installer'
 import { AgentAccessGatewayBridge } from './gateway/agent-access-gateway-bridge'
 import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
 import { startDesktopUpdater } from './updater'
-import { RuntimeConfigBridge, type RuntimeMemoryConfig } from './gateway/runtime-config-bridge'
+import { RuntimeConfigBridge } from './gateway/runtime-config-bridge'
 import { cursorCompletionEnvFromConfig } from './gateway/cursor-completion-env'
-import { MemoryGatewayBridge } from './gateway/memory-gateway-bridge'
 import { SearchGatewayBridge } from './gateway/search-gateway-bridge'
-import { KnowledgeServiceSupervisor } from './knowledge/knowledge-supervisor'
-import { knowledgeServiceLlmEnv } from './knowledge/llm-env'
-import { MemoryCoreSupervisor } from './memory/memory-core-supervisor'
-import { embeddingFieldsFromConfig, isRelaySlotUrl, memoryCoreEmbeddingEnv, memoryCoreEnvironment, relayEmbeddingDimensions, withStableRelayKey } from './memory/embedding-env'
-import type { KnowledgeAttachInput } from '../shared/knowledge'
 import type { McpServersMutation } from '../shared/mcp'
 import type { ExternalCallPolicyInput, ExternalCallQuery } from '../shared/external-calls'
 import type { IngestPipelines } from '../shared/ingest'
-import type {
-  MemoryAtomicListOptions,
-  MemoryConversationListOptions,
-  MemoryDocumentRewriteInput,
-  MemoryOnboardingInput,
-} from '../shared/memory'
 import { DocumentGatewayBridge } from './gateway/document-gateway-bridge'
-import { KnowledgeGatewayBridge } from './gateway/knowledge-gateway-bridge'
 import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
 import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
 import { ThesisFormatGatewayBridge } from './gateway/thesis-format-gateway-bridge'
-import { IngestGatewayBridge } from './gateway/ingest-gateway-bridge'
-import { ContextRoomGatewayBridge } from './gateway/context-room-gateway-bridge'
+import { SubagentGatewayBridge } from './gateway/subagent-gateway-bridge'
 import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
-import { RealityGatewayBridge } from './gateway/reality-gateway-bridge'
-import { PerceptionGatewayBridge } from './gateway/perception-gateway-bridge'
-import { DiaryGatewayBridge } from './gateway/diary-gateway-bridge'
 import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
 import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
-import { RecordingStore } from './recording/recording-store'
-import { RecordingSegmentUploader } from './recording/recording-segment-uploader'
-import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, SaasRequestError, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
+import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
@@ -93,7 +73,6 @@ import type { AgentAskForwardEvent } from './office/office-generation'
 import { createEverroomMaterialResolver } from './office/office-material-resolver'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
-import { AsrCoordinator } from './asr/asr-coordinator'
 import {
   configureDesktopLogger,
   flushDesktopLogs,
@@ -102,27 +81,6 @@ import {
   logDocumentCursorCompletion,
 } from './logging/desktop-logger'
 import { configureSentry, isSentryRemoteDebugEnabled, syncSentryAccount } from './monitoring/sentry'
-import { PrivateTranscriptionSyncService } from './transcription/private-transcription-sync'
-import { PrivateSyncScheduler } from './transcription/private-sync-scheduler'
-import { TranscriptionProcessingCoordinator } from './transcription/processing-coordinator'
-import { PrivateAudioSyncService } from './transcription/private-audio-sync'
-import {
-  captureUserScreen,
-  createWindowScreenshotScheduler,
-} from './screenshot/window-screenshot-service'
-import { ScreenshotOutbox } from './screenshot/screenshot-outbox'
-import { readdir, readFile, stat as statFile } from 'node:fs/promises'
-import {
-  createScreenMemoryController,
-  SCREEN_MEMORY_CHANNELS,
-  type ScreenMemoryController,
-  type ScreenMemoryIntervalPersistence,
-} from './screen-memory/screen-memory-controller'
-import { VisionOcrClient } from './vision-ocr/vision-ocr-client'
-import { ScreenMemoryGatewayBridge } from './screen-memory/screen-memory-gateway-bridge'
-import { getScreenCapturePermission } from './screen-memory/capture-current-screen'
-import { getScreenMemoryDirectory } from './screen-memory/screen-memory-settings'
-import { runScreenMemoryBackfill } from './screen-memory/screen-memory-backfill'
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 import { registerSystemClipboardHandler } from './system-clipboard'
 import { installCrossOriginIsolation } from './cross-origin-isolation'
@@ -149,8 +107,7 @@ import type {
   AgentAuthStartInput,
   DesktopAgentAuthChallenge,
 } from '../shared/agent-auth'
-import { BrowserExtensionService } from './browser-extension/browser-extension-service'
-import { CLIPPER_ASSET_SCHEME, type BrowserExtensionStatus } from '../shared/browser-extension'
+import { CLIPPER_ASSET_SCHEME } from '../shared/browser-extension'
 import { OBSIDIAN_VAULT_ASSET_SCHEME, type ObsidianImportResult, type ObsidianImportTarget } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
 import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
@@ -231,10 +188,6 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
-    scheme: 'screen-memory-asset',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
-  },
-  {
     // 网关素材按内容哈希寻址（slides 素材图、风格卡候选/演示页图共用）。
     scheme: 'everroom-material',
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
@@ -292,14 +245,6 @@ const MIGRATION_CHANNELS = {
   retry: 'migrations:retry', reimport: 'migrations:reimport', clear: 'migrations:clear', conversations: 'migrations:conversations',
   preview: 'migrations:preview', progress: 'migrations:progress',
 } as const
-const BROWSER_EXTENSION_CHANNELS = {
-  status: 'browser-extension:status',
-  install: 'browser-extension:install',
-  openDirectory: 'browser-extension:open-directory',
-  openBrowserPage: 'browser-extension:open-browser-page',
-  createPairing: 'browser-extension:create-pairing',
-  revoke: 'browser-extension:revoke',
-} as const
 const RUNTIME_CONFIG_CHANNELS = {
   get: 'runtime-config:get',
   saveUser: 'runtime-config:save-user',
@@ -333,7 +278,6 @@ const AGENT_AUTH_CHANNELS = {
 const EXTERNAL_DOCUMENT_CHANNELS = {
   importSearch: 'external-documents:import-search',
   importList: 'external-documents:import-list',
-  importExistingInRoom: 'external-documents:import-existing-in-room',
   importBatch: 'external-documents:import-batch',
   importBatchStatus: 'external-documents:import-batch-status',
   activeImportBatch: 'external-documents:active-import-batch',
@@ -356,33 +300,13 @@ const EXTERNAL_DOCUMENT_CHANNELS = {
   searchExportTargets: 'external-documents:search-export-targets',
 } as const
 
-const CONTEXT_ROOM_CHANNELS = {
-  list: 'context-rooms:list',
-  create: 'context-rooms:create',
-  syncSnapshot: 'context-rooms:sync-snapshot',
-  checkDuplicates: 'context-rooms:check-duplicates',
-  listDuplicateCandidates: 'context-rooms:list-duplicate-candidates',
-  updateDuplicateCandidate: 'context-rooms:update-duplicate-candidate',
-  previewMerge: 'context-rooms:preview-merge',
-  startMerge: 'context-rooms:start-merge',
-  suggestMergeNames: 'context-rooms:suggest-merge-names',
-  checkRoomDuplicates: 'context-rooms:check-room-duplicates',
-  getMergeOperation: 'context-rooms:get-merge-operation',
-  retryMerge: 'context-rooms:retry-merge',
-  cancelMerge: 'context-rooms:cancel-merge',
-  dispatchSelectionRewrite: 'context-rooms:dispatch-selection-rewrite',
-  getSubagentInvocation: 'context-rooms:get-subagent-invocation',
-  cancelSubagentInvocation: 'context-rooms:cancel-subagent-invocation',
-  listRunSubagentInvocations: 'context-rooms:list-run-subagent-invocations',
-  listSubagentInvocationEvents: 'context-rooms:list-subagent-invocation-events',
-  refreshBrief: 'context-rooms:refresh-brief',
-  promoteMemoryItem: 'context-rooms:promote-memory-item',
-  overview: 'context-rooms:overview',
-  refreshOverview: 'context-rooms:refresh-overview',
-  listMails: 'context-rooms:list-mails',
-  readMail: 'context-rooms:read-mail',
-  roomEntities: 'context-rooms:room-entities',
-  completeLocalAction: 'context-rooms:complete-local-action',
+// 子代理调用（划词改写 + 调用树/事件轮询）：Context Room 删除后仅剩这些活通道。
+const SUBAGENT_CHANNELS = {
+  dispatchSelectionRewrite: 'subagents:dispatch-selection-rewrite',
+  getInvocation: 'subagents:get-invocation',
+  cancelInvocation: 'subagents:cancel-invocation',
+  listRunInvocations: 'subagents:list-run-invocations',
+  listInvocationEvents: 'subagents:list-invocation-events',
 } as const
 
 const AGENT_CHANNELS = {
@@ -462,42 +386,11 @@ const DOCUMENT_CHANNELS = {
   unsubscribe: 'documents:unsubscribe',
 } as const
 
-const ASR_CHANNELS = {
-  requestMicrophoneAccess: 'asr:request-microphone-access',
-  getMicrophoneAccessStatus: 'asr:get-microphone-access-status',
-  openMicrophoneSettings: 'asr:open-microphone-settings',
-  openSystemAudioSettings: 'asr:open-system-audio-settings',
-  beginRecording: 'asr:begin-recording',
-  appendRecording: 'asr:append-recording',
-  uploadRecordingSegment: 'asr:upload-recording-segment',
-  segmentTranscribed: 'asr:segment-transcribed',
-  finishRecording: 'asr:finish-recording',
-  cancelRecording: 'asr:cancel-recording',
-  createJob: 'asr:create-job',
-  getJob: 'asr:get-job',
-  renameSpeaker: 'asr:rename-speaker',
-} as const
-const PRIVATE_AUDIO_CHANNELS = {
-  list: 'private-audio:list',
-  download: 'private-audio:download',
-  read: 'private-audio:read',
-} as const
-
-const REALITY_CHANNELS = {
-  listEvents: 'reality:list-events',
-  getEvent: 'reality:get-event',
-  createEvent: 'reality:create-event',
-  finishCapture: 'reality:finish-capture',
-  updateTranscript: 'reality:update-transcript',
-  addMarker: 'reality:add-marker',
-  setImportant: 'reality:set-important',
-  confirm: 'reality:confirm',
-  discard: 'reality:discard',
-  fail: 'reality:fail',
-  readAudio: 'reality:read-audio',
-  exportTranscript: 'reality:export-transcript',
-  subscribe: 'reality:subscribe',
-  unsubscribe: 'reality:unsubscribe',
+// 系统隐私授权（本地 TCC 查询，不经网关）：只有麦克风 onboarding 还需要。
+const PERMISSION_CHANNELS = {
+  requestMicrophoneAccess: 'permissions:request-microphone-access',
+  getMicrophoneAccessStatus: 'permissions:microphone-access-status',
+  openMicrophoneSettings: 'permissions:open-microphone-settings',
 } as const
 
 const ACCOUNT_CHANNELS = {
@@ -529,42 +422,6 @@ const ACCOUNT_CHANNELS = {
   aiRelayVerdict: 'ai-relay:verdict',
 } as const
 
-const TRANSCRIPTION_CHANNELS = {
-  syncPrivate: 'transcription:sync-private',
-  listPrivate: 'transcription:list-private',
-  listTags: 'transcription:list-tags',
-  replaceSummaryTags: 'transcription:replace-summary-tags',
-  renameTag: 'transcription:rename-tag',
-  mergeTag: 'transcription:merge-tag',
-} as const
-
-const MEMORY_CHANNELS = {
-  overview: 'memory:overview',
-  startOnboarding: 'memory:onboarding:start',
-  /** 渲染层记忆引导结束（完成/跳过/放行）→ 解除云端同步延迟。 */
-  onboardingFinished: 'memory:onboarding-finished',
-  listAtomic: 'memory:list-atomic',
-  listRoomMemories: 'memory:list-room-memories',
-  searchAtomic: 'memory:search-atomic',
-  updateAtomic: 'memory:update-atomic',
-  deleteAtomic: 'memory:delete-atomic',
-  setAtomicRoom: 'memory:set-atomic-room',
-  listScenarios: 'memory:list-scenarios',
-  readScenario: 'memory:read-scenario',
-  readCore: 'memory:read-core',
-  writeCore: 'memory:write-core',
-  listConversations: 'memory:list-conversations',
-  searchConversations: 'memory:search-conversations',
-  deleteConversations: 'memory:delete-conversations',
-  importMarkdown: 'memory:import-markdown',
-  pickMarkdownFiles: 'memory:pick-markdown-files',
-  listDocuments: 'memory:documents:list',
-  getDocument: 'memory:documents:get',
-  deleteDocument: 'memory:documents:delete',
-  atomicProvenance: 'memory:atomic-provenance',
-  captureDocumentRewrite: 'memory:capture-document-rewrite',
-} as const
-
 const SEARCH_CHANNELS = {
   invoke: 'search:invoke',
   status: 'search:status',
@@ -585,65 +442,14 @@ const EXTERNAL_CALL_CHANNELS = {
   listAudits: 'external-calls:audits:list',
 } as const
 
-const KNOWLEDGE_CHANNELS = {
-  listRooms: 'knowledge:rooms:list',
-  getRoomContext: 'knowledge:rooms:context',
-  upsertRoom: 'knowledge:rooms:upsert',
-  deleteRoom: 'knowledge:rooms:delete',
-  getRoomGraph: 'knowledge:room-graph:get',
-  getRoomRelations: 'knowledge:room-relations:list',
-  getRoomRelationEvidence: 'knowledge:room-relations:evidence',
-  createRoomRelation: 'knowledge:room-relations:create',
-  updateRoomRelation: 'knowledge:room-relations:update',
-  removeManualRoomRelation: 'knowledge:room-relations:remove-manual',
-  listWikiPages: 'knowledge:wiki:pages',
-  retryWikiBuild: 'knowledge:wiki:rebuild',
-  readWikiPage: 'knowledge:wiki:page-read',
-  listWikis: 'knowledge:wikis:list',
-  getWikiGraph: 'knowledge:wiki:graph',
-  listEntities: 'knowledge:entities:list',
-  getEntity: 'knowledge:entities:get',
-  promoteEntity: 'knowledge:entities:promote',
-  promoteEntities: 'knowledge:entities:promote-batch',
-  suppressEntity: 'knowledge:entities:suppress',
-  suppressEntities: 'knowledge:entities:suppress-batch',
-  restoreSuppressedEntity: 'knowledge:entities:restore',
-  mergeEntity: 'knowledge:entities:merge',
-  listUnmatched: 'knowledge:unmatched:list',
-  retryUnmatched: 'knowledge:unmatched:retry',
-  ignoreUnmatched: 'knowledge:unmatched:ignore',
-  listRules: 'knowledge:rules:list',
-  deleteRule: 'knowledge:rules:delete',
-  attachDoc: 'knowledge:docs:attach',
-  listRecentDecisions: 'knowledge:decisions:list',
-  routeStatus: 'knowledge:route:status',
-  proposeRooms: 'knowledge:rooms:propose',
-  emergence: 'knowledge:rooms:emergence',
-  getRouteMindmap: 'knowledge:rooms:route-mindmap',
-  routeMindmapAction: 'knowledge:rooms:route-mindmap-action',
-  revertDecision: 'knowledge:route:revert',
-  getPreferences: 'knowledge:preferences:get',
-  updatePreferenceContent: 'knowledge:preferences:user-content',
-  updatePreferenceSettings: 'knowledge:preferences:settings',
-  refreshPreferences: 'knowledge:preferences:refresh',
-  listRoomFiles: 'knowledge:files:list',
-  readFileMarkdown: 'knowledge:files:markdown',
-  revealFile: 'knowledge:files:reveal',
-  openFile: 'knowledge:files:open',
-} as const
-
 const FILES_CHANNELS = {
   list: 'files:list',
   catalogEntry: 'files:catalog-entry',
-  listClipCaptures: 'files:clipper-captures:list',
-  getClipCaptureDetail: 'files:clipper-captures:detail',
-  setClipCaptureFavorite: 'files:clipper-captures:favorite',
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
   getClipCapture: 'files:clipper-capture:get',
   rename: 'files:rename',
-  pinClusterTitle: 'files:pin-cluster-title',
   delete: 'files:delete',
   reveal: 'files:reveal',
   exportReveal: 'files:export-reveal',
@@ -659,16 +465,6 @@ const FILES_CHANNELS = {
   highRiskReviewsChanged: 'files:high-risk-reviews:changed',
 } as const
 
-const INGEST_CHANNELS = {
-  listEvents: 'ingest:events:list',
-  getFilterRules: 'ingest:filter-rules:get',
-  updateFilterPreference: 'ingest:filter-rules:update-preference',
-  reinstateEvent: 'ingest:events:reinstate',
-  getEventContent: 'ingest:events:content',
-  getPause: 'ingest:pause:get',
-  setPause: 'ingest:pause:set',
-} as const
-
 const THESIS_FORMAT_CHANNELS = {
   listCards: 'thesis-format:cards:list',
   parseFromLibrary: 'thesis-format:parse:library',
@@ -676,37 +472,6 @@ const THESIS_FORMAT_CHANNELS = {
   removeCard: 'thesis-format:cards:remove',
   reformat: 'thesis-format:reformat',
   cardChanged: 'thesis-format:card-changed',
-} as const
-
-const SCREEN_CAPTURE_CHANNELS = {
-  captureCurrentWindow: 'screen-capture:capture-current-window',
-  start: 'screen-capture:start',
-  updateInterval: 'screen-capture:update-interval',
-  stop: 'screen-capture:stop',
-  status: 'screen-capture:status',
-  appInfo: 'screen-capture:app-info',
-  openPermissionSettings: 'screen-capture:open-permission-settings',
-  startAppDrag: 'screen-capture:start-app-drag',
-  relaunchApp: 'screen-capture:relaunch-app',
-} as const
-
-const PERCEPTION_CHANNELS = {
-  settings: 'perception:settings',
-  updateOnlineVlm: 'perception:update-online-vlm',
-  nodes: 'perception:nodes',
-  node: 'perception:node',
-  retry: 'perception:retry',
-  delete: 'perception:delete',
-} as const
-
-const DIARY_CHANNELS = {
-  settings: 'diary:settings',
-  updateSettings: 'diary:update-settings',
-  generate: 'diary:generate',
-  run: 'diary:run',
-  activeRun: 'diary:active-run',
-  days: 'diary:days',
-  day: 'diary:day',
 } as const
 
 /** slides 配图过目卡：后台逐张生成期间的会话快照轮询。 */
@@ -798,28 +563,17 @@ function installIpcRouters(): void {
     OPEN_CONNECTOR_CHANNELS,
     AGENT_AUTH_CHANNELS,
     EXTERNAL_DOCUMENT_CHANNELS,
-    CONTEXT_ROOM_CHANNELS,
+    SUBAGENT_CHANNELS,
     AGENT_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
     DOCUMENT_CHANNELS,
-    ASR_CHANNELS,
-    PRIVATE_AUDIO_CHANNELS,
-    REALITY_CHANNELS,
+    PERMISSION_CHANNELS,
     ACCOUNT_CHANNELS,
-    TRANSCRIPTION_CHANNELS,
-    MEMORY_CHANNELS,
     SEARCH_CHANNELS,
-    KNOWLEDGE_CHANNELS,
     MCP_CHANNELS,
     EXTERNAL_CALL_CHANNELS,
     FILES_CHANNELS,
-    INGEST_CHANNELS,
     MIGRATION_CHANNELS,
-    SCREEN_CAPTURE_CHANNELS,
-    SCREEN_MEMORY_CHANNELS,
-    BROWSER_EXTENSION_CHANNELS,
-    PERCEPTION_CHANNELS,
-    DIARY_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
     AGENT_ACCESS_CHANNELS,
     WRITING_STYLE_CHANNELS,
@@ -841,32 +595,6 @@ function installIpcRouters(): void {
   }
 }
 
-function publishBrowserExtensionStatus(status: BrowserExtensionStatus): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-      window.webContents.send(BROWSER_EXTENSION_CHANNELS.status, status)
-    }
-  }
-}
-
-function registerBrowserExtensionHandlers(service: BrowserExtensionService): void {
-  browserExtensionService = service
-  service.onStatus((status) => publishBrowserExtensionStatus(status))
-  service.onMessage((message) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-        window.webContents.send('browser-extension:message', message)
-      }
-    }
-  })
-  handle(BROWSER_EXTENSION_CHANNELS.status, () => service.getStatus())
-  handle(BROWSER_EXTENSION_CHANNELS.install, () => service.install())
-  handle(BROWSER_EXTENSION_CHANNELS.openDirectory, () => service.openDevelopmentExtension())
-  handle(BROWSER_EXTENSION_CHANNELS.openBrowserPage, () => service.openBrowserExtensionsPage())
-  handle(BROWSER_EXTENSION_CHANNELS.createPairing, () => service.createPairing())
-  handle(BROWSER_EXTENSION_CHANNELS.revoke, () => service.revoke())
-}
-
 let localDataService: LocalDataService | null = null
 let obsidianVaultService: ObsidianVaultService | null = null
 let gatewaySupervisor: GatewaySupervisor | null = null
@@ -875,7 +603,6 @@ let agentAccessSettingsStore: AgentAccessSettingsStore | null = null
 let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
 let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
-let browserExtensionService: BrowserExtensionService | null = null
 let clipperAssetBridge: FilesGatewayBridge | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
@@ -897,23 +624,15 @@ let saasConnectorBridge: SaasConnectorBridge | null = null
 const connectorTombstones = createConnectorTombstoneStore(dataDirectory)
 let connectorReconcileTimer: NodeJS.Timeout | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
-let memoryCoreSupervisor: MemoryCoreSupervisor | null = null
-let knowledgeServiceSupervisor: KnowledgeServiceSupervisor | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
-let realityGatewayBridge: RealityGatewayBridge | null = null
-let perceptionGatewayBridge: PerceptionGatewayBridge | null = null
-let diaryGatewayBridge: DiaryGatewayBridge | null = null
 let writingStyleGatewayBridge: WritingStyleGatewayBridge | null = null
 let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let agentAccessGatewayBridge: AgentAccessGatewayBridge | null = null
 let agentAccessInstaller: AgentAccessInstaller | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
-let recordingStore: RecordingStore | null = null
-let recordingSegmentUploader: RecordingSegmentUploader | null = null
-let privateAudioSync: PrivateAudioSyncService | null = null
 let saasClient: SaasClient | null = null
 let agentStatusReporter: AgentStatusReporter | null = null
 let sessionLeaseKeeper: SessionLeaseKeeper | null = null
@@ -925,9 +644,6 @@ let officeBridgeServer: OfficeBridgeServer | null = null
 let officeFilesBridge: FilesGatewayBridge | null = null
 let macosPushNotifications: MacosPushNotificationService | null = null
 let pendingAgentNotificationTarget: AgentNotificationTarget | null = null
-let privateTranscriptionSync: PrivateTranscriptionSyncService | null = null
-let privateSyncScheduler: PrivateSyncScheduler | null = null
-let transcriptionProcessingCoordinator: TranscriptionProcessingCoordinator | null = null
 let shutdownStarted = false
 let clearUserDataOnQuit = false
 const officePreviewRegistry = new OfficePreviewRegistry(
@@ -953,22 +669,6 @@ function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
 }
 
 const queuedProtocolUrls: string[] = []
-let screenshotOutbox: ScreenshotOutbox | null = null
-const captureAndQueueCurrentWindow = async () => {
-  const result = await captureUserScreen()
-  if (result.ok) await screenshotOutbox?.enqueue(result).catch(() => undefined)
-  return result
-}
-const screenshotScheduler = createWindowScreenshotScheduler(captureAndQueueCurrentWindow)
-
-const visionOcrClient = new VisionOcrClient()
-let screenMemoryPersistence: ScreenMemoryIntervalPersistence = { saveInterval: async () => undefined }
-let screenMemoryControllerSummaryDispatch: ((allowed: boolean) => Promise<void>) | undefined
-const screenMemoryController: ScreenMemoryController = createScreenMemoryController({
-  ocr: visionOcrClient,
-  persist: { saveInterval: (interval) => screenMemoryPersistence.saveInterval(interval) },
-  setSummaryDispatch: (allowed) => screenMemoryControllerSummaryDispatch?.(allowed) ?? Promise.resolve(),
-})
 
 function sendPendingAgentNotificationTarget(): void {
   const target = pendingAgentNotificationTarget
@@ -1165,12 +865,6 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     const fileIds = new Set([...event.projectionFileIds, ...event.memoryProjectionFileIds])
     for (const fileId of fileIds) await files.delete(fileId).catch(() => undefined)
     await new DocumentGatewayBridge(gatewaySupervisor).removeExternalProjections(event.vaultId, undefined, event.sourceType).catch(() => undefined)
-    if (event.mountMode === 'dedicated') {
-      await new KnowledgeGatewayBridge(gatewaySupervisor).deleteRoom(event.roomId).catch(() => undefined)
-    }
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('knowledge:changed')
-    }
   }
   const syncMemoryVault = async (vaultId: string) => {
     if (!gatewaySupervisor) return []
@@ -1232,30 +926,11 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     for (const documentId of service.takeRemovedProjectionDocumentIds(vaultId)) {
       await documents.removeExternalDocumentProjection(documentId).catch(() => undefined)
     }
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('knowledge:changed')
-    }
-  }
-  // 用户主动挂载完成后的收尾：投影落库后触发一次概览再生（一次性，不接增量）。
-  const projectRoomVaultAndKickOverview = async (vaultId: string): Promise<void> => {
-    await projectRoomVault(vaultId)
-    if (!gatewaySupervisor) return
-    const vault = service.list().find((item) => item.id === vaultId)
-    if (!vault || vault.mountMode === 'memory') return
-    if (service.projectionNotes(vaultId).length === 0) return
-    void new ContextRoomGatewayBridge(gatewaySupervisor)
-      .refreshOverview(vault.roomId)
-      .catch((error) => console.warn('Overview refresh after mount failed', { vaultId, error }))
   }
   const mountAsNewRoom = async (rootPath: string, registryId: string | null) => {
     if (!gatewaySupervisor) throw new Error('本地服务尚未就绪。')
     const vault = await service.mount(rootPath, undefined, 'dedicated', registryId)
-    await new KnowledgeGatewayBridge(gatewaySupervisor).upsertRoom({
-      id: vault.roomId,
-      title: vault.name,
-      kind: '项目',
-    })
-    await projectRoomVaultAndKickOverview(vault.id)
+    await projectRoomVault(vault.id)
     return vault
   }
   service.onChanged((event) => {
@@ -1312,7 +987,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
     if (target.kind === 'room') {
       if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('请选择目标 Room。')
       const vault = await service.mount(rootPath, target.roomId, 'embedded', registryId)
-      await projectRoomVaultAndKickOverview(vault.id)
+      await projectRoomVault(vault.id)
       return { kind: 'room' as const, vault }
     }
     const vault = await service.mount(rootPath, undefined, 'memory', registryId)
@@ -1561,122 +1236,6 @@ function registerRuntimeConfigHandlers(): void {
   })
 }
 
-/** 上次注入 MemoryCore 的 AI 覆盖 env（JSON 串比较），null = 未注入过。 */
-let memoryCoreAiEnvApplied: string | null = null
-
-/**
- * runtime config 保存后同步 MemoryCore 的 AI 环境变量（LLM + embedding）：
- * - primary 三要素（baseUrl/apiKey/model）→ TDAI_LLM_*（提炼管道主 LLM）；
- * - knowledge.embedding 四要素齐全 → /test 拿真实向量维度 → TDAI_EMBEDDING_*。
- * 两路皆未配置且之前注入过 → 重启清空（恢复 .env 透传）。
- * 变化才重启（MemoryCore 无热加载），失败只记日志不影响保存结果。
- * embedding 配了但 /embeddings 探测失败 → 保持现 env 不动。
- * 非托管/未启动实例跳过（外部部署的 MemoryCore 由用户自行配置）。
- * 并发由 syncManagedChildProcesses 统一串行化。
- */
-async function syncMemoryCoreEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
-  const bridge = runtimeConfigBridge
-  try {
-    const supervisor = memoryCoreSupervisor
-    const initialConnection = supervisor?.getConnection() ?? null
-    if (!supervisor || !initialConnection) {
-      // MemoryCoreSupervisor returns null for an explicitly configured
-      // external instance. In that mode Gateway already inherited the
-      // NXCORE_MEMORY_* env and must keep using it.
-      const externalMemory = process.env.NXCORE_MEMORY_ENABLED?.trim() !== 'false'
-        && (process.env.NXCORE_MEMORY_MANAGED?.trim() === 'false'
-          || Boolean(process.env.NXCORE_MEMORY_BASE_URL?.trim()
-            && process.env.NXCORE_MEMORY_BASE_URL.trim() !== 'http://127.0.0.1:8420'))
-      if (!externalMemory) await bridge?.disableMemory().catch(() => undefined)
-      return
-    }
-    const fields = embeddingFieldsFromConfig(snapshot.config)
-    let embeddingEnv: Record<string, string> | null = null
-    let applyAiEnvironment = true
-    const relay = gatewaySupervisor?.getConnection() ?? null
-    if (fields && isRelaySlotUrl(fields.baseUrl, relay) && relay) {
-      // relay 槽位：API_KEY 换成 gateway 稳定 token，dimensions 走静态表——
-      // SaaS 中转 token 的 25min 轮换留在 gateway /ai-relay 内，MemoryCore env
-      // 恒定；不做 /test 探测（relay 会话未激活时探测必失败，会把本可用的
-      // 配置卡在未注入状态）。
-      embeddingEnv = memoryCoreEmbeddingEnv(
-        { ...fields, apiKey: relay.token },
-        fields.dimensions ?? relayEmbeddingDimensions(fields.model),
-      )
-    } else if (fields) {
-      // BYOK 直连：/test 真实探测 /embeddings 维度；失败保持现 env 不动。
-      const result = await bridge?.test()
-      if (!result?.embedding?.valid || !result.embedding.dimensions) {
-        console.warn('[memory-core] embedding config saved but /embeddings test failed; keeping current env')
-        applyAiEnvironment = false
-      } else {
-        embeddingEnv = memoryCoreEmbeddingEnv(fields, result.embedding.dimensions)
-      }
-    }
-    const nextEnv = withStableRelayKey(memoryCoreEnvironment(snapshot.config, embeddingEnv), relay)
-    const nextJson = nextEnv ? JSON.stringify(nextEnv) : null
-    if (applyAiEnvironment && initialConnection.managed && nextJson !== memoryCoreAiEnvApplied) {
-      const restarted = await supervisor.restart(nextEnv)
-      if (!restarted?.managed) {
-        // 复用模式（外部实例或残留进程占着 8420）：env 没真正应用，不标记
-        // applied——下次 sync 还会重试；提示用户有残留实例。
-        console.warn('[memory-core] instance at 8420 is not managed by this app; ai env NOT applied (stray process?)')
-      } else {
-        memoryCoreAiEnvApplied = nextJson
-        console.info(`[memory-core] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
-      }
-    }
-
-    const connection = supervisor.getConnection()
-    if (!connection) {
-      await bridge?.disableMemory().catch(() => undefined)
-      return
-    }
-    const runtimeMemory = snapshot.config.memory && typeof snapshot.config.memory === 'object'
-      ? snapshot.config.memory as Record<string, unknown>
-      : {}
-    // The bundled runtime-config file carries legacy placeholders. They must
-    // not override custom local identity values supplied through NXCORE_* env.
-    const runtimeMemoryPlaceholders: Record<string, string> = {
-      serviceId: 'everroom',
-      teamId: 'everroom',
-      agentId: 'everroom',
-      userId: 'local-user',
-    }
-    const envText = (name: string, fallback: string): string => process.env[name]?.trim() || fallback
-    const text = (name: string, fallback: string): string => {
-      const value = runtimeMemory[name]
-      const normalized = typeof value === 'string' ? value.trim() : ''
-      return normalized && normalized !== runtimeMemoryPlaceholders[name] ? normalized : fallback
-    }
-    const integer = (name: string, fallback: number): number => {
-      const value = runtimeMemory[name]
-      if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value
-      const parsed = Number.parseInt(process.env[name] ?? '', 10)
-      return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-    }
-    const memoryConfig: RuntimeMemoryConfig = {
-      enabled: true,
-      baseUrl: connection.baseUrl,
-      apiKey: connection.apiKey,
-      serviceId: text('serviceId', envText('NXCORE_MEMORY_SERVICE_ID', 'everroom')),
-      teamId: text('teamId', envText('NXCORE_MEMORY_TEAM_ID', 'everroom')),
-      agentId: text('agentId', envText('NXCORE_MEMORY_AGENT_ID', 'pi-agent')),
-      userId: text('userId', envText('NXCORE_MEMORY_USER_ID', 'local-user')),
-      recallLimit: integer('NXCORE_MEMORY_RECALL_LIMIT', 5),
-      charBudget: integer('NXCORE_MEMORY_CHAR_BUDGET', 2_000),
-    }
-    const timeoutMs = runtimeMemory.timeoutMs
-    if (typeof timeoutMs === 'number' && Number.isInteger(timeoutMs) && timeoutMs >= 100) {
-      memoryConfig.timeoutMs = timeoutMs
-    }
-    await bridge?.injectMemory(memoryConfig)
-  } catch (error) {
-    console.error('[memory-core] failed to sync ai env:', error)
-    await bridge?.disableMemory().catch(() => undefined)
-  }
-}
-
 /** 补全服务子进程的 AI env 缓存：spawn 时经 getter 求值（惰性），配置变更时更新。 */
 let cursorCompletionAiEnv: Record<string, string> = {}
 let cursorCompletionAiEnvApplied: string = JSON.stringify({})
@@ -1701,11 +1260,11 @@ async function syncCursorCompletionEnvironment(snapshot: RuntimeConfigSnapshot):
 }
 
 /**
- * 托管子进程（MemoryCore / 补全服务）的 runtime config 同步总入口。
+ * 托管子进程（补全服务）的 runtime config 同步总入口。
  * 所有 runtime config 变更路径（IPC 保存/清除、SaaS 下发、source 切换、
  * 启动一次性 sync）统一走这里，避免再出现绕过某条子进程的路径。
  * 整体串行化：并发触发（登录时 SaaS 恢复 + account watch 同秒各来一次）
- * 排队执行，避免 MemoryCore 双 restart 竞态。
+ * 排队执行，避免重复重启竞态。
  */
 let managedChildSyncQueue: Promise<void> = Promise.resolve()
 
@@ -1721,45 +1280,10 @@ async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promi
     } catch (error) {
       console.warn('[managed-children] unredacted runtime config unavailable; falling back to redacted snapshot:', error instanceof Error ? error.message : error)
     }
-    await syncMemoryCoreEnvironment(secrets)
     await syncCursorCompletionEnvironment(secrets)
-    await syncKnowledgeServiceEnvironment(secrets)
   })
   managedChildSyncQueue = run.catch(() => undefined)
   return run
-}
-
-/**
- * Knowledge Service（Wiki 引擎）的 runtime config 同步：primary 三要素 →
- * LLM_* 重启托管实例。KS 的 wiki ingest 依赖 LLM；.env 清空迁移 runtime
- * config 后 spawn env 里 LLM_API_KEY 为空，ingest 会报「LLM apiKey 未配置」。
- * 与 MemoryCore 同款 JSON 比较去重（配置没变不重启）。
- */
-let knowledgeServiceAiEnvApplied: string | null = null
-
-async function syncKnowledgeServiceEnvironment(snapshot: RuntimeConfigSnapshot): Promise<void> {
-  try {
-    const supervisor = knowledgeServiceSupervisor
-    const initialConnection = supervisor?.getConnection() ?? null
-    if (!supervisor || !initialConnection) return
-    // relay 槽位注入 gateway 稳定 token，25min 轮换不再反复重启 KS。
-    const nextEnv = knowledgeServiceLlmEnv(snapshot.config, gatewaySupervisor?.getConnection() ?? null)
-    const nextJson = JSON.stringify(nextEnv)
-    if (nextJson === knowledgeServiceAiEnvApplied) return
-    if (initialConnection.managed) {
-      const restarted = await supervisor.restart(nextEnv)
-      if (restarted?.managed) {
-        knowledgeServiceAiEnvApplied = nextJson
-        console.info(`[knowledge] ai env ${nextEnv ? 'applied' : 'cleared'} (instance restarted)`)
-      } else {
-        // 复用模式（外部实例/残留进程占 8421）：env 未真正应用，不标记
-        // applied，下次 sync 重试。
-        console.warn('[knowledge] instance at 8421 is not managed by this app; ai env NOT applied (stray process?)')
-      }
-    }
-  } catch (error) {
-    console.error('[knowledge] failed to sync ai env:', error)
-  }
 }
 
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
@@ -2214,10 +1738,6 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (mode !== undefined && mode !== 'full' && mode !== 'delta') throw new Error('无效的列举模式。')
     return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly, mode as 'full' | 'delta' | undefined)
   })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importExistingInRoom, (_event, provider: unknown, roomId: unknown, ids: unknown) => {
-    if (typeof provider !== 'string' || typeof roomId !== 'string' || !Array.isArray(ids)) throw new Error('无效的已导入检查请求。')
-    return bridge.importExistingInRoom(provider as 'feishu' | 'notion', roomId, ids as string[])
-  })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
   handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
     if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
@@ -2292,39 +1812,17 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
   })
 }
 
-function registerContextRoomHandlers(bridge: ContextRoomGatewayBridge): void {
-  handle(CONTEXT_ROOM_CHANNELS.list, () => bridge.list())
-  handle(CONTEXT_ROOM_CHANNELS.create, (_event, input) => bridge.create(input))
-  handle(CONTEXT_ROOM_CHANNELS.syncSnapshot, (_event, input) => bridge.syncSnapshot(input))
-  handle(CONTEXT_ROOM_CHANNELS.checkDuplicates, (_event, input) => bridge.checkDuplicates(input))
-  handle(CONTEXT_ROOM_CHANNELS.listDuplicateCandidates, (_event, status) => bridge.listDuplicateCandidates(status))
-  handle(CONTEXT_ROOM_CHANNELS.updateDuplicateCandidate, (_event, id, status) => bridge.updateDuplicateCandidate(id, status))
-  handle(CONTEXT_ROOM_CHANNELS.previewMerge, (_event, sourceAId: string, sourceBId: string) => bridge.previewMerge(sourceAId, sourceBId))
-  handle(CONTEXT_ROOM_CHANNELS.startMerge, (_event, input: Parameters<typeof bridge.startMerge>[0]) => bridge.startMerge(input))
-  handle(CONTEXT_ROOM_CHANNELS.suggestMergeNames, (_event, input: Parameters<typeof bridge.suggestMergeNames>[0]) => bridge.suggestMergeNames(input))
-  handle(CONTEXT_ROOM_CHANNELS.checkRoomDuplicates, (_event, roomId: string) => bridge.checkRoomDuplicates(roomId))
-  handle(CONTEXT_ROOM_CHANNELS.getMergeOperation, (_event, id) => bridge.getMergeOperation(id))
-  handle(CONTEXT_ROOM_CHANNELS.retryMerge, (_event, id) => bridge.retryMerge(id))
-  handle(CONTEXT_ROOM_CHANNELS.cancelMerge, (_event, id) => bridge.cancelMerge(id))
-  handle(CONTEXT_ROOM_CHANNELS.dispatchSelectionRewrite, (_event, input) => bridge.dispatchSelectionRewrite(input))
-  handle(CONTEXT_ROOM_CHANNELS.getSubagentInvocation, (_event, invocationId) =>
+function registerSubagentHandlers(bridge: SubagentGatewayBridge): void {
+  handle(SUBAGENT_CHANNELS.dispatchSelectionRewrite, (_event, input: SubagentSelectionRewriteInput) =>
+    bridge.dispatchSelectionRewrite(input))
+  handle(SUBAGENT_CHANNELS.getInvocation, (_event, invocationId: string) =>
     bridge.getSubagentInvocation(invocationId))
-  handle(CONTEXT_ROOM_CHANNELS.cancelSubagentInvocation, (_event, invocationId) =>
+  handle(SUBAGENT_CHANNELS.cancelInvocation, (_event, invocationId: string) =>
     bridge.cancelSubagentInvocation(invocationId))
-  handle(CONTEXT_ROOM_CHANNELS.listRunSubagentInvocations, (_event, rootRunId: string) =>
+  handle(SUBAGENT_CHANNELS.listRunInvocations, (_event, rootRunId: string) =>
     bridge.listRunSubagentInvocations(rootRunId))
-  handle(CONTEXT_ROOM_CHANNELS.listSubagentInvocationEvents, (_event, invocationId: string, afterSeq = 0) =>
+  handle(SUBAGENT_CHANNELS.listInvocationEvents, (_event, invocationId: string, afterSeq = 0) =>
     bridge.listSubagentInvocationEvents(invocationId, afterSeq))
-  handle(CONTEXT_ROOM_CHANNELS.refreshBrief, (_event, roomId) => bridge.refreshBrief(roomId))
-  handle(CONTEXT_ROOM_CHANNELS.promoteMemoryItem, (_event, roomId: string, itemId: string) =>
-    bridge.promoteMemoryItem(roomId, itemId))
-  handle(CONTEXT_ROOM_CHANNELS.overview, (_event, roomId) => bridge.overview(roomId))
-  handle(CONTEXT_ROOM_CHANNELS.refreshOverview, (_event, roomId) => bridge.refreshOverview(roomId))
-  handle(CONTEXT_ROOM_CHANNELS.listMails, (_event, roomId) => bridge.listMails(roomId))
-  handle(CONTEXT_ROOM_CHANNELS.readMail, (_event, roomId: string, sourceId: string) => bridge.readMail(roomId, sourceId))
-  handle(CONTEXT_ROOM_CHANNELS.roomEntities, (_event, roomId) => bridge.roomEntities(roomId))
-  handle(CONTEXT_ROOM_CHANNELS.completeLocalAction, (_event, roomId: string, actionId: string, completed?: boolean) =>
-    bridge.completeLocalAction(roomId, actionId, completed !== false))
 }
 
 function registerMigrationHandlers(coordinator: MigrationCoordinator): void {
@@ -2754,65 +2252,6 @@ function registerExternalCallHandlers(bridge: ExternalCallsGatewayBridge): void 
   handle(EXTERNAL_CALL_CHANNELS.listAudits, (_event, query?: ExternalCallQuery) => bridge.listAudits(query))
 }
 
-function registerKnowledgeHandlers(bridge: KnowledgeGatewayBridge): void {
-  handle(KNOWLEDGE_CHANNELS.listRooms, (_event, origin?: 'user' | 'auto') => bridge.listRooms(origin))
-  handle(KNOWLEDGE_CHANNELS.getRoomContext, (_event, roomId: string) => bridge.getRoomContext(roomId))
-  handle(KNOWLEDGE_CHANNELS.upsertRoom, (_event, input) => bridge.upsertRoom(input))
-  handle(KNOWLEDGE_CHANNELS.deleteRoom, (_event, roomId) => bridge.deleteRoom(roomId))
-  handle(KNOWLEDGE_CHANNELS.getRoomGraph, (_event, visibility) => bridge.getRoomGraph(visibility))
-  handle(KNOWLEDGE_CHANNELS.getRoomRelations, (_event, roomId, visibility) => bridge.getRoomRelations(roomId, visibility))
-  handle(KNOWLEDGE_CHANNELS.getRoomRelationEvidence, (_event, relationId, offset, limit) =>
-    bridge.getRoomRelationEvidence(relationId, offset, limit))
-  handle(KNOWLEDGE_CHANNELS.createRoomRelation, (_event, input) => bridge.createRoomRelation(input))
-  handle(KNOWLEDGE_CHANNELS.updateRoomRelation, (_event, relationId, input) =>
-    bridge.updateRoomRelation(relationId, input))
-  handle(KNOWLEDGE_CHANNELS.removeManualRoomRelation, (_event, relationId) =>
-    bridge.removeManualRoomRelation(relationId))
-  handle(KNOWLEDGE_CHANNELS.listWikiPages, (_event, roomId) => bridge.listWikiPages(roomId))
-  handle(KNOWLEDGE_CHANNELS.retryWikiBuild, (_event, roomId) => bridge.retryWikiBuild(roomId))
-  handle(KNOWLEDGE_CHANNELS.readWikiPage, (_event, roomId, ref) => bridge.readWikiPage(roomId, ref))
-  handle(KNOWLEDGE_CHANNELS.listWikis, () => bridge.listWikis())
-  handle(KNOWLEDGE_CHANNELS.getWikiGraph, (_event, roomId: string) => bridge.getWikiGraph(roomId))
-  handle(KNOWLEDGE_CHANNELS.listEntities, (_event, status: 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed') =>
-    bridge.listEntities(status))
-  handle(KNOWLEDGE_CHANNELS.getEntity, (_event, entityId: string) => bridge.getEntity(entityId))
-  handle(KNOWLEDGE_CHANNELS.promoteEntity, (_event, entityId: string, options?: { forceNew?: boolean }) => bridge.promoteEntity(entityId, options))
-  handle(KNOWLEDGE_CHANNELS.promoteEntities, (_event, entityIds: string[]) => bridge.promoteEntities(entityIds))
-  handle(KNOWLEDGE_CHANNELS.suppressEntity, (_event, entityId: string) => bridge.suppressEntity(entityId))
-  handle(KNOWLEDGE_CHANNELS.suppressEntities, (_event, entityIds: string[]) => bridge.suppressEntities(entityIds))
-  handle(KNOWLEDGE_CHANNELS.restoreSuppressedEntity, (_event, entityId: string) => bridge.restoreSuppressedEntity(entityId))
-  handle(KNOWLEDGE_CHANNELS.mergeEntity, (_event, fromId: string, targetId: string) =>
-    bridge.mergeEntity(fromId, targetId))
-  handle(KNOWLEDGE_CHANNELS.listUnmatched, () => bridge.listUnmatched())
-  handle(KNOWLEDGE_CHANNELS.retryUnmatched, (_event, decisionIds?: string[]) => bridge.retryUnmatched(decisionIds))
-  handle(KNOWLEDGE_CHANNELS.ignoreUnmatched, (_event, decisionIds: string[]) => bridge.ignoreUnmatched(decisionIds))
-  handle(KNOWLEDGE_CHANNELS.listRules, () => bridge.listRules())
-  handle(KNOWLEDGE_CHANNELS.deleteRule, (_event, ruleId: string) => bridge.deleteRule(ruleId))
-  handle(KNOWLEDGE_CHANNELS.attachDoc, (_event, sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
-    bridge.attachDoc(sourceKind, sourceId, input))
-  handle(KNOWLEDGE_CHANNELS.listRecentDecisions, (_event, limit?: number) =>
-    bridge.listRecentDecisions(limit))
-  handle(KNOWLEDGE_CHANNELS.routeStatus, (_event, sourceIds: string[]) =>
-    bridge.routeStatus(sourceIds))
-  handle(KNOWLEDGE_CHANNELS.proposeRooms, (_event, input: { description: string; fileEntryIds: string[] }) =>
-    bridge.proposeRooms(input))
-  handle(KNOWLEDGE_CHANNELS.revertDecision, (_event, decisionId) => bridge.revertDecision(decisionId))
-  handle(KNOWLEDGE_CHANNELS.getPreferences, () => bridge.getKnowledgePreferences())
-  handle(KNOWLEDGE_CHANNELS.updatePreferenceContent, (_event, content: string) => bridge.updateKnowledgePreferenceContent(content))
-  handle(KNOWLEDGE_CHANNELS.updatePreferenceSettings, (_event, input: { learningEnabled?: boolean; injectionEnabled?: boolean }) => bridge.updateKnowledgePreferenceSettings(input))
-  handle(KNOWLEDGE_CHANNELS.refreshPreferences, () => bridge.refreshKnowledgePreferences())
-  handle(KNOWLEDGE_CHANNELS.listRoomFiles, (_event, roomId: string) => bridge.listRoomFiles(roomId))
-  handle(KNOWLEDGE_CHANNELS.readFileMarkdown, (_event, fileId: string) => bridge.readFileMarkdown(fileId))
-  handle(KNOWLEDGE_CHANNELS.revealFile, (_event, fileId: string) => bridge.revealFile(fileId))
-  handle(KNOWLEDGE_CHANNELS.openFile, (_event, fileId: string) => bridge.openFile(fileId))
-  handle(KNOWLEDGE_CHANNELS.emergence, (_event, roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
-    bridge.emergence(roomId, request))
-  handle(KNOWLEDGE_CHANNELS.getRouteMindmap, (_event, roomId: string, query: { documentId: string; requestVersion: number }) =>
-    bridge.getRouteMindmap(roomId, query))
-  handle(KNOWLEDGE_CHANNELS.routeMindmapAction, (_event, roomId: string, input: import('../shared/knowledge').RouteMindmapActionInput) =>
-    bridge.routeMindmapAction(roomId, input))
-}
-
 /** 本体字节的 sha256（流式；与网关 fileBlobs.contentHash 同算法），预览实例的内容指纹。 */
 async function hashFileBytes(path: string): Promise<string> {
   const hash = createHash('sha256')
@@ -2871,10 +2310,6 @@ function registerFilesHandlers(
   })
   handle(FILES_CHANNELS.list, (_event, limit?: number, offset?: number) => bridge.list(limit, offset))
   handle(FILES_CHANNELS.catalogEntry, (_event, fileId: string) => bridge.catalogEntry(fileId))
-  handle(FILES_CHANNELS.listClipCaptures, (_event, input) => bridge.listClipCaptures(input))
-  handle(FILES_CHANNELS.setClipCaptureFavorite, (_event, captureId: string, favorite: boolean) =>
-    bridge.setClipCaptureFavorite(captureId, favorite))
-  handle(FILES_CHANNELS.getClipCaptureDetail, (_event, captureId: string) => bridge.getClipCaptureDetail(captureId))
   handle(FILES_CHANNELS.get, (_event, fileId: string) => bridge.get(fileId))
   handle(
     FILES_CHANNELS.readMarkdown,
@@ -2884,8 +2319,6 @@ function registerFilesHandlers(
   handle(FILES_CHANNELS.getClipCapture, (_event, fileId: string) => bridge.getClipCapture(fileId))
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
-  handle(FILES_CHANNELS.pinClusterTitle, (_event, clusterId: string, sharedTitle: string) =>
-    bridge.pinClusterTitle(clusterId, sharedTitle))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
   handle(FILES_CHANNELS.exportReveal, (_event, fileId: string, originalName: string) =>
@@ -2992,112 +2425,24 @@ function registerFilesHandlers(
   )
 }
 
-function registerIngestHandlers(bridge: IngestGatewayBridge): void {
-  handle(
-    INGEST_CHANNELS.listEvents,
-    (_event, query: { limit?: number; offset?: number; sourceKind?: string; sourceId?: string }) =>
-      bridge.listEvents(query),
-  )
-  // 过滤规则文档（记忆页「过滤规则」入口）：偏好段可读写，洞察段只读。
-  handle(INGEST_CHANNELS.getFilterRules, () => bridge.getFilterRules())
-  handle(
-    INGEST_CHANNELS.updateFilterPreference,
-    (_event, content: string) => bridge.updateFilterPreference(content),
-  )
-  // 误杀恢复（导入记录页「恢复」按钮）
-  handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
-  // 事件详情：归一化产物全文
-  handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
-  // 记忆引擎暂停闸（记忆页顶部「继续/暂停」按钮）
-  handle(INGEST_CHANNELS.getPause, () => bridge.getPause())
-  handle(INGEST_CHANNELS.setPause, (_event, paused: boolean) => bridge.setPause(paused))
-}
-
-function registerAsrHandlers(store: RecordingStore, coordinator: AsrCoordinator, segments: RecordingSegmentUploader): void {
-  handle(ASR_CHANNELS.requestMicrophoneAccess, async () => {
+function registerPermissionHandlers(): void {
+  handle(PERMISSION_CHANNELS.requestMicrophoneAccess, async () => {
     if (process.platform !== 'darwin') return true
     const status = systemPreferences.getMediaAccessStatus('microphone')
     if (status === 'granted') return true
     if (status === 'denied' || status === 'restricted') return false
     return systemPreferences.askForMediaAccess('microphone')
   })
-  handle(ASR_CHANNELS.getMicrophoneAccessStatus, () => {
+  handle(PERMISSION_CHANNELS.getMicrophoneAccessStatus, () => {
     if (process.platform !== 'darwin') return 'granted' as const
-    const status = systemPreferences.getMediaAccessStatus('microphone')
-    console.info(`[asr] microphone access status: ${status}`)
-    return status
+    return systemPreferences.getMediaAccessStatus('microphone')
   })
-  handle(ASR_CHANNELS.openMicrophoneSettings, () => {
+  handle(PERMISSION_CHANNELS.openMicrophoneSettings, () => {
     if (process.platform !== 'darwin') throw new Error('麦克风隐私设置仅适用于 macOS。')
     return shell.openExternal(
       'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
     )
   })
-  handle(ASR_CHANNELS.openSystemAudioSettings, () => {
-    if (process.platform !== 'darwin') throw new Error('系统音频录制设置仅适用于 macOS。')
-    return shell.openExternal(
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-    )
-  })
-  handle(ASR_CHANNELS.beginRecording, (_event, mimeType) => store.begin(mimeType))
-  handle(ASR_CHANNELS.appendRecording, (_event, id, chunk) => store.append(id, chunk))
-  handle(ASR_CHANNELS.uploadRecordingSegment, (_event, id: string, index: number, chunk: unknown, durationMs: number, meta: { mimeType?: string; languageHints?: string[] }) => {
-    // MediaRecorder 会给 'audio/webm;codecs=opus' 这类带编解码器后缀的类型，
-    // SaaS 建单只收白名单裸类型。
-    const normalized = typeof meta?.mimeType === 'string' ? meta.mimeType.split(';')[0]!.trim() : ''
-    const mimeType = ['audio/aac','audio/flac','audio/mp4','audio/mpeg','audio/ogg','audio/wav','audio/webm','video/mp4'].includes(normalized) ? normalized : 'audio/webm'
-    const languageHints = Array.isArray(meta?.languageHints) ? meta.languageHints.filter((hint): hint is string => typeof hint === 'string') : undefined
-    const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(0)
-    return segments.onSegment(String(id ?? ''), Number(index), bytes, Number(durationMs), { mimeType, languageHints })
-  })
-  handle(ASR_CHANNELS.finishRecording, (_event, id) => store.finish(id))
-  handle(ASR_CHANNELS.cancelRecording, async (_event, id) => {
-    await segments.abort(String(id ?? '')).catch(() => undefined)
-    await store.cancel(id)
-  })
-  handle(ASR_CHANNELS.createJob, (_event, input) => rateLimitAware(() => coordinator.createJob(input)))
-  handle(ASR_CHANNELS.getJob, (_event, id) => rateLimitAware(() => coordinator.getJob(id)))
-  handle(ASR_CHANNELS.renameSpeaker, (_event, id: string, speakerId: string, name: string | null) => rateLimitAware(() => coordinator.renameSpeaker(id, speakerId, name)))
-}
-
-function registerPrivateAudioHandlers(service: PrivateAudioSyncService): void {
-  handle(PRIVATE_AUDIO_CHANNELS.list, (_event, cursor?: number) => rateLimitAware(() => service.list(cursor ?? 0)))
-  handle(PRIVATE_AUDIO_CHANNELS.download, (_event, assetId: string, outputPath: string) => rateLimitAware(() => service.downloadById(assetId, outputPath)))
-  handle(PRIVATE_AUDIO_CHANNELS.read, (_event, assetId: string) => rateLimitAware(() => service.read(assetId)))
-}
-
-/**
- * 云端转写物化（materializeCached）延迟到记忆引导结束：
- * 首登新设备上，materialize 会把云端历史转写经 ingest 写入 MemoryCore L0，
- * 若先于 MemoryOnboardingGate 的 overview 判定完成，L0 非空会被误判为
- * 「用户已完成记忆设置」而跳过引导。引导结束（完成/跳过/直接放行）或超时
- * 后才放行；轮询同步（performSync）不受影响——只有启动时的一次性物化受控。
- */
-let cloudMaterializeGateOpen = false
-const cloudMaterializeWaiters: Array<() => void> = []
-const CLOUD_MATERIALIZE_GATE_TIMEOUT_MS = 5 * 60_000
-
-function openCloudMaterializeGate(): void {
-  if (cloudMaterializeGateOpen) return
-  cloudMaterializeGateOpen = true
-  for (const release of cloudMaterializeWaiters.splice(0)) release()
-}
-
-/** 等待引导结束（或超时兜底）后才执行启动物化。 */
-async function waitForCloudMaterializeGate(): Promise<void> {
-  if (cloudMaterializeGateOpen) return
-  // 兜底超时：引导页卡死/异常时不让云端同步永远悬空。
-  const timeout = new Promise<void>((resolve) => {
-    setTimeout(() => {
-      if (!cloudMaterializeGateOpen) {
-        console.warn('[private-sync] cloud materialize gate timed out; proceeding')
-        openCloudMaterializeGate()
-      }
-      resolve()
-    }, CLOUD_MATERIALIZE_GATE_TIMEOUT_MS)
-  })
-  const gate = new Promise<void>((resolve) => cloudMaterializeWaiters.push(resolve))
-  await Promise.race([gate, timeout])
 }
 
 function registerSearchHandlers(bridge: SearchGatewayBridge): void {
@@ -3114,105 +2459,6 @@ function registerSearchHandlers(bridge: SearchGatewayBridge): void {
     (_event, messageId: string, before?: number, after?: number) =>
       bridge.messageContext(messageId, before, after),
   )
-}
-
-
-function registerMemoryHandlers(bridge: MemoryGatewayBridge): void {
-  handle(MEMORY_CHANNELS.overview, () => bridge.overview())
-  ipcMain.on(MEMORY_CHANNELS.onboardingFinished, () => openCloudMaterializeGate())
-  handle(MEMORY_CHANNELS.startOnboarding, (_event, input: MemoryOnboardingInput) =>
-    bridge.startOnboarding(input))
-  handle(MEMORY_CHANNELS.listAtomic, (_event, options: MemoryAtomicListOptions) =>
-    bridge.listAtomic(options))
-  handle(MEMORY_CHANNELS.listRoomMemories, (_event, roomId: string) =>
-    bridge.listRoomMemories(roomId))
-  handle(MEMORY_CHANNELS.searchAtomic, (_event, query: string, limit?: number) =>
-    bridge.searchAtomic(query, limit))
-  handle(
-    MEMORY_CHANNELS.updateAtomic,
-    (_event, id: string, content: string, background?: string) =>
-      bridge.updateAtomic(id, content, background),
-  )
-  handle(MEMORY_CHANNELS.deleteAtomic, (_event, ids: string[]) => bridge.deleteAtomic(ids))
-  handle(MEMORY_CHANNELS.setAtomicRoom, (
-    _event,
-    id: string,
-    roomId: string | null,
-    snapshot?: { content: string; type: string; memoryUpdatedAt: string },
-  ) =>
-    bridge.setAtomicRoom(id, roomId, snapshot))
-  handle(MEMORY_CHANNELS.listScenarios, (_event, pathPrefix?: string) =>
-    bridge.listScenarios(pathPrefix))
-  handle(MEMORY_CHANNELS.readScenario, (_event, path: string) => bridge.readScenario(path))
-  handle(MEMORY_CHANNELS.readCore, () => bridge.readCore())
-  handle(MEMORY_CHANNELS.writeCore, (_event, content: string) => bridge.writeCore(content))
-  handle(
-    MEMORY_CHANNELS.listConversations,
-    (_event, options: MemoryConversationListOptions) => bridge.listConversations(options),
-  )
-  handle(
-    MEMORY_CHANNELS.searchConversations,
-    (_event, query: string, limit?: number, sessionId?: string) =>
-      bridge.searchConversations(query, limit, sessionId),
-  )
-  handle(
-    MEMORY_CHANNELS.deleteConversations,
-    (_event, target: { sessionIds?: string[]; messageIds?: string[] }) =>
-      bridge.deleteConversations(target),
-  )
-  handle(
-    MEMORY_CHANNELS.importMarkdown,
-    (_event, input: { title: string; markdown: string; filename?: string }) =>
-      bridge.importMarkdown(input),
-  )
-  handle(MEMORY_CHANNELS.pickMarkdownFiles, () => bridge.pickMarkdownFiles())
-  handle(
-    MEMORY_CHANNELS.listDocuments,
-    (_event, limit?: number, offset?: number) => bridge.listDocuments(limit, offset),
-  )
-  handle(MEMORY_CHANNELS.getDocument, (_event, id: string) => bridge.getDocument(id))
-  handle(MEMORY_CHANNELS.deleteDocument, (_event, id: string) => bridge.deleteDocument(id))
-  handle(MEMORY_CHANNELS.atomicProvenance, (_event, id: string) => bridge.atomicProvenance(id))
-  handle(
-    MEMORY_CHANNELS.captureDocumentRewrite,
-    (_event, input: MemoryDocumentRewriteInput) => bridge.captureDocumentRewrite(input),
-  )
-}
-
-function registerRealityHandlers(bridge: RealityGatewayBridge): void {
-  handle(REALITY_CHANNELS.listEvents, (_event, filters) => bridge.listEvents(filters))
-  handle(REALITY_CHANNELS.getEvent, (_event, id) => bridge.getEvent(id))
-  handle(REALITY_CHANNELS.createEvent, (_event, input) => bridge.createEvent(input))
-  handle(REALITY_CHANNELS.finishCapture, (_event, id, input) => bridge.finishCapture(id, input))
-  handle(REALITY_CHANNELS.updateTranscript, (_event, id, input) => bridge.updateTranscript(id, input))
-  handle(REALITY_CHANNELS.addMarker, (_event, id, input) => bridge.addMarker(id, input))
-  handle(REALITY_CHANNELS.setImportant, (_event, id, important) => bridge.setImportant(id, important))
-  handle(REALITY_CHANNELS.confirm, (_event, id) => bridge.confirm(id))
-  handle(REALITY_CHANNELS.discard, (_event, id) => bridge.discard(id))
-  handle(REALITY_CHANNELS.fail, (_event, id, error) => bridge.fail(id, error))
-  handle(REALITY_CHANNELS.readAudio, (_event, id) => bridge.readAudio(id))
-  handle(REALITY_CHANNELS.exportTranscript, async (event, input: unknown) => {
-    const owner = BrowserWindow.fromWebContents(event.sender)
-    if (!owner || owner.isDestroyed() || event.sender.isDestroyed()) throw new Error(desktopText('error.transcript.invalidSource'))
-    if (!input || typeof input !== 'object' || typeof (input as { content?: unknown }).content !== 'string') {
-      throw new Error(desktopText('error.transcript.invalidRequest'))
-    }
-    const defaultTranscriptName = desktopText('dialog.exportTranscript.defaultName')
-    const rawName = typeof (input as { fileName?: unknown }).fileName === 'string' ? (input as { fileName: string }).fileName : `${defaultTranscriptName}.txt`
-    const fileName = rawName.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 180) || defaultTranscriptName
-    const selection = await dialog.showSaveDialog(owner, {
-      title: desktopText('dialog.exportTranscript.title'),
-      defaultPath: fileName.toLowerCase().endsWith('.txt') ? fileName : `${fileName}.txt`,
-      buttonLabel: desktopText('dialog.exportTranscript.button'),
-      filters: [{ name: desktopText('dialog.exportTranscript.textFile'), extensions: ['txt'] }],
-      properties: ['showOverwriteConfirmation', 'createDirectory'],
-    })
-    if (selection.canceled || !selection.filePath) return { canceled: true }
-    await writeFile(selection.filePath, (input as { content: string }).content, 'utf8')
-    return { canceled: false, filePath: selection.filePath }
-  })
-  handle(REALITY_CHANNELS.subscribe, (event) => bridge.subscribe(event.sender))
-  handle(REALITY_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }
 
 async function syncAccountMonitoring(status: Promise<CloudAccountStatus>): Promise<CloudAccountStatus> {
@@ -3368,278 +2614,75 @@ function registerNotificationHandlers(client: SaasClient): void {
   })
 }
 
-function registerPrivateTranscriptionHandlers(
-  sync: PrivateTranscriptionSyncService,
-  onCompleted?: (event: PrivateTranscriptionSyncCompletedEvent) => void,
-): void {
-  handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(() => sync.keyringStatus()))
-  handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(() => sync.createPairingSession()))
+/**
+ * 账号钥匙串/设备配对通道：原本挂在转写同步服务上，转写子系统删除后
+ * 直接落在 AccountKeyringService + SaaS 客户端上，配对页行为保持不变。
+ */
+function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyringService): void {
+  handle(ACCOUNT_CHANNELS.keyringStatus, () => rateLimitAware(async (): Promise<AccountKeyringStatus> => {
+    const account = await client.status()
+    if (!account.authenticated || !account.user) {
+      return {
+        enabled: false,
+        reason: '请先登录 EverRoom。',
+        initialized: false,
+        umkId: null,
+        activeVersion: null,
+        deviceStatus: 'unregistered',
+        verificationCode: null,
+      }
+    }
+    return {
+      enabled: true,
+      initialized: false,
+      umkId: null,
+      activeVersion: null,
+      deviceStatus: 'ready',
+      verificationCode: null,
+    }
+  }))
+  handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(async () => {
+    const account = await client.status()
+    const userId = account.authenticated ? account.user?.id : null
+    if (!account.user || !userId) throw new Error('请先登录 EverRoom。')
+    return keyring.createPairingSession(client, userId)
+  }))
   handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
-    return rateLimitAware(() => sync.getPairingSession(id))
+    return rateLimitAware(() => client.getPairingSession(id))
   })
   handle(ACCOUNT_CHANNELS.approvePairingSession, (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('无效的配对会话。')
-    return rateLimitAware(() => sync.approvePairingSession(id))
-  })
-  handle(TRANSCRIPTION_CHANNELS.syncPrivate, () => rateLimitAware(async () => {
-    const result = await sync.sync()
-    onCompleted?.({ completedAt: new Date().toISOString() })
-    return result
-  }))
-  handle(TRANSCRIPTION_CHANNELS.listPrivate, () => sync.list())
-  handle(TRANSCRIPTION_CHANNELS.listTags, () => rateLimitAware(() => sync.listTags()))
-  handle(TRANSCRIPTION_CHANNELS.replaceSummaryTags, (_event, summaryRecordId, tags) =>
-    rateLimitAware(() => sync.replaceSummaryTags(summaryRecordId, tags)))
-  handle(TRANSCRIPTION_CHANNELS.renameTag, (_event, tagId, label) =>
-    rateLimitAware(() => sync.renameTag(tagId, label)))
-  handle(TRANSCRIPTION_CHANNELS.mergeTag, (_event, targetTagId, sourceTagId) =>
-    rateLimitAware(() => sync.mergeTag(targetTagId, sourceTagId)))
-}
-
-let screenPermissionCardWindow: BrowserWindow | null = null
-
-// 拖拽授权悬浮卡：系统设置打开时置顶悬浮在屏幕下半部，用户从卡上把应用
-// 图标拖进「屏幕录制」列表；权限到手后自动收卡。
-// 卡片必须不可聚焦且用 showInactive：show/focus 会激活 EverRoom 应用，
-// macOS 会连带把主窗口顶到系统设置之上，遮住设置页。
-function showScreenPermissionCard(): void {
-  if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
-    screenPermissionCardWindow.showInactive()
-    return
-  }
-  const cardWidth = 420
-  const cardHeight = 150
-  const workArea = screen.getPrimaryDisplay().workArea
-  const card = new BrowserWindow({
-    width: cardWidth,
-    height: cardHeight,
-    x: Math.round(workArea.x + (workArea.width - cardWidth) / 2),
-    y: Math.round(workArea.y + workArea.height - cardHeight - 96),
-    frame: false,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    transparent: true,
-    show: false,
-    alwaysOnTop: true,
-    focusable: false,
-    title: 'EverRoom',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-  screenPermissionCardWindow = card
-  card.setAlwaysOnTop(true, 'screen-saver')
-  card.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  const permissionWatcher = setInterval(() => {
-    if (card.isDestroyed()) {
-      clearInterval(permissionWatcher)
-      return
-    }
-    if (getScreenCapturePermission() === 'granted') card.close()
-  }, 2000)
-  card.on('closed', () => {
-    clearInterval(permissionWatcher)
-    if (screenPermissionCardWindow === card) screenPermissionCardWindow = null
-  })
-  card.once('ready-to-show', () => card.showInactive())
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void card.loadURL(`${process.env.ELECTRON_RENDERER_URL}/permission-card.html`)
-  } else {
-    void card.loadFile(join(__dirname, '../renderer/permission-card.html'))
-  }
-}
-
-function registerScreenCaptureHandlers(): void {
-  const isAuthorized = (event: { sender: Electron.WebContents }): boolean => {
-    const window = BrowserWindow.getAllWindows().find((candidate) => candidate !== screenPermissionCardWindow)
-    return Boolean(
-      ((window && !window.isDestroyed() && !window.webContents.isDestroyed() && event.sender === window.webContents)
-        || (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()
-          && event.sender === screenPermissionCardWindow.webContents)),
-    )
-  }
-
-  let cachedAppInfo: { appPath: string; appName: string; iconDataUrl: string; dragIcon: Electron.NativeImage } | null = null
-  const getScreenCaptureAppInfo = async () => {
-    if (cachedAppInfo) return cachedAppInfo
-    const appPath = dirname(dirname(dirname(process.execPath)))
-    const icon = await app.getFileIcon(appPath, { size: 'normal' }).catch(() => null)
-    const dragIcon = icon && !icon.isEmpty() ? icon : nativeImage.createEmpty()
-    const info = {
-      appPath,
-      appName: basename(appPath).replace(/\.app$/i, ''),
-      iconDataUrl: dragIcon.isEmpty() ? '' : dragIcon.toDataURL(),
-      dragIcon,
-    }
-    cachedAppInfo = info
-    return info
-  }
-
-  ipcMain.on(SCREEN_CAPTURE_CHANNELS.startAppDrag, (event) => {
-    if (!isAuthorized(event)) return
-    void getScreenCaptureAppInfo().then((info) => {
-      if (info.dragIcon.isEmpty()) return
-      event.sender.startDrag({ file: info.appPath, icon: info.dragIcon })
+    return rateLimitAware(async () => {
+      const account = await client.status()
+      const userId = account.authenticated ? account.user?.id : null
+      if (!account.user || !userId) throw new Error('请先登录 EverRoom。')
+      return keyring.approvePairingSession(client, userId, id)
     })
   })
-
-  handle(SCREEN_CAPTURE_CHANNELS.captureCurrentWindow, async (event) => {
-    if (!isAuthorized(event)) {
-      return { ok: false, code: 'window-unavailable', message: desktopText('error.screenshot.invalidSource') }
-    }
-    return captureAndQueueCurrentWindow()
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.start, async (event, intervalMs: unknown) => {
-    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    const status = await screenshotScheduler.start(typeof intervalMs === 'number' ? intervalMs : NaN)
-    await perceptionGatewayBridge?.updateCapture({ enabled: true, intervalMs: status.intervalMs }).catch(() => undefined)
-    return status
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.updateInterval, async (event, intervalMs: unknown) => {
-    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    const status = screenshotScheduler.updateInterval(typeof intervalMs === 'number' ? intervalMs : NaN)
-    await perceptionGatewayBridge?.updateCapture({ intervalMs: status.intervalMs }).catch(() => undefined)
-    return status
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.stop, async (event) => {
-    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    const status = screenshotScheduler.stop()
-    await perceptionGatewayBridge?.updateCapture({ enabled: false }).catch(() => undefined)
-    return status
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.status, (event) => {
-    if (!isAuthorized(event)) return screenshotScheduler.getStatus()
-    return screenshotScheduler.getStatus()
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.appInfo, async (event) => {
-    if (!isAuthorized(event)) return null
-    const { appPath, appName, iconDataUrl } = await getScreenCaptureAppInfo()
-    return { appPath, appName, iconDataUrl, devMode: !app.isPackaged }
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.openPermissionSettings, (event) => {
-    if (!isAuthorized(event)) return
-    showScreenPermissionCard()
-    const opened = shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
-    // 系统设置启动会抢走层级，延迟两次把卡片顶回去（保持卡片第一、系统设置第二）。
-    for (const delay of [600, 1600]) {
-      setTimeout(() => {
-        if (screenPermissionCardWindow && !screenPermissionCardWindow.isDestroyed()) {
-          screenPermissionCardWindow.setAlwaysOnTop(true, 'screen-saver')
-          screenPermissionCardWindow.moveTop()
-        }
-      }, delay)
-    }
-    return opened
-  })
-  handle(SCREEN_CAPTURE_CHANNELS.relaunchApp, (event) => {
-    if (!isAuthorized(event)) return
-    // dev 下 relaunch 会丢 electron-vite 注入的环境，重启出裸 Electron 窗口。
-    if (!app.isPackaged) {
-      app.quit()
-      return
-    }
-    app.relaunch()
-    app.quit()
-  })
 }
 
-function registerScreenMemoryHandlers(): void {
-  const gatewayJson = async (path: string, init?: { method?: string; body?: unknown }): Promise<unknown> => {
-    const supervisor = gatewaySupervisor
-    if (!supervisor) throw new Error('网关未就绪。')
-    const connection = await supervisor.ensureConnection()
-    const response = await fetch(`${connection.baseUrl}${path}`, {
-      method: init?.method ?? 'GET',
-      headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' },
-      ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-    })
-    if (!response.ok) throw new Error(`screen-memory gateway ${String(response.status)}`)
-    return response.json()
-  }
-  handle(SCREEN_MEMORY_CHANNELS.status, () => screenMemoryController.getStatus())
-  handle(SCREEN_MEMORY_CHANNELS.settings, () => screenMemoryController.getSettings())
-  handle(SCREEN_MEMORY_CHANNELS.updateSettings, (_event, patch: unknown) => {
-    if (!patch || typeof patch !== 'object') return screenMemoryController.getSettings()
-    const row = patch as Record<string, unknown>
-    const next: Record<string, unknown> = {}
-    if (typeof row.enabled === 'boolean') next.enabled = row.enabled
-    if (typeof row.paused === 'boolean') next.paused = row.paused
-    if (row.scopeMode === 'all' || row.scopeMode === 'allowlist') next.scopeMode = row.scopeMode
-    if (Array.isArray(row.allowedApps)) next.allowedApps = row.allowedApps.filter((item): item is string => typeof item === 'string')
-    if (Array.isArray(row.excludedApps)) next.excludedApps = row.excludedApps.filter((item): item is string => typeof item === 'string')
-    return screenMemoryController.updateSettings(next)
+function registerAgentSchedulerHandlers(): void {
+  handle(AGENT_SCHEDULER_CHANNELS.list, () => {
+    if (!agentSchedulerGatewayBridge) throw new Error('Agent 定时任务服务尚未就绪。')
+    return agentSchedulerGatewayBridge.list()
   })
-  handle(SCREEN_MEMORY_CHANNELS.search, (_event, query: { q: string; bundleId?: string; from?: string; to?: string; limit?: number }) => {
-    const params = new URLSearchParams({ q: String(query.q ?? '') })
-    if (query.bundleId) params.set('bundleId', query.bundleId)
-    if (query.from) params.set('from', query.from)
-    if (query.to) params.set('to', query.to)
-    if (typeof query.limit === 'number') params.set('limit', String(query.limit))
-    return gatewayJson(`/v1/screen-memory/search?${params.toString()}`)
+  handle(AGENT_SCHEDULER_CHANNELS.create, (_event, input: unknown) => {
+    if (!agentSchedulerGatewayBridge || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.create(input as never)
   })
-  handle(SCREEN_MEMORY_CHANNELS.intervals, (_event, query: { from?: string; to?: string; bundleId?: string; summaryStatus?: string; limit?: number; offset?: number }) => {
-    const params = new URLSearchParams()
-    if (query.from) params.set('from', query.from)
-    if (query.to) params.set('to', query.to)
-    if (query.bundleId) params.set('bundleId', query.bundleId)
-    if (query.summaryStatus) params.set('summaryStatus', query.summaryStatus)
-    if (typeof query.limit === 'number') params.set('limit', String(query.limit))
-    if (typeof query.offset === 'number') params.set('offset', String(query.offset))
-    return gatewayJson(`/v1/screen-memory/intervals?${params.toString()}`)
+  handle(AGENT_SCHEDULER_CHANNELS.update, (_event, id: unknown, input: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string' || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.update(id, input as never)
   })
-  handle(SCREEN_MEMORY_CHANNELS.interval, (_event, id: string) => {
-    if (typeof id !== 'string' || id.length < 8) throw new Error('无效的区间 id。')
-    return gatewayJson(`/v1/screen-memory/intervals/${encodeURIComponent(id)}`)
+  handle(AGENT_SCHEDULER_CHANNELS.runNow, (_event, id: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.runNow(id)
   })
-  handle(SCREEN_MEMORY_CHANNELS.stats, () => gatewayJson('/v1/screen-memory/stats'))
-  handle(SCREEN_MEMORY_CHANNELS.correct, (_event, input: { id: string; title?: string; textLines?: string[] }) => {
-    return gatewayJson(`/v1/screen-memory/intervals/${encodeURIComponent(input.id)}`, { method: 'PATCH', body: input })
+  handle(AGENT_SCHEDULER_CHANNELS.remove, (_event, id: unknown) => {
+    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
+    return agentSchedulerGatewayBridge.remove(id)
   })
-  handle(SCREEN_MEMORY_CHANNELS.frontmost, async () => {
-    return visionOcrClient.frontmost()
-  })
-  handle(SCREEN_MEMORY_CHANNELS.registerMaterial, (_event, id: string) => {
-    if (typeof id !== 'string' || id.length < 8) throw new Error('无效的区间 id。')
-    return gatewayJson(`/v1/screen-memory/intervals/${encodeURIComponent(id)}/register-material`, { method: 'POST' })
-  })
-  handle(SCREEN_MEMORY_CHANNELS.backfillEstimate, (_event, input: { from: string; to: string }) => {
-    return gatewayJson('/v1/screen-memory/backfill/estimate', { method: 'POST', body: input })
-  })
-  handle(SCREEN_MEMORY_CHANNELS.backfillRun, async (_event, input: { from: string; to: string; maxItems: number }) => {
-    return runScreenMemoryBackfill(
-      {
-        ocr: visionOcrClient,
-        persist: { saveInterval: (interval) => screenMemoryPersistence.saveInterval(interval) },
-        gatewayJson,
-        baseDirectory: getScreenMemoryDirectory(),
-        onError: (message) => console.warn(`[screen-memory] ${message}`),
-      },
-      { from: input.from, to: input.to, maxItems: Math.min(500, Math.max(1, input.maxItems)) },
-    )
-  })
-  handle(SCREEN_MEMORY_CHANNELS.storage, async () => {
-    const imagesRoot = join(getScreenMemoryDirectory(), 'images')
-    const totalBytes = await computeDirectorySize(imagesRoot)
-    return { imagesBytes: totalBytes }
-  })
-}
-
-async function computeDirectorySize(root: string): Promise<number> {
-  let total = 0
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
-  for (const entry of entries) {
-    const entryPath = join(root, entry.name)
-    if (entry.isDirectory()) total += await computeDirectorySize(entryPath)
-    else if (entry.isFile()) total += (await statFile(entryPath)).size
-  }
-  return total
 }
 
 function registerWritingStyleHandlers(): void {
@@ -3709,104 +2752,6 @@ function registerWritingStyleHandlers(): void {
       rejected,
       samples: Array.isArray(samples) ? samples.filter((sample): sample is string => typeof sample === 'string') : [],
     })
-  })
-}
-
-function registerPerceptionAndDiaryHandlers(): void {
-  handle(PERCEPTION_CHANNELS.settings, () => {
-    if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
-    return perceptionGatewayBridge.getSettings()
-  })
-  handle(PERCEPTION_CHANNELS.updateOnlineVlm, (_event, enabled: unknown, configVersion: unknown) => {
-    if (!perceptionGatewayBridge || typeof enabled !== 'boolean' || typeof configVersion !== 'number') {
-      throw new Error('感知设置参数无效。')
-    }
-    return perceptionGatewayBridge.updateOnlineVlm(enabled, configVersion)
-  })
-  handle(PERCEPTION_CHANNELS.nodes, (_event, query: unknown) => {
-    if (!perceptionGatewayBridge) throw new Error('现实感知服务尚未就绪。')
-    return perceptionGatewayBridge.listNodes(query && typeof query === 'object' ? query as never : {})
-  })
-  handle(PERCEPTION_CHANNELS.node, (_event, id: unknown) => {
-    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
-    return perceptionGatewayBridge.getNode(id)
-  })
-  handle(PERCEPTION_CHANNELS.retry, (_event, id: unknown) => {
-    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
-    return perceptionGatewayBridge.retryNode(id)
-  })
-  handle(PERCEPTION_CHANNELS.delete, (_event, id: unknown, deleteAssets: unknown) => {
-    if (!perceptionGatewayBridge || typeof id !== 'string') throw new Error('感知节点参数无效。')
-    return perceptionGatewayBridge.deleteNode(id, deleteAssets === true)
-  })
-  handle(DIARY_CHANNELS.settings, () => {
-    if (!diaryGatewayBridge) throw new Error('日记服务尚未就绪。')
-    return diaryGatewayBridge.settings()
-  })
-  handle(DIARY_CHANNELS.updateSettings, (_event, input: unknown) => {
-    if (!diaryGatewayBridge || !input || typeof input !== 'object') throw new Error('日记设置参数无效。')
-    return diaryGatewayBridge.updateSettings(input as Parameters<DiaryGatewayBridge['updateSettings']>[0])
-  })
-  handle(DIARY_CHANNELS.generate, async (_event, date: unknown) => {
-    if (!diaryGatewayBridge || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new Error('日记日期参数无效。')
-    }
-    logLocalDesktop('diary', 'info', { event: 'diary.generate.requested', date })
-    try {
-      const result = await diaryGatewayBridge.generate(date)
-      logLocalDesktop('diary', 'info', { event: 'diary.generate.accepted', date, runId: result.runId })
-      return result
-    } catch (error) {
-      logLocalDesktop('diary', 'error', {
-        event: 'diary.generate.rejected',
-        date,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      throw error
-    }
-  })
-  handle(DIARY_CHANNELS.run, (_event, id: unknown) => {
-    if (!diaryGatewayBridge || typeof id !== 'string' || id.length < 1 || id.length > 100) {
-      throw new Error('日记运行参数无效。')
-    }
-    return diaryGatewayBridge.run(id)
-  })
-  handle(DIARY_CHANNELS.activeRun, () => {
-    if (!diaryGatewayBridge) throw new Error('日记服务尚未就绪。')
-    return diaryGatewayBridge.activeRun()
-  })
-  handle(DIARY_CHANNELS.days, (_event, start: unknown, end: unknown) => {
-    if (!diaryGatewayBridge || typeof start !== 'string' || typeof end !== 'string'
-      || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-      throw new Error('日记日期范围参数无效。')
-    }
-    return diaryGatewayBridge.days(start, end)
-  })
-  handle(DIARY_CHANNELS.day, (_event, date: unknown) => {
-    if (!diaryGatewayBridge || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new Error('日记日期参数无效。')
-    }
-    return diaryGatewayBridge.day(date)
-  })
-  handle(AGENT_SCHEDULER_CHANNELS.list, () => {
-    if (!agentSchedulerGatewayBridge) throw new Error('Agent 定时任务服务尚未就绪。')
-    return agentSchedulerGatewayBridge.list()
-  })
-  handle(AGENT_SCHEDULER_CHANNELS.create, (_event, input: unknown) => {
-    if (!agentSchedulerGatewayBridge || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
-    return agentSchedulerGatewayBridge.create(input as never)
-  })
-  handle(AGENT_SCHEDULER_CHANNELS.update, (_event, id: unknown, input: unknown) => {
-    if (!agentSchedulerGatewayBridge || typeof id !== 'string' || !input || typeof input !== 'object') throw new Error('Agent 定时任务参数无效。')
-    return agentSchedulerGatewayBridge.update(id, input as never)
-  })
-  handle(AGENT_SCHEDULER_CHANNELS.runNow, (_event, id: unknown) => {
-    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
-    return agentSchedulerGatewayBridge.runNow(id)
-  })
-  handle(AGENT_SCHEDULER_CHANNELS.remove, (_event, id: unknown) => {
-    if (!agentSchedulerGatewayBridge || typeof id !== 'string') throw new Error('Agent 定时任务参数无效。')
-    return agentSchedulerGatewayBridge.remove(id)
   })
 }
 
@@ -3939,53 +2884,6 @@ function createWindow(): BrowserWindow {
     }
     callback(details.mediaTypes?.includes('audio') ?? false)
   })
-  if (process.platform === 'darwin') {
-    window.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
-      const respond = (streams: Parameters<typeof callback>[0]) => {
-        try {
-          callback(streams)
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          console.info(`macOS system audio capture request ended: ${message}`)
-        }
-      }
-      if (
-        request.frame !== window.webContents.mainFrame
-        || !request.audioRequested
-        || !request.videoRequested
-      ) {
-        respond({})
-        return
-      }
-      try {
-        void desktopCapturer.getSources({
-          types: ['screen'],
-          thumbnailSize: { width: 0, height: 0 },
-        }).then(
-          (sources) => {
-            const source = sources[0]
-            if (!source || window.isDestroyed()) respond({})
-            else respond({ video: source, audio: 'loopback' })
-          },
-          (error) => {
-            const message = error instanceof Error ? error.message : String(error)
-            console.info(`macOS system audio capture permission was not granted: ${message}`)
-            respond({})
-          },
-        )
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        console.info(`macOS system audio capture permission was not granted: ${message}`)
-        respond({})
-      }
-    }, {
-      // macOS 15+ 上自定义 desktopCapturer 授权拿到的 loopback 音轨会立即 ended
-      // (CoreAudio tap 权限探测被系统拒绝，且不弹系统授权窗，见 electron#52738)。
-      // 系统原生选择器会正确触发「录屏与系统音频」TCC 授权并返回可用音轨；
-      // macOS 15 以下该选项被忽略，仍走上方 handler 回退逻辑。
-      useSystemPicker: true,
-    })
-  }
   window.once('ready-to-show', () => window.show())
   window.webContents.on('did-finish-load', () => sendPendingAgentNotificationTarget())
   // 渲染进程崩溃（OOM/原生崩溃）默认留下永久白屏窗口；记日志并整页重载。
@@ -4052,12 +2950,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   await obsidianVaultService.initialize().catch((error) => {
     console.error('Failed to initialize Obsidian Vault service', error)
   })
-  screenshotOutbox = new ScreenshotOutbox(
-    join(dataDirectory, 'perception', 'screenshot-outbox.json'),
-    () => gatewaySupervisor,
-    join(dataDirectory, 'backups'),
-  )
-  await screenshotOutbox.initialize()
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   protocol.handle(CLIPPER_ASSET_SCHEME, async (request) => {
     try {
@@ -4089,26 +2981,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return new Response('Not found', { status: 404 })
     }
   })
-  protocol.handle('screen-memory-asset', async (request) => {
-    // screen-memory-asset://local/<YYYY-MM>/<file>.jpg → 本地屏幕记忆压缩原图。
-    try {
-      const url = new URL(request.url)
-      if (url.hostname !== 'local') return new Response('Not found', { status: 404 })
-      const relative = decodeURIComponent(url.pathname.replace(/^\//, ''))
-      if (!/^\d{4}-\d{2}\/[A-Za-z0-9._-]+\.jpg$/.test(relative)) {
-        return new Response('Bad request', { status: 400 })
-      }
-      const imagesRoot = join(getScreenMemoryDirectory(), 'images')
-      const filePath = join(imagesRoot, relative)
-      if (!filePath.startsWith(imagesRoot)) return new Response('Forbidden', { status: 403 })
-      const data = await readFile(filePath)
-      return new Response(new Uint8Array(data), {
-        headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-  })
   protocol.handle('everroom-material', async (request) => {
     // everroom-material://<64位sha256> → 网关 /v1/materials/:hash（文件桥惰性取）。
     try {
@@ -4130,13 +3002,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerObsidianHandlers(obsidianVaultService)
   registerSystemClipboardHandler()
   registerGatewayHandlers()
-  browserExtensionService = new BrowserExtensionService(dataDirectory)
-  try {
-    await browserExtensionService.start()
-  } catch (error) {
-    console.warn('Browser extension bridge unavailable; extension settings stay disabled.', error)
-  }
-  registerBrowserExtensionHandlers(browserExtensionService)
   registerOpenConnectorHandlers()
   // Agent 授权引导（飞书 lark-cli）：不依赖 gateway/OpenConnector，尽早可用。
   agentAuthController = new AgentAuthController(
@@ -4166,26 +3031,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     return rateLimitAware(() => client.aiGatewayStatus())
   })
   handle(ACCOUNT_CHANNELS.aiRelayVerdict, () => ({ quotaExhausted: aiRelayKeeper?.isQuotaExhausted() ?? false }))
-  // 屏幕记忆/截图通道同理：首页一挂载就查 status/settings，注册晚于窗口
-  // 创建必报 No handler registered。依赖均为模块级或调用期懒解析，可提前注册。
-  registerScreenCaptureHandlers()
-  registerScreenMemoryHandlers()
   createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))
   await credentials.initialize()
-  const recordingsDirectory=join(dataDirectory,'recordings')
-  recordingStore = new RecordingStore(recordingsDirectory)
-  saasClient=new SaasClient(credentials,app,recordingsDirectory,(url)=>shell.openExternal(url))
+  // SaaS 客户端仍需要录音目录参数（历史中转建单落盘路径），保留同一目录。
+  const recordingsDirectory = join(dataDirectory, 'recordings')
+  saasClient = new SaasClient(credentials, app, recordingsDirectory, (url) => shell.openExternal(url))
   void saasClient.initialize()
-  recordingSegmentUploader = new RecordingSegmentUploader(saasClient, recordingsDirectory)
-  recordingSegmentUploader.setPreviewListener((event) => {
-    console.log('[segment-asr] preview push', event.recordingId, 'index', event.index, 'segments', event.result.segments.length, 'windows', BrowserWindow.getAllWindows().length)
-    for (const target of BrowserWindow.getAllWindows()) {
-      if (!target.isDestroyed() && !target.webContents.isDestroyed()) target.webContents.send(ASR_CHANNELS.segmentTranscribed, event)
-    }
-  })
-  void recordingSegmentUploader.cleanupAtStartup()
   startDesktopUpdater(saasClient)
   // 连接器栈在所有页面可用（sources/connectors 页面模式分叉已删除）
   const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
@@ -4217,23 +3070,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           : null,
       )
     }
-    // 先拉起/探测 MemoryCore(独立可复用),再把连接信息注入 gateway 的记忆配置,
-    // 让队友拉代码后无需手工部署即可使用记忆功能。
-    memoryCoreSupervisor = new MemoryCoreSupervisor(dataDirectory)
-    const memoryCore = await memoryCoreSupervisor.start().catch((error) => {
-      console.error('Managed MemoryCore failed to start; memory stays disabled.', error)
-      return null
-    })
-    // P2-5：Nango supervisor 启动分支删除（Seam1 后取数走 oo；P3 删 Nango 全家）。
-    // Knowledge Service(Wiki)与 MemoryCore 同款托管;失败仅禁用 wiki 工具,不阻塞启动。
-    knowledgeServiceSupervisor = new KnowledgeServiceSupervisor(dataDirectory)
-    // 冷启动先带 .env 透传起 KS（gateway 未起，runtime config 读不到）；
-    // gateway ready 后的 startup syncManagedChildProcesses 会按已存 primary
-    // 三要素重启注入 LLM_*（同 MemoryCore 的窗口收窄策略）。
-    const knowledge = await knowledgeServiceSupervisor.start().catch((error) => {
-      console.error('Managed Knowledge service failed to start; wiki tools stay disabled.', error)
-      return null
-    })
     agentNotificationBridgeServer = new AgentNotificationBridgeServer(
       () => saasClient,
       (local) => {
@@ -4310,31 +3146,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // 文档资产桥：网关把本地图改写为该 loopback URL，lark-cli markdown 导入自动下载。
         ...(documentAssetBridge
           ? { NXCORE_DOCUMENT_ASSET_BRIDGE_URL: documentAssetBridge.baseUrl }
-          : {}),        ...(memoryCore
-          ? {
-            NXCORE_MEMORY_ENABLED: 'true',
-            NXCORE_MEMORY_BASE_URL: memoryCore.baseUrl,
-            NXCORE_MEMORY_API_KEY: memoryCore.apiKey,
-          }
-          : {}),
-        ...(knowledge
-          ? {
-            NXCORE_KNOWLEDGE_ENABLED: 'true',
-            NXCORE_KNOWLEDGE_BASE_URL: knowledge.baseUrl,
-            NXCORE_KNOWLEDGE_SERVICE_ID: knowledge.serviceId,
-            NXCORE_KNOWLEDGE_TEAM_ID: knowledge.teamId,
-            // Room 级 wiki 模式（docs/room-wiki-plan.md）：wiki 由 gateway 按
-            // Room 懒创建并随会话解析，桌面端不再注入全局 wiki_id。
-            NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: 'true',
-          }
           : {}),
       }),
       {
         // 外部 Agent 访问（PRD 第 7 章）固定端口：连接页可设置；设置后安装到
         // 外部工具的 MCP 配置在网关重启后仍有效（随机端口会失效）。
         portProvider: () => agentAccessSettingsStore?.portProvider() ?? null,
-        // gateway 连接变化（dev 热重载换端口/token）时，MemoryCore/KS 等子进程
-        // 指向 /ai-relay 的稳定 token 随之失效——联动补一次 env 同步。
+        // gateway 连接变化（dev 热重载换端口/token）时，托管子进程指向
+        // /ai-relay 的稳定 token 随之失效——联动补一次 env 同步。
         onConnectionChanged: () => {
           void runtimeConfigBridge?.get()
             .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
@@ -4350,38 +3169,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerAgentAccessHandlers()
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
-    void screenshotOutbox.flush()
-    perceptionGatewayBridge = new PerceptionGatewayBridge(gatewaySupervisor)
-    const screenMemoryBridge = new ScreenMemoryGatewayBridge(() => gatewaySupervisor, (message) => console.warn(`[screen-memory] ${message}`))
-    screenMemoryPersistence = screenMemoryBridge
-    screenMemoryControllerSummaryDispatch = (allowed) => screenMemoryBridge.setSummaryDispatch(allowed)
     runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
-    // 冷启动 MemoryCore/补全服务只带 .env 透传；gateway 就绪后按已存 runtime
-    // config 补一次（把“每次冷启动回退 .env”的窗口收窄到 gateway ready 之前）。
-    // 现在这两个 sync 都是 no-op 风格：配置没变不会重启任何实例。
+    // 冷启动补全服务只带 .env 透传；gateway 就绪后按已存 runtime config 补一次
+    // （把「每次冷启动回退 .env」的窗口收窄到 gateway ready 之前）。配置没变
+    // 不会重启任何实例。
     void runtimeConfigBridge.get()
       .then((snapshot) => syncManagedChildProcesses(snapshot))
       .catch((error) => console.warn('[managed-children] startup runtime-config sync skipped:', error))
-    diaryGatewayBridge = new DiaryGatewayBridge(gatewaySupervisor)
     writingStyleGatewayBridge = new WritingStyleGatewayBridge(gatewaySupervisor)
     registerWritingStyleHandlers()
     agentSchedulerGatewayBridge = new AgentSchedulerGatewayBridge(gatewaySupervisor)
-    registerPerceptionAndDiaryHandlers()
-    const perceptionSettings = await perceptionGatewayBridge.getSettings().catch(() => null)
-    if (perceptionSettings?.captureEnabled) {
-      await screenshotScheduler.start(perceptionSettings.captureIntervalSeconds * 1_000)
-      void screenMemoryController.ensureRunningState().catch(() => undefined)
-    } else if (perceptionSettings) {
-      // Keep the local scheduler's interval in sync even while capture is off.
-      // Otherwise the settings page falls back to the five-minute default and
-      // enabling capture later overwrites a saved custom interval.
-      screenshotScheduler.updateInterval(perceptionSettings.captureIntervalSeconds * 1_000)
-    }
+    registerAgentSchedulerHandlers()
     cursorCompletionSupervisor = new GatewaySupervisor(
       join(dataDirectory, 'cursor-completion-service'),
       // getter：惰性 respawn 时重新求值，拿到最新 runtime config 派生的 AI env。
       () => ({
-        NXCORE_MEMORY_ENABLED: 'false',
         NXCORE_AGENT_RUNTIME: 'pi',
         ...gatewayProxyEnv,
         ...cursorCompletionAiEnv,
@@ -4393,15 +3195,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         devPortEnvironment: 'NXCORE_CURSOR_COMPLETION_DEV_PORT',
       },
     )
-    registerContextRoomHandlers(new ContextRoomGatewayBridge(gatewaySupervisor))
+    registerSubagentHandlers(new SubagentGatewayBridge(gatewaySupervisor))
     // slides 配图过目卡轮询（后台逐张生成期间渲染层拉最新会话快照）。
     const slidesGatewaySupervisor = gatewaySupervisor
     handle(SLIDES_CHANNELS.pageImagesStatus, (_event, documentId: string) => {
       if (!slidesGatewaySupervisor) throw new Error('gateway_not_ready')
       return new SlidesGatewayBridge(slidesGatewaySupervisor).pageImagesStatus(documentId)
     })
-    realityGatewayBridge = new RealityGatewayBridge(gatewaySupervisor)
-    registerRealityHandlers(realityGatewayBridge)
     connectorGatewayBridge = new ConnectorGatewayBridge(gatewaySupervisor, (url) => shell.openExternal(url))
     // saas 连接层：授权面走 SaaS 代发起 + oo 数据面探测（客户端不持 oo admin
     // token，gateway 无法代发起）；其余数据面通道仍走 gateway。local 模式不变。
@@ -4431,14 +3231,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const connectorIpcBridge = connectorModeState.mode === 'saas' ? saasConnectorBridge : connectorGatewayBridge
     registerConnectorHandlers(connectorIpcBridge)
     // Agent status reporting is attached after the authenticated SaaS client is created below.
-    const memoryGatewayBridge = new MemoryGatewayBridge(gatewaySupervisor)
-    registerMemoryHandlers(memoryGatewayBridge)
     registerSearchHandlers(new SearchGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
     registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
     registerExternalDocumentHandlers(new ExternalDocumentsGatewayBridge(gatewaySupervisor))
     registerDocumentPdfExportHandler()
-    registerKnowledgeHandlers(new KnowledgeGatewayBridge(gatewaySupervisor))
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
     registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'), join(dataDirectory, 'backups'))
@@ -4460,12 +3257,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     // slides「AI 修改」弹层 → 反查 Room → 渲染层注入对话框（hook 在运行时首用时懒装）。
     officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
-    browserExtensionService?.setCaptureHandlers({
-      create: (capture) => filesGatewayBridge.createClipCapture(capture),
-      uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),
-      finalize: (captureId, failures) => filesGatewayBridge.finalizeClipCapture(captureId, failures),
-      retry: (captureId) => filesGatewayBridge.retryClipCapture(captureId),
-    })
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
     const thesisFormatBridge = new ThesisFormatGatewayBridge(gatewaySupervisor)
     thesisFormatBridgeRef = thesisFormatBridge
@@ -4477,7 +3268,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
       reformat: (roomId, fileEntryId, cardId) => thesisFormatBridge.reformat(roomId, fileEntryId, cardId),
     })
-    registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()
     registerNotificationHandlers(saasClient)
@@ -4522,10 +3312,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     aiRelayKeeper = new AiRelayKeeper(saasClient, gatewaySupervisor, (event: AiRelayKeeperEvent) => {
       if (event.type === 'session-activated' || event.type === 'models-changed') {
         // relay 会话就绪后 gateway 才把槽位重写为 /ai-relay——补一次子进程
-        // env 同步，闭合「boot 时会话未就绪 → MemoryCore/KS 缺 embedding/LLM」
-        // 的冷启动窗口（token 轮换不再触发，见 withStableRelayKey）。
+        // env 同步，闭合「boot 时会话未就绪 → 补全服务缺 LLM」的冷启动窗口。
         // models-changed：续签时 SaaS 侧套餐场景模型变更，gateway 槽位已热
-        // 更新，托管子进程的 env 需要重派生（含 embedding 维度）。
+        // 更新，托管子进程的 env 需要重派生。
         void runtimeConfigBridge?.get()
           .then(snapshot => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
           .catch(() => undefined)
@@ -4537,50 +3326,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       }
     })
     const keyring = new AccountKeyringService(join(dataDirectory, 'account-keyring.json'), join(dataDirectory, 'backups'))
-    privateAudioSync = new PrivateAudioSyncService(saasClient, keyring, recordingsDirectory, join(dataDirectory, 'private-audio-sync.json'), join(dataDirectory, 'backups'))
-    void privateAudioSync.drainPending().catch(() => undefined)
-    privateTranscriptionSync = new PrivateTranscriptionSyncService(
-      join(dataDirectory, 'private-transcription-sync.json'),
-      saasClient,
-      keyring,
-      realityGatewayBridge,
-      join(dataDirectory, 'backups'),
-    )
-    await privateTranscriptionSync.initialize()
-    // 云端历史转写的物化统一延迟到记忆引导结束（scheduler 登录即跑的首轮
-    // sync 与启动一次性 materializeCached 都经 materialize——闸门下沉到
-    // service 内，两条路都拦住），避免 L0 先被填充导致引导判定误跳过。
-    privateTranscriptionSync.setMaterializeGate(waitForCloudMaterializeGate)
-    const publishSyncCompleted = () => {
-      const event: PrivateTranscriptionSyncCompletedEvent = { completedAt: new Date().toISOString() }
-      for (const target of BrowserWindow.getAllWindows()) {
-        if (!target.isDestroyed() && !target.webContents.isDestroyed()) {
-          target.webContents.send('transcription:sync-completed', event)
-        }
-      }
-    }
-    privateSyncScheduler = new PrivateSyncScheduler(privateTranscriptionSync, 15_000, publishSyncCompleted)
     const initialAccount = await saasClient.status().catch(() => null)
-    privateSyncScheduler.setAuthenticated(Boolean(initialAccount?.authenticated))
     if (initialAccount?.authenticated) remoteAgentCommandClient.start()
     if (initialAccount?.authenticated) aiRelayKeeper?.start()
     if (initialAccount?.authenticated) void macosPushNotifications.registerAuthenticatedDevice()
-    privateAudioSync.setEventResolver((recordingId) => privateTranscriptionSync!.eventIdForSegment(recordingId))
-    // 物化闸门已下沉到 service.materialize（见 setMaterializeGate 注释），
-    // 这里只管启动一次性物化本身。
-    void privateTranscriptionSync?.materializeCached().catch((error) => {
-      console.warn('Unable to import cached private transcriptions into Reality.', error)
-    })
-    transcriptionProcessingCoordinator = new TranscriptionProcessingCoordinator(
-      join(dataDirectory, 'transcription-processing-state.json'),
-      saasClient,
-      keyring,
-      agentGatewayBridge,
-      privateTranscriptionSync,
-      join(dataDirectory, 'backups'),
-    )
-    await transcriptionProcessingCoordinator.initialize()
-    transcriptionProcessingCoordinator.start()
     if (process.platform !== 'darwin') {
       const startupProtocolUrl = process.argv.find((argument) => argument.startsWith(OIDC_CALLBACK_URL))
       if (startupProtocolUrl) queuedProtocolUrls.push(startupProtocolUrl)
@@ -4605,7 +3354,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           .then((snapshot) => (snapshot ? syncManagedChildProcesses(snapshot) : undefined))
           .catch(() => undefined)
       }
-      privateSyncScheduler?.setAuthenticated(account.authenticated)
       if (!account.authenticated) {
         remoteAgentCommandClient?.stop()
         agentStatusReporter?.reset()
@@ -4619,14 +3367,12 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         agentStatusReporter?.reportNow()
         sessionLeaseKeeper?.reset()
         aiRelayKeeper?.start()
-        transcriptionProcessingCoordinator?.wake()
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
     }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
     registerRuntimeConfigHandlers()
-    registerPrivateTranscriptionHandlers(privateTranscriptionSync, publishSyncCompleted)
-    registerAsrHandlers(recordingStore,new AsrCoordinator(new AsrGatewayBridge(gatewaySupervisor),saasClient,realityGatewayBridge,privateAudioSync,privateTranscriptionSync,recordingSegmentUploader ?? undefined),recordingSegmentUploader!)
-    registerPrivateAudioHandlers(privateAudioSync)
+    registerAccountKeyringHandlers(saasClient, keyring)
+    registerPermissionHandlers()
 
     const fileCapabilities = await filesGatewayBridge.capabilities().catch((error) => {
       console.warn('Unable to load file capabilities; automatic local scanning stays disabled.', error)
@@ -4658,10 +3404,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
-    privateSyncScheduler?.stop()
-    privateSyncScheduler = null
-    await browserExtensionService?.stop()
-    browserExtensionService = null
     await agentNotificationBridgeServer?.stop()
     agentNotificationBridgeServer = null
     await officeBridgeServer?.stop()
@@ -4681,23 +3423,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     cursorCompletionAgentBridge = null
     documentGatewayBridge?.dispose()
     documentGatewayBridge = null
-    realityGatewayBridge?.dispose()
-    realityGatewayBridge = null
-    perceptionGatewayBridge = null
-    diaryGatewayBridge = null
     agentSchedulerGatewayBridge = null
     connectorGatewayBridge = null
     clipperAssetBridge = null
-    await recordingStore?.dispose()
-    recordingStore = null
     await gatewaySupervisor?.shutdown()
     gatewaySupervisor = null
     await cursorCompletionSupervisor?.shutdown()
     cursorCompletionSupervisor = null
-    await memoryCoreSupervisor?.shutdown()
-    memoryCoreSupervisor = null
-    await knowledgeServiceSupervisor?.shutdown()
-    knowledgeServiceSupervisor = null
     console.error('Failed to initialize Everroom desktop services', error)
     // 静默退出 = 用户看到白屏数分钟后应用消失且毫无提示（issue #179）。
     // 用原生错误框告知原因与日志位置，再退出。
@@ -4723,14 +3455,11 @@ app.on('before-quit', (event) => {
   shutdownStarted = true
   const service = localDataService
   const vaults = obsidianVaultService
-  const browserExtension = browserExtensionService
   const gateway = gatewaySupervisor
   const connectorCli = ooCliBridge
   const connectorRuntime = openConnectorSupervisor
   const connectorConsole = openConnectorConsoleWindow
   const cursorCompletion = cursorCompletionSupervisor
-  const memoryCore = memoryCoreSupervisor
-  const knowledgeService = knowledgeServiceSupervisor
   const agentBridge = agentGatewayBridge
   const statusReporter = agentStatusReporter
   const leaseKeeper = sessionLeaseKeeper
@@ -4738,50 +3467,34 @@ app.on('before-quit', (event) => {
   const remoteCommands = remoteAgentCommandClient
   const cursorCompletionBridge = cursorCompletionAgentBridge
   const documentBridge = documentGatewayBridge
-  const realityBridge = realityGatewayBridge
-  const recordings = recordingStore
-  const pendingScreenshots = screenshotOutbox
   const cloud = saasClient
-  const privateSync = privateSyncScheduler
   const notificationBridge = agentNotificationBridgeServer
   const pushNotificationsService = macosPushNotifications
   localDataService = null
   obsidianVaultService = null
-  browserExtensionService = null
   gatewaySupervisor = null
   ooCliBridge = null
   connectorConsoleBaseUrl = null
   openConnectorSupervisor = null
   openConnectorConsoleWindow = null
   cursorCompletionSupervisor = null
-  memoryCoreSupervisor = null
-  knowledgeServiceSupervisor = null
   agentGatewayBridge = null
   agentStatusReporter = null
   sessionLeaseKeeper = null
   remoteAgentCommandClient = null
   cursorCompletionAgentBridge = null
   documentGatewayBridge = null
-  realityGatewayBridge = null
-  perceptionGatewayBridge = null
-  diaryGatewayBridge = null
   agentSchedulerGatewayBridge = null
   connectorGatewayBridge = null
   clipperAssetBridge = null
   officeFilesBridge = null
-  recordingStore = null
   saasClient = null
-  screenshotOutbox = null
-  screenshotScheduler.stop()
-  void screenMemoryController.dispose()
-  privateSyncScheduler = null
   agentNotificationBridgeServer = null
   macosPushNotifications = null
   agentAuthController?.shutdown()
   agentAuthController = null
   void documentAssetBridge?.stop()
   documentAssetBridge = null
-  privateSync?.stop()
   void notificationBridge?.stop()
   pushNotificationsService?.stop()
   void officePreviewRegistry.disposeAll()
@@ -4794,19 +3507,13 @@ app.on('before-quit', (event) => {
   remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
-  realityBridge?.dispose()
   cloud?.cancelOidcLogin('EverRoom 正在退出。')
   void Promise.allSettled([
     service?.shutdown(),
     vaults?.shutdown(),
-    browserExtension?.stop(),
-    recordings?.dispose(),
-    pendingScreenshots?.dispose(),
     gateway?.shutdown(),
     connectorRuntime?.shutdown(),
     cursorCompletion?.shutdown(),
-    memoryCore?.shutdown(),
-    knowledgeService?.shutdown(),
   ]).then(async () => {
     await flushDesktopLogs()
     if (clearUserDataOnQuit) {

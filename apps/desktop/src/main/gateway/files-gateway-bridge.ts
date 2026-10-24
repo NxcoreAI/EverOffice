@@ -15,13 +15,7 @@ import type {
   HighRiskImportResolution,
   IngestPipelines,
 } from '../../shared/ingest'
-import type {
-  BrowserExtensionCapture,
-  BrowserExtensionCaptureResult,
-  BrowserExtensionClipperCapture,
-  BrowserExtensionClipperListInput,
-  BrowserExtensionClipperListResult,
-} from '../../shared/browser-extension'
+import type { BrowserExtensionClipperCapture } from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
 import { isArtifactImportFileName } from '../../shared/sources'
@@ -211,30 +205,6 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/catalog?${query}`)
   }
 
-  listClipCaptures(inputOrLimit: BrowserExtensionClipperListInput | number = {}, legacyOffset = 0): Promise<BrowserExtensionClipperListResult> {
-    const input: BrowserExtensionClipperListInput = typeof inputOrLimit === 'number'
-      ? { limit: inputOrLimit, offset: legacyOffset }
-      : inputOrLimit
-    const query = new URLSearchParams()
-    if (input.query) query.set('query', input.query)
-    if (input.filter) query.set('filter', input.filter)
-    if (input.sort) query.set('sort', input.sort)
-    query.set('limit', String(input.limit ?? 100))
-    query.set('offset', String(input.offset ?? 0))
-    return this.request(`/v1/clipper/captures?${query}`)
-  }
-
-  setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/favorite`, {
-      method: 'PATCH',
-      body: JSON.stringify({ favorite }),
-    })
-  }
-
-  getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}`)
-  }
-
   catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     return this.request(`/v1/files/catalog?${query}`)
@@ -314,9 +284,6 @@ export class FilesGatewayBridge {
             visibility: 'private',
           }),
         })
-        // 与截图管线同款两步：上传后注册视觉库（VLM 出描述，素材检索才能命中）；
-        // 注册失败不阻断附件发送。
-        await this.registerVisualObservation({ fileId: uploaded.id }).catch(() => {})
         attachments.push({
           fileId: uploaded.id,
           filename: uploaded.originalName,
@@ -349,13 +316,6 @@ export class FilesGatewayBridge {
     return this.request(`/v1/file-entries/${encodeURIComponent(fileId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ displayName }),
-    })
-  }
-
-  pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }> {
-    return this.request(`/v1/file-clusters/${encodeURIComponent(clusterId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ sharedTitle }),
     })
   }
 
@@ -531,27 +491,12 @@ export class FilesGatewayBridge {
     })
   }
 
-  /** 图片注册进看图理解（perception VLM 出描述）：导入链路本身不看图，只有
-   *  截图管线会注册 observation——vault 图片附件走记忆同步入库后需补注册，
-   *  PPT 素材检索才能按中文描述搜到。同一 fileId 重复注册幂等（服务端命中
-   *  既有 observation 直接返回）。 */
   /** 网关 manualImport 集；darwin 下补 heic（导入前转 jpg，网关能力表不登记 heic）。 */
   private async manualImportExtensions(): Promise<Set<string>> {
     const extensions = new Set((await this.capabilities()).items
       .filter((item) => item.manualImport).map((item) => item.extension))
     if (process.platform === 'darwin') extensions.add(HEIC_EXTENSION)
     return extensions
-  }
-
-  async registerVisualObservation(input: { fileId: string; capturedAt?: Date }): Promise<void> {
-    await this.request('/v1/perception/visual-observations', {
-      method: 'POST',
-      body: JSON.stringify({
-        fileId: input.fileId,
-        kind: 'photo',
-        capturedAt: (input.capturedAt ?? new Date()).toISOString(),
-      }),
-    })
   }
 
   async importMigrationFile(input: {
@@ -747,38 +692,6 @@ export class FilesGatewayBridge {
     sourceModifiedAt: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({ ...input, sourceKind: 'connector' })
-  }
-
-  createClipCapture(input: BrowserExtensionCapture): Promise<BrowserExtensionCaptureResult> {
-    return this.request('/v1/clipper/captures', { method: 'POST', body: JSON.stringify({
-      captureId: input.captureId,
-      sourceUrl: input.url,
-      canonicalUrl: input.canonicalUrl,
-      title: input.title,
-      author: input.author,
-      publishedAt: input.publishedAt,
-      capturedAt: input.capturedAt,
-      extractionMode: input.extractionMode,
-      markdown: input.markdown,
-      extractorVersion: input.extractorVersion,
-      assets: input.assets,
-    }) })
-  }
-
-  uploadClipAsset(captureId: string, assetId: string, data: string): Promise<BrowserExtensionClipperCapture['assets'][number]> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/assets/${encodeURIComponent(assetId)}`, {
-      method: 'PUT', body: JSON.stringify({ data }),
-    })
-  }
-
-  finalizeClipCapture(captureId: string, failures: Array<{ assetId: string; code?: string }>): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/finalize`, {
-      method: 'POST', body: JSON.stringify({ failures }),
-    })
-  }
-
-  retryClipCapture(captureId: string): Promise<{ capture: BrowserExtensionClipperCapture; pendingAssetIds: string[] }> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/retry`, { method: 'POST' })
   }
 
   getClipCapture(fileEntryId: string): Promise<BrowserExtensionClipperCapture> {

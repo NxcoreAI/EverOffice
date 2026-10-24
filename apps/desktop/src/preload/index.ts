@@ -13,12 +13,6 @@ import type {
   AgentConnectionDto,
 } from '../shared/agent-access'
 import type {
-  CreateContextRoomInput,
-  RoomDuplicateCheckInput,
-  RoomDuplicateCandidateStatus,
-  SaveContextRoomSnapshotInput,
-} from '@nxcore/agent-contract'
-import type {
   SearchItemType,
   SearchMessageContextDto,
   SearchPageDto,
@@ -29,8 +23,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
-import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -298,24 +291,6 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('migrations:progress', handle)
     },
   },
-  browserExtension: {
-    status: () => invokeQuietly<BrowserExtensionStatus>('browser-extension:status'),
-    install: () => invoke<BrowserExtensionStatus>('browser-extension:install'),
-    openDirectory: () => invoke('browser-extension:open-directory'),
-    openBrowserPage: () => invoke('browser-extension:open-browser-page'),
-    createPairing: () => invoke<BrowserExtensionStatus>('browser-extension:create-pairing'),
-    revoke: () => invoke<BrowserExtensionStatus>('browser-extension:revoke'),
-    onStatus: (listener: (status: BrowserExtensionStatus) => void) => {
-      const handleStatus = (_event: Electron.IpcRendererEvent, status: BrowserExtensionStatus) => listener(status)
-      ipcRenderer.on('browser-extension:status', handleStatus)
-      return () => ipcRenderer.removeListener('browser-extension:status', handleStatus)
-    },
-    onMessage: (listener: (message: BrowserExtensionMessage) => void) => {
-      const handleMessage = (_event: Electron.IpcRendererEvent, message: BrowserExtensionMessage) => listener(message)
-      ipcRenderer.on('browser-extension:message', handleMessage)
-      return () => ipcRenderer.removeListener('browser-extension:message', handleMessage)
-    },
-  },
   nangoConnector: {
     runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
@@ -407,23 +382,6 @@ const api: NxcoreDesktopApi = {
     listUsage: (query) => invokeQuietly('external-calls:usage:list', query),
     listAudits: (query) => invokeQuietly('external-calls:audits:list', query),
   },
-  screenCapture: {
-    captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
-    start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),
-    updateInterval: (intervalMs: number) => invoke('screen-capture:update-interval', intervalMs),
-    stop: () => invoke('screen-capture:stop'),
-    status: () => invoke('screen-capture:status'),
-    appInfo: () => invoke('screen-capture:app-info'),
-    openPermissionSettings: () => invoke('screen-capture:open-permission-settings'),
-    startAppDrag: () => ipcRenderer.send('screen-capture:start-app-drag'),
-    relaunchApp: () => invoke('screen-capture:relaunch-app'),
-    perceptionSettings: () => invoke('perception:settings'),
-    updateOnlineVlm: (enabled, configVersion) => invoke('perception:update-online-vlm', enabled, configVersion),
-    listPerceptionNodes: (query) => invokeQuietly('perception:nodes', query),
-    getPerceptionNode: (id) => invokeQuietly('perception:node', id),
-    retryPerceptionNode: (id) => invoke('perception:retry', id),
-    deletePerceptionNode: (id, deleteAssets) => invoke('perception:delete', id, deleteAssets),
-  },
   writingStyle: {
     profile: () => invoke('writing-style:get'),
     settings: () => invoke('writing-style:get-settings'),
@@ -480,46 +438,17 @@ const api: NxcoreDesktopApi = {
     pageImagesStatus: (documentId: string) =>
       invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
   },
-  contextRooms: {
-    list: () => invokeQuietly('context-rooms:list'),
-    create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
-    syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
-      invokeQuietly('context-rooms:sync-snapshot', input),
-    checkDuplicates: (input: RoomDuplicateCheckInput) => invokeQuietly('context-rooms:check-duplicates', input),
-    listDuplicateCandidates: (status?: RoomDuplicateCandidateStatus) =>
-      invokeQuietly('context-rooms:list-duplicate-candidates', status),
-    updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
-      invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
-    previewMerge: (sourceAId: string, sourceBId: string) =>
-      invokeQuietly('context-rooms:preview-merge', sourceAId, sourceBId),
-    startMerge: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
-      invokeQuietly('context-rooms:start-merge', input),
-    suggestMergeNames: (input: { sourceAId: string; sourceBId: string; responseLanguage?: string }) =>
-      invokeQuietly('context-rooms:suggest-merge-names', input),
-    checkRoomDuplicates: (roomId: string) => invokeQuietly('context-rooms:check-room-duplicates', roomId),
-    getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
-    retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
-    cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
-    dispatchSelectionRewrite: (input: RoomAgentSelectionRewriteInput) =>
-      invokeQuietly('context-rooms:dispatch-selection-rewrite', input),
+  subagents: {
+    dispatchSelectionRewrite: (input: SubagentSelectionRewriteInput) =>
+      invokeQuietly('subagents:dispatch-selection-rewrite', input),
     getSubagentInvocation: (invocationId: string) =>
-      invokeQuietly('context-rooms:get-subagent-invocation', invocationId),
+      invokeQuietly('subagents:get-invocation', invocationId),
     cancelSubagentInvocation: (invocationId: string) =>
-      invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
+      invokeQuietly('subagents:cancel-invocation', invocationId),
     listRunSubagentInvocations: (rootRunId: string) =>
-      invokeQuietly('context-rooms:list-run-subagent-invocations', rootRunId),
+      invokeQuietly('subagents:list-run-invocations', rootRunId),
     listSubagentInvocationEvents: (invocationId: string, afterSeq = 0) =>
-      invokeQuietly('context-rooms:list-subagent-invocation-events', invocationId, afterSeq),
-    refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
-    promoteMemoryItem: (roomId: string, itemId: string) =>
-      invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),
-    overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
-    refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
-    listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
-    readMail: (roomId: string, sourceId: string) => invokeQuietly('context-rooms:read-mail', roomId, sourceId),
-    roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
-    completeLocalAction: (roomId: string, actionId: string, completed?: boolean) =>
-      invokeQuietly('context-rooms:complete-local-action', roomId, actionId, completed),
+      invokeQuietly('subagents:list-invocation-events', invocationId, afterSeq),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
@@ -587,14 +516,12 @@ const api: NxcoreDesktopApi = {
     test: () => invoke('runtime-config:test'),
   },
   permissions: {
-    /** OS 麦克风授权状态（本地 TCC 查询，不经网关）。通道仍由主进程 asr 段注册，属本地系统能力而非网关调用。 */
-    getMicrophoneAccessStatus: () => invoke('asr:get-microphone-access-status'),
+    /** OS 麦克风授权状态（本地 TCC 查询，不经网关）。属本地系统能力而非网关调用。 */
+    getMicrophoneAccessStatus: () => invoke('permissions:microphone-access-status'),
     /** 弹出系统麦克风授权请求（本地 TCC，不经网关）。 */
-    requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
+    requestMicrophoneAccess: () => invoke('permissions:request-microphone-access'),
     /** 打开系统「麦克风」隐私设置页。 */
-    openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
-    /** 打开系统「屏幕与系统音频录制」隐私设置页。 */
-    openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
+    openMicrophoneSettings: () => invoke('permissions:open-microphone-settings'),
   },
   search: {
     invoke: (request: SearchRequestDto): Promise<SearchPageDto> => invoke('search:invoke', request),
@@ -781,17 +708,12 @@ const api: NxcoreDesktopApi = {
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
     catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
-    listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
-    setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
-    getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
     get: (fileId: string) => invoke('files:get', fileId),
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),
     readDataUrl: (fileId: string) => invokeQuietly('files:read-data-url', fileId),
     getClipCapture: (fileId: string) => invoke('files:clipper-capture:get', fileId),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
-    pinClusterTitle: (clusterId: string, sharedTitle: string) =>
-      invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
     exportReveal: (fileId: string, originalName: string) =>
