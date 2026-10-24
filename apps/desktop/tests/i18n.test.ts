@@ -36,6 +36,9 @@ describe('renderer i18n', () => {
     expect(translate('en-US', 'surface:connectorSync.importToWorkspace')).toBe('Import to workspace')
     expect(translate('zh-CN', 'surface:connectorSync.importToWorkspace')).toBe('导入到工作区')
     expect(i18n.getFixedT('en-US')('contextRoom:documentOperationReview.documentChange', { sequence: 2 })).toBe('Document change 2')
+    // search 命名空间在 init 的 resources 里注册（不再靠运行时 addResourceBundle 兜底）。
+    expect(translate('zh-CN', 'search:state.empty')).toBe('没有匹配的结果')
+    expect(translate('en-US', 'search:palette.scopeReady', { count: 3 })).toBe('3 items searchable')
   })
 
   it('keeps unknown messages and unresolved placeholders intact', () => {
@@ -70,7 +73,7 @@ describe('renderer i18n', () => {
   it('keeps locale namespace keys in parity without a legacy runtime dictionary', () => {
     expect(i18nResources['zh-CN'].common).toEqual({})
     expect(i18nResources['en-US'].common).toEqual({})
-    for (const namespace of ['contextRoom', 'surface'] as const) {
+    for (const namespace of ['contextRoom', 'search', 'surface'] as const) {
       expect(Object.keys(i18nResources['en-US'][namespace]).sort()).toEqual(
         Object.keys(i18nResources['zh-CN'][namespace]).sort(),
       )
@@ -80,7 +83,7 @@ describe('renderer i18n', () => {
 
   it('keeps zh-CN and en-US identical in namespace and key sets', () => {
     expect(Object.keys(i18nResources['en-US']).sort()).toEqual(Object.keys(i18nResources['zh-CN']).sort())
-    for (const namespace of ['contextRoom', 'surface'] as const) {
+    for (const namespace of ['contextRoom', 'search', 'surface'] as const) {
       expect(Object.keys(i18nResources['en-US'][namespace]).sort()).toEqual(
         Object.keys(i18nResources['zh-CN'][namespace]).sort(),
       )
@@ -91,7 +94,7 @@ describe('renderer i18n', () => {
     const localeRoot = fileURLToPath(new URL('../src/renderer/src/i18n/locales', import.meta.url))
     const duplicates: string[] = []
     for (const locale of ['zh-CN', 'en-US']) {
-      for (const namespace of ['contextRoom', 'surface']) {
+      for (const namespace of ['contextRoom', 'search', 'surface']) {
         const source = readFileSync(`${localeRoot}/${locale}/${namespace}.json`, 'utf8')
         const keys = [...source.matchAll(/^\s*"([^"]+)":/gm)].map((match) => match[1])
         for (const key of new Set(keys)) {
