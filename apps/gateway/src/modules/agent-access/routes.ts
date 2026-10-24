@@ -202,19 +202,21 @@ export function agentAccessRoutes(
         const view = service.getConnection(request.params.id);
         if (!view) return reply.code(404).send({ error: "not_found" });
         const connection = resolvedFrom(view);
-        const list = await host.runTool(connection, "everroom_list_rooms", {}).catch(unavailableState);
-        const firstRoom = list.status === "ok"
-          ? ((list.data as { rooms?: Array<{ title?: string; roomId: string }> })?.rooms ?? [])[0]
-          : undefined;
-        const query = firstRoom?.title ?? "EverRoom";
+        // Phase 2i：list_rooms 已删除，第一步改为 get_status 自述（steps.list 键
+        // 保留，桌面 AgentConnectionCard 按该键渲染自检结果）。
+        const list = await host.runTool(connection, "everroom_get_status", {}).catch(unavailableState);
+        const query = "EverRoom";
         const search = await host
           .runTool(connection, "everroom_search", { query, limit: 3 })
           .catch(unavailableState);
-        const fetch = firstRoom
+        const firstHit = search.status === "ok"
+          ? ((search.data as { hits?: Array<{ uri?: string }> })?.hits ?? []).find((hit) => hit.uri)
+          : undefined;
+        const fetch = firstHit?.uri
           ? await host
-              .runTool(connection, "everroom_fetch", { uri: `everroom://rooms/${firstRoom.roomId}` })
+              .runTool(connection, "everroom_fetch", { uri: firstHit.uri })
               .catch(unavailableState)
-          : ({ status: "empty", message: "授权范围内没有 Room 可精读" } satisfies AgentAccessState);
+          : ({ status: "empty", message: "搜索无命中，跳过精读步骤" } satisfies AgentAccessState);
         const submit = await host
           .runTool(connection, "everroom_submit", {
             submissionId: `selftest-${Date.now()}`,
@@ -239,13 +241,7 @@ export function agentAccessRoutes(
         const view = service.getConnection(request.params.id);
         if (!view) return reply.code(404).send({ error: "not_found" });
         const connection = resolvedFrom(view);
-        let query = request.body.query;
-        if (!query) {
-          const list = await host.runTool(connection, "everroom_list_rooms", {}).catch(unavailableState);
-          query = list.status === "ok"
-            ? (((list.data as { rooms?: Array<{ title?: string }> })?.rooms ?? [])[0]?.title ?? "EverRoom")
-            : "EverRoom";
-        }
+        const query = request.body.query ?? "EverRoom";
         const result = await host
           .runTool(connection, "everroom_search", { query, limit: 5 })
           .catch(unavailableState);

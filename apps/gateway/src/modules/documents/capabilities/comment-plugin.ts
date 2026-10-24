@@ -60,7 +60,6 @@ export function commentPlugin(
       const documentId = stringArg(args, "documentId");
       const document = backend.get(documentId);
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (context.roomId !== null && document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document does not belong to this Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
 
       const blockId = typeof args.blockId === "string" && args.blockId.trim() ? args.blockId.trim() : null;

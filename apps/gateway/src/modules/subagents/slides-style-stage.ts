@@ -43,7 +43,7 @@ export interface SlidesStyleStageDeps {
   /** 正文配图后台生成循环；缺省时 generate 决策同步生完全部再返回。 */
   pageImageRunner?: import("./slides-page-images-runner.js").SlidesPageImageRunner | null;
   /** 读草稿文档正文（settle 的 outlineRoles 来源）；缺省或读取失败时省略该输入。 */
-  resolveDraftDocument?: (documentId: string, roomId: string) => { markdown: string } | null;
+  resolveDraftDocument?: (documentId: string) => { markdown: string } | null;
 }
 
 export interface SlidesStyleStageResult {
@@ -398,7 +398,7 @@ async function runStyleSelect(
     const draftId = session.draftDocumentId;
     if (!draftId || !deps.resolveDraftDocument) return null;
     try {
-      const doc = deps.resolveDraftDocument(draftId, input.run.roomId);
+      const doc = deps.resolveDraftDocument(draftId);
       return doc ? outlineRolesFromDraft(doc.markdown) : null;
     } catch {
       return null;

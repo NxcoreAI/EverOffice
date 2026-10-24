@@ -188,20 +188,10 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(input.idempotencyKey!.startsWith("agent-word:")).toBe(true);
   });
 
-  it("六个工具都要求先选 Room", async () => {
-    const { tools } = createHarness();
-    const noRoom = { ...context, roomId: null };
-    const args: Record<string, Record<string, unknown>> = {
-      office_create: { title: "t", html: "<p>x</p>" },
-      slides_create: { title: "t", outline: ["封面"] },
-      slides_set_page: { fileId: "file-1", slideIndex: 0, spec: { elements: [] } },
-      sheets_create: { title: "t", sheets: [{ rows: [["a"]] }] },
-      slides_read: { fileId: "file-1" },
-      slides_edit: { fileId: "file-1", ops: [{ op: "setNotes" }] },
-    };
-    for (const [name, input] of Object.entries(args)) {
-      await expect(tools.get(name)!.execute(input, noRoom)).rejects.toThrow("ROOM_SELECTION_REQUIRED");
-    }
+  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），六个工具照常暴露", () => {
+    const { plugin, tools } = createHarness();
+    expect(plugin.manifest.requiresRoom).toBe(false);
+    expect(tools.size).toBe(6);
   });
 });
 

@@ -1,5 +1,4 @@
 import { WORKSPACE_DOCUMENT_CHANNEL, type TiptapJsonContent } from "@nxcore/agent-contract";
-import type { ProjectedDocumentReference } from "@nxcore/document-model";
 import { hasEmbeddedDocumentImages, migrateDocumentContent } from "@nxcore/document-model";
 import {
   normalizeDocumentContent,
@@ -9,20 +8,17 @@ import { DocumentServiceError } from "../errors.js";
 
 export type NormalizedGatewayDocument = ReturnType<typeof normalizeDocumentContent>;
 
-export interface DocumentContentEngineOptions {
-  findDocumentRoom?: (documentId: string) => string | null;
-}
-
+/**
+ * 文档正文归一化。Phase 2i 之后文档库只剩工作区级文稿，块作用域恒为
+ * WORKSPACE_DOCUMENT_CHANNEL（不再有 Room 分区）。
+ */
 export class DocumentContentEngine {
-  constructor(private readonly options: DocumentContentEngineOptions = {}) {}
-
   normalizeDocument(
     content: TiptapJsonContent,
     documentId: string,
-    roomId: string | null,
     indexedVersion = 0,
   ): NormalizedGatewayDocument {
-    const scope = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
+    const scope: string = WORKSPACE_DOCUMENT_CHANNEL;
     if (hasEmbeddedDocumentImages(content)) {
       throw new DocumentServiceError(
         "EMBEDDED_IMAGE_NOT_ALLOWED",
@@ -30,26 +26,20 @@ export class DocumentContentEngine {
         400,
       );
     }
-    const normalized = normalizeDocumentContent(content, documentId, scope, { indexedVersion });
-    this.validateReferences(normalized.references, scope);
-    return normalized;
+    return normalizeDocumentContent(content, documentId, scope, { indexedVersion });
   }
 
   normalizeFragment(
     content: TiptapJsonContent,
     documentId: string,
-    roomId: string | null,
   ): NormalizedGatewayDocument {
-    const scope = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
-    const normalized = normalizeDocumentFragment(content, documentId, scope);
-    this.validateReferences(normalized.references, scope);
-    return normalized;
+    const scope: string = WORKSPACE_DOCUMENT_CHANNEL;
+    return normalizeDocumentFragment(content, documentId, scope);
   }
 
   normalizeStoredDocument(
     content: TiptapJsonContent,
     documentId: string,
-    roomId: string | null,
     fromSchemaVersion: number,
     indexedVersion = 0,
   ): NormalizedGatewayDocument {
@@ -63,34 +53,12 @@ export class DocumentContentEngine {
         409,
       );
     }
-    const scope = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
-    const normalized = normalizeDocumentContent(
+    const scope: string = WORKSPACE_DOCUMENT_CHANNEL;
+    return normalizeDocumentContent(
       migrated.content,
       documentId,
       scope,
       { indexedVersion },
     );
-    this.validateReferences(normalized.references, scope);
-    return normalized;
-  }
-
-  private validateReferences(references: ProjectedDocumentReference[], roomId: string): void {
-    for (const reference of references) {
-      if (reference.targetRoomId !== roomId) {
-        throw new DocumentServiceError(
-          "CROSS_ROOM_REFERENCE",
-          "Document block references must stay in one Room",
-          409,
-        );
-      }
-      const targetRoom = this.options.findDocumentRoom?.(reference.targetDocumentId);
-      if (targetRoom && targetRoom !== roomId) {
-        throw new DocumentServiceError(
-          "CROSS_ROOM_REFERENCE",
-          "Referenced document belongs to another Room",
-          409,
-        );
-      }
-    }
   }
 }

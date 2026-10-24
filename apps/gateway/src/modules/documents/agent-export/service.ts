@@ -286,9 +286,6 @@ export class AgentDocumentExportService {
     }
     const document = this.documents.get(input.documentId);
     if (!document) throw new ExportServiceError("NOT_FOUND", "文档不存在", 404);
-    if (document.roomId !== input.roomId) {
-      throw new ExportServiceError("ROOM_MISMATCH", "文档属于其他 Room", 409);
-    }
     const version = input.version ?? document.version;
     const snapshot = this.documents.getVersionSnapshot(input.documentId, version);
     if (!snapshot) {

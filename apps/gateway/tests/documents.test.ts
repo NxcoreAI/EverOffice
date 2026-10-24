@@ -2,18 +2,16 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { TiptapJsonContent } from '@nxcore/agent-contract'
+import { WORKSPACE_DOCUMENT_CHANNEL, type TiptapJsonContent } from '@nxcore/agent-contract'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import {
   agentSessions,
-  contextRooms,
   documentBlocks,
   documentBlockReferences,
   documentVersions,
   documentYjsUpdates,
   documents,
   jobs,
-  roomDocumentLinks,
 } from '../src/infrastructure/database/schema.js'
 import { eq } from 'drizzle-orm'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
@@ -57,7 +55,7 @@ describe('document import origin', () => {
 
     expect(external.origin).toBe('import')
     expect(created.origin).toBe('native')
-    expect(service.list('room-1', false, 'native').map((document) => document.id)).toEqual(['doc-origin-native'])
+    expect(service.list(false, 'native').map((document) => document.id)).toEqual(['doc-origin-native'])
   })
 })
 
@@ -142,10 +140,10 @@ describe('document transactions', () => {
     const second = createDatabase(databasePath, resolve('drizzle'))
     const secondService = new DocumentService(second.db, new DocumentEventBroker())
     try {
-      expect(secondService.list('room-persisted')).toEqual([
+      expect(secondService.list()).toEqual([
         expect.objectContaining({
           id: 'doc-persisted',
-          roomId: 'room-persisted',
+          roomId: null,
           title: '持久化文档',
           version: 2,
           status: 'active',
@@ -183,8 +181,8 @@ describe('document transactions', () => {
     const second = createDatabase(databasePath, resolve('drizzle'))
     const secondService = new DocumentService(second.db, new DocumentEventBroker())
     try {
-      expect(secondService.list('room-trash-persisted')).toEqual([])
-      expect(secondService.list('room-trash-persisted', true)).toEqual([
+      expect(secondService.list()).toEqual([])
+      expect(secondService.list(true)).toEqual([
         expect.objectContaining({
           id: 'doc-trash-persisted',
           deletedAt: expect.any(String),
@@ -217,15 +215,15 @@ describe('document transactions', () => {
     })
 
     expect(updated.version).toBe(2)
-    expect(service.list('room-1')).toHaveLength(1)
-    expect(service.list('room-2')).toHaveLength(0)
+    // Phase 2i：文档库只剩工作区级列表，roomId 过滤维度已删除。
+    expect(service.list()).toHaveLength(1)
     const renamed = await service.save(updated.id, {
       baseVersion: 2,
       title: '  新项目标题  ',
       contentJson: updated.contentJson,
     })
     expect(renamed).toMatchObject({ title: '新项目标题', version: 3 })
-    expect(service.list('room-1')[0]).toMatchObject({ title: '新项目标题', version: 3 })
+    expect(service.list()[0]).toMatchObject({ title: '新项目标题', version: 3 })
     expect(db.select().from(documentVersions).all()).toHaveLength(3)
     await expect(service.save(renamed.id, {
       baseVersion: 3,
@@ -298,7 +296,7 @@ describe('document transactions', () => {
     })
 
     expect(updated.title).toBe('显式新标题')
-    expect(service.list('room-1')[0]?.title).toBe('显式新标题')
+    expect(service.list()[0]?.title).toBe('显式新标题')
     expect(db.select().from(documentVersions).where(eq(documentVersions.documentId, imported.id)).all()
       .map((row) => row.title)).toEqual(['旧标题', '显式新标题'])
   })
@@ -386,7 +384,7 @@ describe('document transactions', () => {
   it('moves a document to trash, restores it, and only removes stored content permanently', async () => {
     const { db, service } = await createHarness()
     const frames: string[] = []
-    const unsubscribe = service.broker.subscribe('room-1', {
+    const unsubscribe = service.broker.subscribe(null, {
       readyState: 1,
       send: (frame) => frames.push(frame),
     })
@@ -398,13 +396,12 @@ describe('document transactions', () => {
     })
 
     await service.delete(imported.id)
-    expect(service.list('room-1')).toEqual([])
-    expect(service.list('room-1', true)).toEqual([
+    expect(service.list()).toEqual([])
+    expect(service.list(true)).toEqual([
       expect.objectContaining({ id: imported.id, deletedAt: expect.any(String) }),
     ])
     expect(service.get(imported.id)).toMatchObject({ id: imported.id, deletedAt: expect.any(String) })
     expect(db.select().from(documents).all()).toHaveLength(1)
-    expect(db.select().from(roomDocumentLinks).all()).toHaveLength(1)
     expect(db.select().from(documentVersions).all()).toHaveLength(1)
     await expect(service.save(imported.id, {
       baseVersion: 1,
@@ -412,10 +409,10 @@ describe('document transactions', () => {
     })).rejects.toMatchObject({ code: 'DOCUMENT_TRASHED' })
 
     await service.restore(imported.id)
-    expect(service.list('room-1')).toEqual([
+    expect(service.list()).toEqual([
       expect.objectContaining({ id: imported.id, deletedAt: null }),
     ])
-    expect(service.list('room-1', true)).toEqual([])
+    expect(service.list(true)).toEqual([])
 
     service.retryYjsHistoryBackfill(imported.id)
     await service.delete(imported.id)
@@ -424,7 +421,6 @@ describe('document transactions', () => {
 
     expect(service.get(imported.id)).toBeNull()
     expect(db.select().from(documents).all()).toEqual([])
-    expect(db.select().from(roomDocumentLinks).all()).toEqual([])
     expect(db.select().from(documentVersions).all()).toEqual([])
     // Phase 2：删除不再入队 document.delete（理解引擎已退役），只清历史回填作业。
     expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toEqual([])
@@ -438,7 +434,7 @@ describe('document transactions', () => {
     }))
     expect(events).toContainEqual(expect.objectContaining({
       event: expect.objectContaining({
-        roomId: 'room-1',
+        roomId: null,
         documentId: imported.id,
         type: 'document.deleted',
         payload: { documentId: imported.id },
@@ -448,7 +444,7 @@ describe('document transactions', () => {
   })
 
 
-  it('empties a Room recycle bin and cascades document history', async () => {
+  it('empties the workspace recycle bin and cascades document history', async () => {
     const { db, service } = await createHarness()
     for (const id of ['doc-trash-a', 'doc-trash-b']) {
       const imported = await service.import({
@@ -460,11 +456,10 @@ describe('document transactions', () => {
       await service.delete(imported.id)
     }
 
-    await service.emptyTrash('room-1')
+    await service.emptyTrash()
 
-    expect(service.list('room-1', true)).toEqual([])
+    expect(service.list(true)).toEqual([])
     expect(db.select().from(documents).all()).toEqual([])
-    expect(db.select().from(roomDocumentLinks).all()).toEqual([])
     expect(db.select().from(documentVersions).all()).toEqual([])
     expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(0)
   })
@@ -489,11 +484,9 @@ describe('document transactions', () => {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
     }, globalContext)
     expect(workspaceStarted.structuredContent).toMatchObject({ roomId: null, state: 'running' })
-    expect(service.list(null)).toEqual([
+    expect(service.list()).toEqual([
       expect.objectContaining({ title: '服务端学习路径', status: 'draft', version: 0 }),
     ])
-    expect(service.list('room-1')).toEqual([])
-    expect(service.list('room-2')).toEqual([])
 
     const started = await host.callTool('document_write_begin', {
       mode: 'create', title: '服务端学习路径', format: 'markdown',
@@ -501,7 +494,8 @@ describe('document transactions', () => {
     expect(started.structuredContent).toMatchObject({ roomId: 'room-2', state: 'running' })
     const operationId = String(started.structuredContent.operationId)
     const documentId = String(started.structuredContent.docId)
-    expect(service.list('room-2')).toEqual([
+    expect(service.list()).toEqual([
+      expect.objectContaining({ title: '服务端学习路径', status: 'draft', version: 0 }),
       expect.objectContaining({
         id: documentId,
         title: '服务端学习路径',
@@ -514,12 +508,8 @@ describe('document transactions', () => {
     expect(operations.list({ roomId: 'room-2', statuses: ['running'] })).toHaveLength(1)
   })
 
-  it('assigns stable IDs recursively and resolves only same-Room block references', async () => {
+  it('assigns stable IDs recursively and resolves block references without Room gates', async () => {
     const { db, service } = await createHarness()
-    db.insert(contextRooms).values([
-      { id: 'room-1', title: 'Room 1', data: {}, position: 0 },
-      { id: 'room-2', title: 'Room 2', data: {}, position: 1 },
-    ]).run()
     const target = await service.import({
       id: 'doc-block-target',
       roomId: 'room-1',
@@ -546,15 +536,17 @@ describe('document transactions', () => {
       sourceRoomId: 'room-1',
       references: [{ roomId: 'room-1', documentId: target.id, blockId: item.blockId }],
     })).toEqual([expect.objectContaining({ status: 'available', textPreview: '第一项' })])
-    expect(() => service.resolveBlockReferences({
+    // Phase 2i：引用元数据里的 roomId 不再参与校验，跨 Room 标签也照常可用。
+    expect(service.resolveBlockReferences({
       sourceRoomId: 'room-1',
       references: [{ roomId: 'room-2', documentId: target.id, blockId: item.blockId }],
-    })).toThrow(expect.objectContaining({ code: 'CROSS_ROOM_REFERENCE' }))
+    })).toEqual([expect.objectContaining({ status: 'available', textPreview: '第一项' })])
 
-    await expect(service.import({
+    // Phase 2i：正文里存量引用的 targetRoomId 只作元数据，不再阻断导入。
+    const referencing = await service.import({
       id: 'doc-cross-room-reference',
       roomId: 'room-2',
-      title: '非法引用',
+      title: '存量引用',
       contentJson: {
         type: 'doc',
         content: [{
@@ -565,12 +557,15 @@ describe('document transactions', () => {
           }],
         }],
       },
-    })).rejects.toMatchObject({ code: 'CROSS_ROOM_REFERENCE' })
+    })
+    expect(referencing.id).toBe('doc-cross-room-reference')
+    expect(service.listBlockBacklinks(target.id, item.blockId)).toEqual([
+      expect.objectContaining({ sourceDocumentId: 'doc-cross-room-reference' }),
+    ])
   })
 
   it('treats block identity as document-local and rebuilds reference backlinks', async () => {
     const { db, service } = await createHarness()
-    db.insert(contextRooms).values({ id: 'room-1', title: 'Room 1', data: {}, position: 0 }).run()
     const target = await service.import({
       id: 'doc-target-local-id', roomId: 'room-1', title: '目标文档',
       contentJson: { type: 'doc', content: [{
@@ -583,7 +578,7 @@ describe('document transactions', () => {
       contentJson: { type: 'doc', content: [{
         type: 'paragraph', attrs: { id: 'shared-block-id' }, content: [{
           type: 'text', text: '引用', marks: [{ type: 'link', attrs: {
-            href: `everroom://room/room-1/${target.id}/${targetBlockId}`,
+            href: `everroom://room/${WORKSPACE_DOCUMENT_CHANNEL}/${target.id}/${targetBlockId}`,
           } }],
         }],
       }] },
@@ -612,7 +607,6 @@ describe('document transactions', () => {
 
   it('repairs a stale derived projection from canonical content before resolving a reference', async () => {
     const { db, service } = await createHarness()
-    db.insert(contextRooms).values({ id: 'room-1', title: 'Room 1', data: {}, position: 0 }).run()
     const target = await service.import({
       id: 'doc-stale-projection', roomId: 'room-1', title: '投影修复',
       contentJson: { type: 'doc', content: [{

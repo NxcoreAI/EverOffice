@@ -311,7 +311,7 @@ interface MaterialSourceEntry {
  */
 export function inferMaterialSourcesFromReads(
   reads: { documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> },
-  readDocument: (documentId: string, roomId: string) => {
+  readDocument: (documentId: string) => {
     document: { title: string };
     blocks: Array<{ blockId: string; depth: number; textPreview: string }>;
   } | null,
@@ -329,7 +329,7 @@ export function inferMaterialSourcesFromReads(
     if (roomId && read.roomId !== roomId) continue;
     let snapshot;
     try {
-      snapshot = readDocument(read.documentId, read.roomId);
+      snapshot = readDocument(read.documentId);
     } catch {
       continue;
     }
@@ -486,7 +486,7 @@ export function createSubagentPiTools(
   options: {
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
-    resolveDocumentForDraft?: (documentId: string, roomId: string | null) => DocumentDraftSnapshot;
+    resolveDocumentForDraft?: (documentId: string) => DocumentDraftSnapshot;
     /**
      * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档、
      * 却没传 materialSources 时，从本 run 的 document_read 台账推断来源块。
@@ -796,7 +796,7 @@ export function createSubagentPiTools(
           if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
           if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
           try {
-            snapshot = options.resolveDocumentForDraft(documentId, roomId);
+            snapshot = options.resolveDocumentForDraft(documentId);
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             const code = (error as { code?: string } | null)?.code;
@@ -1019,7 +1019,7 @@ export function createSubagentPiTools(
           let fresh: DocumentDraftSnapshot | null = null;
           try {
             fresh = options.resolveDocumentForDraft
-              ? options.resolveDocumentForDraft(snapshot.document.id, roomId)
+              ? options.resolveDocumentForDraft(snapshot.document.id)
               : null;
           } catch {
             fresh = null;
@@ -1824,7 +1824,7 @@ export function createSubagentPiTools(
             ])];
             return { ...tailResult, content: JSON.stringify(tailPayload) };
           }
-          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId, roomId) ?? null;
+          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId) ?? null;
           if (!draftSnapshot) {
             return {
               content: JSON.stringify({

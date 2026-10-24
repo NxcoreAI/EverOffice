@@ -8,7 +8,6 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { runSqliteMigrations } from "@nxcore/migration-kit";
 import * as schema from "./schema.js";
 import { gatewayDataMigrations } from "./data-migrations.js";
-import { repairContextRoomSchema } from "./context-room-compatibility.js";
 
 export interface DatabaseClient {
   db: BetterSQLite3Database<typeof schema>;
@@ -235,8 +234,9 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
   ).has(column);
   const entries = readMigrationJournal(migrationsDir);
   let connectorTodosEnsured = false;
-  // 0033_room_entity_facts / 0034_room_overviews_and_corrections 建的表已随 0084 删除
-  // （room_overviews 由 canonical 链保证，早期库的形态修复见 context-room-compatibility），
+  // 0033_room_entity_facts / 0034_room_overviews_and_corrections 建的表已随 0084 删除，
+  // 0085 又删掉了最后 5 张 Room 表（context_rooms / room_overviews / room_doc_links /
+  // rooms / room_source_memberships），对应的形态修复（context-room-compatibility）一并删除，
   // 因此这里不再整体重放 0033-0035，只补仍然存活的 connector_todos。
   const ensureConnectorTodosMigration = () => {
     if (connectorTodosEnsured) return;
@@ -348,7 +348,6 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
-  repairContextRoomSchema(sqlite);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.

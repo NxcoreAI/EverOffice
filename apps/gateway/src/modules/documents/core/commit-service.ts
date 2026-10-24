@@ -5,7 +5,6 @@ import type { GatewayDatabase } from "../../../infrastructure/database/client.js
 import {
   documentVersions,
   documents,
-  roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { DocumentServiceError } from "../errors.js";
@@ -30,7 +29,11 @@ export interface DocumentCommitHooks {
 
 export interface CommitDocumentInput {
   documentId: string;
-  /** null = 工作区级文稿，不写入 room_doc_links。 */
+  /**
+   * Phase 2i：Room 维度已删，文稿一律工作区级，本字段不再参与落库或校验。
+   * 保留只因 service/route 层的 DTO 形状（ImportRoomDocumentInput 等）仍带
+   * roomId，调用方原样透传即可。
+   */
   roomId: string | null;
   title: string;
   content: TiptapJsonContent;
@@ -98,7 +101,6 @@ export class DocumentCommitService {
     const normalized = this.engine.normalizeDocument(
       input.content,
       input.documentId,
-      input.roomId,
       input.version,
     );
     const now = input.createdAt ?? new Date();
@@ -108,7 +110,8 @@ export class DocumentCommitService {
       now,
       document: {
         id: input.documentId,
-        roomId: input.roomId,
+        // 工作区级文稿：合成 DTO 恒定 roomId=null（Room 维度已删）。
+        roomId: null,
         title: input.title,
         contentJson: normalized.content,
         contentSchemaVersion: normalized.schemaVersion,
@@ -140,13 +143,6 @@ export class DocumentCommitService {
         createdAt: now,
         updatedAt: now,
       }).run();
-    if (input.roomId) {
-      tx.insert(roomDocumentLinks).values({
-        roomId: input.roomId,
-        documentId: input.documentId,
-        linkedAt: now,
-      }).run();
-    }
     enqueueSearchIndex(tx, { itemType: "document", refId: input.documentId, priority: "high" });
     if (input.writeVersion !== false && input.version > 0) {
       this.insertVersion(tx, input, normalized, now);
@@ -181,14 +177,10 @@ export class DocumentCommitService {
     const normalized = this.engine.normalizeDocument(
       input.content,
       input.documentId,
-      input.roomId,
       input.version,
     );
     const previous = this.repository.get(input.documentId);
     if (!previous) throw new Error(`Document ${input.documentId} was not found`);
-    if (previous.roomId !== input.roomId) {
-      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
-    }
     const expectedVersion = input.expectedVersion ?? previous.version;
     if (input.expectedVersion !== undefined && input.expectedVersion !== previous.version) {
       throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409, {

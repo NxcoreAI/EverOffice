@@ -95,7 +95,7 @@ describe("document_comment_add", () => {
     expect(comments.list(document.id)).toHaveLength(1);
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("document.comments.changed");
-    expect(events[0]!.roomId).toBe("room-1");
+    expect(events[0]!.roomId).toBeNull();
     expect(events[0]!.documentId).toBe(document.id);
   });
 
@@ -123,7 +123,7 @@ describe("document_comment_add", () => {
     }, { agentSessionId: "s3", runId: "run-block", roomId: "room-1" }), "BLOCK_NOT_FOUND");
   });
 
-  it("回收站文档与跨房间文档被拒", async () => {
+  it("回收站文档被拒；Phase 2i 起 context.roomId 不再构成归属校验", async () => {
     const { registry, documents } = await createHarness("comment-tool-guard");
     const document = await seedDocument(documents, "doc-tool-4");
     await documents.delete(document.id);
@@ -133,10 +133,11 @@ describe("document_comment_add", () => {
     }, { agentSessionId: "s4", runId: "run-trash", roomId: "room-1" }), "DOCUMENT_TRASHED");
 
     const other = await seedDocument(documents, "doc-tool-5");
-    await expectServiceError(registry.execute(TOOL, {
+    const crossRoom = await registry.execute(TOOL, {
       documentId: other.id,
       body: "建议",
-    }, { agentSessionId: "s5", runId: "run-room", roomId: "room-other" }), "ROOM_MISMATCH");
+    }, { agentSessionId: "s5", runId: "run-room", roomId: "room-other" });
+    expect(crossRoom.structuredContent).toMatchObject({ documentId: other.id });
   });
 
   it("单 run 评论数超限后拒绝；新 run 重新计数", async () => {

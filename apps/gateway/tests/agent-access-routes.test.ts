@@ -176,7 +176,8 @@ describe("agent-access REST（全局 bearer）", () => {
     });
     expect(selftest.statusCode).toBe(200);
     const steps = (selftest.json() as { steps: Record<string, { status: string }> }).steps;
-    expect(steps.list!.status).toBe("empty");
+    // Phase 2i：第一步改为 everroom_get_status（list_rooms 已删），空库也返回 ok。
+    expect(["ok", "empty"]).toContain(steps.list!.status);
     expect(steps.search!.status).toBe("empty");
     expect(steps.fetch!.status).toBe("empty");
     expect(["ok", "duplicate"]).toContain(steps.submit!.status);

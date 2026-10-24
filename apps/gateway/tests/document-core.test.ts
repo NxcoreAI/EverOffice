@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
   documentYjsUpdates,
@@ -10,7 +11,6 @@ import {
   documents,
   documentVersions,
   jobs,
-  roomDocumentLinks,
 } from "../src/infrastructure/database/schema.js";
 import {
   DocumentCommitService,
@@ -28,9 +28,7 @@ async function createCore() {
   const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
   disposables.push(() => sqlite.close());
   const repository = new DocumentRepository(db);
-  const engine = new DocumentContentEngine({
-    findDocumentRoom: (documentId) => repository.get(documentId)?.roomId ?? null,
-  });
+  const engine = new DocumentContentEngine();
   return { db, repository, engine, commits: new DocumentCommitService(db, repository, engine) };
 }
 
@@ -46,9 +44,9 @@ describe("document core", () => {
       type: "doc",
       content: [{ type: "image", attrs: { src: "data:image/png;base64,iVBORw0KGgo=" } }],
     };
-    expect(() => engine.normalizeDocument(embedded, "doc-1", "room-1"))
+    expect(() => engine.normalizeDocument(embedded, "doc-1"))
       .toThrowError(expect.objectContaining({ code: "EMBEDDED_IMAGE_NOT_ALLOWED", statusCode: 400 }));
-    expect(engine.normalizeStoredDocument(embedded, "doc-legacy", "room-1", 3).content)
+    expect(engine.normalizeStoredDocument(embedded, "doc-legacy", 3).content)
       .toMatchObject(embedded);
   });
 
@@ -60,10 +58,12 @@ describe("document core", () => {
         { type: "documentTitle", content: [{ type: "text", text: "污染标题" }] },
         { type: "paragraph", content: [{ type: "text", text: "片段正文" }] },
       ],
-    }, "doc-1", "room-1");
+    }, "doc-1");
 
     expect(fragment.content.content?.map((node) => node.type)).toEqual(["paragraph"]);
-    expect(fragment.blocks).toEqual([expect.objectContaining({ documentId: "doc-1", roomId: "room-1" })]);
+    expect(fragment.blocks).toEqual([
+      expect.objectContaining({ documentId: "doc-1", roomId: WORKSPACE_DOCUMENT_CHANNEL }),
+    ]);
   });
 
   it("routes stored content through schema migration and rejects newer schemas", () => {
@@ -71,7 +71,6 @@ describe("document core", () => {
     const migrated = engine.normalizeStoredDocument(
       { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "legacy" }] }] },
       "doc-legacy",
-      "room-1",
       1,
       4,
     );
@@ -81,7 +80,6 @@ describe("document core", () => {
     expect(() => engine.normalizeStoredDocument(
       { type: "doc", content: [] },
       "doc-future",
-      "room-1",
       999,
     )).toThrowError(expect.objectContaining({ code: "UNSUPPORTED_DOCUMENT_SCHEMA", statusCode: 409 }));
   });
@@ -578,8 +576,8 @@ describe("document core", () => {
     expect(result?.blocks).toHaveLength(1_001);
   });
 
-  it("creates workspace-level documents with no Room link (P0-2)", async () => {
-    const { db, commits, repository } = await createCore();
+  it("creates workspace-level documents only (Phase 2i: no Room dimension)", async () => {
+    const { commits, repository } = await createCore();
     const created = commits.create({
       documentId: "doc-workspace",
       roomId: null,
@@ -589,20 +587,16 @@ describe("document core", () => {
     });
 
     expect(created.roomId).toBeNull();
-    const links = db.select().from(roomDocumentLinks).all();
-    expect(links).toHaveLength(0);
     expect(repository.get("doc-workspace")?.roomId).toBeNull();
-    expect(repository.list(null).map((document) => document.id)).toEqual(["doc-workspace"]);
-    // 传具体 roomId 时仍按 Room 过滤，工作区文稿不混入。
-    expect(repository.list("room-core")).toHaveLength(0);
+    expect(repository.list().map((document) => document.id)).toEqual(["doc-workspace"]);
   });
 
-  it("keeps Room-scoped documents visible through the workspace-wide listing", async () => {
+  it("lists every document as workspace-level regardless of the roomId passed at create time", async () => {
     const { commits, repository } = await createCore();
     commits.create({
       documentId: "doc-in-room",
       roomId: "room-core",
-      title: "房内文稿",
+      title: "旧归属文稿",
       content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
       version: 1,
     });
@@ -614,9 +608,9 @@ describe("document core", () => {
       version: 1,
     });
 
-    const workspaceWide = repository.list(null).map((document) => [document.id, document.roomId]);
+    const workspaceWide = repository.list().map((document) => [document.id, document.roomId]);
     expect(workspaceWide).toEqual([
-      ["doc-in-room", "room-core"],
+      ["doc-in-room", null],
       ["doc-workspace-only", null],
     ]);
   });

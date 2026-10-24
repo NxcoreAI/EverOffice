@@ -38,7 +38,7 @@ export function queryPlugins(
     execute: (_args, context) => {
       return success({
         roomId: context.roomId,
-        documents: backend.list(context.roomId).map((document) => ({
+        documents: backend.list().map((document) => ({
           id: document.id,
           // 桌面端选择卡片要求每条候选文档自带 roomId（否则按无效条目丢弃，卡片永远为空）
           roomId: context.roomId,
@@ -76,7 +76,7 @@ export function queryPlugins(
     },
     annotations: annotations(true),
     execute: (args, context) => {
-      const result = backend.readDocumentForAgent(stringArg(args, "documentId"), context.roomId);
+      const result = backend.readDocumentForAgent(stringArg(args, "documentId"));
       const editableBlocks = result.blocks.filter((block) => block.depth === 0);
       const receipt = reads?.issue(
         context,

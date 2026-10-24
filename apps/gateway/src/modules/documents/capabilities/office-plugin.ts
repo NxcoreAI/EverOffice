@@ -193,7 +193,6 @@ export function officePlugin(
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const title = stringArg(args, "title").trim().slice(0, 120);
       const html = stringArg(args, "html");
       if (html.length > MAX_HTML_LENGTH) {
@@ -255,7 +254,6 @@ export function officePlugin(
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const title = stringArg(args, "title").trim().slice(0, 120);
       const outline = normalizeOutline(args.outline);
       const fileName = optionalFileName(args, ".pptx");
@@ -313,7 +311,6 @@ export function officePlugin(
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const fileId = stringArg(args, "fileId").trim();
       const slideIndex = args.slideIndex;
       if (typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0) {
@@ -404,7 +401,6 @@ export function officePlugin(
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const title = stringArg(args, "title").trim().slice(0, 120);
       const sheets = normalizeSheets(args.sheets);
       const fileName = optionalFileName(args, ".xlsx");
@@ -453,7 +449,6 @@ export function officePlugin(
     },
     annotations: annotations(true, false),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const rawFileId = args.fileId;
       const fileId = typeof rawFileId === "string" && rawFileId.trim() ? rawFileId.trim() : "active";
       const info = await bridge.readDeck(fileId);
@@ -497,7 +492,6 @@ export function officePlugin(
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const fileId = stringArg(args, "fileId").trim();
       if (!Array.isArray(args.ops) || args.ops.length === 0) {
         throw new Error("INVALID_REQUEST: ops 必须是非空数组（每项一个操作对象）");
@@ -526,7 +520,7 @@ export function officePlugin(
   };
 
   return {
-    manifest: manifest("office.create", "mutation", null, null, true, false),
+    manifest: manifest("office.create", "mutation", null, null, false, false),
     promptGuidelines: [
       "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 office_create，"
       + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides 子代理（create 先方案后落页，edit 直改）完成；"

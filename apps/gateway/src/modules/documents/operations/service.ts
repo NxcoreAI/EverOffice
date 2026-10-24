@@ -179,9 +179,7 @@ export class DocumentOperationService {
     private readonly broker: DocumentEventBroker,
   ) {
     this.repository = new DocumentRepository(db);
-    const engine = new DocumentContentEngine({
-      findDocumentRoom: (documentId) => this.repository.get(documentId)?.roomId ?? null,
-    });
+    const engine = new DocumentContentEngine();
     this.commits = new DocumentCommitService(db, this.repository, engine);
   }
 
@@ -711,7 +709,8 @@ export class DocumentOperationService {
     input: AtomicDocumentCommitInput,
   ): PreparedDocumentCommit {
     const operationDocumentId = operation.documentId ?? this.draftDocumentId(operation);
-    if (!operationDocumentId || input.documentId !== operationDocumentId || input.roomId !== operation.roomId) {
+    // Phase 2i：roomId 不再参与目标校验（文稿恒为工作区级，commit 也忽略它）。
+    if (!operationDocumentId || input.documentId !== operationDocumentId) {
       throw new DocumentServiceError("OPERATION_DOCUMENT_MISMATCH", "Commit target does not match the operation", 409);
     }
     const current = this.repository.get(input.documentId);
@@ -746,7 +745,6 @@ export class DocumentOperationService {
       || operation.documentId !== null
       || !draftDocumentId
       || input.documentId !== draftDocumentId
-      || input.roomId !== operation.roomId
     ) {
       throw new DocumentServiceError("OPERATION_DOCUMENT_MISMATCH", "Create target does not match the operation", 409);
     }

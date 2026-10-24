@@ -259,7 +259,7 @@ describe('Pi document tool integration', () => {
       'document_write_commit',
     ])
     expect(firstEvents.at(-1)?.type).toBe('run.completed')
-    expect(service.list('room-a')).toEqual([
+    expect(service.list()).toEqual([
       expect.objectContaining({ title: 'Room A 文档', status: 'active', version: 1 }),
     ])
 
@@ -276,7 +276,10 @@ describe('Pi document tool integration', () => {
       'document_write_begin',
       'document_write_abort',
     ])
-    expect(service.list('room-b')).toEqual([])
+    // Phase 2i：工作区级文稿库不分区，run-b 中止后只剩 run-a 提交的那一篇。
+    expect(service.list()).toEqual([
+      expect.objectContaining({ title: 'Room A 文档', status: 'active', version: 1 }),
+    ])
 
     const persistedOperations = db.select().from(documentOperations)
       .orderBy(asc(documentOperations.createdAt)).all()
@@ -556,7 +559,7 @@ describe('Pi document tool integration', () => {
     })
     const eventsPromise = collect(run.events)
     await firstAppend
-    expect(service.list('room-cancel')).toEqual([
+    expect(service.list()).toEqual([
       expect.objectContaining({
         title: '等待 ACK 的文档',
         status: 'draft',
@@ -569,7 +572,7 @@ describe('Pi document tool integration', () => {
     const events = await eventsPromise
 
     expect(events.at(-1)?.type).toBe('run.cancelled')
-    expect(service.list('room-cancel')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-cancel')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
@@ -592,7 +595,7 @@ describe('Pi document tool integration', () => {
     const disposeEvents = await disposeEventsPromise
 
     expect(disposeEvents.at(-1)?.type).toBe('run.cancelled')
-    expect(service.list('room-cancel')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-dispose')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
@@ -680,7 +683,7 @@ describe('Pi document tool integration', () => {
     })
     const failedEvents = await collect(failedRun.events)
     expect(failedEvents.at(-1)?.type).toBe('run.failed')
-    expect(service.list('room-terminal')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-failed')).get()).toMatchObject({
       agentSessionId: 'session-terminal',
@@ -698,7 +701,7 @@ describe('Pi document tool integration', () => {
     })
     const completedEvents = await collect(completedRun.events)
     expect(completedEvents.at(-1)?.type).toBe('run.completed')
-    expect(service.list('room-terminal')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-uncommitted')).get()).toMatchObject({
       agentSessionId: 'session-terminal',

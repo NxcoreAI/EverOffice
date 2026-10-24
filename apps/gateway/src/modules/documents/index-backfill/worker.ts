@@ -8,11 +8,9 @@ import { buildIndexProbe } from "@nxcore/document-model";
 
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
-  contextRooms,
   documents as documentsTable,
   gatewayMetadata,
   jobs,
-  roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
 import { roomScopeId } from "../room-scope.js";
@@ -55,7 +53,8 @@ interface IndexBackfillLogger {
 /** 管线依赖的最小文档面（生产传 DocumentService，测试可 stub）。 */
 export interface DocumentIndexBackfillDocuments {
   get(documentId: string): RoomDocument | null;
-  list(roomId: string): RoomDocument[];
+  /** 工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。 */
+  list(): RoomDocument[];
   listBlocks(documentId: string): DocumentBlockSummary[];
   save(documentId: string, input: { baseVersion: number; contentJson: TiptapJsonContent }): Promise<RoomDocument>;
 }
@@ -189,7 +188,6 @@ export class DocumentIndexBackfillWorker {
         isNull(documentsTable.deletedAt),
         isNull(documentsTable.activeTransactionId),
         lte(documentsTable.updatedAt, cutoff),
-        isNull(contextRooms.deletedAt),
       ];
       if (cursor.updatedAt != null) {
         const cursorUpdatedAt = new Date(cursor.updatedAt);
@@ -205,10 +203,7 @@ export class DocumentIndexBackfillWorker {
         id: documentsTable.id,
         version: documentsTable.version,
         updatedAt: documentsTable.updatedAt,
-        roomId: roomDocumentLinks.roomId,
       }).from(documentsTable)
-        .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documentsTable.id))
-        .innerJoin(contextRooms, eq(contextRooms.id, roomDocumentLinks.roomId))
         .where(and(...conditions))
         .orderBy(asc(documentsTable.updatedAt), asc(documentsTable.id))
         .limit(batchSize)
@@ -230,7 +225,6 @@ export class DocumentIndexBackfillWorker {
           seen.add(row.id);
           enqueueDocumentIndexBackfill(tx, {
             documentId: row.id,
-            roomId: row.roomId,
             version: row.version,
           }, now);
           enqueued += 1;
@@ -534,7 +528,7 @@ export class DocumentIndexBackfillWorker {
   }
 
   private collectCandidates(document: RoomDocument): IndexSourceCandidate[] {
-    const sourceDocuments = this.documents.list(roomScopeId(document.roomId))
+    const sourceDocuments = this.documents.list()
       .filter((candidate) =>
         candidate.id !== document.id
         && !candidate.deletedAt

@@ -5,7 +5,6 @@ import { BLOCK_INDEX_MARK_NODE } from "../block-index-mark.js";
 import { applyDocumentMutation, findBlockPath, mutationTargetBlockIds, targetsOverlap, tiptapText } from "../content-model.js";
 import { DocumentContentEngine } from "../core/index.js";
 import { DocumentServiceError } from "../errors.js";
-import { roomScopeId } from "../room-scope.js";
 import type { DocumentOperationCommandMutation, DocumentOperationService } from "../operations/service.js";
 import type { DocumentReadAuthority } from "./read-authority.js";
 import { PATCH_TARGET_SCHEMA } from "./schemas.js";
@@ -86,7 +85,6 @@ function resolveRunningOperation(
 function authoritativeDocument(backend: CapabilityBackend, operation: DocumentOperation) {
   const document = operation.documentId ? backend.get(operation.documentId) : null;
   if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-  if (document.roomId !== operation.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
   if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
   if (document.activeTransactionId && document.activeTransactionId !== operation.id) {
     throw new DocumentServiceError("DOCUMENT_BUSY", "Document is busy", 409);
@@ -102,13 +100,13 @@ function authoritativeDocument(backend: CapabilityBackend, operation: DocumentOp
   return document;
 }
 
-function parseFragment(backend: CapabilityBackend, documentId: string, roomId: string, source: string): TiptapJsonContent[] {
-  const engine = new DocumentContentEngine({ findDocumentRoom: (id) => backend.get(id)?.roomId ?? null });
+function parseFragment(documentId: string, source: string): TiptapJsonContent[] {
+  const engine = new DocumentContentEngine();
   try {
     const parsed = sanitizeAgentDocumentTables(
       parseImportedMarkdown(source) as TiptapJsonContent,
     ).content;
-    return engine.normalizeFragment(parsed, documentId, roomId).content.content ?? [];
+    return engine.normalizeFragment(parsed, documentId).content.content ?? [];
   } catch (error) {
     if (error instanceof DocumentServiceError) throw error;
     throw new DocumentServiceError(
@@ -145,7 +143,7 @@ function validatedReplacementMarkdown(
   if (Buffer.byteLength(source, "utf8") > CHUNK_MAX_BYTES) {
     throw new DocumentServiceError("SIZE_LIMIT", "Replacement Markdown exceeds 64 KiB");
   }
-  const content = parseFragment(backend, document.id, roomScopeId(document.roomId), source);
+  const content = parseFragment(document.id, source);
   if (!content.length) {
     throw new DocumentServiceError("EMPTY_REPLACEMENT_MARKDOWN", "Replacement Markdown cannot be empty");
   }
@@ -246,7 +244,7 @@ function isIndexMarksOnlyItems(items: DocumentOperationItem[]): boolean {
  * 已删或 blockId 对不上都拒绝——把"静默悬空标记"变成可重试的明确报错，并随错误
  * 回传出问题文档的当前块清单（截断），调用方不重读也能直接换用合法 id 自纠。
  */
-function validateIndexMarkTargets(backend: CapabilityBackend, roomId: string, fragment: TiptapJsonContent[]): void {
+function validateIndexMarkTargets(backend: CapabilityBackend, fragment: TiptapJsonContent[]): void {
   const invalid: Array<{ documentId: string; blockId: string }> = [];
   const byDocument = new Map<string, Set<string>>();
   const visit = (node: TiptapJsonContent): void => {
@@ -274,7 +272,7 @@ function validateIndexMarkTargets(backend: CapabilityBackend, roomId: string, fr
   for (const [documentId, blockIds] of byDocument) {
     let blocks: Array<{ blockId: string; textPreview: string }>;
     try {
-      blocks = backend.readDocumentForAgent(documentId, roomId).blocks
+      blocks = backend.readDocumentForAgent(documentId).blocks
         .map((block) => ({ blockId: block.blockId, textPreview: block.textPreview }));
     } catch (error) {
       if (error instanceof DocumentServiceError
@@ -445,7 +443,6 @@ function beginTool(
       if (kind !== "continue" && kind !== "edit") throw new Error("INVALID_REQUEST: kind must be continue or edit");
       const document = backend.get(stringArg(args, "documentId"));
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (context.roomId !== null && document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document does not belong to this Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
       if (document.activeTransactionId) throw new DocumentServiceError("DOCUMENT_BUSY", "Document is busy", 409);
       const baseVersion = integerArg(args, "baseVersion");
@@ -640,7 +637,7 @@ function hunkTool(
         && current.items.some((item) => item.target && targetsOverlap(document.contentJson, item.target, normalized.target))) {
         throw new DocumentServiceError("PATCH_HUNK_OVERLAP", "Operation items must be independently applicable", 409);
       }
-      let after = kind === "delete" ? [] : parseFragment(backend, document.id, roomScopeId(document.roomId), source);
+      let after = kind === "delete" ? [] : parseFragment(document.id, source);
       const continuationProposal = continuation
         ? [...current.items.flatMap((item) => item.after), ...after]
         : after;
@@ -686,7 +683,7 @@ function hunkTool(
       }
       // 块索引标记的目标必须是本 Room 内真实存在的块（id 照抄 document_read）。
       // Agent 手写/截短的 id 在此被拒绝并给出可重试的明确原因，而不是落成悬空标记。
-      validateIndexMarkTargets(backend, roomScopeId(document.roomId), after);
+      validateIndexMarkTargets(backend, after);
       const applied = applyDocumentMutation(proposedContent(document.contentJson, current.items), kind, normalized.target, after);
       if (!continuation && kind === "replace" && equivalentContent(applied.before, after)) {
         throw new DocumentServiceError(
