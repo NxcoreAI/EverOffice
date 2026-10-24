@@ -163,9 +163,6 @@ export class DocumentCapabilityRegistry {
     context: DocumentExecutionContext,
     args: Record<string, unknown> = {},
   ): void {
-    if (manifest.requiresRoom && !context.roomId) {
-      throw new DocumentServiceError("ROOM_SELECTION_REQUIRED", "ROOM_SELECTION_REQUIRED: Select a Context Room before using this capability", 409);
-    }
     const hasRunOperation = manifest.type === "mutation"
       && typeof this.operations?.list === "function"
       && this.operations.list({

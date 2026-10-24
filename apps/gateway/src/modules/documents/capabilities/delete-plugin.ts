@@ -69,7 +69,7 @@ export function deletePlugin(backend: CapabilityBackend): DocumentCapabilityPlug
   };
 
   return {
-    manifest: manifest("document.delete", "mutation", null, null, false, true),
+    manifest: manifest("document.delete", "mutation", null, null, true),
     promptGuidelines: [
       "只有用户明确要求删除文档（如「删掉这篇」「把它移到回收站」）时才调用 document_delete："
       + "先用 document_list 或 document_read 确认目标文档，拿不准用户指哪篇时先向用户复述标题核对；"

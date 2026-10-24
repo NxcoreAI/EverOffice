@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { KnowledgeRuntimeConfig, MemoryRuntimeConfig } from "@nxcore/agent-runtime-pi";
 // 阶段二：注册表只被用于「读取元数据」（env 名/默认 configKey），provider 文件本身
 // 无副作用依赖，可安全进入 config 层（新增 provider 时 config 解析自动跟随注册表）。
 import { SYNC_PROVIDERS } from "@nxcore/connectors-module/sync-providers/index.js";
@@ -25,7 +24,6 @@ const AgentRuntimeSchema = Type.Union([
   Type.Literal("fake"),
   Type.Literal("pi"),
 ]);
-const AsrProviderSchema = Type.Union([Type.Literal("disabled"), Type.Literal("aliyun")]);
 const AiApiSchema = Type.Union([
   Type.Literal("openai-completions"),
   Type.Literal("openai-responses"),
@@ -59,7 +57,6 @@ const RawConfigSchema = Type.Object(
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
-    aiTranscriptionModel: Type.String(),
     aiSlidesReviewerModel: Type.String(),
     /** 审页档独立预算：视觉模型输出上限/窗口/思考档（缺省沿用主模型档）。 */
     aiSlidesReviewerMaxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -71,9 +68,7 @@ const RawConfigSchema = Type.Object(
     aiApi: AiApiSchema,
     aiMaxTokens: Type.Integer({ minimum: 1 }),
     aiBackgroundMaxTokens: Type.Integer({ minimum: 1 }),
-    aiTranscriptionMaxTokens: Type.Integer({ minimum: 1 }),
     aiLiteMaxTokens: Type.Integer({ minimum: 1 }),
-    diaryMaxTokens: Type.Integer({ minimum: 1 }),
     aiContextWindow: Type.Integer({ minimum: 1 }),
     aiTemperature: Type.Number({ minimum: 0, maximum: 2 }),
     aiReasoning: AiReasoningSchema,
@@ -94,65 +89,13 @@ const RawConfigSchema = Type.Object(
     webSearchBaseUrl: Type.String(),
     webSearchModel: Type.String({ minLength: 1 }),
     webSearchApiKey: Type.String(),
-    asrProvider: AsrProviderSchema,
-    asrAliyunApiKey: Type.String(),
-    asrAliyunBaseUrl: Type.String(),
-    asrAliyunModel: Type.String({ minLength: 1 }),
-    asrAliyunOssRegion: Type.String(),
-    asrAliyunOssBucket: Type.String(),
-    asrAliyunOssAccessKeyId: Type.String(),
-    asrAliyunOssAccessKeySecret: Type.String(),
-    asrAliyunOssStsToken: Type.String(),
-    asrAliyunOssPrefix: Type.String({ minLength: 1 }),
     nangoConnectorPollMs: Type.Integer({ minimum: 1000 }),
-    memoryEnabled: Type.Boolean(),
-    memoryBaseUrl: Type.String(),
-    memoryApiKey: Type.String(),
-    memoryServiceId: Type.String({ minLength: 1 }),
-    memoryTeamId: Type.String({ minLength: 1 }),
-    memoryAgentId: Type.String({ minLength: 1 }),
-    memoryUserId: Type.String({ minLength: 1 }),
-    memoryRecallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
-    memoryCharBudget: Type.Integer({ minimum: 200 }),
-    memoryRoomDeriveEnabled: Type.Boolean(),
-    memoryRoomDeriveIntervalMs: Type.Integer({ minimum: 10_000 }),
     documentIndexBackfillEnabled: Type.Boolean(),
     documentIndexBackfillScanIntervalMs: Type.Integer({ minimum: 1_000 }),
     documentIndexBackfillQuietWindowMs: Type.Integer({ minimum: 0 }),
     documentIndexBackfillLlmEnabled: Type.Boolean(),
     documentIndexBackfillRescanMs: Type.Integer({ minimum: 0 }),
     documentIndexBackfillReadTriggerCooldownMs: Type.Integer({ minimum: 0 }),
-    knowledgeEnabled: Type.Boolean(),
-    knowledgeBaseUrl: Type.String(),
-    knowledgeServiceId: Type.String({ minLength: 1 }),
-    knowledgeTeamId: Type.String({ minLength: 1 }),
-    knowledgeWikiId: Type.String(),
-    knowledgeRoomWikisEnabled: Type.Boolean(),
-    knowledgeIngestDebounceMs: Type.Integer({ minimum: 0 }),
-    knowledgeRouterEnabled: Type.Boolean(),
-    knowledgeEntityPromoteScore: Type.Number({ exclusiveMinimum: 0 }),
-    knowledgeEntityPromoteSources: Type.Integer({ minimum: 1 }),
-    knowledgeRoomRelationMinScore: Type.Number({ exclusiveMinimum: 0 }),
-    knowledgeEntityMergeAutoDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
-    knowledgeEntityMergeJudgeDice: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
-    knowledgeLlmBaseUrl: Type.String(),
-    knowledgeLlmApiKey: Type.String(),
-    knowledgeLlmModel: Type.String(),
-    knowledgeEmbeddingModel: Type.String(),
-    knowledgeEmbeddingBaseUrl: Type.String(),
-    knowledgeEmbeddingApiKey: Type.String(),
-    ingestFilterEnabled: Type.Boolean(),
-    ingestFilterMode: Type.Union([Type.Literal("observe"), Type.Literal("enforce")]),
-    ingestFilterConfidenceThreshold: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
-    ingestFilterBatchSize: Type.Integer({ minimum: 1, maximum: 20 }),
-    ingestFilterBatchDelayMs: Type.Integer({ minimum: 0 }),
-    ingestFilterExemptSourceKinds: Type.String(),
-    ingestFilterToolsEnabled: Type.Boolean(),
-    ingestFilterMaxToolCalls: Type.Integer({ minimum: 0, maximum: 128 }),
-    ingestFilterRulesFile: Type.String(),
-    ingestFilterRulesMaxBytes: Type.Integer({ minimum: 256, maximum: 65_536 }),
-    ingestFilterInsightEnabled: Type.Boolean(),
-    ingestFilterInsightIntervalMs: Type.Integer({ minimum: 60_000 }),
     notificationBridgeUrl: Type.String(),
     notificationBridgeToken: Type.String(),
     officeBridgeUrl: Type.String(),
@@ -165,22 +108,6 @@ export type LogLevel = typeof LogLevelSchema.static;
 export type AgentRuntimeMode = typeof AgentRuntimeSchema.static;
 export type AiApi = typeof AiApiSchema.static;
 export type AiReasoning = typeof AiReasoningSchema.static;
-
-export interface AliyunAsrConfig {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-  oss: AliyunOssConfig | null;
-}
-
-export interface AliyunOssConfig {
-  region: string;
-  bucket: string;
-  accessKeyId: string;
-  accessKeySecret: string;
-  stsToken?: string;
-  prefix: string;
-}
 
 /** 百炼（DashScope compatible-mode）联网搜索配置，注入 agent 的 web_search 工具。 */
 export interface WebSearchConfig {
@@ -217,69 +144,6 @@ export interface PiRuntimeConfig {
   builtinTools?: string[];
   /** MCP 服务器注入配置（pi-mcp-adapter）；读取 NXCORE_MCP_CONFIG 或 dataDir/agent/mcp.json。 */
   mcp?: { mcpServers: Record<string, unknown> };
-  memory?: MemoryRuntimeConfig;
-  knowledge?: KnowledgeRuntimeConfig;
-}
-
-/** gateway 侧 knowledge 模块配置（Room wiki 注册表 + 实体晋升制，docs/entity-room-plan.md §6）。 */export interface KnowledgeGatewayConfig {
-  baseUrl: string;
-  serviceId: string;
-  teamId: string;
-  /** Room 级 wiki 总开关；关闭时本模块不接管任何文档事件。 */
-  roomWikisEnabled: boolean;
-  /** 文档落定后的入队防抖窗口（毫秒）。 */
-  ingestDebounceMs: number;
-  /** 自动归类路由总开关（③′抽取→③″解析→④链接）；关闭时仅 ① 入口直连 ingest。 */
-  routerEnabled: boolean;
-  /** 晋升证据分阈值（primary +1.0 / mention +0.4 / manual +1.5 累积）。 */
-  entityPromoteScore: number;
-  /** 晋升最小资料数（防单份资料多角色刷分）。 */
-  entityPromoteSources: number;
-  /** Minimum score for an automatically visible Room relation. */
-  roomRelationMinScore: number;
-  /** 弱-弱确定性自动合并线（免 LLM 判定）。 */
-  mergeAutoDice: number;
-  /** LLM 同一性判定带下限（[judge, auto) 走判定）。 */
-  mergeJudgeDice: number;
-  /** 抽取/判定/登记用的 LLM；缺省回退 NXCORE_AI_*。 */
-  llm: KnowledgeLlmConfig | null;
-  /** 消歧 tie-break 的 embedding 端点（与抽取 LLM 同源配置）。 */
-  embeddingLlm: KnowledgeLlmConfig | null;
-  /** embedding 模型；空 = 关闭（消歧回退证据分高者）。 */
-  embeddingModel: string;
-}
-
-export interface KnowledgeLlmConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
-/** agent 过滤器（ingest 第一级闸门）：无价值资料不进下游链路。 */
-export interface IngestFilterConfig {
-  enabled: boolean;
-  /** observe = 只记 verdict 不拦截；enforce = 拦截。 */
-  mode: "observe" | "enforce";
-  /** 低于阈值的 filtered 判定放行（宁漏勿错杀）。 */
-  confidenceThreshold: number;
-  /** 去抖批大小（一次 agent run 批量判定条数上限）。 */
-  batchSize: number;
-  /** 去抖批等待窗口 ms。 */
-  batchDelayMs: number;
-  /** 豁免 sourceKind（用户手写/录音转写内容默认豁免，agent 不判生死）。 */
-  exemptSourceKinds: string[];
-  /** 只读 wiki/记忆工具总开关（false = 零工具纯 prompt，现行为）。 */
-  toolsEnabled: boolean;
-  /** 单 run 工具调用上限（过滤器专用 runtime 用）。 */
-  maxToolCalls: number;
-  /** 部署覆盖层规则文档路径。 */
-  rulesFile: string;
-  /** 单段注入截断上限（字节）。 */
-  rulesMaxBytes: number;
-  /** 洞察维护 job 开关。 */
-  insightEnabled: boolean;
-  /** 洞察刷新周期 ms。 */
-  insightIntervalMs: number;
 }
 
 export interface OpenConnectorCliConfig {
@@ -290,11 +154,6 @@ export interface OpenConnectorCliConfig {
   adminToken?: string;
   configDirectory: string;
   dataDirectory: string;
-}
-
-export interface MemoryRoomDeriveConfig {
-  enabled: boolean;
-  intervalMs: number;
 }
 
 export interface DocumentIndexBackfillConfig {
@@ -320,30 +179,20 @@ export interface GatewayConfig {
   agentRuntime: AgentRuntimeMode;
   externalCallUserId?: string;
   externalCallWorkspaceId?: string;
-  memory: MemoryRuntimeConfig | null;
-  /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
-  memoryRoomDerive?: MemoryRoomDeriveConfig;
   documentIndexBackfill?: DocumentIndexBackfillConfig;
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
-  knowledge: KnowledgeGatewayConfig | null;
-  /** agent 过滤器（ingest 第一级闸门）配置；enabled=false 直通。 */
-  ingestFilter: IngestFilterConfig;
   backgroundPi: PiRuntimeConfig | null;
-  /** 转写总结专用档：独立于 background 换模型；model 为空＝未配置（回退 backgroundPi）。 */
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
   /** 审页代理专用档（slides-reviewer，需多模态模型）；未配置＝回退 backgroundPi。 */
   slidesReviewerPi?: PiRuntimeConfig | null;
-  diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
   mcpConfigPath: string;
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
   webSearch: WebSearchConfig | null;
   vlm?: VlmConfig | null;
-  asrInputDir: string;
-  asr: AliyunAsrConfig | null;
   /** 链路A连接编排（P3 Nango 删除后仅剩编排自身配置；命名遗留 P4 清理）。 */
   nangoConnector?: {
     enabled: boolean;
@@ -461,23 +310,6 @@ function parseAiReasoning(name: string, value: string | undefined): AiReasoning 
   return trimmed as AiReasoning;
 }
 
-function parseFraction(name: string, value: string): number {
-  const fraction = Number(value);
-  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
-    throw new Error(`Invalid ${name}: expected a fraction in (0, 1]`);
-  }
-  return fraction;
-}
-
-/** 晋升证据分阈值等正实数配置用这个。 */
-function parsePositiveNumber(name: string, value: string): number {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) {
-    throw new Error(`Invalid ${name}: expected a positive number`);
-  }
-  return number;
-}
-
 function validateAiEndpoint(value: string, name = "NXCORE_AI_BASE_URL"): void {
   let url: URL;
   try {
@@ -487,33 +319,6 @@ function validateAiEndpoint(value: string, name = "NXCORE_AI_BASE_URL"): void {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
-  }
-}
-
-function validateHttpEndpoint(name: string, value: string): void {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`Invalid ${name}: expected an absolute HTTPS URL`);
-  }
-  if (url.protocol !== "https:") {
-    throw new Error(`Invalid ${name}: expected an absolute HTTPS URL`);
-  }
-}
-
-/** MemoryCore 通常是本地/内网 HTTP 服务：允许 localhost/127.0.0.1 的 HTTP 与任意 HTTPS。 */
-function validateMemoryEndpoint(name: string, value: string): void {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`Invalid ${name}: expected an absolute HTTP(S) URL`);
-  }
-  const isLoopbackHttp = url.protocol === "http:"
-    && (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1");
-  if (url.protocol !== "https:" && !isLoopbackHttp) {
-    throw new Error(`Invalid ${name}: plain HTTP is only allowed for loopback addresses`);
   }
 }
 
@@ -618,7 +423,6 @@ export function loadConfig(
     aiProvider: env.NXCORE_AI_PROVIDER?.trim() ?? "",
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
-    aiTranscriptionModel: env.NXCORE_AI_TRANSCRIPTION_MODEL?.trim() || "",
     aiSlidesReviewerModel: env.NXCORE_AI_SLIDES_REVIEWER_MODEL?.trim() || "",
     aiSlidesReviewerMaxTokens: env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS?.trim()
       ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS", env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS)
@@ -638,18 +442,10 @@ export function loadConfig(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
     ),
-    aiTranscriptionMaxTokens: parsePositiveInteger(
-      "NXCORE_AI_TRANSCRIPTION_MAX_TOKENS",
-      env.NXCORE_AI_TRANSCRIPTION_MAX_TOKENS ?? env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
-    ),
     aiLiteModel: env.NXCORE_AI_LITE_MODEL?.trim() ?? "",
     aiLiteMaxTokens: parsePositiveInteger(
       "NXCORE_AI_LITE_MAX_TOKENS",
       env.NXCORE_AI_LITE_MAX_TOKENS ?? env.NXCORE_AI_MAX_TOKENS ?? "8192",
-    ),
-    diaryMaxTokens: parsePositiveInteger(
-      "NXCORE_DIARY_MAX_TOKENS",
-      env.NXCORE_DIARY_MAX_TOKENS ?? "16384",
     ),
     aiContextWindow: parsePositiveInteger(
       "NXCORE_AI_CONTEXT_WINDOW",
@@ -699,50 +495,13 @@ export function loadConfig(
     webSearchModel: env.NXCORE_WEB_SEARCH_MODEL?.trim() ?? "qwen-plus",
     webSearchApiKey: env.NXCORE_WEB_SEARCH_API_KEY?.trim()
       ?? env.DASHSCOPE_API_KEY?.trim()
-      ?? env.NXCORE_ASR_ALIYUN_API_KEY?.trim()
       ?? (env.NXCORE_AI_BASE_URL?.trim().toLowerCase().startsWith("https://dashscope.aliyuncs.com/")
         ? env.NXCORE_AI_API_KEY?.trim()
         : "")
       ?? "",
-    asrProvider: env.NXCORE_ASR_PROVIDER ?? "disabled",
-    asrAliyunApiKey: env.NXCORE_ASR_ALIYUN_API_KEY?.trim() ?? "",
-    asrAliyunBaseUrl: env.NXCORE_ASR_ALIYUN_BASE_URL?.trim()
-      ?? "https://dashscope.aliyuncs.com/api/v1",
-    asrAliyunModel: env.NXCORE_ASR_ALIYUN_MODEL?.trim()
-      ?? "qwen-audio-3.0-asr-flash-filetrans",
-    asrAliyunOssRegion: env.NXCORE_ASR_ALIYUN_OSS_REGION?.trim() ?? "",
-    asrAliyunOssBucket: env.NXCORE_ASR_ALIYUN_OSS_BUCKET?.trim() ?? "",
-    asrAliyunOssAccessKeyId: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID?.trim() ?? "",
-    asrAliyunOssAccessKeySecret: env.NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? "",
-    asrAliyunOssStsToken: env.NXCORE_ASR_ALIYUN_OSS_STS_TOKEN?.trim() ?? "",
-    asrAliyunOssPrefix: env.NXCORE_ASR_ALIYUN_OSS_PREFIX?.trim() ?? "nxcore-asr",
     nangoConnectorPollMs: parsePositiveInteger(
       "NXCORE_CONNECTOR_POLL_MS",
       env.NXCORE_CONNECTOR_POLL_MS?.trim() || "300000",
-    ),
-    memoryEnabled: env.NXCORE_MEMORY_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_MEMORY_ENABLED", env.NXCORE_MEMORY_ENABLED.trim()),
-    memoryBaseUrl: env.NXCORE_MEMORY_BASE_URL?.trim() ?? "http://127.0.0.1:8420",
-    memoryApiKey: env.NXCORE_MEMORY_API_KEY?.trim() ?? "",
-    memoryServiceId: env.NXCORE_MEMORY_SERVICE_ID?.trim() ?? "everroom",
-    memoryTeamId: env.NXCORE_MEMORY_TEAM_ID?.trim() ?? "everroom",
-    memoryAgentId: env.NXCORE_MEMORY_AGENT_ID?.trim() ?? "pi-agent",
-    memoryUserId: env.NXCORE_MEMORY_USER_ID?.trim() ?? "local-user",
-    memoryRecallLimit: parsePositiveInteger(
-      "NXCORE_MEMORY_RECALL_LIMIT",
-      env.NXCORE_MEMORY_RECALL_LIMIT ?? "5",
-    ),
-    memoryCharBudget: parsePositiveInteger(
-      "NXCORE_MEMORY_CHAR_BUDGET",
-      env.NXCORE_MEMORY_CHAR_BUDGET ?? "2000",
-    ),
-    memoryRoomDeriveEnabled: env.NXCORE_MEMORY_ROOM_DERIVE_ENABLED == null
-      ? true
-      : parseBoolean("NXCORE_MEMORY_ROOM_DERIVE_ENABLED", env.NXCORE_MEMORY_ROOM_DERIVE_ENABLED.trim()),
-    memoryRoomDeriveIntervalMs: parsePositiveInteger(
-      "NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS",
-      env.NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS ?? "300000",
     ),
     documentIndexBackfillEnabled: env.NXCORE_DOCUMENT_INDEX_BACKFILL_ENABLED == null
       ? true
@@ -765,90 +524,6 @@ export function loadConfig(
     documentIndexBackfillReadTriggerCooldownMs: parseNonNegativeInteger(
       "NXCORE_DOCUMENT_INDEX_BACKFILL_READ_TRIGGER_COOLDOWN_MS",
       env.NXCORE_DOCUMENT_INDEX_BACKFILL_READ_TRIGGER_COOLDOWN_MS ?? "1800000",
-    ),
-    knowledgeEnabled: env.NXCORE_KNOWLEDGE_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_KNOWLEDGE_ENABLED", env.NXCORE_KNOWLEDGE_ENABLED.trim()),
-    knowledgeBaseUrl: env.NXCORE_KNOWLEDGE_BASE_URL?.trim() ?? "http://127.0.0.1:8421",
-    knowledgeServiceId: env.NXCORE_KNOWLEDGE_SERVICE_ID?.trim() ?? "everroom",
-    knowledgeTeamId: env.NXCORE_KNOWLEDGE_TEAM_ID?.trim() ?? "everroom",
-    knowledgeWikiId: env.NXCORE_KNOWLEDGE_WIKI_ID?.trim() ?? "",
-    knowledgeRoomWikisEnabled: env.NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED == null
-      ? false
-      : parseBoolean(
-          "NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED",
-          env.NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED.trim(),
-        ),
-    knowledgeIngestDebounceMs: parseNonNegativeInteger(
-      "NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS",
-      env.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS ?? "600000",
-    ),
-    knowledgeRouterEnabled: env.NXCORE_KNOWLEDGE_ROUTER_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_KNOWLEDGE_ROUTER_ENABLED", env.NXCORE_KNOWLEDGE_ROUTER_ENABLED.trim()),
-    knowledgeEntityPromoteScore: parsePositiveNumber(
-      "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE",
-      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SCORE ?? "2.4",
-    ),
-    knowledgeEntityPromoteSources: parsePositiveInteger(
-      "NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES",
-      env.NXCORE_KNOWLEDGE_ENTITY_PROMOTE_SOURCES ?? "3",
-    ),
-    knowledgeRoomRelationMinScore: parsePositiveNumber(
-      "NXCORE_KNOWLEDGE_ROOM_RELATION_MIN_SCORE",
-      env.NXCORE_KNOWLEDGE_ROOM_RELATION_MIN_SCORE ?? "1.0",
-    ),
-    knowledgeEntityMergeAutoDice: parseFraction(
-      "NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE",
-      env.NXCORE_KNOWLEDGE_ENTITY_MERGE_AUTO_DICE ?? "0.75",
-    ),
-    knowledgeEntityMergeJudgeDice: parseFraction(
-      "NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE",
-      env.NXCORE_KNOWLEDGE_ENTITY_MERGE_JUDGE_DICE ?? "0.6",
-    ),
-    knowledgeLlmBaseUrl: env.NXCORE_KNOWLEDGE_LLM_BASE_URL?.trim() ?? "",
-    knowledgeLlmApiKey: env.NXCORE_KNOWLEDGE_LLM_API_KEY?.trim() ?? "",
-    knowledgeLlmModel: env.NXCORE_KNOWLEDGE_LLM_MODEL?.trim() ?? "",
-    knowledgeEmbeddingModel: env.NXCORE_KNOWLEDGE_EMBEDDING_MODEL?.trim() ?? "",
-    knowledgeEmbeddingBaseUrl: env.NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL?.trim() ?? "",
-    knowledgeEmbeddingApiKey: env.NXCORE_KNOWLEDGE_EMBEDDING_API_KEY?.trim() ?? "",
-    ingestFilterEnabled: env.NXCORE_INGEST_FILTER_ENABLED == null
-      ? false
-      : parseBoolean("NXCORE_INGEST_FILTER_ENABLED", env.NXCORE_INGEST_FILTER_ENABLED.trim()),
-    ingestFilterMode: env.NXCORE_INGEST_FILTER_MODE?.trim() === "enforce" ? "enforce" : "observe",
-    ingestFilterConfidenceThreshold: parseFraction(
-      "NXCORE_INGEST_FILTER_CONFIDENCE_THRESHOLD",
-      env.NXCORE_INGEST_FILTER_CONFIDENCE_THRESHOLD ?? "0.7",
-    ),
-    ingestFilterBatchSize: parsePositiveInteger(
-      "NXCORE_INGEST_FILTER_BATCH_SIZE",
-      env.NXCORE_INGEST_FILTER_BATCH_SIZE ?? "5",
-    ),
-    ingestFilterBatchDelayMs: parseNonNegativeInteger(
-      "NXCORE_INGEST_FILTER_BATCH_DELAY_MS",
-      env.NXCORE_INGEST_FILTER_BATCH_DELAY_MS ?? "120000",
-    ),
-    ingestFilterExemptSourceKinds: env.NXCORE_INGEST_FILTER_EXEMPT_SOURCE_KINDS?.trim()
-      ?? "everroom-doc,reality-event",
-    ingestFilterToolsEnabled: env.NXCORE_INGEST_FILTER_TOOLS_ENABLED == null
-      ? true
-      : parseBoolean("NXCORE_INGEST_FILTER_TOOLS_ENABLED", env.NXCORE_INGEST_FILTER_TOOLS_ENABLED.trim()),
-    ingestFilterMaxToolCalls: parsePositiveInteger(
-      "NXCORE_INGEST_FILTER_MAX_TOOL_CALLS",
-      env.NXCORE_INGEST_FILTER_MAX_TOOL_CALLS ?? "8",
-    ),
-    ingestFilterRulesFile: env.NXCORE_INGEST_FILTER_RULES_FILE?.trim()
-      || join(dataDir, "ingest", "filter-rules.md"),
-    ingestFilterRulesMaxBytes: parsePositiveInteger(
-      "NXCORE_INGEST_FILTER_RULES_MAX_BYTES",
-      env.NXCORE_INGEST_FILTER_RULES_MAX_BYTES ?? "2048",
-    ),
-    ingestFilterInsightEnabled: env.NXCORE_INGEST_FILTER_INSIGHT_ENABLED == null
-      ? true
-      : parseBoolean("NXCORE_INGEST_FILTER_INSIGHT_ENABLED", env.NXCORE_INGEST_FILTER_INSIGHT_ENABLED.trim()),
-    ingestFilterInsightIntervalMs: parseNonNegativeInteger(
-      "NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS",
-      env.NXCORE_INGEST_FILTER_INSIGHT_INTERVAL_MS ?? "3600000",
     ),
     notificationBridgeUrl: env.NXCORE_NOTIFICATION_BRIDGE_URL?.trim() ?? "",
     notificationBridgeToken: env.NXCORE_NOTIFICATION_BRIDGE_TOKEN?.trim() ?? "",
@@ -883,113 +558,10 @@ export function loadConfig(
     validateAiEndpoint(rawConfig.vlmBaseUrl, "NXCORE_VLM_BASE_URL");
   }
 
-  if (rawConfig.asrProvider === "aliyun") {
-    if (!rawConfig.asrAliyunApiKey) {
-      throw new Error("Aliyun ASR requires: NXCORE_ASR_ALIYUN_API_KEY");
-    }
-    validateHttpEndpoint("NXCORE_ASR_ALIYUN_BASE_URL", rawConfig.asrAliyunBaseUrl);
-    const ossFields = [
-      ["NXCORE_ASR_ALIYUN_OSS_REGION", rawConfig.asrAliyunOssRegion],
-      ["NXCORE_ASR_ALIYUN_OSS_BUCKET", rawConfig.asrAliyunOssBucket],
-      ["NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID", rawConfig.asrAliyunOssAccessKeyId],
-      ["NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET", rawConfig.asrAliyunOssAccessKeySecret],
-    ] as const;
-    if (ossFields.some(([, value]) => value) && ossFields.some(([, value]) => !value)) {
-      const missing = ossFields.filter(([, value]) => !value).map(([name]) => name);
-      throw new Error(`Aliyun OSS configuration requires: ${missing.join(", ")}`);
-    }
-  }
   if (Boolean(rawConfig.notificationBridgeUrl)!==Boolean(rawConfig.notificationBridgeToken)) throw new Error("Notification bridge configuration requires URL and token together");
   if(rawConfig.notificationBridgeUrl){const u=new URL(rawConfig.notificationBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_NOTIFICATION_BRIDGE_URL must be a loopback HTTP endpoint");}
   if (Boolean(rawConfig.officeBridgeUrl)!==Boolean(rawConfig.officeBridgeToken)) throw new Error("Office bridge configuration requires URL and token together");
   if(rawConfig.officeBridgeUrl){const u=new URL(rawConfig.officeBridgeUrl);if(u.protocol!=="http:"||!["localhost","127.0.0.1","::1"].includes(u.hostname))throw new Error("NXCORE_OFFICE_BRIDGE_URL must be a loopback HTTP endpoint");}
-
-  const memory: MemoryRuntimeConfig | null = rawConfig.memoryEnabled
-    ? {
-        baseUrl: rawConfig.memoryBaseUrl,
-        apiKey: rawConfig.memoryApiKey,
-        serviceId: rawConfig.memoryServiceId,
-        teamId: rawConfig.memoryTeamId,
-        agentId: rawConfig.memoryAgentId,
-        userId: rawConfig.memoryUserId,
-        recallLimit: rawConfig.memoryRecallLimit,
-        charBudget: rawConfig.memoryCharBudget,
-      }
-    : null;
-  if (memory) {
-    validateMemoryEndpoint("NXCORE_MEMORY_BASE_URL", memory.baseUrl);
-  }
-
-  const knowledge: KnowledgeRuntimeConfig | null = rawConfig.knowledgeEnabled
-    ? {
-        baseUrl: rawConfig.knowledgeBaseUrl,
-        serviceId: rawConfig.knowledgeServiceId,
-        teamId: rawConfig.knowledgeTeamId,
-        // Room 级 wiki 模式下 wiki 由会话按 roomId 解析，wikiId 仅作
-        // Room 未命中时的回退（全局 wiki 已随方案取消，仅保留旧配置兼容）。
-        ...(rawConfig.knowledgeWikiId ? { wikiId: rawConfig.knowledgeWikiId } : {}),
-        searchLimit: 5,
-      }
-    : null;
-  if (knowledge) {
-    validateMemoryEndpoint("NXCORE_KNOWLEDGE_BASE_URL", knowledge.baseUrl);
-    if (!knowledge.wikiId && !rawConfig.knowledgeRoomWikisEnabled) {
-      throw new Error(
-        "Knowledge service requires: NXCORE_KNOWLEDGE_WIKI_ID (or enable NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED)",
-      );
-    }
-  }
-
-  // ⑤ 的 LLM 独立配置优先，缺项回退 NXCORE_AI_*；base/key/model 三者齐全才算可用。
-  const knowledgeLlmBaseUrl = rawConfig.knowledgeLlmBaseUrl || rawConfig.aiBaseUrl;
-  const knowledgeLlmApiKey = rawConfig.knowledgeLlmApiKey || rawConfig.aiApiKey;
-  const knowledgeLlmModel = rawConfig.knowledgeLlmModel || rawConfig.aiModel;
-  // 消歧 embedding 可指向别家（如 LLM 用 GLM、embedding 用 DashScope）；
-  // 未独立配置时沿用抽取 LLM 的端点（历史行为）。
-  const knowledgeEmbeddingBaseUrl = rawConfig.knowledgeEmbeddingBaseUrl || knowledgeLlmBaseUrl;
-  const knowledgeEmbeddingApiKey = rawConfig.knowledgeEmbeddingApiKey || knowledgeLlmApiKey;
-  const knowledgeGateway: KnowledgeGatewayConfig | null = rawConfig.knowledgeEnabled
-    ? {
-        baseUrl: rawConfig.knowledgeBaseUrl,
-        serviceId: rawConfig.knowledgeServiceId,
-        teamId: rawConfig.knowledgeTeamId,
-        roomWikisEnabled: rawConfig.knowledgeRoomWikisEnabled,
-        ingestDebounceMs: rawConfig.knowledgeIngestDebounceMs,
-        routerEnabled: rawConfig.knowledgeRouterEnabled,
-        entityPromoteScore: rawConfig.knowledgeEntityPromoteScore,
-        entityPromoteSources: rawConfig.knowledgeEntityPromoteSources,
-        roomRelationMinScore: rawConfig.knowledgeRoomRelationMinScore,
-        mergeAutoDice: rawConfig.knowledgeEntityMergeAutoDice,
-        mergeJudgeDice: rawConfig.knowledgeEntityMergeJudgeDice,
-        llm: knowledgeLlmBaseUrl && knowledgeLlmApiKey && knowledgeLlmModel
-          ? {
-              baseUrl: knowledgeLlmBaseUrl,
-              apiKey: knowledgeLlmApiKey,
-              model: knowledgeLlmModel,
-            }
-          : null,
-        // 消歧只需要 base/key（模型名单列）；缺省与抽取 LLM 同端点，但 embedding
-        // 模型常在不同家（如 LLM 用 GLM、embedding 用 DashScope），故留独立
-        // NXCORE_KNOWLEDGE_EMBEDDING_BASE_URL/API_KEY 覆盖位。
-        embeddingLlm: knowledgeEmbeddingBaseUrl && knowledgeEmbeddingApiKey
-          ? {
-              baseUrl: knowledgeEmbeddingBaseUrl,
-              apiKey: knowledgeEmbeddingApiKey,
-              model: knowledgeLlmModel,
-            }
-          : null,
-        embeddingModel: rawConfig.knowledgeEmbeddingModel,
-      }
-    : null;
-  if (knowledgeGateway?.routerEnabled) {
-    if (knowledgeGateway.mergeJudgeDice >= knowledgeGateway.mergeAutoDice) {
-      throw new Error(
-        "Invalid knowledge entity merge dice: MERGE_JUDGE_DICE must be lower than MERGE_AUTO_DICE",
-      );
-    }
-    // 抽取未配置 LLM 时 router 仍可运行（全部落未识别栏人工挂载）；
-    // 自动晋升依赖抽取产出的证据，没有 LLM 同样不会发生——不构成错误。
-  }
 
   const mcpConfigPath = resolveMcpConfigPath(dataDir, env.NXCORE_MCP_CONFIG);
   const mcpServers = loadMcpServers(mcpConfigPath);
@@ -1008,9 +580,6 @@ export function loadConfig(
         workingDirectory: join(dataDir, "agent", "workspace"),
         agentDirectory: join(dataDir, "agent", "pi-config"),
         ...(rawConfig.piBuiltinTools ? { builtinTools: rawConfig.piBuiltinTools } : {}),
-        ...(Object.keys(mcpServers).length > 0 ? { mcp: { mcpServers } } : {}),
-        ...(memory ? { memory } : {}),
-        ...(knowledge ? { knowledge } : {}),
       }
     : null;
   const cursorCompletionPi: PiRuntimeConfig | null = rawConfig.agentRuntime === "pi"
@@ -1059,12 +628,6 @@ export function loadConfig(
     agentRuntime: rawConfig.agentRuntime,
     externalCallUserId: rawConfig.externalCallUserId,
     externalCallWorkspaceId: rawConfig.externalCallWorkspaceId,
-    diaryMaxTokens: rawConfig.diaryMaxTokens,
-    memory,
-    memoryRoomDerive: {
-      enabled: rawConfig.memoryRoomDeriveEnabled,
-      intervalMs: rawConfig.memoryRoomDeriveIntervalMs,
-    },
     documentIndexBackfill: {
       enabled: rawConfig.documentIndexBackfillEnabled,
       scanIntervalMs: rawConfig.documentIndexBackfillScanIntervalMs,
@@ -1078,26 +641,6 @@ export function loadConfig(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
     ),
     runtimeManifestPath: join(dataDir, "runtime", "gateway.json"),
-    asrInputDir: join(dataDir, "recordings"),
-    asr: rawConfig.asrProvider === "aliyun"
-      ? {
-          apiKey: rawConfig.asrAliyunApiKey,
-          baseUrl: rawConfig.asrAliyunBaseUrl,
-          model: rawConfig.asrAliyunModel,
-          oss: rawConfig.asrAliyunOssRegion
-            ? {
-                region: rawConfig.asrAliyunOssRegion,
-                bucket: rawConfig.asrAliyunOssBucket,
-                accessKeyId: rawConfig.asrAliyunOssAccessKeyId,
-                accessKeySecret: rawConfig.asrAliyunOssAccessKeySecret,
-                ...(rawConfig.asrAliyunOssStsToken
-                  ? { stsToken: rawConfig.asrAliyunOssStsToken }
-                  : {}),
-                prefix: rawConfig.asrAliyunOssPrefix.replace(/^\/+|\/+$/g, ""),
-              }
-            : null,
-        }
-      : null,
     nangoConnector: {
       // P3：Nango runtime 删除——链路A编排恒可用（executor 走 oo）。
       enabled: true,
@@ -1189,23 +732,5 @@ export function loadConfig(
     vlm: rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel
       ? { baseUrl: rawConfig.vlmBaseUrl, apiKey: rawConfig.vlmApiKey, model: rawConfig.vlmModel }
       : null,
-    knowledge: knowledgeGateway,
-    ingestFilter: {
-      enabled: rawConfig.ingestFilterEnabled,
-      mode: rawConfig.ingestFilterMode,
-      confidenceThreshold: rawConfig.ingestFilterConfidenceThreshold,
-      batchSize: Math.min(rawConfig.ingestFilterBatchSize, 20),
-      batchDelayMs: rawConfig.ingestFilterBatchDelayMs,
-      exemptSourceKinds: rawConfig.ingestFilterExemptSourceKinds
-        .split(",")
-        .map((kind) => kind.trim())
-        .filter(Boolean),
-      toolsEnabled: rawConfig.ingestFilterToolsEnabled,
-      maxToolCalls: rawConfig.ingestFilterMaxToolCalls,
-      rulesFile: rawConfig.ingestFilterRulesFile,
-      rulesMaxBytes: rawConfig.ingestFilterRulesMaxBytes,
-      insightEnabled: rawConfig.ingestFilterInsightEnabled,
-      insightIntervalMs: rawConfig.ingestFilterInsightIntervalMs,
-    },
   };
 }

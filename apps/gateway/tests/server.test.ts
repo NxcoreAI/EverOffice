@@ -25,17 +25,12 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    memory: null,
     pi: null,
     cursorCompletionPi: null,
     litePi: null,
-    knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
-        asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
-    asr: null,
   };
 }
 
@@ -508,47 +503,25 @@ describe("gateway server", () => {
           apiKey: "user-key",
           api: "openai-completions",
         },
-        knowledge: {
-          embedding: {
-            provider: "openai-compatible",
-            model: "text-embedding-test",
-            baseUrl: "http://127.0.0.1:9/v1",
-            apiKey: "embed-key",
-          },
-        },
         vlm: {
           provider: "openai-compatible",
           model: "vlm-test-model",
           baseUrl: "http://127.0.0.1:9/v1",
           apiKey: "vlm-key",
         },
-        asr: {
-          provider: "aliyun",
-          model: "asr-test-model",
-          baseUrl: "https://dashscope.aliyuncs.com/api/v1",
-          apiKey: "asr-key",
-          oss: {
-            region: "oss-cn-beijing",
-            bucket: "test-bucket",
-            accessKeyId: "ak",
-            accessKeySecret: "sk",
-          },
-        },
       },
     });
     expect(saved.statusCode).toBe(200);
     expect(saved.json()).toMatchObject({ primaryConfigured: true, selectedSource: "user" });
 
-    // embedding apiKey 落库后在快照中脱敏（********），provider/model 不脱敏。
+    // 槽位 apiKey 落库后在快照中脱敏（********），provider/model 不脱敏。
     const snapshot = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
     expect(snapshot.statusCode).toBe(200);
     expect(snapshot.json()).toMatchObject({
       config: {
-        knowledge: {
-          embedding: {
-            model: "text-embedding-test",
-            apiKey: "********",
-          },
+        vlm: {
+          model: "vlm-test-model",
+          apiKey: "********",
         },
       },
     });
@@ -561,7 +534,7 @@ describe("gateway server", () => {
       primaryConfigured: true,
       config: {
         primary: { apiKey: "user-key" },
-        knowledge: { embedding: { apiKey: "embed-key" } },
+        vlm: { apiKey: "vlm-key" },
       },
     });
 
@@ -576,35 +549,24 @@ describe("gateway server", () => {
     expect(body.valid).toBe(false);
     expect(body.error).toContain("runtime_config_test_unreachable");
 
-    // 端点恢复 2xx → valid=true（primary/vlm 走 /chat/completions，embedding
-    // 走 /embeddings 并返回向量维度）。
-    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
-      const url = String(input);
-      if (url.endsWith("/embeddings")) {
-        return new Response(
-          JSON.stringify({ data: [{ embedding: Array.from({ length: 8 }, () => 0.1) }] }),
-          { status: 200 },
-        );
-      }
-      return new Response("{}", { status: 200 });
-    }));
+    // 端点恢复 2xx → valid=true（primary/vlm 都走 /chat/completions）。
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     const ok = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
     vi.unstubAllGlobals();
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toMatchObject({
       valid: true,
-      embedding: { valid: true, dimensions: 8 },
       vlm: { valid: true },
     });
 
     await app.inject({ method: "DELETE", url: "/v1/runtime-config/user", headers });
-    // 清空 user source 后 embedding 未配置 → /test 不带 embedding 字段。
+    // 清空 user source 后 vlm 未配置 → /test 不带 vlm 字段。
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     const cleared = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
     vi.unstubAllGlobals();
-    const clearedBody = cleared.json<{ valid: boolean; embedding?: unknown }>();
+    const clearedBody = cleared.json<{ valid: boolean; vlm?: unknown }>();
     expect(clearedBody.valid).toBe(false);
-    expect(clearedBody.embedding).toBeUndefined();
+    expect(clearedBody.vlm).toBeUndefined();
     await app.close();
   });
 });

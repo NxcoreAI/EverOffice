@@ -127,7 +127,7 @@ export function queryPlugins(
     },
   };
   return [
-    { manifest: manifest("document.list", "query", null, null, false, false), promptGuidelines: [], tools: [documentList] },
-    { manifest: manifest("document.read", "query", null, null, false, true), promptGuidelines: [], tools: [documentRead] },
+    { manifest: manifest("document.list", "query", null, null, false), promptGuidelines: [], tools: [documentList] },
+    { manifest: manifest("document.read", "query", null, null, true), promptGuidelines: [], tools: [documentRead] },
   ];
 }

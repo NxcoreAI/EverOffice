@@ -520,7 +520,7 @@ export function officePlugin(
   };
 
   return {
-    manifest: manifest("office.create", "mutation", null, null, false, false),
+    manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
       "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 office_create，"
       + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides 子代理（create 先方案后落页，edit 直改）完成；"

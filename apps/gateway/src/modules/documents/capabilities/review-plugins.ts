@@ -981,10 +981,10 @@ export function reviewPlugins(
 ): DocumentCapabilityPlugin[] {
   const tools = [beginTool(backend, operations, reads), hunkTool(backend, operations, reads), commitTool(backend, operations), abortTool(operations)];
   return [
-    { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", false, true),
+    { manifest: manifest("document.edit", "mutation", "atomic_review", "atomic-diff", true),
       promptGuidelines: ["修改已有文档的内容必须先调用 document_draft(task=draft-edit) 生成修改提案：网关会读取权威版本组装素材并为本 run 签发读取凭证；patch_begin 后 patch_hunk 凭返回的 invocationId 与 itemIndex（0 起，按顺序逐项）引用转交，operation/target/markdown 由服务端从 doc-writer 结果取用，不得在工具参数中复写或补写。Gateway 会在当前 run 内自动绑定读取凭证和唯一运行中的 Patch，后续工具无需搬运 readReceipt、operationId 或 patchId。重写、润色、扩写、替换或删除已有内容必须使用 kind=edit，kind=continue 只追加全新内容。Agent 只能生成提案，不能直接应用。单次工具失败若返回 retryable=true，应修正参数并重试；最终回复以最后一次工具结果为准，不能把已恢复的失败说成整轮失败。patch_commit 后必须按返回的 state/applied/documentChanged 描述状态；awaiting_review 时只能说修改建议已准备好、等待用户审阅，不能声称正文已修改。"], tools,
       command: (operation, command) => editCommand(backend, operation, command) },
-    { manifest: manifest("document.continue", "mutation", "incremental_review", "continuation", false, true),
+    { manifest: manifest("document.continue", "mutation", "incremental_review", "continuation", true),
       promptGuidelines: ["continue 只用于追加原文中不存在的全新内容，不能用于重写、润色、扩写或替换已有段落；追加内容必须来自 document_draft(task=draft-continue)，patch_hunk 凭返回的 invocationId 与 itemIndex（0 起）引用转交，markdown 由服务端从 doc-writer 结果取用。普通续写默认插入文末；长篇内容可分多次调用 document_draft 再按连续 sequence 分批引用，禁止在参数中发送累计内容、原文或全文，最终由用户逐块接受。"], tools: [],
       command: (operation, command) => continuationCommand(backend, operation, command) },
   ];

@@ -134,7 +134,7 @@ export function commentPlugin(
   };
 
   return {
-    manifest: manifest("document.comment", "mutation", null, null, false, true),
+    manifest: manifest("document.comment", "mutation", null, null, true),
     promptGuidelines: [
       "用户要求审阅、评审、给文档提意见或找问题时：先调用 document_read 读取当前权威版本，"
       + "再挑出 3-5 处最有价值的具体改进点（结构缺口、论证漏洞、缺少反例或数据支撑、事实性风险、表达歧义），"
