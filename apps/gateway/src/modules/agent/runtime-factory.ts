@@ -404,7 +404,7 @@ export function createConnectorMapperAgentRuntime(
 ): AgentRuntime | null {
   const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const { memory: _memory, mcp: _mcp, ...pi } = config.backgroundPi!;
+  const { mcp: _mcp, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorMapper, {
       ...pi,

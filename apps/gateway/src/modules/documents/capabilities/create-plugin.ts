@@ -343,7 +343,7 @@ export function createPlugin(
     },
   };
   return {
-    manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", false, false),
+    manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", false),
     promptGuidelines: [
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
       "文档写入工作区文稿库（docs 页）：当前视口未绑定 Room 时直接创建，文档作为工作区级文稿保存，不需要先让用户选择 Room；只有用户明确要求归入某个已有 Room 时，才在 document_write_begin.roomId 中填写其 ID。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",

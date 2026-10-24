@@ -214,35 +214,6 @@ function applyRuntimeConfig(config: GatewayConfig, runtime: RuntimeConfig): void
   // 默认/BYOK）直接作为审页模型。vlm 槽自带连接（中转重写或 BYOK 继承）时一并
   // 补齐；空连接时审页档保留从 pi 继承的连接。model 未变化时 apply 不触碰。
   apply(config.slidesReviewerPi as unknown as Record<string, unknown> | null, runtime.vlm);
-  // ASR（仅 aliyun provider）：runtime 标量 + OSS 必填项齐全可直接构造
-  // （含 OSS——env 从未应用 runtime.asr.oss，而阿里云提交转写无 OSS 直接抛错）；
-  // 仅标量齐全时保持补丁行为，env 配置的 OSS 保留。
-  const runtimeAsr = runtime.asr as Record<string, unknown> | undefined;
-  const asrText = (key: string): string =>
-    runtimeAsr && typeof runtimeAsr[key] === "string" ? (runtimeAsr[key] as string).trim() : "";
-  const runtimeOss = runtimeAsr?.oss as Record<string, unknown> | undefined;
-  const ossText = (key: string): string =>
-    runtimeOss && typeof runtimeOss[key] === "string" ? (runtimeOss[key] as string).trim() : "";
-  if (asrText("apiKey") && asrText("baseUrl") && asrText("model")
-    && ossText("region") && ossText("bucket") && ossText("accessKeyId") && ossText("accessKeySecret")) {
-    config.asr = {
-      apiKey: asrText("apiKey"),
-      baseUrl: asrText("baseUrl"),
-      model: asrText("model"),
-      oss: {
-        region: ossText("region"),
-        bucket: ossText("bucket"),
-        accessKeyId: ossText("accessKeyId"),
-        accessKeySecret: ossText("accessKeySecret"),
-        ...(ossText("stsToken") ? { stsToken: ossText("stsToken") } : {}),
-        prefix: ossText("prefix") || "nxcore-asr",
-      },
-    };
-  } else if (config.asr && runtimeAsr) {
-    for (const key of ["provider", "baseUrl", "model", "apiKey"] as const) {
-      if (asrText(key)) (config.asr as unknown as Record<string, unknown>)[key] = asrText(key);
-    }
-  }
 }
 
 /**
@@ -861,7 +832,7 @@ export async function createServer(config: GatewayConfig) {
       configVersion: snapshot.configVersion,
       primaryConfigured: isRuntimePrimaryConfigured(snapshot.config),
       runtimeSections: Object.keys(snapshot.config).filter((key) =>
-        ["primary", "background", "cursorCompletion", "asr", "vlm", "webSearch"].includes(key)),
+        ["primary", "background", "cursorCompletion", "vlm", "webSearch"].includes(key)),
     }, "runtime config selected");
     applyRuntimeConfig(config, snapshot.config);
     // webSearch：boot 时 env 未配、runtime config 保存后才注册的场景。

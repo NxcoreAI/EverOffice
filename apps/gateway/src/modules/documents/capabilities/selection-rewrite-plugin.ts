@@ -27,7 +27,6 @@ export function selectionRewritePlugin(backend: CapabilityBackend): DocumentCapa
       "mutation",
       "preview_replace",
       "selection-rewrite",
-      false,
       true,
     ),
     promptGuidelines: ["局部选区重写只返回替换文本，用户接受并持久化后才能记录为文档改动。"],
