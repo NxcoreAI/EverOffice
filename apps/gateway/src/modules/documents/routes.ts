@@ -440,8 +440,9 @@ export function documentRoutes(
       },
     );
 
-    // 文档事件 WS：路径段沿用旧 Room 频道 id（桌面 document-gateway-bridge 以
-    // WORKSPACE_DOCUMENT_CHANNEL 订阅），Phase 2i 起它就是工作区频道本身。
+    // 文档事件 WS：**工作区文档频道**（不是 Room 资源，路径里的 `rooms` 段是冻结的
+    // 历史命名，改 URL 会断开桌面的旧订阅）。桌面 document-gateway-bridge 以
+    // WORKSPACE_DOCUMENT_CHANNEL 作为 `:id` 订阅，Phase 2i 起它就是工作区频道本身。
     app.get(
       "/v1/documents/rooms/:id/stream",
       { websocket: true, schema: { tags: ["documents"], params: IdParams } },

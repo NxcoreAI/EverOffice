@@ -1765,13 +1765,13 @@ function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge
     if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
     return bridge.cancelImportRun(runId)
   })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importHistory, (_event, roomId: unknown, documentId: unknown) => {
-    if (typeof roomId !== 'string' || typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.importHistory(roomId, documentId)
+  handle(EXTERNAL_DOCUMENT_CHANNELS.importHistory, (_event, documentId: unknown) => {
+    if (typeof documentId !== 'string') throw new Error('无效的文档标识。')
+    return bridge.importHistory(documentId)
   })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, roomId: unknown, documentId: unknown) => {
-    if (typeof roomId !== 'string' || typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.checkExternalUpdate(roomId, documentId)
+  handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, documentId: unknown) => {
+    if (typeof documentId !== 'string') throw new Error('无效的文档标识。')
+    return bridge.checkExternalUpdate(documentId)
   })
   handle(EXTERNAL_DOCUMENT_CHANNELS.importStructuredDiff, (_event, roomImportId: unknown) => {
     if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')

@@ -32,7 +32,6 @@ interface ThreadAnchor {
 
 export function ImportedCommentsPanel({
   editor,
-  roomId,
   documentId,
   onClose,
   collapsed = false,
@@ -43,7 +42,6 @@ export function ImportedCommentsPanel({
   documentTitle,
 }: {
   editor: Editor | null
-  roomId: string
   documentId: string
   onClose: () => void
   /** 收起态：不渲染停靠栏，但仍在正文标记有评论的文本，点击标记展开面板。 */
@@ -100,7 +98,7 @@ export function ImportedCommentsPanel({
   useEffect(() => {
     let cancelled = false
     setComments(null)
-    void window.nxcore?.externalDocuments.importHistory(roomId, documentId)
+    void window.nxcore?.externalDocuments.importHistory(documentId)
       .then((result) => {
         if (!cancelled) {
           setComments(result.comments)
@@ -115,7 +113,7 @@ export function ImportedCommentsPanel({
     return () => {
       cancelled = true
     }
-  }, [roomId, documentId])
+  }, [documentId])
 
   useEffect(() => {
     reloadLocalComments()

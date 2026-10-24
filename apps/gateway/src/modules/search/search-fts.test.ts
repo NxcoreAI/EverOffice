@@ -23,11 +23,10 @@ function insertIndexRow(db: Database.Database, id: string, title: string, body: 
 }
 
 describe("search FTS 集成", () => {
-  it("0078 迁移可执行且四表齐备", () => {
+  it("0078 迁移可执行且检索三表齐备", () => {
     const db = applyMigration();
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'search_index%'").all() as Array<{ name: string }>).map((r) => r.name);
     expect(tables).toContain("search_index");
-    expect(tables).toContain("search_index_rooms");
     expect(tables).toContain("search_index_fts");
     db.close();
   });
@@ -55,17 +54,6 @@ describe("search FTS 集成", () => {
       "SELECT COUNT(*) AS count FROM search_index_fts f JOIN search_index si ON si.rowid=f.rowid WHERE search_index_fts MATCH ?",
     ).get(tokenizeJoined("定价")) as { count: number };
     expect(rows.count).toBe(1);
-    db.close();
-  });
-
-  it("Room 关联过滤走 join 表", () => {
-    const db = applyMigration();
-    insertIndexRow(db, "a", "调研", "连接器调研正文");
-    db.prepare("INSERT INTO search_index_rooms (index_id, room_id) VALUES ('a','room-1')").run();
-    const hit = db.prepare(
-      "SELECT si.id FROM search_index si WHERE si.id IN (SELECT index_id FROM search_index_rooms WHERE room_id=?)",
-    ).all("room-1") as Array<{ id: string }>;
-    expect(hit).toHaveLength(1);
     db.close();
   });
 });

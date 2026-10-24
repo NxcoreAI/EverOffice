@@ -1865,19 +1865,6 @@ export const searchIndex = sqliteTable(
   ],
 );
 
-/** 搜索索引与 Room 的多对多关联（筛选维度独立成表，改名/移出不触碰 FTS token）。 */
-export const searchIndexRooms = sqliteTable(
-  "search_index_rooms",
-  {
-    indexId: text("index_id").notNull(),
-    roomId: text("room_id").notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.indexId, table.roomId] }),
-    index("search_index_rooms_room_idx").on(table.roomId),
-  ],
-);
-
 /**
  * 外部 Agent 连接（PRD 0.2.0 第 7 章 L2.5）：Agent 连接页签发的持久凭证。
  * token 只存 sha256（tokenHash），创建/轮换时明文返回一次；status=paused

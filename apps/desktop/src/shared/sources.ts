@@ -715,7 +715,7 @@ export interface NxcoreDesktopApi {
     }>
     importRun(runId: string): Promise<DocumentImportRunView>
     cancelImportRun(runId: string): Promise<DocumentImportRunView>
-    importHistory(roomId: string, documentId: string): Promise<{
+    importHistory(documentId: string): Promise<{
       entries: DocumentImportHistoryEntry[]
       commentDiff: DocumentImportCommentDiffSummary | null
       comments: ExternalDocumentCommentView[]
@@ -732,7 +732,7 @@ export interface NxcoreDesktopApi {
     searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
       items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
     }>
-    checkExternalUpdate(roomId: string, documentId: string): Promise<{
+    checkExternalUpdate(documentId: string): Promise<{
       run: DocumentImportRunView
       roomImportId: string | null
       relation: 'primary' | 'candidate'

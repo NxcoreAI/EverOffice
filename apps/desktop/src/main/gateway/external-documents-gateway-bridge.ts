@@ -116,24 +116,22 @@ export class ExternalDocumentsGatewayBridge {
     return this.request(`/v1/document-import/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
   }
 
-  async importHistory(roomId: string, documentId: string): Promise<{
+  async importHistory(documentId: string): Promise<{
     entries: DocumentImportHistoryEntry[]
     commentDiff: DocumentImportCommentDiffSummary | null
     comments: ExternalDocumentCommentView[]
   }> {
-    return this.request(
-      `/v1/rooms/${encodeURIComponent(roomId)}/documents/${encodeURIComponent(documentId)}/import-history`,
-    )
+    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/import-history`)
   }
 
-  async checkExternalUpdate(roomId: string, documentId: string): Promise<{
+  async checkExternalUpdate(documentId: string): Promise<{
     run: DocumentImportRunView
     roomImportId: string
     relation: 'primary' | 'candidate'
     documentId: string
   }> {
     return this.request(
-      `/v1/rooms/${encodeURIComponent(roomId)}/documents/${encodeURIComponent(documentId)}/check-external-update`,
+      `/v1/documents/${encodeURIComponent(documentId)}/check-external-update`,
       { method: 'POST' },
     )
   }
