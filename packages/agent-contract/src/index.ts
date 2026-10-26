@@ -1304,6 +1304,34 @@ export interface RoomDocument {
   updatedAt: string;
 }
 
+/** Room 产物跨 Room 移动（产物放错房或主题更适合其它房时的整理动作）。 */
+export interface MoveRoomDocumentInput {
+  /** 文档当前所属 Room（只移除这一条归属，文档在其它 Room 的链接不受影响）。 */
+  fromRoomId: string;
+  /** 目标 Room。 */
+  roomId: string;
+}
+
+/** 批量移动：一次选择多个产物迁往同一目标 Room。 */
+export interface MoveRoomDocumentsInput {
+  documentIds: string[];
+  fromRoomId: string;
+  roomId: string;
+}
+
+export interface MovedRoomDocument {
+  documentId: string;
+  fromRoomId: string;
+  toRoomId: string;
+  title: string;
+  /** 移动后的文档（roomId 已指向目标 Room）。 */
+  document: RoomDocument;
+}
+
+export interface MoveRoomDocumentsResult {
+  items: MovedRoomDocument[];
+}
+
 export interface RoomTaskFolder {
   id: string;
   roomId: string;
@@ -1674,6 +1702,7 @@ export type DocumentEventType =
   | "document.changed"
   | "document.operation.changed"
   | "document.deleted"
+  | "document.moved"
   | "document.comments.changed";
 
 export interface DocumentEvent<T = unknown> {
@@ -1690,6 +1719,17 @@ export interface DocumentEventFrame {
   type: "document.event";
   protocol: 1;
   event: DocumentEvent;
+}
+
+/**
+ * document.moved 的负载：事件发往源 Room（`roomId` = 源房），接收端据此从
+ * 源房清单摘除该文档；目标房另行收到 document.changed（携带移动后的文档）。
+ */
+export interface DocumentMovedPayload {
+  documentId: string;
+  fromRoomId: string;
+  toRoomId: string;
+  title: string;
 }
 
 export interface ImportRoomDocumentInput {

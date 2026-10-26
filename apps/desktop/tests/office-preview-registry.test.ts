@@ -136,6 +136,49 @@ describe('officePreviewKindFor', () => {
 })
 
 describe('OfficePreviewRegistry', () => {
+  // 论文排版桥是 genoffice 后加的导出：旧运行时（vendored 子模块还没升到含该导出的提交）
+  // 缺这个函数时，曾把整个 ensureRuntime 打挂，Room 内所有 Office 内嵌预览一起退回
+  // 「用系统默认应用打开」。这里钉住「缺能力只跳过桥、预览照开」。
+  describe('thesis panel bridge', () => {
+    type DocsWithThesisHook = { setDocsThesisPanelHook?: (hook: (wcId: number, action: unknown) => Promise<unknown>) => void }
+
+    afterEach(() => {
+      delete (runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook
+    })
+
+    it('keeps Office previews working when the runtime has no thesis hook', async () => {
+      const window = makeWindow()
+      registry.setThesisPanelBridge({
+        listCards: vi.fn(async () => []),
+        pickAndSet: vi.fn(async () => null),
+        removeCard: vi.fn(async () => undefined),
+        reformat: vi.fn(async () => null),
+      })
+
+      const descriptor = await registry.open(window, file('file-1', 'file-1.docx'))
+
+      expect(descriptor).toMatchObject({ id: 'file-1', kind: 'docx' })
+      expect(viewCalls).toHaveLength(1)
+    })
+
+    it('wires the hook when the runtime provides it', async () => {
+      const hook = vi.fn()
+      ;(runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook = hook
+      const window = makeWindow()
+      registry.setThesisPanelBridge({
+        listCards: vi.fn(async () => []),
+        pickAndSet: vi.fn(async () => null),
+        removeCard: vi.fn(async () => undefined),
+        reformat: vi.fn(async () => null),
+      })
+
+      await registry.open(window, file('file-1', 'file-1.docx'))
+
+      expect(hook).toHaveBeenCalledTimes(1)
+      expect(typeof hook.mock.calls[0]![0]).toBe('function')
+    })
+  })
+
   let registry: OfficePreviewRegistry
 
   beforeEach(() => {

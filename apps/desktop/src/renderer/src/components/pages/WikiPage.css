@@ -699,6 +699,17 @@
   color: var(--text);
 }
 
+/* 自适应：与「仅核心/显示全部」同排同款，图标 + 文案不要贴在一起 */
+.wiki-graph-fit {
+  gap: 6px;
+}
+
+.wiki-graph-fit svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
 /* 搜索无命中：替换画布的占位 */
 .wiki-graph-no-match {
   display: grid;

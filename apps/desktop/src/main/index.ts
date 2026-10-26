@@ -453,6 +453,8 @@ const DOCUMENT_CHANNELS = {
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
+  move: 'documents:move',
+  moveMany: 'documents:move-many',
   restore: 'documents:restore',
   deletePermanently: 'documents:delete-permanently',
   emptyTrash: 'documents:empty-trash',
@@ -2717,6 +2719,8 @@ function registerDocumentHandlers(
       if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
       return deleted
     },
+    move: (_event, documentId, fromRoomId, roomId) => bridge.move(documentId, fromRoomId, roomId),
+    moveMany: (_event, documentIds, fromRoomId, roomId) => bridge.moveMany(documentIds, fromRoomId, roomId),
     restore: (_event, documentId) => bridge.restore(documentId),
     deletePermanently: async (_event, documentId) => {
       if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
