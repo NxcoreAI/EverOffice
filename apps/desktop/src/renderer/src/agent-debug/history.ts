@@ -388,9 +388,13 @@ export function archiveSummaryOf(
   }
   const oldest = info.oldestStartedAt ? formatRelativeTime(info.oldestStartedAt, now) : '—'
   const oldestDetail = info.oldestStartedAt ? ` · 最旧 ${oldest}（${info.oldestStartedAt}）` : ''
+  // retentionDays<=0 表示「离线读取时未知保留策略」（archive 来源没有 Gateway 配置），只报条数。
+  const text = info.retentionDays > 0
+    ? `历史 ${info.runCount} 条 · 保留 ${info.retentionDays} 天`
+    : `历史 ${info.runCount} 条 · 只读`
   return {
     enabled: true,
-    text: `历史 ${info.runCount} 条 · 保留 ${info.retentionDays} 天`,
+    text,
     title: `归档 ${formatBytes(info.bytes)}${oldestDetail}`,
   }
 }

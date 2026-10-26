@@ -385,6 +385,12 @@ pre {
   white-space: nowrap;
 }
 
+/* 逐页任务（PPT 单页布局）的页归属：Agent 行摘要用 mono 便于扫页号，不引入新颜色。 */
+.agent-pages {
+  font-family: var(--font-mono);
+  color: var(--secondary);
+}
+
 /* ── 中栏：Run ── */
 .run-list {
   flex: 1 1 auto;
@@ -436,6 +442,14 @@ pre {
 
 .run-status[data-status="failed"] {
   color: var(--danger);
+}
+
+/* 逐页 run（如 slides-layouter 单页布局）的页序徽标：P3/12 */
+.run-page {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--secondary);
 }
 
 .run-agent {

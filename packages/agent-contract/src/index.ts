@@ -337,6 +337,14 @@ export interface AgentDebugRun {
    * 数据来源；缺省按 `live` 处理（旧版 Gateway）。`archive` 表示来自磁盘归档的历史 run。
    */
   origin?: AgentDebugRunOrigin;
+  /**
+   * 逐页任务（如 slides-layouter 的单页布局）的页序，**1 起**；非逐页 run 不返回。
+   * Gateway 从子 Agent dispatch input 的 0 起 `pageIndex` 换算，随 run 元数据落归档，
+   * 调试页据此显示「这个布局 agent 正在负责哪一页」。
+   */
+  slidePageIndex?: number;
+  /** 逐页任务的总页数；未知（旧 run / 非逐页）不返回。 */
+  slidePageCount?: number;
   task: string;
   status: AgentDebugRunStatus;
   startedAt: string;

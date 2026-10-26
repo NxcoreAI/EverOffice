@@ -18,6 +18,15 @@ import {
   type RangeMode,
 } from './history'
 import { mergeRunEvents, reduceRunTimeline, type DebugFilters } from './reducer'
+import {
+  isArchiveSource,
+  orderDebugSources,
+  pickSourceId,
+  sourceConnectionLabel,
+  sourceConnectionTitle,
+  sourceLabel,
+  sourceTitle,
+} from './sources'
 
 const SNAPSHOT_INTERVAL_MS = 1200
 const EVENTS_INTERVAL_MS = 400
@@ -88,6 +97,16 @@ export function App() {
     eventsRef.current = eventsState
   }, [eventsState])
 
+  const currentSource = sources.find((source) => source.id === sourceId) ?? null
+  const selectedArchiveSource = isArchiveSource(currentSource)
+  // 下拉顺序：可用 live → 历史归档 → 不可用 live（死来源沉底，与默认选中优先级一致）。
+  const orderedSources = useMemo(() => orderDebugSources(sources), [sources])
+
+  // 选中历史归档来源时范围落到「历史」：归档没有本次进程的 run，「本次」也不可点。
+  useEffect(() => {
+    if (sourceId && selectedArchiveSource) setRangeMode('archive')
+  }, [sourceId, selectedArchiveSource])
+
   const refresh = useCallback(() => setRefreshNonce((value) => value + 1), [])
 
   // ── sources：启动即拉取，空结果 3s 重试（等 Desktop 启动）、有结果 15s 刷新（等重启换端口） ──
@@ -103,10 +122,8 @@ export function App() {
         setSourcesReady(true)
         setSourcesError(result.warning ?? (result.sources.length === 0 ? '未发现 gateway runtime manifest' : null))
         nextDelay = result.sources.length > 0 ? SOURCES_REFRESH_MS : SOURCES_RETRY_MS
-        setSourceId((current) => {
-          if (current && result.sources.some((source) => source.id === current)) return current
-          return result.sources[0]?.id ?? null
-        })
+        // 当前来源仍可用则保持；live 变不可用（EverRoom 退出）时自动落到历史归档。
+        setSourceId((current) => pickSourceId(result.sources, current))
       } catch (error) {
         if (cancelled) return
         setSourcesReady(true)
@@ -321,8 +338,9 @@ export function App() {
     : null
   const timeline = useMemo(() => reduceRunTimeline(activeEvents), [activeEvents])
 
-  const currentSource = sources.find((source) => source.id === sourceId) ?? null
-  const connectionLabel = sourcesReady && sources.length === 0
+  // 历史归档来源的连接态与 Gateway 无关：显示「历史归档 · 只读」，title 给归档目录。
+  const archiveConnectionLabel = sourceConnectionLabel(currentSource)
+  const connectionLabel = archiveConnectionLabel ?? (sourcesReady && sources.length === 0
     ? '未发现 Gateway'
     : paused
       ? '已暂停'
@@ -330,7 +348,10 @@ export function App() {
         ? '在线'
         : connection === 'offline'
           ? '离线'
-          : '连接中'
+          : '连接中')
+  const connectionTitle = archiveConnectionLabel
+    ? [sourceConnectionTitle(currentSource), paused ? '轮询已暂停' : null].filter(Boolean).join(' · ')
+    : connectionError ?? (paused ? '轮询已暂停' : '')
 
   return (
     <div className="app">
@@ -339,18 +360,18 @@ export function App() {
         <select
           className="source-select"
           value={sourceId ?? ''}
-          disabled={sources.length === 0}
+          disabled={orderedSources.length === 0}
           onChange={(event) => setSourceId(event.target.value || null)}
-          title={currentSource ? `代理目标 ${currentSource.baseUrl}` : '未发现 gateway runtime manifest'}
+          title={currentSource ? sourceTitle(currentSource) : '未发现 gateway runtime manifest / 本地历史归档'}
         >
-          {sources.length === 0 ? <option value="">未发现 Gateway</option> : null}
-          {sources.map((source) => (
-            <option key={source.id} value={source.id}>
-              {source.label}{source.version ? ` · v${source.version}` : ''}
+          {orderedSources.length === 0 ? <option value="">未发现 Gateway</option> : null}
+          {orderedSources.map((source) => (
+            <option key={source.id} value={source.id} title={sourceTitle(source)}>
+              {sourceLabel(source)}
             </option>
           ))}
         </select>
-        <span className="conn" data-state={paused ? 'paused' : connection} title={connectionError ?? (paused ? '轮询已暂停' : '')}>
+        <span className="conn" data-state={paused ? 'paused' : connection} title={connectionTitle}>
           {connectionLabel}
         </span>
         {connection === 'offline' && connectionError ? (
@@ -359,7 +380,15 @@ export function App() {
         <span className="topbar-label topbar-label--range">范围</span>
         <div className="topbar-range" role="group" aria-label="Run 范围">
           {RANGE_MODES.map((definition) => {
-            const disabled = definition.id === 'archive' && archiveDisabled
+            // 归档来源没有「本次」进程的 run；live Gateway 未启用归档时「历史」不可点。
+            const archiveModeDisabled = definition.id === 'archive' && archiveDisabled
+            const liveModeDisabled = definition.id === 'live' && selectedArchiveSource
+            const disabled = archiveModeDisabled || liveModeDisabled
+            const title = liveModeDisabled
+              ? `${definition.hint}（归档来源没有本次进程的 run）`
+              : archiveModeDisabled
+                ? `${definition.hint}（历史归档未启用）`
+                : definition.hint
             return (
               <button
                 key={definition.id}
@@ -369,7 +398,7 @@ export function App() {
                 aria-pressed={rangeMode === definition.id}
                 disabled={disabled}
                 onClick={() => setRangeMode(definition.id)}
-                title={disabled ? `${definition.hint}（历史归档未启用）` : definition.hint}
+                title={title}
               >
                 {definition.label}
               </button>
@@ -410,7 +439,7 @@ export function App() {
       </header>
 
       {!sourcesReady ? (
-        <div className="boot">正在检测 Gateway runtime manifest</div>
+        <div className="boot">正在检测 Gateway 与本地历史归档</div>
       ) : sources.length === 0 ? (
         <EmptySources error={sourcesError} onRefresh={refresh} />
       ) : (
@@ -454,7 +483,7 @@ export function App() {
                     ? rangeMode === 'archive'
                       ? '历史归档里还没有可回看的 run；归档只保存终态 run。'
                       : '选择一个 run 查看时间线、事件与输出。'
-                    : connectionError ?? '正在连接 Gateway'}
+                    : connectionError ?? (selectedArchiveSource ? '正在读取历史归档' : '正在连接 Gateway')}
                 </p>
               </div>
             </section>
@@ -470,8 +499,19 @@ function EmptySources({ error, onRefresh }: { error: string | null; onRefresh: (
   return (
     <main className="empty">
       <div className="empty-text">
-        <p>未发现 Gateway runtime manifest。请先启动 EverRoom，或设置 manifest 路径后重启调试页。</p>
-        <p><code>EVERROOM_AGENT_DEBUG_MANIFEST=/path/to/runtime/gateway.json pnpm debug:agents</code></p>
+        <p>未发现 Gateway，也没有可读的本地历史归档。</p>
+        <p>
+          EverRoom 未运行：先启动 EverRoom 跑一个 Agent 任务，run 结束后会写入磁盘归档，
+          下次打开调试页即可直接回看历史 run。
+        </p>
+        <p>
+          已有归档目录时设置 <code>NXCORE_DATA_DIR=/path/to/dataDir</code>：
+          调试页会读取 <code>dataDir/agent-debug/&lt;source&gt;/index.json</code> 与 <code>runs/*.ndjson</code>。
+        </p>
+        <p>
+          或用 manifest 指向运行中的 Gateway：
+          <code>EVERROOM_AGENT_DEBUG_MANIFEST=/path/to/runtime/gateway.json pnpm debug:agents</code>
+        </p>
         {detail ? <p>{detail}</p> : null}
         <button type="button" className="text-btn" onClick={onRefresh}>重新检测</button>
       </div>

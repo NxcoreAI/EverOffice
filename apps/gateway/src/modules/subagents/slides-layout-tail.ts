@@ -1074,7 +1074,7 @@ export async function runLayouterTail(
         // 布局代理未交树（失败/超时/坏树）：减配重试一次——支撑条目砍半、去图表、去讲稿、
         // 密度降档，格式仍是 v2；仍不收敛才落 v2 兜底页。dispatch 被拒（并发限额）不算未交树，走 catch 退避。
         const trimmed = pages[index]!.content
-          ? { ...pages[index]!, revisionFeedback: `上次提交未通过：${placed.reason ?? "布局无效"}。保留完整内容，修复绑定与布局；容量不足请明确说明。` }
+          ? { ...pages[index]!, revisionFeedback: `上次提交未通过：${placed.reason ?? "布局无效"}。不要重画整页或换构图；只按错误做最小修改（补绑定、调区域、删装饰）后立即提交；仍不收敛就简化结构提交，或按 blocked 说明限制。` }
           : trimmedPage(pages[index]!);
         const retryInput = layouterInputFor(base, trimmed, index);
         try {
@@ -1143,8 +1143,8 @@ export async function runLayouterTail(
           currentTree: outcome.tree.v2,
           ...(outcome.designIntent ? { previousDesignIntent: outcome.designIntent } : {}),
           revisionFeedback: pages[index]!.content
-            ? "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码；对照 previousDesignIntent 验收。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 tree、designIntent、bindings。无需修改则原样交树；修改版不会再次回投看图。"
-            : "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码及旧模式兼容门槛。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 v2 tree。无需修改则原样交树；修改版不会再次回投看图。",
+            ? "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码；对照 previousDesignIntent 验收。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 tree、designIntent、bindings。无需修改则原样交树；修改版不会再次回投看图。"
+            : "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码及旧模式兼容门槛。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 v2 tree。无需修改则原样交树；修改版不会再次回投看图。",
         };
         const invocation = await dispatchWithPageRetry(() =>
           deps.dispatchPage(

@@ -6,11 +6,24 @@ import type { AgentDebugRunEvents, AgentDebugSnapshot } from '@nxcore/agent-cont
 
 import { snapshotSearchParams, type SnapshotQuery } from './history'
 
+/** 数据来源类型：live = 代理到 Gateway；archive = dev server 直读磁盘归档（只读，无需 EverRoom 运行）。 */
+export type DebugSourceBackend = 'live' | 'archive'
+
 export interface DebugSource {
   id: string
   label: string
   baseUrl: string
   version: string
+  /** 缺省 `live`（旧版 dev server 不返回该字段）。 */
+  backend: DebugSourceBackend
+  /** live 来源：manifest 里的 Gateway 进程是否还活着；archive 来源恒可用。缺省 true。 */
+  available: boolean
+  /** archive 来源的归档目录绝对路径（仅展示）；live / 未知为 null。 */
+  archiveDir: string | null
+  /** archive 来源索引里的 run 条数；live 为 0。 */
+  runCount: number
+  /** archive 来源最新一条 run 的开始时间；未知为 null。 */
+  latestStartedAt: string | null
 }
 
 export interface SourcesResult {
@@ -52,23 +65,34 @@ export function gatewayBase(sourceId: string): string {
   return `${DEBUG_ROOT}/gateway/${encodeURIComponent(sourceId)}`
 }
 
+/** 单条 sources 响应解析：新字段一律按缺省值兼容旧版 dev server。 */
+function parseSource(item: unknown): DebugSource[] {
+  if (!item || typeof item !== 'object') return []
+  const record = item as Record<string, unknown>
+  if (typeof record.id !== 'string' || typeof record.baseUrl !== 'string') return []
+  const runCount = typeof record.runCount === 'number' && Number.isFinite(record.runCount) && record.runCount > 0
+    ? Math.trunc(record.runCount)
+    : 0
+  return [{
+    id: record.id,
+    label: typeof record.label === 'string' && record.label ? record.label : record.id,
+    baseUrl: record.baseUrl,
+    version: typeof record.version === 'string' ? record.version : '',
+    backend: record.backend === 'archive' ? 'archive' : 'live',
+    available: record.available !== false,
+    archiveDir: typeof record.archiveDir === 'string' && record.archiveDir ? record.archiveDir : null,
+    runCount,
+    latestStartedAt: typeof record.latestStartedAt === 'string' && record.latestStartedAt
+      ? record.latestStartedAt
+      : null,
+  }]
+}
+
 export async function loadSources(): Promise<SourcesResult> {
   const response = await fetch(`${DEBUG_ROOT}/sources`, { cache: 'no-store' })
   if (!response.ok) throw await responseError(response)
   const data: unknown = await response.json()
-  const sources = Array.isArray(data)
-    ? data.flatMap((item): DebugSource[] => {
-      if (!item || typeof item !== 'object') return []
-      const record = item as Record<string, unknown>
-      if (typeof record.id !== 'string' || typeof record.baseUrl !== 'string') return []
-      return [{
-        id: record.id,
-        label: typeof record.label === 'string' && record.label ? record.label : record.id,
-        baseUrl: record.baseUrl,
-        version: typeof record.version === 'string' ? record.version : '',
-      }]
-    })
-    : []
+  const sources = Array.isArray(data) ? data.flatMap(parseSource) : []
   const rawWarning = response.headers.get('x-agent-debug-warning')
   let warning: string | null = null
   if (rawWarning) {

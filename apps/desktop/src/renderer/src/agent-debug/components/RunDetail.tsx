@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatClock } from '../format'
 import { isArchivedRun, sessionLabelOf, sessionShortId } from '../history'
 import type { DebugFilters, RunTimelineModel } from '../reducer'
+import { slidePageBadge } from '../slidePage'
 import { copyText } from './CopyButton'
 import { LiveDuration, runStatusLabel } from './Indicators'
 import { OutputView } from './OutputView'
@@ -52,11 +53,13 @@ export function RunDetail({ run, events, model, filters, eventsError }: RunDetai
   // 归档 run 来自磁盘、只读回放：不显示「实时更新」，也不再拉增量（终态轮询自然停止）。
   const archived = isArchivedRun(run)
   const shortSessionId = sessionShortId(run.sessionId)
+  const slidePage = slidePageBadge(run)
   const meta = [
     `runtime ${run.runtimeId ?? '—'}`,
     `session ${run.sessionId ?? '—'}`,
     `会话 ${sessionLabelOf(run)}${shortSessionId ? ` (#${shortSessionId})` : ''}`,
     `page ${run.pageLabel ?? '—'}`,
+    ...(slidePage ? [`幻灯片 ${slidePage}`] : []),
     `开始 ${formatClock(run.startedAt)}`,
     `结束 ${run.completedAt ? formatClock(run.completedAt) : '—'}`,
     `事件 ${run.eventCount}`,

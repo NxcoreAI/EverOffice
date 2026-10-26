@@ -1,9 +1,9 @@
 # Agent 调试页（独立浏览器调试台）
 
-> 状态：已交付并独立验收（2026-10-23）；2026-10-24 增补「终态 run 磁盘归档 / 历史找回」
-> 日期：2026-10-23（历史归档 2026-10-24）
+> 状态：已交付并独立验收（2026-10-23）；2026-10-24 增补「终态 run 磁盘归档 / 历史找回」；2026-10-26 增补「离线归档来源」（EverRoom 不启动也能回看历史）
+> 日期：2026-10-23（历史归档 2026-10-24，离线归档来源 2026-10-26）
 > 范围：Gateway runtime 埋点 + 独立浏览器调试页（不进入产品导航、不落数据库）
-> 设计细案：`docs/agent-debug-persistence.zh-CN.md`
+> 设计细案：`docs/agent-debug-persistence.zh-CN.md`、`docs/agent-debug-offline-archive.zh-CN.md`
 
 ## 1. 背景与目标
 
@@ -14,7 +14,8 @@ EverRoom 现在同时运行多类 Agent：内置 Agent（`main`/`knowledge`/`web
 1. 看到所有 Agent 的实时工作进度（谁在跑、跑到哪一步、成功/失败）；
 2. 看每一次 run 的**工具调用**（参数、结果、耗时、错误）和**思考过程**（`reasoning.delta`）；
 3. 随时切换跟踪的 Agent，查看不同 Agent 的执行流与最终输出；
-4. **桌面应用重启后仍能找回历史 run**：终态 run 落盘归档，按「会话 / 时间 / 来源（本次 or 历史）」区分并回放（2026-10-24 新增）。
+4. **桌面应用重启后仍能找回历史 run**：终态 run 落盘归档，按「会话 / 时间 / 来源（本次 or 历史）」区分并回放（2026-10-24 新增）；
+5. **EverRoom 不启动也能打开调试页复盘**：dev server 直接把本机归档作为「历史归档」来源读出并回放，不依赖 Gateway 进程（2026-10-26 新增，见 §4.4）。
 
 非目标：
 
@@ -73,12 +74,14 @@ flowchart LR
 
 定义在 `@nxcore/agent-contract`：`AgentDebugAgent`、`AgentDebugRun`、`AgentDebugEvent`、`AgentDebugSnapshot`、`AgentDebugRunEvents`，以及 2026-10-24 新增的 `AgentDebugRunOrigin`（`live` / `archive`）、`AgentDebugArchiveInfo`。
 
-`AgentDebugRun` 新增两个查询时补全字段（均为可选，兼容旧 Gateway）：
+`AgentDebugRun` 在原有字段之外新增以下可选字段（兼容旧 Gateway / 旧归档）：
 
 | 字段 | 含义 |
 | --- | --- |
 | `origin?: "live" \| "archive"` | 数据来源；缺省按 `live` 处理。`archive` = 来自磁盘归档的历史 run |
 | `sessionTitle?: string \| null` | 会话标题（`agent_sessions.title`），用于按对话区分/找回；子 Agent / 会话已删除为 null。**不落归档**，每次查询时补全 |
+| `slidePageIndex?: number` | 逐页任务（如 `slides-layouter` 单页布局）的页序，**1 起**；Gateway 从子 Agent dispatch input 的 0 起 `pageIndex` 换算，随 run 元数据落归档。非逐页 run 不返回 |
+| `slidePageCount?: number` | 逐页任务的总页数；未知（旧 run / 非逐页）不返回 |
 
 ### 3.2 AgentDebugTraceStore（内存环形缓冲）
 
@@ -107,7 +110,7 @@ flowchart LR
 
 trace 包装 `AgentRuntime.start()` / `resume()`（`apps/gateway/src/modules/agent-debug/instrument.ts`）：
 
-1. run 开始时 `beginRun({ runId, agentId, agentName, agentKind, runtimeId, sessionId, pageLabel, task })`；
+1. run 开始时 `beginRun({ runId, agentId, agentName, agentKind, runtimeId, sessionId, pageLabel, task, slidePageIndex?, slidePageCount? })`；逐页任务（`slides-layouter`）的 0 起 `pageIndex`/`totalPages` 从 `runtimeMetadata.subagentInput` 提取，换算成 1 起页序（见 §7.9）；
 2. 事件流逐条 `recordEvent`（含 `reasoning.delta`、`tool.*`、`message.*`、`context.usage`、`run.*`）；
 3. 收到 `run.completed/failed/cancelled/interrupted`、事件流抛错、消费者提前 `break` 或流结束无终态时 `finishRun`；
 4. 事件原样向下游透传，**不改变顺序、不吞异常**；store 自身的任何异常都被吞掉，不影响 Agent 行为；
@@ -185,6 +188,8 @@ node apps/desktop/node_modules/vite/bin/vite.js --config apps/desktop/vite.agent
 
 调试页不进入 Electron renderer 构建产物，也不参与产品打包；`vite build` 只输出到 `apps/desktop/out/agent-debug/` 供验证。
 
+> **EverRoom 未运行时也能直接用**：不需要额外命令或参数。dev server 会把本机 `<dataDir>/agent-debug/<source>/` 归档作为「历史归档」来源列出；没有可用的 live Gateway 时页面自动选中它（见 §4.4）。前提是之前跑过 Agent 任务且归档仍未被保留策略清理。
+
 ### 4.2 网关发现与鉴权代理
 
 Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间件之前挂载）：
@@ -195,9 +200,11 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
   3. NxCore 独立网关数据目录下 `runtime/gateway.json`；
   4. 仓库 `.data/runtime/gateway.json`。
 - 每次请求按 **mtime** 重读 manifest：Desktop 重启换了端口/token 会自动生效。
-- `GET /@agent-debug/sources` 返回 `[{ id, label, baseUrl, version }]`，**不含 token**；manifest 无效/读取失败时通过 `x-agent-debug-warning` 响应头（URI 编码）带回可读提示。
-- `GET /@agent-debug/gateway/:sourceId/*` 在同源内转发到对应 `baseUrl`，由 dev server 注入 `Authorization: Bearer <token>`；token 只存在于 Node 进程，不进浏览器、不进页面 bundle。
-- 代理只接受 GET（其它方法 `405`）；无任何 manifest 时 `503`；未知 sourceId `404`。
+- `GET /@agent-debug/sources` 返回 live + archive 两类来源，**不含 token**；manifest 无效/读取失败时通过 `x-agent-debug-warning` 响应头（URI 编码）带回可读提示。
+  - live 来源：`{ id, label, baseUrl, version, backend: "live", available }`；`available` = manifest 里 `pid` 是否还活着（`process.kill(pid, 0)` 探测）。
+  - archive 来源：`{ id: "archive-…", label: "历史归档 · 主网关", baseUrl: "", version: "", backend: "archive", available: true, archiveDir, runCount, latestStartedAt }`；`archiveDir` 为归档目录，`label` 用语义名（`main` → 主网关、`cursor-completion` → 补全服务）。
+- `GET /@agent-debug/gateway/:sourceId/*`：live 来源在同源内转发到对应 `baseUrl`，由 dev server 注入 `Authorization: Bearer <token>`；token 只存在于 Node 进程，不进浏览器、不进页面 bundle。archive 来源（`archive-…`）不经过 Gateway，由 dev server 直接读磁盘归档响应 `snapshot` / `runs/:runId/events`（§4.4）。
+- 代理只接受 GET（其它方法 `405`）；live + archive 都没有时 `503`；未知 sourceId `404`。
 - dev server 只监听 `127.0.0.1`（`server.host = '127.0.0.1'`）。
 
 ### 4.3 页面布局
@@ -219,15 +226,18 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 - 左侧点选 Agent = **切换跟踪对象**；切换时 run 列表按 `agentId` 过滤，事件缓冲按 `sourceId + runId` 重置为 0 增量重新拉取；点「全部 Agent」看全局 run 流。
 - Agent 类型页签：全部 / 内置（builtin）/ 子 Agent（developer）/ 本机 Agent（local）。
 - 顶栏「范围」三态：`全部`（本次 + 历史，默认）/ `本次`（仅内存 run）/ `历史`（仅归档 run）。历史模式 snapshot 请求 `runs=300`，其它模式 150；切换即重新拉快照。归档关闭或旧 Gateway 不返回 `archive` 时显示「历史未启用」并禁用历史入口。
-- 顶栏归档概况：`历史 N 条 · 保留 D 天`，hover 显示字节数与最旧时间。
+- 顶栏「来源」（2026-10-26）：下拉按「可用 live → 历史归档 → 不可用 live」排序；live 标签 `<label> · v<version>`（进程不在时追加「 · 离线」），archive 标签形如「历史归档 · 主网关 · 只读」。默认选中第一个可用 live；没有可用 live 时自动落到 archive（EverRoom 退出后 15s 内自动切换）。选中 archive 时连接态显示「历史归档 · 只读」（title 给归档目录 + 无需 EverRoom 运行）、「本次」禁用、范围落到「历史」。
+- 顶栏归档概况：Gateway 在线时显示 `历史 N 条 · 保留 D 天`；离线归档来源拿不到 Gateway 的保留配置，显示 `历史 N 条 · 只读`；hover 均给字节数与最旧时间。
 - run 列表：每行显示状态、任务摘要、耗时/工具数/思考字数/事件数；历史 run 额外有「历史」文字标签与 `MM-DD HH:mm` 开始时间；会话标签显示 `sessionTitle`（回退 `pageLabel`），并始终附 `#短id`（sessionId 前 8 位），标题相同也能区分。
 - 会话筛选与分组（2026-10-24 增强）：列表头「会话」下拉的每个选项是「主名 · 首次时间 · #短id」，主名优先 `sessionTitle`、缺失时用该会话首条 run 的任务摘要（比 `Home`/`Room` 更可辨认），hover 可看完整 sessionId / 时间范围 / run 数；「全部会话」视图下 run 列表按会话分组，组头（同样带时间与短 id）可点击直接筛选到该会话；筛选后顶部有「筛选：… / 全部会话」提示条，可一键回到全部。空态区分「无本次 run / 无历史记录 / 该会话暂无 run」。
 - 浏览时锁序（2026-10-26）：Agent / Run 两栏离开顶部（>8px）后**冻结行顺序**，snapshot 只在原位置更新行内容，不再按「运行中置顶 / 最近活动」重排；新出现的 Agent / run 插到列表最前，并通过视口锚定（`data-row-key` + `useLayoutEffect` 校正 `scrollTop`）保持正在看的那一行不动。滚回顶部或点右下角「回到顶部」即恢复实时排序；切换 Agent / 会话筛选 / 范围时列表回到顶部并重置锁序。实现见 `browseOrder.ts`（纯函数）与 `useBrowsingList.ts`（滚动锚点 Hook）。
+- 逐页任务的页归属（2026-10-26 增补）：`slides-layouter` 每页一个并发 run，run 元数据带 `slidePageIndex`（1 起）/`slidePageCount`。Run 列表每行显示 `P3/12` 徽标，16 个并发页一眼可辨；Run 详情 meta 也带「幻灯片 P3/12」。**Agent 列表的 Slides Layouter 行**聚合该 Agent「运行中」run 的页序并压缩显示：连续页 `P1–P16`、不连续 `P1–P3 P7 +2`（段数 >4 时尾部折叠为 `+N`），hover 可看完整页列表——PPT 生成时不用点开每个 run 就知道布局 agent 正在负责哪几页。其他没有页序字段的 Agent 行不受影响。
 - run 列表自动跟随最新活跃 run（可关闭「跟随」）；历史模式默认选中最新一条历史 run。
 - 时间线：思考块可折叠；工具行可展开参数/结果/失败错误，展开内容为纯 mono JSON；另有上下文用量文本、压缩提示、审批、系统事件行。
 - 「原始事件」页签：事件列表 + 选中事件的 JSON（列表最多渲染最近 1200 条，顶栏过滤可缩小范围；JSON 预览超过 240k 字符会截断提示）。
 - 「输出」页签：最终 assistant 文本 + `subagent_submit_result` 结构化结果（依次尝试 `tool.completed.result.content` 里的 JSON、`result` 本身、`tool.started.args`，并标注提取来源）。
 - 历史 run 的详情显示「历史归档 · 只读」、不显示「实时更新」；事件只拉取一次（终态不轮询），时间线/事件/输出页签均可回放。
+- 空态（2026-10-26）：既没有 Gateway 也没有可读的本地历史归档时，提示 EverRoom 未运行 / 先跑任务生成归档，并给出 `NXCORE_DATA_DIR`（dataDir）与 `EVERROOM_AGENT_DEBUG_MANIFEST` 用法。
 - 轮询策略：snapshot 1200ms；选中 run 运行中 400ms 增量拉事件（终态后停止）；暂停后完全停止轮询；事件按 seq upsert 合并。
 
 #### 视觉规范（浅色极简，2026-10-23 改版）
@@ -253,6 +263,28 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 - 改版前的深色版本截图（`debug-page.png`、`e2e-*.png`、`live-*.png`）保留为历史验收证据，不代表当前 UI。
 
 
+### 4.4 离线归档来源（EverRoom 不启动也能回看，2026-10-26）
+
+设计细案：`docs/agent-debug-offline-archive.zh-CN.md`。
+
+```text
+浏览器 ──/ @agent-debug/gateway/archive-…/v1/agent-debug/*──▶ Vite dev server（只读归档读取器）
+                                                                  │
+                                        <dataDir>/agent-debug/main/{index.json,runs/*.ndjson}
+```
+
+- **目录发现**：对每个 manifest 候选取 `dataDir`（`dirname(dirname(manifestPath))`），扫描其 `agent-debug/*` 子目录；有 `index.json` 或 `runs/` 即视为一个 archive 来源。`main` → 「历史归档 · 主网关」，`cursor-completion` → 「历史归档 · 补全服务」，其它目录名原样。id = `archive-` + sha1(归档目录) 前 12 位，跨重启稳定。
+- **只读**：index.json 按 mtime 缓存；缺失/损坏时在内存里扫 `runs/**/*.ndjson` 首行重建，**不写盘**（Gateway 可能同时在写）；索引里的相对路径必须落在归档目录内；坏行跳过。读取器实例在 dev server 生命周期内按目录缓存复用。
+- **端点**（archive 来源上用与 Gateway 相同形状）：
+  - `GET …/v1/agent-debug/snapshot?runs=&archived=`：`runs` 1–300（默认 150）、`archived` ⊆ `include|only|exclude`（默认 include，`exclude` 返回空 run 列表）；返回归档 run（`startedAt` 倒序、带 `origin: "archive"`、`sessionTitle: null`）+ 由归档 run 聚合的 `agents`（最新 run 的状态决定 error/idle、`activeRunCount = 0`）+ `archive: { enabled: true, retentionDays: 0, runCount, bytes, oldestStartedAt }`。
+  - `GET …/v1/agent-debug/runs/:runId/events?afterSeq=&limit=`：`seq > afterSeq` 升序、`limit` 1–5000、`latestSeq` 为文件内最大 seq；终态静态，不做尾部 delta 重放。
+  - 非法参数 `400`、未知 run `404`、其它路径 `404`、非 GET `405`。
+- **页面**：来源下拉并列 archive 来源；没有可用 live 时自动选中；选中后连接态「历史归档 · 只读」、范围「本次」禁用；详情沿用现有「历史归档 · 只读」只读回放（§4.3）。
+- **离线拿不到的数据**：`sessionTitle`（不读业务库，会话辨识退化为「任务摘要 + #短 id + 首次时间」）、`retentionDays`（未知，显示「只读」）；实际裁剪仍由 Gateway 写入时执行。
+- **验证命令**：
+  - `node scripts/agent-debug-offline-smoke.mjs`（合成归档 fixture）；`--archive <dir>` 用真实归档；`--keep` 保留临时 dataDir。
+  - 浏览器 e2e harness：`.tmp-inspect/agent-debug-offline-e2e/run.mjs`（gitignored，headless Chrome + CDP，可加 `--archive <dir>`）。
+
 ## 5. 文件清单
 
 ```text
@@ -260,7 +292,7 @@ packages/agent-contract/src/index.ts                     # 调试契约类型（
 apps/gateway/src/modules/agent-debug/
   trace-store.ts                                         # 内存缓冲 + 合并/淘汰 + 归档回落
   archive.ts                                             # 文件型磁盘归档（index.json + ndjson、保留/自愈）
-  instrument.ts                                          # runtime 边界 trace 包装
+  instrument.ts                                          # runtime 边界 trace 包装 + 逐页任务页序提取
   routes.ts                                              # /v1/agent-debug/*（archived 参数 / sessionTitle）
 apps/gateway/src/config.ts                               # 归档 env 解析（4 个 NXCORE_AGENT_DEBUG_ARCHIVE*）
 apps/gateway/src/modules/agent/resolver.ts               # 接入 trace（跳过 developer）
@@ -272,19 +304,27 @@ apps/gateway/src/server/create-cursor-completion-server.ts
 apps/gateway/tests/agent-debug.test.ts                   # store/埋点/路由单测（32 个，含 archived 三态）
 apps/gateway/tests/agent-debug-archive.test.ts           # 归档单测（14 个：落盘/重建/裁剪/dispose）
 apps/gateway/tests/config.test.ts                        # 归档 env 默认值/覆盖/非法值
-apps/desktop/vite.agent-debug.config.mts                 # dev server + 网关代理插件
+apps/desktop/vite.agent-debug.config.mts                 # dev server + 网关代理插件 + archive 来源（§4.4）
+apps/desktop/debug/host/archive-source.ts                # 离线只读归档读取器（索引缓存/内存重建/事件/agents/发现）
 apps/desktop/debug/agent-debug.html                      # 页面入口
-apps/desktop/src/renderer/src/agent-debug/               # React 调试台源码（App/api/reducer/history/components/format/styles）
+apps/desktop/src/renderer/src/agent-debug/               # React 调试台源码（App/api/reducer/history/sources/components/format/styles）
+apps/desktop/src/renderer/src/agent-debug/sources.ts     # 来源排序 / 默认选中 / 标签 / 连接态文案（纯函数）
 apps/desktop/tests/agent-debug-reducer.test.ts           # reducer/upsert/输出提取单测（17 个）
-apps/desktop/tests/agent-debug-history.test.ts           # 范围/来源/会话标签与分组纯函数单测（29 个）
+apps/desktop/tests/agent-debug-history.test.ts           # 范围/来源/会话标签与分组纯函数单测（30 个）
+apps/desktop/tests/agent-debug-sources.test.ts           # 来源排序/默认选中/标签纯函数单测（16 个）
+apps/desktop/tests/agent-debug-archive-source.test.ts    # 离线归档读取器单测（25 个：索引/重建/事件/agents/发现/400 语义）
 apps/desktop/src/renderer/src/agent-debug/browseOrder.ts # 浏览时锁序纯逻辑（顺序冻结 / 视口锚点换算）
 apps/desktop/src/renderer/src/agent-debug/useBrowsingList.ts # 滚动锚点 + 锁序 Hook（browsing/scrollToTop）
+apps/desktop/src/renderer/src/agent-debug/slidePage.ts   # 逐页任务页序：徽标 / Agent 页摘要聚合与压缩
 apps/desktop/tests/agent-debug-browse-order.test.ts      # 浏览时锁序 / 锚点纯函数单测
+apps/desktop/tests/agent-debug-slide-pages.test.ts       # 页序徽标 / Agent 页摘要纯函数单测（14 个）
 scripts/agent-debug-smoke.mjs                            # fake 网关端到端冒烟（含 archive 断言）
 scripts/agent-debug-archive-e2e.mjs                      # 「停止网关 → 同 dataDir 重启 → 历史找回」e2e
+scripts/agent-debug-offline-smoke.mjs                    # 无 Gateway 离线冒烟（archive 来源；--archive 用真实归档）
 screenshots/agent-debug/                                 # 验收截图
 docs/agent-debug-page.zh-CN.md                           # 本文
 docs/agent-debug-persistence.zh-CN.md                    # 历史归档设计细案
+docs/agent-debug-offline-archive.zh-CN.md                # 离线归档来源设计细案
 ```
 
 ## 6. 安全与资源边界
@@ -436,10 +476,61 @@ EVERROOM_AGENT_DEBUG_MANIFEST=$PWD/../../.tmp-pnpm/e2e-data/runtime/gateway.json
 - 回归：Desktop typecheck 仍只有既有 ThoughtsPane `10` 条基线错误（agent-debug 0 新增）；`agent-debug-reducer / agent-debug-history / agent-debug-browse-order` 单测 **64 passed**；调试页 `vite build` exit 0（1592 modules → css 16.88 kB / js 193.35 kB）；页面 console error 0。
 - 视觉：回顶按钮复用时间线「回到最新」的平铺样式（1px 边框、`border-radius: 2px`、无阴影）；两列同时滚动见 `screenshots/agent-debug/scroll-lock-both-columns.png`（本机验收截图，`screenshots/` 不入库）。
 
+### 7.9 布局 agent 页归属（2026-10-26 增补，PASS）
+
+问题：PPT 生成时 `slides-layouter` 最多 16 个并发 run 各负责一页，但 Agent 列表只有一行「Slides Layouter · 16 运行」，Run 列表每行 task 都是「单页布局」，无法分辨哪个 run 在负责哪一页。
+
+实现：
+
+- 契约：`AgentDebugRun` 新增 `slidePageIndex`（1 起）/ `slidePageCount`（见 §3.1）。
+- Gateway：`instrument.ts` 从 `runtimeMetadata.subagentInput` 提取 layouter dispatch input 里的 0 起 `pageIndex` + `totalPages`（orchestrator 透传），换算成 1 起页序写入 trace store；`trace-store.ts` 在 descriptor/StoredRun/`toDebugRun` 透传，随 run 元数据落归档（旧归档无字段时按 `undefined` 处理）。
+- 调试页：新增 `slidePage.ts` 纯函数；Run 行显示 `P3/12` 徽标；Agent 行的「运行中」逐页 run 按 Agent 聚合页序并压缩（连续 `P1–P16`；不连续 `P1–P3 P7 P9–P10 P12 +9`，title 列全）；Run 详情 meta 显示「幻灯片 P3/12」。连续段压缩规则：段数 >4 时尾部折叠为 `+N`（N=被折叠页数）。
+
+验证：
+
+| 项 | 结果 |
+| --- | --- |
+| Gateway 单测 | `tests/agent-debug.test.ts` **36 passed**（新增：traceRuntime 0 起→1 起、非法 pageIndex 忽略、SubagentRuntimeManager 透传、snapshot 字段、归档 roundtrip） |
+| Desktop 单测 | agent-debug 4 files / **78 passed**（新增 `agent-debug-slide-pages.test.ts` 14 个） |
+| typecheck | gateway exit 0；desktop 仅既有 ThoughtsPane `10` 条基线错误（agent-debug 0 新增） |
+| 调试页 build | exit 0，1593 modules → css 17.05 kB / js 195.03 kB |
+| 浏览器 e2e | baseline（pre-feature commit `59f32405` 的 `git archive` 副本，:5300）：无 `.agent-pages`/`.run-page`、详情无「幻灯片」；post-fix（:5299）**15/15 PASS**：连续夹具 `· P1–P16`、非连续 `P1–P3 P7 P9–P10 P12 +9`、18 条 run 行徽标与 runId 一一对应（`layout-page-01..16 → P1/16..P16/16`）、详情 `幻灯片 P3/16`、其他 Agent 行无页摘要、console error 0 |
+
+- harness：`.tmp-inspect/agent-debug-slide-pages/`（gitignored；`node .tmp-inspect/agent-debug-slide-pages/verify.mjs --mode postfix`，`--mode baseline` 会自动用 pre-feature commit 副本重建基线，`--stop` 清理）。
+- 截图：`screenshots/agent-debug/layout-pages-agent-list.png`（左栏 Slides Layouter 行 `P1–P16`）、`layout-pages-run-list.png`（中栏每行 `P1/16…` 徽标）。
+
+### 7.10 离线归档来源 / EverRoom 不启动看历史（2026-10-26 增补，PASS）
+
+环境：macOS，系统 node v22.23.1；两名并行工程师（host 读取器 / 页面 UI）+ Lead 集成验收。全部命令用 `node node_modules/...` 直跑，未 `pnpm install` / 未 `git commit`。
+
+问题：EverRoom/Gateway 未启动时 `/@agent-debug/sources` 为空（或 stale manifest 导致 502），页面无法回看已经落盘的历史 run；用户希望「平时也能打开调试页翻历史做复盘」。
+
+实现：Vite dev server 增加只读 archive 来源（`apps/desktop/debug/host/archive-source.ts` + 插件 sources/代理扩展）；页面增加来源排序与默认选中、「历史归档 · 只读」连接态、「本次」禁用、离线归档概况文案（详见 §4.4 与 `docs/agent-debug-offline-archive.zh-CN.md`）。
+
+| 项 | 命令 / 场景 | 结果 |
+| --- | --- | --- |
+| Host 单测 | `node node_modules/vitest/vitest.mjs run tests/agent-debug-archive-source.test.ts` | **25 passed**（索引/重建/事件/agents/发现/label 映射/参数 400） |
+| 页面单测 | 追加 `tests/agent-debug-sources.test.ts tests/agent-debug-history.test.ts` | **46 passed**（sources 16 / history 30） |
+| agent-debug 全量单测 | 6 个文件 | **120 passed**（sources 16 / history 30 / reducer 17 / browse-order 18 / slide-pages 14 / archive-source 25） |
+| typecheck | `cd apps/desktop && node node_modules/typescript/bin/tsc --noEmit` | 仍为既有 ThoughtsPane `10` 条基线，**0 新增** |
+| 调试页构建 | `node node_modules/vite/bin/vite.js build --config vite.agent-debug.config.mts` | exit 0，1594 modules → css 17.05 kB / js 197.27 kB |
+| 离线冒烟（合成归档） | `node scripts/agent-debug-offline-smoke.mjs` | **13/13 PASS**（archive/stale live 两态、archived 三态、参数边界、token 不泄漏、全程无 Gateway） |
+| 离线冒烟（真实归档） | `node scripts/agent-debug-offline-smoke.mjs --archive "$HOME/Library/Application Support/EverRoom/agent-debug/main"` | **13/13 PASS**（586 runs / 63 MB 真实归档） |
+| 浏览器 e2e（合成归档） | `.tmp-inspect/agent-debug-offline-e2e/run.mjs` | **14/14 PASS**：自动选中「历史归档 · 主网关 · 只读」、stale live 显示「离线」、连接态与 title、归档概况「历史 N 条 · 只读」、run 行「历史」、时间线/工具/事件/输出回放、「本次」禁用、1280×720 无横向溢出、console error 0 |
+| 浏览器 e2e（真实归档） | `… run.mjs --archive <真实归档>` | **14/14 PASS**（300 条历史 run / 8 个 Agent，截图见下） |
+| 在线回归 | EverRoom 运行中另起 `:5411` dev server | live 来源 `available=true`、archive 来源并列、live snapshot 200（`retentionDays=7`）、live events 200、archive snapshot 200 |
+| 在线浏览器回归 | `.tmp-inspect/agent-debug-offline-e2e/online-check.mjs` | 5/5 PASS：默认选中「EverRoom 主网关」、连接态「在线」、archive 来源并列、范围「本次/历史」均可用、无未捕获异常（150 run / 18 Agent） |
+
+- 截图（本机验收，`screenshots/` 不入库）：`screenshots/agent-debug/offline-archive-1680.png`（真实 586 runs 归档，来源「历史归档 · 主网关 · 只读」）、`offline-archive-1280.png`。
+- 已知取舍见 §8（离线不补会话标题、retentionDays 未知、仍受 300 条快照上限约束）。
+
 ## 8. 已知限制
 
 - 历史归档只保存**终态 run**：进程被 SIGKILL（强杀/断电）时，运行中的 run 不保证保留；正常退出（SIGTERM，桌面端 shutdown 会等 5s）会把 running 收尾为 `interrupted` 并落盘。
 - 历史浏览上限：snapshot 最多 300 条（历史模式即 300）；更早的 run 需直接查看 `<dataDir>/agent-debug/<source>/runs/<YYYYMMDD>/*.ndjson`。归档默认保留 7 天 / 2000 条 / 1 GiB，超出自动清理最旧。
+- 离线归档来源（§4.4）不读业务数据库：`sessionTitle` 恒为 null，会话辨识退化为「任务摘要 + 首次时间 + #短 id」；也拿不到 Gateway 的归档保留配置，顶栏显示「历史 N 条 · 只读」而不是「保留 D 天」。
+- 离线归档来源沿用 300 条快照上限：真实归档 586 条时只列最近 300 条；更早的 run 需在 Gateway 在线时翻页或用 `--archive` + 直接读 ndjson 的方式查看。
+- 离线读取器只读：索引缺失/损坏时只在内存里从 ndjson 首行重建，不改写 `index.json`；Gateway 同时运行时以 Gateway 写入为准（索引 mtime 变化后 dev server 自动重读）。
 - `sessionTitle` 是查询时按当前 `agent_sessions` 补全的：会话被删除后历史 run 仍可按任务文本、时间、pageLabel 找回，但标题为 null。会话标签已统一带「首次时间 + sessionId 前 8 位」，标题重复/缺失也能区分；若要拿完整 sessionId，hover 会话下拉/组头或看 Run 详情 meta。
 - 会话列表来源于当前快照里的 run（最多 300 条，历史模式）：超出该窗口的老会话不会出现在下拉里，需直接看归档 ndjson。
 - 单机调试：dev server 与 Gateway 都只绑 `127.0.0.1`，不支持远程/多人访问。
@@ -449,3 +540,4 @@ EVERROOM_AGENT_DEBUG_MANIFEST=$PWD/../../.tmp-pnpm/e2e-data/runtime/gateway.json
 - resume 复用同一 runId：`beginRun` 保留既有事件与计数，并把终态重新拉回 `running`（清空 `completedAt`/`errorMessage`），后续终态可正常回写。当前 Gateway 业务链路尚未调用 `runtime.resume()`，该行为为前瞻性兜底。
 - 页面轮询是固定间隔的全量快照 + 增量事件，不做推送；超高频事件流下 400ms 轮询可能合并多批。
 - 两栏列表的「浏览时锁序」（§4.3）只在离开顶部（scrollTop > 8px）后生效：停在顶部时仍按实时排序刷新（运行中置顶），这是刻意的「跟随最新」行为；想看稳定顺序请向下滚一点或点「暂停」。
+- 页归属（§7.9）依赖 run 元数据里的 `slidePageIndex`：字段上线前产生的 run / 旧归档没有页序，不显示徽标与摘要；Agent 行只聚合**运行中**的逐页 run（已完成的页仍在 Run 列表里有徽标，但不计入行摘要）。

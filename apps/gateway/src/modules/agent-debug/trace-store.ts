@@ -42,6 +42,10 @@ export interface AgentDebugRunDescriptor {
   sessionId: string | null;
   pageLabel: string | null;
   task: string;
+  /** 逐页任务（slides-layouter 单页布局）的页序，1 起；非逐页 run 不传。 */
+  slidePageIndex?: number;
+  /** 逐页任务的总页数；未知不传。 */
+  slidePageCount?: number;
   /** Agent 描述（调试页 Agent 列表展示用；观测到本机 Agent 时补全）。 */
   agentDescription?: string;
 }
@@ -83,6 +87,8 @@ interface StoredRun {
   sessionId: string | null;
   pageLabel: string | null;
   task: string;
+  slidePageIndex?: number;
+  slidePageCount?: number;
   status: AgentDebugRunStatus;
   startedAt: string;
   completedAt: string | null;
@@ -184,6 +190,11 @@ export class AgentDebugTraceStore {
       if (!existing.agentDescription && descriptor.agentDescription) {
         existing.agentDescription = descriptor.agentDescription;
       }
+      // 旧 run（页字段上线前开始）resume 时补齐逐页信息；已有值不覆盖。
+      if (existing.slidePageIndex === undefined && descriptor.slidePageIndex !== undefined) {
+        existing.slidePageIndex = descriptor.slidePageIndex;
+        if (descriptor.slidePageCount !== undefined) existing.slidePageCount = descriptor.slidePageCount;
+      }
       return;
     }
     this.runs.set(descriptor.runId, {
@@ -196,6 +207,8 @@ export class AgentDebugTraceStore {
       sessionId: descriptor.sessionId,
       pageLabel: descriptor.pageLabel,
       task: descriptor.task,
+      ...(descriptor.slidePageIndex === undefined ? {} : { slidePageIndex: descriptor.slidePageIndex }),
+      ...(descriptor.slidePageCount === undefined ? {} : { slidePageCount: descriptor.slidePageCount }),
       status: "running",
       startedAt: new Date().toISOString(),
       completedAt: null,
@@ -516,6 +529,8 @@ export class AgentDebugTraceStore {
       sessionId: run.sessionId,
       pageLabel: run.pageLabel,
       task: run.task,
+      ...(run.slidePageIndex === undefined ? {} : { slidePageIndex: run.slidePageIndex }),
+      ...(run.slidePageCount === undefined ? {} : { slidePageCount: run.slidePageCount }),
       status: run.status,
       startedAt: run.startedAt,
       completedAt: run.completedAt,

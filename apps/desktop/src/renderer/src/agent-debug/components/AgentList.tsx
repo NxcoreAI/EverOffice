@@ -2,6 +2,7 @@ import type { AgentDebugAgent, AgentDebugRun } from '@nxcore/agent-contract'
 import { memo, useMemo } from 'react'
 
 import { formatRelativeTime } from '../format'
+import { activeSlidePagesByAgent, formatSlidePageSummary, slidePagesTitle } from '../slidePage'
 import { useBrowsingList, useBrowsingOrder } from '../useBrowsingList'
 import { AGENT_KIND_LABEL } from './Indicators'
 
@@ -50,6 +51,9 @@ export const AgentList = memo(function AgentList({
     for (const run of runs) map.set(run.agentId, (map.get(run.agentId) ?? 0) + 1)
     return map
   }, [runs])
+
+  // 逐页任务（如 slides-layouter 单页布局）：聚合运行中页序，Agent 行直接显示在负责哪几页。
+  const slidePagesByAgent = useMemo(() => activeSlidePagesByAgent(runs), [runs])
 
   const visibleAgents = useMemo(
     () => sortAgents(kindTab === 'all' ? agents : agents.filter((agent) => agent.kind === kindTab)),
@@ -106,6 +110,8 @@ export const AgentList = memo(function AgentList({
         </button>
         {orderedAgents.map((agent) => {
           const total = runStats.get(agent.id) ?? 0
+          const slidePages = slidePagesByAgent.get(agent.id)
+          const pageSummary = slidePages ? formatSlidePageSummary(slidePages) : ''
           return (
             <button
               key={agent.id}
@@ -113,7 +119,7 @@ export const AgentList = memo(function AgentList({
               className="agent-row"
               data-row-key={agent.id}
               data-selected={selectedAgentId === agent.id}
-              title={`${agent.name}${agent.description ? `\n${agent.description}` : ''}\nid: ${agent.id}`}
+              title={`${agent.name}${agent.description ? `\n${agent.description}` : ''}\nid: ${agent.id}${slidePages ? `\n${slidePagesTitle(slidePages)}` : ''}`}
               onClick={() => onSelectAgent(agent.id)}
             >
               <span className="agent-row-top">
@@ -124,6 +130,9 @@ export const AgentList = memo(function AgentList({
               <span className="agent-sub">
                 {AGENT_KIND_LABEL[agent.kind]} · {formatRelativeTime(agent.lastRunAt)}
                 {agent.activeRunCount > 0 ? ` · ${agent.activeRunCount} 运行` : ''}
+                {slidePages && pageSummary
+                  ? <span className="agent-pages" title={slidePagesTitle(slidePages)}>{` · ${pageSummary}`}</span>
+                  : null}
               </span>
             </button>
           )

@@ -344,6 +344,43 @@ describe("traceRuntime", () => {
     expect(typeof (deltas[0]?.payload as { delta?: string }).delta).toBe("string");
   });
 
+  it("records slides 逐页任务的页序（dispatch input 0 起 pageIndex → 调试页 1 起）", async () => {
+    const store = createStore();
+    const traced = traceRuntime(new FakeAgentRuntime(), store, {
+      agentId: "slides-layouter",
+      agentName: "Slides Layouter",
+      agentKind: "developer",
+    });
+    await drain((await traced.start(startInput("run-slide-page", {
+      runtimeMetadata: {
+        subagentAgentId: "slides-layouter",
+        subagentInput: { task: "layout", pageIndex: 2, totalPages: 12 },
+      },
+    }))).events);
+
+    expect(store.getRun("run-slide-page")).toMatchObject({
+      agentId: "slides-layouter",
+      slidePageIndex: 3,
+      slidePageCount: 12,
+    });
+  });
+
+  it("非逐页 run 不写页序字段，非法 pageIndex 也被忽略", async () => {
+    const store = createStore();
+    const traced = traceRuntime(new FakeAgentRuntime(), store, DESCRIPTOR);
+    await drain((await traced.start(startInput("run-no-page"))).events);
+    await drain((await traced.start(startInput("run-bad-page", {
+      runtimeMetadata: { subagentInput: { pageIndex: -1, totalPages: 12 } },
+    }))).events);
+
+    const plain = store.getRun("run-no-page")!;
+    expect(plain.slidePageIndex).toBeUndefined();
+    expect(plain.slidePageCount).toBeUndefined();
+    const bad = store.getRun("run-bad-page")!;
+    expect(bad.slidePageIndex).toBeUndefined();
+    expect(bad.slidePageCount).toBeUndefined();
+  });
+
   it("records terminal failure from an event stream error, keeps the exception and calls once", async () => {
     const store = createStore();
     const failing: AsyncIterable<RuntimeEvent> = {
@@ -476,6 +513,17 @@ describe("agent debug wiring", () => {
       agentName: "Slides Planner",
       agentKind: "developer",
     });
+
+    // 逐页 dispatch：orchestrator 放在 runtimeMetadata.subagentInput 的 0 起 pageIndex
+    // 要穿透到调试 run（1 起页序），Agent 列表才能显示「负责哪一页」。
+    await drain((await runtime.start(startInput("run-subagent-page", {
+      pageLabel: "Slides",
+      runtimeMetadata: { subagentAgentId: "slides-layouter", subagentInput: { pageIndex: 4, totalPages: 16 } },
+    }))).events);
+    expect(store.getRun("run-subagent-page")).toMatchObject({
+      slidePageIndex: 5,
+      slidePageCount: 16,
+    });
     await manager.dispose();
   });
 
@@ -575,6 +623,38 @@ describe("agent debug routes", () => {
   function headers(): Record<string, string> {
     return { authorization: `Bearer ${AUTH_TOKEN}` };
   }
+
+  it("round-trips slide page fields through the disk archive", async () => {
+    const dir = await tempDir();
+    const archive = new AgentDebugArchive({ dir, now: () => Date.parse("2026-01-02T00:00:00.000Z") });
+    await archive.archiveRun(archivedRun("run-archive-page", {
+      agentId: "slides-layouter",
+      agentName: "Slides Layouter",
+      agentKind: "developer",
+      slidePageIndex: 5,
+      slidePageCount: 12,
+    }), archivedEvents());
+    await archive.flush();
+
+    expect(archive.listRuns(10)[0]).toMatchObject({ slidePageIndex: 5, slidePageCount: 12 });
+  });
+
+  it("serves slide page fields on snapshot runs", async () => {
+    const store = createStore();
+    begin(store, "run-page", { slidePageIndex: 4, slidePageCount: 12 });
+    const app = await buildApp(store);
+
+    const body = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/snapshot",
+      headers: headers(),
+    })).json() as AgentDebugSnapshot;
+    expect(body.runs.find(({ runId }) => runId === "run-page")).toMatchObject({
+      slidePageIndex: 4,
+      slidePageCount: 12,
+    });
+    await app.close();
+  });
 
   it("rejects unauthenticated requests with 401", async () => {
     const app = await buildApp(createStore());

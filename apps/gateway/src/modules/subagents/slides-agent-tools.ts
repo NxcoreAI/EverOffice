@@ -349,7 +349,7 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   label: "布局树校验",
   description:
     "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（节点路径+缺陷类型+改法）。"
-    + "ok=true 才可用 subagent_submit_result 提交；有缺陷按 hint 修正后重交整棵树。",
+    + "单页最多调用 4 次，只用于提交前确认：第一次 ok=true 立即用 subagent_submit_result 提交，禁止再校验、再改树或再试其他构图变体。有缺陷按 hint 做最小修正；同一缺陷修 2 次仍在就简化结构后校验一次并提交，或交 blocked。",
   parameters: {
     type: "object",
     properties: {
@@ -377,7 +377,7 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
           ...outcome,
           ok: true,
           forcedSubmission: true,
-          warning: `已连续 ${round} 轮校验未完全收敛；网关收下当前树，落页时引擎会再 shrinkToFit 一次。请立即调用 subagent_submit_result 提交，不要再校验。`,
+          warning: `已连续 ${round} 轮校验未完全收敛。不要再试新构图或继续微调——立即调用 subagent_submit_result 提交当前树（未解决缺陷如实写进结果 notes），提交后结束本页；不要再调用校验。`,
         }),
       };
     }

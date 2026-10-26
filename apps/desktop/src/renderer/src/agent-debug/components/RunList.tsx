@@ -11,6 +11,7 @@ import {
   sessionShortId,
   type SessionOption,
 } from '../history'
+import { slidePageBadge, slidePageTitle } from '../slidePage'
 import { useBrowsingGroupOrder, useBrowsingList } from '../useBrowsingList'
 import { LiveDuration, runStatusLabel } from './Indicators'
 
@@ -64,6 +65,7 @@ export const RunList = memo(function RunList({
 
   const renderRun = (run: AgentDebugRun) => {
     const shortId = sessionShortId(run.sessionId)
+    const pageBadge = slidePageBadge(run)
     return (
       <button
         key={run.runId}
@@ -78,6 +80,7 @@ export const RunList = memo(function RunList({
       >
         <span className="run-top">
           <span className="run-status" data-status={run.status}>{runStatusLabel(run.status)}</span>
+          {pageBadge ? <span className="run-page" title={slidePageTitle(run) ?? undefined}>{pageBadge}</span> : null}
           {showAgent ? <span className="run-agent">{run.agentName}</span> : null}
           {isArchivedRun(run) ? (
             <span className="run-origin" title="来自磁盘归档的历史 run，只读回放">历史</span>

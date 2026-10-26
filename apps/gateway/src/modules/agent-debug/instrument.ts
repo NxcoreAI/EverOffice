@@ -8,6 +8,29 @@ import type {
 } from "@nxcore/agent-runtime";
 import type { AgentDebugTraceStore } from "./trace-store.js";
 
+/**
+ * 从 runtime 元数据里取「逐页任务」的页序。
+ *
+ * slides-layouter 的 dispatch input 顶层带 0 起 `pageIndex` + `totalPages`
+ * （见 `slides-layout-tail.ts` 的 `layouterInputFor`），orchestrator 会把它放进
+ * `runtimeMetadata.subagentInput`。调试页展示用 1 起页序；非逐页任务返回 null。
+ */
+export function slidePageOfRuntimeMetadata(
+  metadata: Record<string, unknown> | undefined,
+): { pageIndex: number; pageCount: number | null } | null {
+  if (!metadata) return null;
+  const subagentInput = metadata.subagentInput;
+  if (typeof subagentInput !== "object" || subagentInput === null || Array.isArray(subagentInput)) return null;
+  const record = subagentInput as Record<string, unknown>;
+  const zeroBased = record.pageIndex;
+  if (typeof zeroBased !== "number" || !Number.isInteger(zeroBased) || zeroBased < 0 || zeroBased > 31) return null;
+  const totalPages = record.totalPages;
+  const pageCount = typeof totalPages === "number" && Number.isInteger(totalPages) && totalPages > 0
+    ? totalPages
+    : null;
+  return { pageIndex: zeroBased + 1, pageCount };
+}
+
 /** 被 trace 的 Agent 身份（来自 AgentResolver 定义 / 子 Agent manifest / 本机 Agent target）。 */
 export interface AgentDebugTraceDescriptor {
   agentId: string;
@@ -71,6 +94,7 @@ export function traceRuntime(
 
   const begin = (input: StartRuntimeRunInput | ResumeRuntimeRunInput): string => {
     try {
+      const slidePage = slidePageOfRuntimeMetadata(input.runtimeMetadata);
       store.beginRun({
         runId: input.runId,
         agentId: descriptor.agentId,
@@ -80,6 +104,8 @@ export function traceRuntime(
         sessionId: input.sessionId,
         pageLabel: input.pageLabel,
         task: (input.originalPrompt ?? input.prompt).trim(),
+        ...(slidePage ? { slidePageIndex: slidePage.pageIndex } : {}),
+        ...(slidePage && slidePage.pageCount !== null ? { slidePageCount: slidePage.pageCount } : {}),
         ...(descriptor.description ? { agentDescription: descriptor.description } : {}),
       });
     } catch {

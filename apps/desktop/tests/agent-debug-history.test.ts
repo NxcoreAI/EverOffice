@@ -389,6 +389,17 @@ describe('archiveSummaryOf', () => {
     expect(summary?.text).toBe('历史 0 条 · 保留 7 天')
     expect(summary?.title).toBe('归档 0 B')
   })
+
+  it('retentionDays<=0（离线读取归档来源）时只报条数并标「只读」，title 仍给字节与最旧时间', () => {
+    const summary = archiveSummaryOf(makeArchiveInfo({ retentionDays: 0, runCount: 586 }))
+    expect(summary?.enabled).toBe(true)
+    expect(summary?.text).toBe('历史 586 条 · 只读')
+    expect(summary?.title).toContain('归档 2.0 KB')
+    expect(summary?.title).toContain('2026-10-20T00:00:00.000Z')
+    expect(summary?.text).not.toContain('保留')
+    // 负数（异常配置）同样按未知处理。
+    expect(archiveSummaryOf(makeArchiveInfo({ retentionDays: -1 }))?.text).toBe('历史 128 条 · 只读')
+  })
 })
 
 describe('emptyRunsText', () => {
