@@ -1682,6 +1682,7 @@
   "thesisFormat.uploadTemplate": "Upload thesis template",
   "thesisFormat.templateBadge": "Thesis template",
   "thesisFormat.templateReady": "Thesis template is ready",
+  "thesisFormat.templatePartial": "Thesis template partially parsed",
   "thesisFormat.templateParseFailed": "Failed to parse thesis template",
   "thesisFormat.templateParseFailedHint": "Make sure the file is a zip, docx, doc, dotx or pdf, and the zip contains a Word template inside",
   "thesisFormat.panelTitle": "Choose a thesis format",

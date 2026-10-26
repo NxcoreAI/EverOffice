@@ -121,14 +121,24 @@ export async function buildTemplateFacts(members: TemplateMember[]): Promise<The
       continue;
     }
     if (member.ext === ".docx") {
+      // docx 成员的版式事实是解析的主输入：抽不出=这张模版解析不了，
+      // 必须显性失败（带成员名），不能静默丢掉后用默认样式出卡。
       try {
         const facts = await extractOoxmlFacts(member.bytes);
         ooxml.push({ name: member.name, ...facts });
-      } catch { /* 版式抽取失败不阻断 */ }
+      } catch (error) {
+        throw new Error(
+          `thesis_template_facts_extract_failed:${member.name}:${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       try {
         const text = await docxPlainText(member.bytes);
         if (text.trim()) documentsText.push({ name: member.name, text: text.slice(0, 60_000) });
-      } catch { /* 同上 */ }
+      } catch (error) {
+        throw new Error(
+          `thesis_template_text_extract_failed:${member.name}:${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       continue;
     }
     if (member.ext === ".doc") {

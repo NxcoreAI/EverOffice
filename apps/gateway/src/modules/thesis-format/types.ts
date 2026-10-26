@@ -59,6 +59,8 @@ export interface ThesisHeaderRule {
   underline: boolean;
   /** 封面页是否省略页眉页脚。 */
   skipOnCover: boolean;
+  /** 模版页眉里的图片（校徽 logo 等）：装机时按版位事实回填到输出页眉。 */
+  images?: ThesisHfImage[];
 }
 
 export interface ThesisFooterRule {
@@ -193,11 +195,26 @@ export interface ThesisTemplateFacts {
     name: string;
     styles: Array<{ id: string; name: string; fontEastAsia?: string; fontAscii?: string; sizePt?: number; bold?: boolean; lineSpacingMultiple?: number; lineSpacingExactPt?: number; align?: string; firstLineIndentChars?: number }>;
     sections: Array<{ widthMm?: number; heightMm?: number; marginTopMm?: number; marginBottomMm?: number; marginLeftMm?: number; marginRightMm?: number; gutterMm?: number; pageFormat?: string }>;
-    headers: Array<{ file: string; text: string }>;
-    footers: Array<{ file: string; text: string }>;
+    headers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
+    footers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
   }>;
   /** 规范条文/样例全文（文件名 → 文本）。 */
   documentsText: Array<{ name: string; text: string }>;
+}
+
+/** 页眉/页脚图片（从模版 OOXML 抽出的事实，装机时原样回填）。 */
+export interface ThesisHfImage {
+  dataUrl: string;
+  widthPx?: number | undefined;
+  heightPx?: number | undefined;
+  floating?: boolean | undefined;
+  behind?: boolean | undefined;
+  posH?: "left" | "center" | "right" | undefined;
+  posV?: "top" | "center" | "bottom" | undefined;
+  posXPx?: number | undefined;
+  posYPx?: number | undefined;
+  posHRel?: "page" | "margin" | undefined;
+  posVRel?: "page" | "margin" | "paragraph" | undefined;
 }
 
 /** 装订规格：解析代理第二任务输出——源文档内容 → 骨架槽位映射。块区间索引与

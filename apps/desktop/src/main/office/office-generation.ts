@@ -6,6 +6,7 @@ import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime, type ThesisBindingSpecPayload, type ThesisFormatCardPayload } from './office-runtime'
+import { backfillThesisHeaderLogos } from './thesis-logo-backfill'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -228,11 +229,22 @@ export async function generateThesisDocx(
   const title = (input.bindingSpec.title || input.bindingSpec.coverFields.title || '论文').trim().slice(0, 120)
   const { docs } = ensureRuntime()
   onPhase?.('rendering')
-  const bytes = await docs.buildThesisDocx(
+  let bytes = await docs.buildThesisDocx(
     new Uint8Array(input.sourceBytes),
     input.formatCard,
     input.bindingSpec,
   )
+  // 模版页眉的校徽 logo 回填：装订是「重排版」，页眉部件由引擎新生成，
+  // 模版页眉图片不会自动带入——这里从格式卡的 header.images 原样写回。
+  const headerImages = input.formatCard.header?.images
+  if (Array.isArray(headerImages) && headerImages.length > 0) {
+    try {
+      bytes = await backfillThesisHeaderLogos(bytes, headerImages)
+    } catch (error) {
+      // 回填失败不阻断出稿，但要在 warnings 通道可见——挂到控制台与广播 phase
+      console.warn('[thesis] 页眉 logo 回填失败', error)
+    }
+  }
   onPhase?.('saved')
   return { filePath: await writeGeneratedTempFile(Buffer.from(bytes), '.docx'), bytes: Buffer.from(bytes), title }
 }

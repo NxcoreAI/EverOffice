@@ -1682,6 +1682,7 @@
   "thesisFormat.uploadTemplate": "上传论文模版",
   "thesisFormat.templateBadge": "论文模版",
   "thesisFormat.templateReady": "论文模版已就绪",
+  "thesisFormat.templatePartial": "论文模版部分内容未解析",
   "thesisFormat.templateParseFailed": "论文模版解析失败",
   "thesisFormat.templateParseFailedHint": "请确认文件为 zip、docx、doc、dotx 或 pdf，且 zip 内包含 Word 模版文件",
   "thesisFormat.panelTitle": "选择论文格式",

@@ -1653,10 +1653,10 @@ export interface NxcoreDesktopApi {
       updatedAt: string
       card: Record<string, unknown>
     }>>
-    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
-    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
-    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
-    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。factGaps 非空 = 模版部分信息未能解析（UI 必须提示，不得静默）。 */
+    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。factGaps 语义同 setFromLibrary。 */
+    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }>
     /** 删除一张格式卡。 */
     removeCard(roomId: string, cardId: string): Promise<void>
     /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */

@@ -61,7 +61,7 @@ export interface ThesisOutlineBlock {
 export interface ThesisFormatCardPayload {
   page: Record<string, number | string>
   base: Record<string, unknown>
-  header: Record<string, unknown>
+  header: Record<string, unknown> & { images?: Array<Record<string, unknown>> }
   footer: Record<string, unknown>
   headings: Array<Record<string, unknown>>
   abstract: Record<string, unknown>

@@ -22,6 +22,9 @@ export interface ThesisParseResult {
   cardId: string;
   sourceName: string;
   card: ThesisFormatCard;
+  /** 解析代理申报的「模版事实缺口」：未能确定的版式信息（图片抽不出、条文冲突等）。
+   *  空数组 = 模版完整可读。UI 据此提示，杜绝静默降级到默认样式。 */
+  factGaps: string[];
 }
 
 export interface ThesisReformatResult {
@@ -53,23 +56,31 @@ export class ThesisFormatService {
     const bytes = await readFile(storagePath);
     const result = await this.parseBytes(bytes, entry.originalName);
     const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId, sourceName: entry.originalName });
-    return { cardId: row.id, sourceName: result.sourceName, card: result.card };
+    return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
   async parseFromUpload(roomId: string, bytes: Buffer, name: string): Promise<ThesisParseResult> {
     const result = await this.parseBytes(bytes, name);
     const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: null, sourceName: name });
-    return { cardId: row.id, sourceName: result.sourceName, card: result.card };
+    return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
   removeCard(roomId: string, cardId: string): boolean {
     return this.store.remove(roomId, cardId);
   }
 
-  private async parseBytes(bytes: Buffer, name: string): Promise<{ sourceName: string; card: ThesisFormatCard }> {
-    const members = await unpackTemplateInput(bytes, name);
-    const normalized = await normalizeMembersToDocx(members);
-    const facts = await buildTemplateFacts(normalized);
+  private async parseBytes(bytes: Buffer, name: string): Promise<{ sourceName: string; card: ThesisFormatCard; factGaps: string[] }> {
+    // 全链路显性失败：解包/归一化/事实抽取任一步失败都直接抛错（带阶段名），
+    // 由 routes 层回 400 与 UI toast——绝不静默降级用默认样式出卡。
+    const members = await unpackTemplateInput(bytes, name).catch((error: unknown) => {
+      throw new Error(`thesis_template_unpack_failed:${error instanceof Error ? error.message : String(error)}`);
+    });
+    const normalized = await normalizeMembersToDocx(members).catch((error: unknown) => {
+      throw new Error(`thesis_template_normalize_failed:${error instanceof Error ? error.message : String(error)}`);
+    });
+    const facts = await buildTemplateFacts(normalized).catch((error: unknown) => {
+      throw new Error(`thesis_template_facts_failed:${error instanceof Error ? error.message : String(error)}`);
+    });
     const task = `解析论文格式模版并产出格式卡：${name}`;
     const input = {
       task: "parse_template" as const,
@@ -80,7 +91,11 @@ export class ThesisFormatService {
     const rawCard = structured?.formatCard;
     if (!rawCard || typeof rawCard !== "object") throw new Error("thesis_format_card_missing");
     const card = validateThesisFormatCard(rawCard, name);
-    return { sourceName: name, card };
+    const rawGaps = structured?.templateFactsGaps;
+    const factGaps = Array.isArray(rawGaps)
+      ? rawGaps.filter((g): g is string => typeof g === "string" && g.trim().length > 0).slice(0, 20)
+      : [];
+    return { sourceName: name, card, factGaps };
   }
 
   async reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<ThesisReformatResult> {

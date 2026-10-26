@@ -83,6 +83,7 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
             cardId: Type.String(),
             sourceName: Type.String(),
             card: Type.Unknown(),
+            factGaps: Type.Array(Type.String()),
           }),
           400: Type.Object({ error: Type.String() }),
         },
@@ -90,7 +91,7 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
     }, async (request, reply) => {
       try {
         const result = await service.parseFromLibrary(request.params.roomId, request.body.fileEntryId);
-        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card });
+        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps });
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
       }
@@ -107,7 +108,7 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
       if (bytes.length === 0) return reply.code(400).send({ error: "file_empty" });
       try {
         const result = await service.parseFromUpload(request.params.roomId, bytes, name);
-        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card });
+        return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps });
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
       }

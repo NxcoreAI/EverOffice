@@ -21,6 +21,24 @@ export interface OoxmlStyleFact {
   firstLineIndentChars?: number;
 }
 
+/** 页眉/页脚里的展示图片（校徽 logo 等）：字节内联 + 版位事实，装订引擎回填用。 */
+export interface OoxmlHfImageFact {
+  /** data:image/...;base64 URL。 */
+  dataUrl: string;
+  widthPx?: number;
+  heightPx?: number;
+  /** 浮动（wp:anchor）；false/缺省 = 内联随文。 */
+  floating?: boolean;
+  /** 衬于文字下方（图片水印）。 */
+  behind?: boolean;
+  posH?: "left" | "center" | "right";
+  posV?: "top" | "center" | "bottom";
+  posXPx?: number;
+  posYPx?: number;
+  posHRel?: "page" | "margin";
+  posVRel?: "page" | "margin" | "paragraph";
+}
+
 export interface OoxmlSectionFact {
   widthMm?: number;
   heightMm?: number;
@@ -35,8 +53,8 @@ export interface OoxmlSectionFact {
 export interface OoxmlFacts {
   styles: OoxmlStyleFact[];
   sections: OoxmlSectionFact[];
-  headers: Array<{ file: string; text: string }>;
-  footers: Array<{ file: string; text: string }>;
+  headers: Array<{ file: string; text: string; images: OoxmlHfImageFact[] }>;
+  footers: Array<{ file: string; text: string; images: OoxmlHfImageFact[] }>;
 }
 
 function attr(xml: string, name: string): number | undefined {
@@ -44,6 +62,79 @@ function attr(xml: string, name: string): number | undefined {
   if (!m) return undefined;
   const value = Number(m[1]);
   return Number.isFinite(value) ? value : undefined;
+}
+
+/** EMU → 像素（genoffice 同款换算：14400 EMU = 1px @96dpi）。 */
+const EMU_PER_PX = 9525;
+
+function numAttr(xml: string, tag: string, name: string): number | undefined {
+  const m = xml.match(new RegExp(`<${tag}[^>]*\\s${name}="(\\d+)"`));
+  if (!m) return undefined;
+  const value = Number(m[1]);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * 页眉/页脚部件里的展示图片（logo/水印位图）。抽取字节（data:URL）与版位事实，
+ * 供解析代理识别「校徽」并让装订引擎在输出里原样回填。
+ */
+async function hfImages(zip: JSZip, partPath: string, partXml: string): Promise<OoxmlHfImageFact[]> {
+  if (!partXml.includes("<a:blip") && !partXml.includes("<v:imagedata")) return [];
+  const relsPath = partPath.replace(/([^/]+)$/, "_rels/$1.rels");
+  const relsXml = await zip.file(relsPath)?.async("string").catch(() => undefined);
+  if (!relsXml) return [];
+  const mediaByRid = new Map<string, string>();
+  for (const rel of relsXml.match(/<Relationship\s[^>]*>/g) ?? []) {
+    const id = rel.match(/\bId="([^"]+)"/)?.[1];
+    const target = rel.match(/\bTarget="([^"]+)"/)?.[1];
+    if (!id || !target || /TargetMode="External"/i.test(rel)) continue;
+    const dir = partPath.includes("/") ? partPath.slice(0, partPath.lastIndexOf("/") + 1) : "";
+    const resolved = target.startsWith("/") ? target.slice(1) : dir + target.replace(/^\.\//, "");
+    const normalized: string[] = [];
+    for (const segment of resolved.split("/")) {
+      if (segment === "." || segment === "") continue;
+      if (segment === "..") normalized.pop();
+      else normalized.push(segment);
+    }
+    const entry = zip.file(normalized.join("/"));
+    if (!entry) continue;
+    const bytes = await entry.async("nodebuffer");
+    const ext = (normalized.join("/").split(".").pop() ?? "png").toLowerCase();
+    const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+      : ext === "gif" ? "image/gif"
+      : ext === "bmp" ? "image/bmp"
+      : ext === "emf" || ext === "wmf" ? "image/x-emf"
+      : "image/png";
+    mediaByRid.set(id, `data:${mime};base64,${bytes.toString("base64")}`);
+  }
+  if (mediaByRid.size === 0) return [];
+
+  const out: OoxmlHfImageFact[] = [];
+  for (const m of partXml.matchAll(/<w:drawing[\s\S]*?<\/w:drawing>|<v:imagedata[^>]*>/g)) {
+    const frag = m[0];
+    const rId = frag.match(/r:(?:embed|id)="([^"]+)"/)?.[1];
+    const dataUrl = rId ? mediaByRid.get(rId) : undefined;
+    if (!dataUrl) continue;
+    const image: OoxmlHfImageFact = { dataUrl };
+    const cx = numAttr(frag, "wp:extent", "cx");
+    const cy = numAttr(frag, "wp:extent", "cy");
+    if (cx !== undefined && cx > 0) image.widthPx = Math.round(cx / EMU_PER_PX);
+    if (cy !== undefined && cy > 0) image.heightPx = Math.round(cy / EMU_PER_PX);
+    if (/<wp:anchor[\s>]/.test(frag)) {
+      image.floating = true;
+      if (/behindDoc="(?:1|true)"/.test(frag)) image.behind = true;
+      const posH = frag.match(/<wp:positionH[^>]*relativeFrom="(page|margin)"[^>]*>[\s\S]*?<wp:align>(\w+)<\/wp:align>/);
+      const posV = frag.match(/<wp:positionV[^>]*relativeFrom="(page|margin|paragraph)"[^>]*>[\s\S]*?<wp:align>(\w+)<\/wp:align>/);
+      if (posH) { image.posHRel = posH[1] as "page" | "margin"; image.posH = posH[2] as "left" | "center" | "right"; }
+      if (posV) { image.posVRel = posV[1] as "page" | "margin" | "paragraph"; image.posV = posV[2] as "top" | "center" | "bottom"; }
+      const offH = frag.match(/<wp:positionH[^>]*relativeFrom="(page|margin)"[^>]*>[\s\S]*?<wp:posOffset>(-?\d+)<\/wp:posOffset>/);
+      const offV = frag.match(/<wp:positionV[^>]*relativeFrom="(page|margin|paragraph)"[^>]*>[\s\S]*?<wp:posOffset>(-?\d+)<\/wp:posOffset>/);
+      if (offH) image.posXPx = Math.round(Number(offH[2]) / EMU_PER_PX);
+      if (offV) image.posYPx = Math.round(Number(offV[2]) / EMU_PER_PX);
+    }
+    out.push(image);
+  }
+  return out;
 }
 
 function stripTags(xml: string): string {
@@ -133,14 +224,19 @@ export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts>
     }
   }
 
-  const headers: Array<{ file: string; text: string }> = [];
-  const footers: Array<{ file: string; text: string }> = [];
+  const headers: OoxmlFacts["headers"] = [];
+  const footers: OoxmlFacts["footers"] = [];
   for (const path of Object.keys(zip.files)) {
     if (!/^word\/(header|footer)\d*\.xml$/.test(path)) continue;
     const xml = await zip.file(path)!.async("string").catch(() => "");
     if (!xml) continue;
     const text = stripTags(xml).trim();
-    const entry = { file: path.replace(/^word\//, ""), text: text.slice(0, 200) };
+    const images = await hfImages(zip, path, xml);
+    const entry = {
+      file: path.replace(/^word\//, ""),
+      text: (images.length > 0 ? `[图片×${images.length}]${text ? " " + text : ""}` : text).slice(0, 200),
+      images,
+    };
     if (path.includes("header")) headers.push(entry);
     else footers.push(entry);
   }

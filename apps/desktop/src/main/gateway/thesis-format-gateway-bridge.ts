@@ -26,6 +26,9 @@ export interface ThesisReformatOutcomeDto {
 export class ThesisFormatGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
+  /** 解析结果里的模版事实缺口（图片抽不出、条文冲突等），UI 据此提示。 */
+  static readonly EMPTY_FACT_GAPS: string[] = []
+
   async listCards(roomId: string): Promise<ThesisFormatCardDto[]> {
     const response = await this.request(`/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/cards`)
     if (!response.ok) throw new Error(`论文格式卡列表读取失败（${response.status}）`)
@@ -33,7 +36,7 @@ export class ThesisFormatGatewayBridge {
   }
 
   /** 资料区已有文件设为模版（docx/doc/pdf）。 */
-  async parseFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }> {
+  async parseFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     return this.parse(roomId, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -42,7 +45,7 @@ export class ThesisFormatGatewayBridge {
   }
 
   /** 磁盘直传模版（zip 不进文件库；docx/doc/pdf 也走此通道）。 */
-  async parseFromDisk(roomId: string, filePath: string): Promise<{ cardId: string; sourceName: string }> {
+  async parseFromDisk(roomId: string, filePath: string): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const bytes = await readFile(filePath)
     const name = basename(filePath)
     const form = new FormData()
@@ -58,7 +61,7 @@ export class ThesisFormatGatewayBridge {
     if (!response.ok) throw new Error(`论文格式卡删除失败（${response.status}）`)
   }
 
-  private async parse(roomId: string, init: RequestInit): Promise<{ cardId: string; sourceName: string }> {
+  private async parse(roomId: string, init: RequestInit): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const upload = init.body instanceof FormData
     const response = await this.request(
       `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/${upload ? 'parse-upload' : 'parse'}`,
@@ -69,10 +72,13 @@ export class ThesisFormatGatewayBridge {
       const body = await response.json().catch(() => ({})) as { error?: string }
       throw new Error(body.error || `论文模版解析失败（${response.status}）`)
     }
-    const body = await response.json() as { cardId?: string; sourceName?: string }
+    const body = await response.json() as { cardId?: string; sourceName?: string; factGaps?: string[] }
     return {
       cardId: typeof body.cardId === 'string' ? body.cardId : '',
       sourceName: typeof body.sourceName === 'string' ? body.sourceName : '',
+      factGaps: Array.isArray(body.factGaps)
+        ? body.factGaps.filter((g): g is string => typeof g === 'string' && g.trim().length > 0).slice(0, 20)
+        : [],
     }
   }
 

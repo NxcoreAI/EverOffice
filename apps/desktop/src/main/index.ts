@@ -2821,16 +2821,16 @@ async function hashFileBytes(path: string): Promise<string> {
 }
 
 /** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
-async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> {
+async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> {
   const thesisBridgeForPick = thesisFormatBridgeRef
-  if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '' }
+  if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
   const picked = await dialog.showOpenDialog({
     title: '选择论文格式模版',
     properties: ['openFile'],
     filters: [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
   })
   const filePath = picked.filePaths[0]
-  if (!filePath) return { canceled: true, cardId: '', sourceName: '' }
+  if (!filePath) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
   return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
 }
 
