@@ -10,6 +10,19 @@ import type {
   PixiSprite,
   PixiTexture,
 } from './pixiForceGraphTypes'
+/** 复位补间的运行态（scale 与中心按弹簧曲线线性插值）。 */
+interface FitTween {
+  startedAt: number
+  durationMs: number
+  ease: (progress: number) => number
+  fromScale: number
+  fromCenterX: number
+  fromCenterY: number
+  toScale: number
+  toCenterX: number
+  toCenterY: number
+}
+
 
 export type * from './pixiForceGraphTypes'
 
@@ -483,8 +496,66 @@ export function createPixiForceGraphRenderer(
   // Claim node presses before the drag plugin handles subsequent movement.
   viewport.drag().wheel().pinch()
 
+  /**
+   * 复位补间：由共享 ticker 逐帧驱动，按「scale 与中心线性插值 × 弹簧曲线」推进。
+   *
+   * 不用 pixi-viewport 的 Animate 插件是有原因的：它按 `ease(elapsed, 0, 1, duration)`
+   * （Penner 签名）调用、并且以「世界宽度」为插值量，曲线和"一大一小交替"的手感都会被改写。
+   * 这里自己插值，与预览页（scratch/spring-fit-demo.html）的数学完全一致。
+   */
+  const FIT_SPRING_DAMPING = 0.38
+  const FIT_SPRING_OMEGA = 10
+  /** 欠阻尼二阶阶跃响应（初速度 0）：1 − e^(−ζωt)(cos(ω_d t) + ζω/ω_d·sin(ω_d t)) */
+  function createFitEase(durationMs: number) {
+    const dampingRatio = FIT_SPRING_DAMPING
+    const omega = FIT_SPRING_OMEGA
+    const dampedOmega = omega * Math.sqrt(1 - dampingRatio ** 2)
+    const shape = (time: number) => {
+      const decay = Math.exp(-dampingRatio * omega * time)
+      return 1 - decay * (
+        Math.cos(dampedOmega * time)
+        + ((dampingRatio * omega) / dampedOmega) * Math.sin(dampedOmega * time)
+      )
+    }
+    const seconds = Math.max(0.001, durationMs / 1000)
+    const settled = shape(seconds) || 1
+    return (progress: number) => {
+      if (progress <= 0) return 0
+      if (progress >= 1) return 1
+      return shape(progress * seconds) / settled
+    }
+  }
+
+  let fitTween: FitTween | null = null
+  const nowMs = () => dependencies.now?.() ?? (
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now()
+  )
+
+  function stepFitTween() {
+    if (!fitTween) return
+    const elapsed = nowMs() - fitTween.startedAt
+    const progress = fitTween.durationMs <= 0 ? 1 : Math.min(1, elapsed / fitTween.durationMs)
+    const value = fitTween.ease(progress)
+    const scale = fitTween.fromScale + (fitTween.toScale - fitTween.fromScale) * value
+    const centerX = fitTween.fromCenterX + (fitTween.toCenterX - fitTween.fromCenterX) * value
+    const centerY = fitTween.fromCenterY + (fitTween.toCenterY - fitTween.fromCenterY) * value
+    viewport.setZoom?.(Math.max(0.02, scale), false)
+    viewport.moveCenter?.(centerX, centerY)
+    if (progress >= 1) fitTween = null
+  }
+
+  function cancelFitAnimation() {
+    const wasPlaying = fitTween !== null
+    fitTween = null
+    return wasPlaying
+  }
+
   const drawFrame = () => {
     if (destroyed) return
+    // 补间推进放在最前面：它改了视口 x/y/scale，下面的脏检查就会重绘这一帧。
+    stepFitTween()
     if (anchors.length > 0) syncAnchorPositions()
     const startRevision = effectiveRevision()
     if ((startRevision & 1) === 1) return
@@ -586,11 +657,21 @@ export function createPixiForceGraphRenderer(
   dependencies.Ticker.shared.add(drawFrame)
   drawFrame()
 
-  const contentBounds = () => {
+  /**
+   * 两套包围盒，各司其职：
+   * - `bounds`：节点半径 + 底边 24px 标签预留 —— 只用于算缩放（标签不能被裁）；
+   * - `center`：只用节点半径的几何中心 —— 用于居中。
+   * 只居中的话必须用后者：标签预留只加在底边，用它求中心会让整块内容固定上偏 12px。
+   */
+  const contentMetrics = () => {
     let minX = Number.POSITIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
     let maxY = Number.NEGATIVE_INFINITY
+    let coreMinX = Number.POSITIVE_INFINITY
+    let coreMinY = Number.POSITIVE_INFINITY
+    let coreMaxX = Number.NEGATIVE_INFINITY
+    let coreMaxY = Number.NEGATIVE_INFINITY
     nodes.forEach((node, index) => {
       const x = positions[index * 2]
       const y = positions[index * 2 + 1]
@@ -603,15 +684,24 @@ export function createPixiForceGraphRenderer(
       minY = Math.min(minY, y! - radius)
       maxX = Math.max(maxX, x! + radius)
       maxY = Math.max(maxY, y! + radius + 24)
+      coreMinX = Math.min(coreMinX, x! - radius)
+      coreMinY = Math.min(coreMinY, y! - radius)
+      coreMaxX = Math.max(coreMaxX, x! + radius)
+      coreMaxY = Math.max(coreMaxY, y! + radius)
     })
     if (!Number.isFinite(minX)) return null
-    return { minX, minY, maxX, maxY }
+    return {
+      bounds: { minX, minY, maxX, maxY },
+      center: { x: (coreMinX + coreMaxX) / 2, y: (coreMinY + coreMaxY) / 2 },
+    }
   }
 
+  const contentCenter = () => contentMetrics()?.center ?? null
+
   const centerOnContent = () => {
-    const bounds = contentBounds()
-    if (!bounds) return
-    viewport.moveCenter?.((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2)
+    const center = contentCenter()
+    if (!center) return
+    viewport.moveCenter?.(center.x, center.y)
   }
 
   // 面板只决定视口：世界大于面板时初始视野对准内容中心、保持原始缩放，
@@ -634,10 +724,12 @@ export function createPixiForceGraphRenderer(
     centerOnLayoutPending = !(hostWidth > 0 && hostHeight > 0)
   }
 
-  const fitView = (minScale = 0.2) => {
-    if (destroyed || nodes.length === 0) return
-    const bounds = contentBounds()
-    if (!bounds) return
+  /** 自适应目标：缩放取带标签预留的包围盒，居中取节点几何中心；与 fitView 共用。 */
+  const fitTarget = (minScale = 0.2) => {
+    if (destroyed || nodes.length === 0) return null
+    const metrics = contentMetrics()
+    if (!metrics) return null
+    const { bounds, center } = metrics
     const boundsWidth = Math.max(1, bounds.maxX - bounds.minX)
     const boundsHeight = Math.max(1, bounds.maxY - bounds.minY)
     const scale = Math.min(4, Math.max(minScale, Math.min(
@@ -650,8 +742,49 @@ export function createPixiForceGraphRenderer(
     const degenerate = nodes.length > 1
       && boundsWidth < textureRadius * 4
       && boundsHeight < textureRadius * 4 + 24
-    viewport.setZoom?.(degenerate ? Math.min(scale, 1) : scale, false)
-    viewport.moveCenter?.((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2)
+    return {
+      scale: degenerate ? Math.min(scale, 1) : scale,
+      centerX: center.x,
+      centerY: center.y,
+    }
+  }
+
+  const fitView = (minScale = 0.2) => {
+    const target = fitTarget(minScale)
+    if (!target) return
+    viewport.setZoom?.(target.scale, false)
+    viewport.moveCenter?.(target.centerX, target.centerY)
+  }
+
+  /**
+   * 带补间的自适应：从当前视野弹回内容（默认 1s，慢弹簧：放大→缩小交替衰减后落定）。
+   * 用户中途拖拽/缩放时调用 cancelFitAnimation() 立刻交还控制权。
+   */
+  const animateFitView = ({ minScale = 0.2, durationMs = 1000 }: {
+    minScale?: number
+    durationMs?: number
+  } = {}) => {
+    const target = fitTarget(minScale)
+    if (!target) return
+    if (durationMs <= 0 || destroyed) {
+      cancelFitAnimation()
+      viewport.setZoom?.(target.scale, false)
+      viewport.moveCenter?.(target.centerX, target.centerY)
+      return
+    }
+    fitTween = {
+      startedAt: nowMs(),
+      durationMs,
+      ease: createFitEase(durationMs),
+      fromScale: viewport.scale?.x ?? target.scale,
+      fromCenterX: viewport.center?.x ?? target.centerX,
+      fromCenterY: viewport.center?.y ?? target.centerY,
+      toScale: target.scale,
+      toCenterX: target.centerX,
+      toCenterY: target.centerY,
+    }
+    // 立刻推进一帧，避免"点了没反应"的第一帧空档
+    stepFitTween()
   }
 
   return {
@@ -665,6 +798,8 @@ export function createPixiForceGraphRenderer(
     activeLabelCount: () => labelManager.activeCount(),
     createdLabelCount: () => labelManager.createdCount(),
     fitView,
+    animateFitView,
+    cancelFitAnimation,
     hitTest,
     resize(nextWidth, nextHeight) {
       if (destroyed) return

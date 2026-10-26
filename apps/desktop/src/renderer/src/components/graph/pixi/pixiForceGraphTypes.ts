@@ -99,6 +99,11 @@ export interface PixiViewport extends PixiContainer {
   getVisibleBounds?(): { x: number; y: number; width: number; height: number }
   moveCenter?(x: number, y: number): PixiViewport
   setZoom?(scale: number, center?: boolean): PixiViewport
+  /** 画面尺寸（世界坐标插值要用：中心 = toWorld(screen/2)）。 */
+  readonly screenWidth?: number
+  readonly screenHeight?: number
+  /** 当前画面中心（世界坐标）：pixi-viewport 的 getter，复位补间的插值起点。 */
+  readonly center?: { x: number; y: number }
   toWorld?(x: number, y: number): { x: number; y: number }
   on?(event: string, callback: (event: PixiPointerEvent) => void): void
   off?(event: string, callback: (event: PixiPointerEvent) => void): void
@@ -138,6 +143,8 @@ export interface PixiForceGraphDependencies {
     autoResize?: boolean,
   ) => PixiParticleContainer
   Ticker: { shared: PixiTicker }
+  /** 时钟（测试注入用）；缺省 performance.now()。复位补间用它算进度。 */
+  now?: () => number
   Viewport: PixiViewportConstructor
 }
 
@@ -249,6 +256,13 @@ export interface PixiForceGraphRenderer {
   createdLabelCount(): number
   /** 缩放至内容恰好入屏；minScale 为缩放下限（如 1 = 只居中不缩小）。 */
   fitView(minScale?: number): void
+  /**
+   * 带补间（默认 1s，慢弹簧：放大→缩小交替衰减）回到自适应视野；用户手势可中途打断。
+   * 视口不支持 animate 时内部退化为瞬时对准。
+   */
+  animateFitView(options?: { minScale?: number; durationMs?: number }): void
+  /** 立刻取消复位补间，停在当前视野；返回是否真的取消了一段在播的补间。 */
+  cancelFitAnimation(): boolean
   hitTest(x: number, y: number): number | null | undefined
   resize(width: number, height: number): void
   setHoveredIndex(index: number | null): void

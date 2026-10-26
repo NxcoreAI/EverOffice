@@ -6,10 +6,10 @@ import type { ContextRoomRecord } from '../src/renderer/src/components/context-r
 
 const graphProps: Array<{
   rooms: unknown[]
+  autoFitOnIdleMs?: number
   onSelectRelation: (relationId: string | null) => void
   onSelectRoom: (roomId: string | null) => void
 }> = []
-const fitViewCalls = { count: 0 }
 
 vi.mock('../src/renderer/src/components/context-room/ported/components/RoomGraphCanvas', async () => {
   const { forwardRef, useImperativeHandle } = await import('react')
@@ -17,17 +17,13 @@ vi.mock('../src/renderer/src/components/context-room/ported/components/RoomGraph
     RoomGraphCanvas: forwardRef(function MockRoomGraphCanvas(
       props: {
         rooms: unknown[]
+        autoFitOnIdleMs?: number
         onSelectRelation: (relationId: string | null) => void
         onSelectRoom: (roomId: string | null) => void
       },
-      ref,
+      _ref,
     ) {
       graphProps.push(props)
-      useImperativeHandle(ref, () => ({
-        fitView: async () => {
-          fitViewCalls.count += 1
-        },
-      }), [])
       return (
         <>
           <button type="button" onClick={() => props.onSelectRoom('room-b')}>select room-b</button>
@@ -247,12 +243,11 @@ describe('RelationsPane graph fit control', () => {
 
   afterEach(() => {
     graphProps.length = 0
-    fitViewCalls.count = 0
     vi.unstubAllGlobals()
   })
 
-  // 画布可自由缩放平移：缩到最小或拖走后图看不见，浮层按钮必须始终可点。
-  it('keeps an always-visible fit control that re-fits the graph', async () => {
+  // 自适应不再做成按钮：拖歪/缩太小之后停手 5 秒，画布自己缩放居中回内容。
+  it('hands the graph a 5s idle auto-fit instead of a fit button', async () => {
     const current = room('room-a', '项目', 'Current Room')
     const related = room('room-b', '项目', 'Related Room')
     stubRelations([edge])
@@ -262,17 +257,12 @@ describe('RelationsPane graph fit control', () => {
       renderer = TestRenderer.create(<RelationsPane room={current} rooms={[current, related]} onOpenRoom={vi.fn()} />)
     })
 
-    const fitButton = renderer!.root.findByProps({ className: 'context-room-graph-fit' })
-    expect(fitButton.props['aria-label']).toBe('自适应图谱：缩放并居中')
-
-    await act(async () => {
-      fitButton.props.onClick()
-    })
-
-    expect(fitViewCalls.count).toBe(1)
+    expect(graphProps.at(-1)!.autoFitOnIdleMs).toBe(5000)
+    // 画布上不再有自适应按钮
+    expect(renderer!.root.findAllByProps({ className: 'context-room-graph-fit' })).toHaveLength(0)
   })
 
-  it('hides the fit control when there is no graph to fit', async () => {
+  it('renders no graph (and no fit control) when there are no relations', async () => {
     const current = room('room-a', '项目', 'Current Room')
     stubRelations([])
     let renderer: TestRenderer.ReactTestRenderer
@@ -281,6 +271,7 @@ describe('RelationsPane graph fit control', () => {
       renderer = TestRenderer.create(<RelationsPane room={current} rooms={[current]} onOpenRoom={vi.fn()} />)
     })
 
+    expect(graphProps).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ className: 'context-room-graph-fit' })).toHaveLength(0)
   })
 })
