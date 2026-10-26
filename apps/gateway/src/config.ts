@@ -54,17 +54,17 @@ const RawConfigSchema = Type.Object(
     subagentsDir: Type.String(),
     subagentTimeoutMs: Type.Integer({ minimum: 1_000 }),
     subagentMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentSlidesMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentDefaultMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentBackgroundMaxConcurrent: Type.Integer({ minimum: 1, maximum: 64 }),
+    subagentSlidesReasoning: Type.Optional(AiReasoningSchema),
+    slidesDeckConcurrency: Type.Integer({ minimum: 1, maximum: 64 }),
     externalCallUserId: Type.String({ minLength: 1, maxLength: 200 }),
     externalCallWorkspaceId: Type.String({ minLength: 1, maxLength: 200 }),
     aiProvider: Type.String(),
     aiModel: Type.String(),
     aiBackgroundModel: Type.String(),
     aiTranscriptionModel: Type.String(),
-    aiSlidesReviewerModel: Type.String(),
-    /** 审页档独立预算：视觉模型输出上限/窗口/思考档（缺省沿用主模型档）。 */
-    aiSlidesReviewerMaxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
-    aiSlidesReviewerContextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
-    aiSlidesReviewerReasoning: Type.Optional(AiReasoningSchema),
     aiLiteModel: Type.String(),
     aiBaseUrl: Type.String(),
     aiApiKey: Type.String(),
@@ -157,6 +157,10 @@ const RawConfigSchema = Type.Object(
     notificationBridgeToken: Type.String(),
     officeBridgeUrl: Type.String(),
     officeBridgeToken: Type.String(),
+    agentDebugArchiveEnabled: Type.Boolean(),
+    agentDebugArchiveDays: Type.Integer({ minimum: 1, maximum: 3_650 }),
+    agentDebugArchiveRuns: Type.Integer({ minimum: 1, maximum: 100_000 }),
+    agentDebugArchiveMaxMb: Type.Integer({ minimum: 64, maximum: 65_536 }),
   },
   { additionalProperties: false },
 );
@@ -308,6 +312,20 @@ export interface DocumentIndexBackfillConfig {
   readTriggerCooldownMs: number;
 }
 
+/**
+ * Agent 调试台历史归档（文件型，写入 dataDir/agent-debug/<source>/）。
+ * 仅调试数据面：默认开启，`NXCORE_AGENT_DEBUG_ARCHIVE=0` 可整体关闭。
+ */
+export interface AgentDebugArchiveConfig {
+  enabled: boolean;
+  /** 保留天数；超过即清理最旧 run。 */
+  retentionDays: number;
+  /** 最多保留的 run 条数。 */
+  maxRuns: number;
+  /** 归档总字节上限。 */
+  maxBytes: number;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -324,6 +342,8 @@ export interface GatewayConfig {
   /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
   memoryRoomDerive?: MemoryRoomDeriveConfig;
   documentIndexBackfill?: DocumentIndexBackfillConfig;
+  /** Agent 调试台历史归档；可选（旧测试/手写 config 对象缺省视为开启）。 */
+  agentDebugArchive?: AgentDebugArchiveConfig;
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
@@ -334,8 +354,6 @@ export interface GatewayConfig {
   transcriptionSummaryPi: PiRuntimeConfig | null;
   /** 轻量模型档（main-lite）；model 为空＝未配置（lite 档隐藏）。 */
   litePi: PiRuntimeConfig | null;
-  /** 审页代理专用档（slides-reviewer，需多模态模型）；未配置＝回退 backgroundPi。 */
-  slidesReviewerPi?: PiRuntimeConfig | null;
   diaryMaxTokens?: number;
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
@@ -374,8 +392,57 @@ export interface SubagentFrameworkConfig {
   definitionsDir: string;
   runtimeDir: string;
   defaultTimeoutMs: number;
+  /** 全池总上限：所有子代理并发 invocation 数之和，任何池都不得突破。 */
   maxConcurrent: number;
+  /**
+   * slides 系列子代理（逐页布局 / 逐页审阅）的专属并发上限。
+   * 缺省沿用 `maxConcurrent`，即不分区——一册 15 页的 deck 需要 15 个页级
+   * invocation 同时在飞，与交互链路共用一个 4~8 的窗口时，页级调用会互相排队。
+   */
+  slidesMaxConcurrent?: number;
+  /** 非 slides 子代理（交互链路，如 context-room / doc-writer）的并发上限；缺省沿用 `maxConcurrent`。 */
+  defaultMaxConcurrent?: number;
+  /**
+   * 影子/旁路作业（slides-editor 的 storyboard 阴影压缩）的并发上限。
+   * 这类作业不参与交付，却会抢走页级布局的窗口——给它一个独立的小池。
+   */
+  backgroundMaxConcurrent?: number;
+  /** 单册 deck 的页级并发上限（逐页取树 worker 数）；缺省 `DEFAULT_SLIDES_DECK_CONCURRENCY`。 */
+  slidesDeckConcurrency?: number;
+  /**
+   * slides-* 子代理的推理档位覆盖（`NXCORE_SUBAGENT_SLIDES_REASONING`）。
+   * 实测单页 165s 里 98% 是模型推理，想继续压只能动它；缺省不设＝沿用全局档位。
+   * 拿来对同一份资料做 medium/low 的 A/B，不必改仓库里的 agent.yaml。
+   */
+  slidesReasoning?: AiReasoning;
 }
+
+/**
+ * slides 池默认并发：一次 15 页 deck 需要 15 个页级 invocation 同时在飞。
+ *
+ * 取 16 而不是"越大越好"，是实测出来的：真实 key 并发阶梯（micro-payload，
+ * 1/4/8/16/24/32）显示吞吐在 **16 见顶**（4.26 req/s），24 回落到 3.09，
+ * 32 触发 provider 429（13/64 请求失败）。越过拐点只会更慢，还会丢请求。
+ * 注：16 同时也是页级窗口（`slidesDeckConcurrency`）的默认值，二者对齐。
+ */
+export const DEFAULT_SLIDES_MAX_CONCURRENT = 16;
+/** 非 slides 池默认并发（与改造前全局窗口一致，交互链路不受影响）。 */
+export const DEFAULT_DEFAULT_MAX_CONCURRENT = 4;
+/** 影子作业池默认并发：够它自己推进即可，绝不与页级布局抢窗口。 */
+export const DEFAULT_BACKGROUND_MAX_CONCURRENT = 2;
+/**
+ * 单册 deck 页级并发默认值。
+ * 必须 ≥ 典型页数（15）：页级窗口小于页数时，剩下的页要等第一波落定才开工，
+ * 足足多出一整轮单页耗时（实测 P50 141s）。落页侧本身串行，故不必再往上加。
+ */
+export const DEFAULT_SLIDES_DECK_CONCURRENCY = 16;
+
+/** Agent 调试台归档默认保留天数。 */
+export const DEFAULT_AGENT_DEBUG_ARCHIVE_DAYS = 7;
+/** Agent 调试台归档默认最多 run 条数。 */
+export const DEFAULT_AGENT_DEBUG_ARCHIVE_RUNS = 2_000;
+/** Agent 调试台归档默认总字节上限（MB）。 */
+export const DEFAULT_AGENT_DEBUG_ARCHIVE_MAX_MB = 1_024;
 
 /** agent MCP 配置文件路径（NXCORE_MCP_CONFIG 优先，缺省 dataDir/agent/mcp.json）。 */
 export function resolveMcpConfigPath(dataDir: string, overridePath?: string): string {
@@ -424,6 +491,24 @@ function parsePositiveInteger(name: string, value: string): number {
     throw new Error(`Invalid ${name}: ${value}`);
   }
   return Number(value);
+}
+
+/** 带范围校验的正整数配置：格式/范围错误都报 `Invalid <name>: <value>`。 */
+function parseBoundedInteger(name: string, value: string, minimum: number, maximum: number): number {
+  const parsed = parsePositiveInteger(name, value);
+  if (parsed < minimum || parsed > maximum) {
+    throw new Error(`Invalid ${name}: ${value}`);
+  }
+  return parsed;
+}
+
+/** 归档开关：缺省开启；1/true/on/yes 开，0/false/off/no 关，其余报错。 */
+function parseArchiveEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return true;
+  if (["1", "true", "on", "yes"].includes(normalized)) return true;
+  if (["0", "false", "off", "no"].includes(normalized)) return false;
+  throw new Error(`Invalid NXCORE_AGENT_DEBUG_ARCHIVE: ${value}`);
 }
 
 /** Return the first non-empty environment value, allowing renamed variables to fall back safely. */
@@ -612,7 +697,28 @@ export function loadConfig(
     ),
     subagentMaxConcurrent: parsePositiveInteger(
       "NXCORE_SUBAGENT_MAX_CONCURRENT",
-      env.NXCORE_SUBAGENT_MAX_CONCURRENT ?? "8",
+      env.NXCORE_SUBAGENT_MAX_CONCURRENT
+        ?? String(DEFAULT_SLIDES_MAX_CONCURRENT + DEFAULT_DEFAULT_MAX_CONCURRENT + DEFAULT_BACKGROUND_MAX_CONCURRENT),
+    ),
+    subagentSlidesMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT ?? String(DEFAULT_SLIDES_MAX_CONCURRENT),
+    ),
+    subagentDefaultMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT ?? String(DEFAULT_DEFAULT_MAX_CONCURRENT),
+    ),
+    subagentBackgroundMaxConcurrent: parsePositiveInteger(
+      "NXCORE_SUBAGENT_BACKGROUND_MAX_CONCURRENT",
+      env.NXCORE_SUBAGENT_BACKGROUND_MAX_CONCURRENT ?? String(DEFAULT_BACKGROUND_MAX_CONCURRENT),
+    ),
+    subagentSlidesReasoning: parseAiReasoning(
+      "NXCORE_SUBAGENT_SLIDES_REASONING",
+      env.NXCORE_SUBAGENT_SLIDES_REASONING,
+    ),
+    slidesDeckConcurrency: parsePositiveInteger(
+      "NXCORE_SLIDES_DECK_CONCURRENCY",
+      env.NXCORE_SLIDES_DECK_CONCURRENCY ?? String(DEFAULT_SLIDES_DECK_CONCURRENCY),
     ),
     externalCallUserId: env.NXCORE_EXTERNAL_CALL_USER_ID?.trim() || "local-user",
     externalCallWorkspaceId: env.NXCORE_EXTERNAL_CALL_WORKSPACE_ID?.trim() || "local-workspace",
@@ -620,17 +726,6 @@ export function loadConfig(
     aiModel: env.NXCORE_AI_MODEL?.trim() ?? "",
     aiBackgroundModel: env.NXCORE_AI_BACKGROUND_MODEL?.trim() || env.NXCORE_AI_MODEL?.trim() || "",
     aiTranscriptionModel: env.NXCORE_AI_TRANSCRIPTION_MODEL?.trim() || "",
-    aiSlidesReviewerModel: env.NXCORE_AI_SLIDES_REVIEWER_MODEL?.trim() || "",
-    aiSlidesReviewerMaxTokens: env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS?.trim()
-      ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS", env.NXCORE_AI_SLIDES_REVIEWER_MAX_TOKENS)
-      : undefined,
-    aiSlidesReviewerContextWindow: env.NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW?.trim()
-      ? parsePositiveInteger("NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW", env.NXCORE_AI_SLIDES_REVIEWER_CONTEXT_WINDOW)
-      : undefined,
-    aiSlidesReviewerReasoning: parseAiReasoning(
-      "NXCORE_AI_SLIDES_REVIEWER_REASONING",
-      env.NXCORE_AI_SLIDES_REVIEWER_REASONING,
-    ),
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
@@ -855,6 +950,25 @@ export function loadConfig(
     notificationBridgeToken: env.NXCORE_NOTIFICATION_BRIDGE_TOKEN?.trim() ?? "",
     officeBridgeUrl: env.NXCORE_OFFICE_BRIDGE_URL?.trim() ?? "",
     officeBridgeToken: env.NXCORE_OFFICE_BRIDGE_TOKEN?.trim() ?? "",
+    agentDebugArchiveEnabled: parseArchiveEnabled(env.NXCORE_AGENT_DEBUG_ARCHIVE),
+    agentDebugArchiveDays: parseBoundedInteger(
+      "NXCORE_AGENT_DEBUG_ARCHIVE_DAYS",
+      env.NXCORE_AGENT_DEBUG_ARCHIVE_DAYS ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_DAYS),
+      1,
+      3_650,
+    ),
+    agentDebugArchiveRuns: parseBoundedInteger(
+      "NXCORE_AGENT_DEBUG_ARCHIVE_RUNS",
+      env.NXCORE_AGENT_DEBUG_ARCHIVE_RUNS ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_RUNS),
+      1,
+      100_000,
+    ),
+    agentDebugArchiveMaxMb: parseBoundedInteger(
+      "NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB",
+      env.NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_MAX_MB),
+      64,
+      65_536,
+    ),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -1074,6 +1188,13 @@ export function loadConfig(
       rescanMs: rawConfig.documentIndexBackfillRescanMs,
       readTriggerCooldownMs: rawConfig.documentIndexBackfillReadTriggerCooldownMs,
     },
+    // 调试数据面：默认开启；关闭时 create-server 不创建归档实例（store 不接收 archive）。
+    agentDebugArchive: {
+      enabled: rawConfig.agentDebugArchiveEnabled,
+      retentionDays: rawConfig.agentDebugArchiveDays,
+      maxRuns: rawConfig.agentDebugArchiveRuns,
+      maxBytes: rawConfig.agentDebugArchiveMaxMb * 1_024 * 1_024,
+    },
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(
       values["migrations-dir"] ?? env.NXCORE_GATEWAY_MIGRATIONS_DIR ?? defaultMigrationsDir(),
@@ -1163,32 +1284,22 @@ export function loadConfig(
           maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
-    // 审页档（slides-reviewer 专用，多模态）：model 可来自 env 专用键，也可由
-    // runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
-    // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
-    // 输出上限/窗口/思考档支持独立 env 键：审页模型常是 qwen 系视觉模型，
-    // 输出上限远小于主模型；沿用主模型档会让长思考把输出预算吃满（2026-10 实测）。
-    slidesReviewerPi: pi
-      ? {
-          ...pi,
-          model: rawConfig.aiSlidesReviewerModel,
-          ...(rawConfig.aiSlidesReviewerMaxTokens === undefined
-            ? {}
-            : { maxTokens: rawConfig.aiSlidesReviewerMaxTokens }),
-          ...(rawConfig.aiSlidesReviewerContextWindow === undefined
-            ? {}
-            : { contextWindow: rawConfig.aiSlidesReviewerContextWindow }),
-          ...(rawConfig.aiSlidesReviewerReasoning === undefined
-            ? {}
-            : { reasoning: rawConfig.aiSlidesReviewerReasoning }),
-        }
-      : null,
+    // 布局代理（slides-layouter）直接用主模型：主模型已具备视觉能力，自审直接看
+    // 渲染图，不再需要独立的多模态视觉档（vlm 槽仍供给 perception / 视觉复检等
+    // 其他链路，见 config.vlm）。
     subagents: {
       enabled: rawConfig.subagentsEnabled,
       definitionsDir: resolve(rawConfig.subagentsDir || bundledAgentDefinitionsDir()),
       runtimeDir: join(dataDir, "agent", "subagents"),
       defaultTimeoutMs: rawConfig.subagentTimeoutMs,
       maxConcurrent: rawConfig.subagentMaxConcurrent,
+      slidesMaxConcurrent: rawConfig.subagentSlidesMaxConcurrent,
+      defaultMaxConcurrent: rawConfig.subagentDefaultMaxConcurrent,
+      backgroundMaxConcurrent: rawConfig.subagentBackgroundMaxConcurrent,
+      slidesDeckConcurrency: rawConfig.slidesDeckConcurrency,
+      ...(rawConfig.subagentSlidesReasoning === undefined
+        ? {}
+        : { slidesReasoning: rawConfig.subagentSlidesReasoning }),
     },
     mcpConfigPath,
     webSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchApiKey

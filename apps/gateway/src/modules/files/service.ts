@@ -568,9 +568,21 @@ export class FilesService {
     return Boolean(entry && entry.sourceKind !== "legacy-upload");
   }
 
-  /** 单个 catalog 条目（@ 文件引用取当前版本 id 用）。 */
+  /**
+   * 单个 catalog 条目（@ 文件引用取当前版本 id 用；桌面端「未打开产物自动打开」也用它）。
+   * 先查最近一页，未命中再分页扫描：刚生成的产物一定在首页，历史产物也不会因为
+   * 目录超过 200 条就查不到（此前只扫前 200 条，导致上古老产物按 id 查永远是 404）。
+   */
   catalogEntry(fileEntryId: string): CatalogFileDto | null {
-    return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
+    const pageSize = 200;
+    const first = this.listCatalog(pageSize, 0);
+    const direct = first.items.find((item) => item.id === fileEntryId);
+    if (direct) return direct;
+    for (let offset = pageSize; offset < first.total; offset += pageSize) {
+      const hit = this.listCatalog(pageSize, offset).items.find((item) => item.id === fileEntryId);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {

@@ -15,7 +15,8 @@
     "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
     "prepare:ntn": "node scripts/prepare-ntn.mjs",
     "prepare:acp-adapters": "node scripts/prepare-acp-adapters.mjs",
-    "prepare:vision-ocr": "node scripts/prepare-vision-ocr.mjs"
+    "prepare:vision-ocr": "node scripts/prepare-vision-ocr.mjs",
+    "debug:agents": "vite --config vite.agent-debug.config.mts"
   },
   "dependencies": {
     "@antv/g6": "4.8.24",

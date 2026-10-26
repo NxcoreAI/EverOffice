@@ -428,6 +428,10 @@ export class OfficeBridgeServer {
    * 显式 fileEntryId 未打开时的自动打开：核实产物库条目是 Office 产物后，
    * 广播 open-edit 让渲染端以可编辑方式打开（顶栏出标签，编辑实时可见）。
    * 渲染层打开失败/文件不存在时返回 false，保持原 not_open 报错路径。
+   *
+   * 查询顺序：catalog 条目（agent 生成/导入的产物都在 file_entries）优先，
+   * `get()`（只查 legacy uploaded_files）兜底。此前只用 `get()`，导致
+   * agent 生成的 PPT 永远 file_not_found，「未打开自动打开」从未成功过。
    */
   private async requestRendererOpen(fileId: string): Promise<boolean> {
     const files = this.filesBridge()
@@ -436,15 +440,21 @@ export class OfficeBridgeServer {
       return false
     }
     try {
-      let entry: Awaited<ReturnType<FilesGatewayBridge['get']>>
+      let entry: { originalName?: unknown; displayName?: unknown } | null = null
       try {
-        entry = await files.get(fileId)
-      } catch (error) {
-        console.warn('office-bridge: open-edit 跳过（fileId 读取失败）', {
-          fileId,
-          error: error instanceof Error ? error.message : String(error),
-        })
-        return false
+        entry = await files.catalogEntry(fileId)
+      } catch (catalogError) {
+        // 旧版本上传的产物不在 catalog 里：退回 legacy 查询。
+        try {
+          entry = await files.get(fileId)
+        } catch (error) {
+          console.warn('office-bridge: open-edit 跳过（fileId 读取失败）', {
+            fileId,
+            error: error instanceof Error ? error.message : String(error),
+            catalogError: catalogError instanceof Error ? catalogError.message : String(catalogError),
+          })
+          return false
+        }
       }
       if (!entry) {
         console.warn('office-bridge: open-edit 跳过（fileId 读取为空）', { fileId })

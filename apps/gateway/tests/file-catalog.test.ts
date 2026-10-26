@@ -186,6 +186,28 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
+  it("catalogEntry 目录超过一页时仍能按 id 命中（分页兜底）", async () => {
+    const test = await catalogForTest();
+    const deep = {
+      id: "file-deep", originalName: "deep.pptx", displayName: null, sharedTitle: "deep.pptx",
+      sourceKind: "agent-generated", sourceLabel: "Agent 生成", relativePath: null, provider: null,
+      bytes: 1, dataType: "slides", agentCategory: null, summary: null, tags: [],
+      processingState: "ready", clusterId: null, contentHash: "a".repeat(64), currentVersionId: null,
+      parsed: false, updatedAt: new Date().toISOString(),
+    } as never;
+    const pages = new Map<number, { items: never[]; total: number }>([
+      [0, { items: [], total: 250 }],
+      [200, { items: [deep], total: 250 }],
+    ]);
+    vi.spyOn(test.service, "listCatalog").mockImplementation(((limit = 100, offset = 0) => (
+      pages.get(offset) ?? { items: [], total: 250 }
+    )) as never);
+    expect(test.service.catalogEntry("file-deep")).toMatchObject({ id: "file-deep", originalName: "deep.pptx" });
+    expect(test.service.catalogEntry("file-missing")).toBeNull();
+    await test.service.dispose();
+    test.sqlite.close();
+  });
+
   it("accepts artifact-imported office uploads as a first-class source kind", async () => {
     const test = await catalogForTest();
     const imported = await test.service.importFileStream({

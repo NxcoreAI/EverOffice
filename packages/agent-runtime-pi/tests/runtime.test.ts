@@ -107,6 +107,7 @@ describe("PiAgentRuntime", () => {
         contextWindow: 8192,
         percent: expect.any(Number),
         segments: expect.any(Array),
+        runUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       });
       expect(events.find((event) => event.type === "message.completed")?.payload).toEqual({
         role: "assistant",
@@ -410,6 +411,7 @@ describe("PiAgentRuntime", () => {
           created: 1,
           model: "nxcore-test-model",
           choices: [{ index: 0, delta, finish_reason: finishReason }],
+          usage: finishReason ? { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15 } : undefined,
         });
         if (requestIndex % 2 === 0) {
           response.write(`data: ${chunk({
@@ -517,6 +519,13 @@ describe("PiAgentRuntime", () => {
       expect(firstEvents.map((event) => event.type)).toContain("tool.started");
       expect(firstEvents.map((event) => event.type)).toContain("tool.completed");
       expect(secondEvents.map((event) => event.type)).toContain("tool.completed");
+      const toolCompletedIndex = firstEvents.findIndex(event => event.type === "tool.completed");
+      expect(firstEvents.slice(0, toolCompletedIndex)).toContainEqual(expect.objectContaining({
+        type: "context.usage", payload: expect.objectContaining({ runUsage: { input: 12, output: 3, cacheRead: 0, cacheWrite: 0 } }),
+      }));
+      expect(firstEvents.find(event => event.type === "message.completed")?.payload).toMatchObject({
+        usage: { input: 24, output: 6, cacheRead: 0, cacheWrite: 0 },
+      });
       const reusedRunRequest = JSON.stringify(requestBodies[2]);
       expect(reusedRunRequest).toContain("本轮执行 ID：run-room-b");
       expect(reusedRunRequest).toContain("历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效");

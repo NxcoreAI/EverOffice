@@ -286,6 +286,6 @@ describe("external call budgets", () => {
     const subagentSource = readFileSync(resolve(import.meta.dirname, "../src/modules/subagents/runtime-manager.ts"), "utf8");
     expect(subagentSource).toContain('this.externalCalls!.execute("MCP"');
     const serverSource = readFileSync(resolve(import.meta.dirname, "../src/server/create-server.ts"), "utf8");
-    expect(serverSource).toContain("new SubagentRuntimeManager(config, subagentConfig, externalCalls)");
+    expect(serverSource).toContain("new SubagentRuntimeManager(config, subagentConfig, externalCalls, agentDebugStore)");
   });
 });
