@@ -603,6 +603,18 @@ let gatewayProxyEnv: Record<string, string> = {}
 /** gateway:recover 的 in-flight 去重（网络失败风暴时并发请求只触发一次恢复）。 */
 let gatewayRecoverInFlight: Promise<{ ok: boolean; reason?: 'not-started' | 'recover-failed' }> | null = null
 let runtimeConfigBridge: RuntimeConfigBridge | null = null
+/**
+ * 网关就绪信号：启动期的 runtime-config 查询只等它，不等全量服务初始化
+ * （servicesReady = 网关 + 连接器/本地数据等全部就绪）。否则登录态下
+ * 会话恢复、连接器初始化都会被算进启动闪屏，把网关启动的并行收益吃掉。
+ */
+let resolveGatewayReady: (() => void) | null = null
+let rejectGatewayReady: ((error: Error) => void) | null = null
+const gatewayReady = new Promise<void>((resolve, reject) => {
+  resolveGatewayReady = resolve
+  rejectGatewayReady = reject
+})
+gatewayReady.catch(() => { /* 失败由 gate 的重试路径收口 */ })
 let cursorCompletionSupervisor: GatewaySupervisor | null = null
 let ooCliBridge: OoCliBridge | null = null
 /** OpenConnector 控制台地址（local=本地运行时；SaaS=oo 会话 baseUrl）；bridge 未建时为 null。 */
@@ -1313,7 +1325,10 @@ function registerGatewayHandlers(): void {
 }
 
 function registerRuntimeConfigHandlers(): void {
-  handle(RUNTIME_CONFIG_CHANNELS.get, () => runtimeConfigBridge?.get())
+  handle(RUNTIME_CONFIG_CHANNELS.get, async () => {
+    await gatewayReady
+    return runtimeConfigBridge?.get()
+  })
   handle(RUNTIME_CONFIG_CHANNELS.saveUser, async (_event, input: unknown) => {
     const snapshot = await runtimeConfigBridge?.saveUser(input)
     if (snapshot) void syncManagedChildProcesses(snapshot)
@@ -3042,31 +3057,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) {
     app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   }
-  // 主密钥改内置（gateway 端默认值），清掉 Keychain 时代的遗留文件再拉起网关。
-  await cleanupLegacyGatewaySecretKey(join(dataDirectory, 'security'))
-  // 先清上次残留的受管子进程树（父进程被强杀后 gateway/memory-core/knowledge
-  // 会残留并锁 SQLite/端口，导致新实例启动超时或被 probe 误复用，issue #179）。
-  const staleProcesses = await cleanupStaleProcessRecords(join(dataDirectory, 'runtime'))
-  if (staleProcesses.length > 0) {
-    console.warn(`[startup] 已清理上次残留进程：${staleProcesses.join('、')}`)
-  }
   // 退出兜底（win32）：崩溃/强杀路径 before-quit 不会执行，exit 钩子同步击杀
   // 仍存活的受管子进程；POSIX 正常退出已有进程组语义，不注册。
   installExitCleanupHook()
   // 窗口先显示,Gateway 等服务在后台初始化,状态由左下角 Gateway 指示器呈现。
   const documentAssets = new DocumentAssetStore(join(dataDirectory, 'document-assets'))
-  await documentAssets.initialize().catch((error: unknown) => {
-    console.error('Failed to initialize local document assets', error)
-  })
-  // 文档资产本地桥：飞书导出时 lark-cli 经此下载本地图并上传（token 只进网关 env）。
-  documentAssetBridge = await startDocumentAssetBridge(documentAssets).catch((error: unknown) => {
-    console.warn('Document asset bridge unavailable; exports degrade to placeholders.', error)
-    return null
-  })
-  obsidianVaultService = new ObsidianVaultService(dataDirectory, (path) => shell.trashItem(path))
-  await obsidianVaultService.initialize().catch((error) => {
-    console.error('Failed to initialize Obsidian Vault service', error)
-  })
   protocol.handle(DOCUMENT_ASSET_SCHEME, (request) => documentAssets.response(request.url))
   protocol.handle(OBSIDIAN_VAULT_ASSET_SCHEME, async (request) => {
     try {
@@ -3101,7 +3096,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
   })
   installIpcRouters()
-  registerObsidianHandlers(obsidianVaultService)
+  // runtime-config 处理器必须早于窗口注册：否则渲染层首次查询会落到
+  // servicesReady 的兜底队列里，启动闪屏被迫等全量服务初始化。
+  registerRuntimeConfigHandlers()
   registerSystemClipboardHandler()
   registerGatewayHandlers()
   registerOpenConnectorHandlers()
@@ -3133,15 +3130,43 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     return rateLimitAware(() => client.aiGatewayStatus())
   })
   handle(ACCOUNT_CHANNELS.aiRelayVerdict, () => ({ quotaExhausted: aiRelayKeeper?.isQuotaExhausted() ?? false }))
-  createWindow()
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
+  // 放在 createWindow 之前：渲染层挂载即查账号，处理器必须先于首帧就位。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))
   await credentials.initialize()
   // SaaS 客户端仍需要录音目录参数（历史中转建单落盘路径），保留同一目录。
   const recordingsDirectory = join(dataDirectory, 'recordings')
   saasClient = new SaasClient(credentials, app, recordingsDirectory, (url) => shell.openExternal(url))
   void saasClient.initialize()
+  // 启动期账号查询不能排到 servicesReady：登录态解析（刷新令牌等网络往返）
+  // 本身就该与 gateway 启动并行。这里先注册轻量 status 处理器，完整处理器
+  // （含账号事件钩子）稍后覆盖同一 channel。
+  const startupSaasClient = saasClient
+  handle(ACCOUNT_CHANNELS.status, (_event, refreshSubscription?: unknown) => rateLimitAware(async () => (
+    startupSaasClient.status(refreshSubscription === true)
+  )))
   startDesktopUpdater(saasClient)
+  createWindow()
+  // 首帧关键路径之外：残留进程清理、文档资产 / Obsidian 初始化只影响各自页面，
+  // 放到窗口显示之后做。闪屏出现时间从 ~1.0s 提前到 ~0.4s，不动总启动时间。
+  await cleanupLegacyGatewaySecretKey(join(dataDirectory, 'security'))
+  const staleProcesses = await cleanupStaleProcessRecords(join(dataDirectory, 'runtime'))
+  if (staleProcesses.length > 0) {
+    console.warn(`[startup] 已清理上次残留进程：${staleProcesses.join('、')}`)
+  }
+  await documentAssets.initialize().catch((error: unknown) => {
+    console.error('Failed to initialize local document assets', error)
+  })
+  // 文档资产本地桥：飞书导出时 lark-cli 经此下载本地图并上传（token 只进网关 env）。
+  documentAssetBridge = await startDocumentAssetBridge(documentAssets).catch((error: unknown) => {
+    console.warn('Document asset bridge unavailable; exports degrade to placeholders.', error)
+    return null
+  })
+  obsidianVaultService = new ObsidianVaultService(dataDirectory, (path) => shell.trashItem(path))
+  await obsidianVaultService.initialize().catch((error) => {
+    console.error('Failed to initialize Obsidian Vault service', error)
+  })
+  registerObsidianHandlers(obsidianVaultService)
   // 连接器栈在所有页面可用（sources/connectors 页面模式分叉已删除）
   const connectorModeStore = connectorModeStoreRef ?? createConnectorModeStore(dataDirectory)
   connectorModeStoreRef = connectorModeStore
@@ -3158,19 +3183,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         ooCliBridge = createOoCliBridge(openConnector)
         attachOpenConnectorBridge(ooCliBridge)
       }
-    }
-    if (connectorModeState.mode === 'saas') {
-      // SaaS 连接层：已登录则先向 SaaS 换 oo 会话（bridge 与 gateway env 工厂都用它）；
-      // 未登录/暂不可达时不阻断启动，由账号事件钩子补拉。
-      await saasClient.initialize()
-      const account = await saasClient.status().catch(() => null)
-      connectorOoLoginSeen = Boolean(account?.authenticated)
-      connectorOoUserId = account?.authenticated ? account.user?.id ?? null : null
-      await applyConnectorOoSession(
-        account?.authenticated && account.user?.id
-          ? await fetchConnectorOoSession(account.user.id)
-          : null,
-      )
     }
     agentNotificationBridgeServer = new AgentNotificationBridgeServer(
       () => saasClient,
@@ -3272,6 +3284,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)
+    resolveGatewayReady?.()
     // 冷启动补全服务只带 .env 透传；gateway 就绪后按已存 runtime config 补一次
     // （把「每次冷启动回退 .env」的窗口收窄到 gateway ready 之前）。配置没变
     // 不会重启任何实例。
@@ -3332,6 +3345,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     const connectorIpcBridge = connectorModeState.mode === 'saas' ? saasConnectorBridge : connectorGatewayBridge
     registerConnectorHandlers(connectorIpcBridge)
+    // SaaS 会话恢复排在 gateway 启动之后：这两个网络往返（刷新令牌 + 换 oo 会话）
+    // 曾经卡在 gateway spawn 之前，登录态下等于把网关启动整体推迟 1s 以上。现在
+    // 网关先在后台启动，会话到位后经 /v1/connector-session 热推送（不重启进程），
+    // 连接器配置不丢；未登录/暂不可达时同样不阻断启动，由账号事件钩子补拉。
+    if (connectorModeState.mode === 'saas') {
+      await saasClient.initialize()
+      const account = await saasClient.status().catch(() => null)
+      connectorOoLoginSeen = Boolean(account?.authenticated)
+      connectorOoUserId = account?.authenticated ? account.user?.id ?? null : null
+      await applyConnectorOoSession(
+        account?.authenticated && account.user?.id
+          ? await fetchConnectorOoSession(account.user.id)
+          : null,
+      )
+    }
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     registerSearchHandlers(new SearchGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
@@ -3473,7 +3501,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         void macosPushNotifications?.registerAuthenticatedDevice()
       }
     }, () => macosPushNotifications?.beforeLogout() ?? Promise.resolve())
-    registerRuntimeConfigHandlers()
     registerAccountKeyringHandlers(saasClient, keyring)
     registerPermissionHandlers()
 
@@ -3507,6 +3534,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     resolveServicesReady?.()
   } catch (error) {
     rejectServicesReady?.(error instanceof Error ? error : new Error(String(error)))
+    rejectGatewayReady?.(error instanceof Error ? error : new Error(String(error)))
     await agentNotificationBridgeServer?.stop()
     agentNotificationBridgeServer = null
     await officeBridgeServer?.stop()

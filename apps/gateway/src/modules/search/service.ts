@@ -97,6 +97,7 @@ interface IndexRow {
 
 export class SearchService {
   private timer: NodeJS.Timeout | null = null;
+  private initialDrainTimer: NodeJS.Timeout | null = null;
   private draining = false;
   private stopped = false;
 
@@ -273,13 +274,22 @@ export class SearchService {
     )).run();
     this.timer = setInterval(() => void this.drain(), 2_000);
     this.timer.unref();
-    void this.drain();
+    // 首轮 drain 延后 2s：大库（jobs/parsed_contents 数百 MB）的同步回填会触发
+    // FTS5 段合并，占住主线程数百毫秒——正好压在 HTTP 监听之后、manifest 写入
+    // 之前，把网关 ready 和启动闪屏一起拖住。先让 ready 落定，回填随后开始。
+    this.initialDrainTimer = setTimeout(() => {
+      this.initialDrainTimer = null;
+      void this.drain();
+    }, 2_000);
+    this.initialDrainTimer.unref();
   }
 
   stop(): void {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.initialDrainTimer) clearTimeout(this.initialDrainTimer);
+    this.initialDrainTimer = null;
   }
 
   private async drain(): Promise<void> {
