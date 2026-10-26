@@ -88,12 +88,15 @@ function localizeAgentAnswer(value: string, t: Translate): string {
 }
 
 function RoomSelection({
+  awaitingInput = true,
   availableRooms,
   busy,
   onCancel,
   onSelect,
   rooms,
 }: {
+  /** agent 正挂着 run 等用户选（区别于「确认中」的 busy）。 */
+  awaitingInput?: boolean
   availableRooms: AgentRoomReference[]
   busy: boolean
   onCancel: () => void
@@ -103,7 +106,10 @@ function RoomSelection({
   const { t } = useLocale()
   const availableById = new Map(availableRooms.map((room) => [room.id, room]))
   return (
-    <section className="agent-room-selection" aria-label={t('surface:agentChat.chooseARoomForTheDocument')}>
+    <section
+      className="agent-room-selection"
+      data-awaiting-input={String(awaitingInput && !busy)}
+      aria-label={t('surface:agentChat.chooseARoomForTheDocument')}>
       <header>
         <span><FolderKanban aria-hidden="true" /><strong>{t('surface:agentChat.chooseARoomForTheDocument')}</strong></span>
         <button type="button" aria-label={t('surface:agentChat.cancelRoomSelection')} title={t('surface:agentChat.cancel')} disabled={busy} onClick={onCancel}>
@@ -137,11 +143,14 @@ function RoomSelection({
 }
 
 function DocumentIntentClarification({
+  awaitingInput = true,
   busy,
   onConfirm,
   onReject,
   topic,
 }: {
+  /** agent 正挂着 run 等用户答复（区别于「确认中」的 busy）。 */
+  awaitingInput?: boolean
   busy: boolean
   onConfirm: () => void
   onReject: () => void
@@ -149,7 +158,10 @@ function DocumentIntentClarification({
 }) {
   const { t } = useLocale()
   return (
-    <section className="agent-room-selection agent-document-intent" aria-label={t('surface:agentChat.confirmDocumentCreation')}>
+    <section
+      className="agent-room-selection agent-document-intent"
+      data-awaiting-input={String(awaitingInput && !busy)}
+      aria-label={t('surface:agentChat.confirmDocumentCreation')}>
       <header>
         <span><CircleHelp aria-hidden="true" /><strong>{t('surface:agentChat.confirmCreationMethod')}</strong></span>
       </header>
@@ -665,7 +677,6 @@ export function AgentChatView({
   const userRunIds = useMemo(() => new Set(
     messages.filter((message) => message.role === 'user').map((message) => message.runId),
   ), [messages])
-  const activeRunPending = Boolean(activeRunId && !runCompletedAtByRun[activeRunId])
   const activeRunHasUserMessage = Boolean(activeRunId && userRunIds.has(activeRunId))
   const activeNavigationLink = activeRunId
     ? outgoingLinks.find((link) => link.sourceRunId === activeRunId)
@@ -1277,9 +1288,13 @@ export function AgentChatView({
             resolvingApprovalIds={resolvingApprovalIds}
             onResolve={onResolveApproval}
           />
+          {/* 等待用户决策 ≠ 执行中：run 挂着正是「agent 在等输入」的正常形态，
+              卡片此时必须可点；busy 只保留「提交通道被占用/会话加载中」。
+              同样适用于下方的 RoomSelection / AgentDocumentPicker。 */}
           {pendingDocumentIntent ? (
             <DocumentIntentClarification
-              busy={loading || submitting || activeRunPending}
+              awaitingInput
+              busy={loading || submitting}
               topic={pendingDocumentIntent.result.topic}
               onConfirm={() => {
                 setDismissedDocumentIntents((current) => new Set(current).add(pendingDocumentIntent.tool.id))
@@ -1296,8 +1311,9 @@ export function AgentChatView({
           ) : null}
           {roomSelection ? (
             <RoomSelection
+              awaitingInput
               availableRooms={availableRooms}
-              busy={loading || submitting || activeRunPending}
+              busy={loading || submitting}
               rooms={roomSelection.rooms}
               onCancel={() => {
                 if (roomSelection.toolId) {
@@ -1325,7 +1341,8 @@ export function AgentChatView({
           ) : null}
           {pendingIntentDocumentSelection ? (
             <AgentDocumentPicker
-              busy={loading || submitting || activeRunPending}
+              awaitingInput
+              busy={loading || submitting}
               documents={pendingIntentDocuments}
               onCancel={() => setPendingIntentDocumentSelection(null)}
               onSelect={(document) => {
@@ -1341,7 +1358,8 @@ export function AgentChatView({
             />
           ) : pendingDocumentSelection ? (
             <AgentDocumentPicker
-              busy={loading || submitting || activeRunPending}
+              awaitingInput
+              busy={loading || submitting}
               documents={pendingDocumentSelection.documents}
               onCancel={() => {
                 handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)

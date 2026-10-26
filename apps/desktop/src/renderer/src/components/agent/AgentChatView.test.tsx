@@ -160,6 +160,69 @@ describe('AgentChatView', () => {
     },
   )
 
+  it('keeps decision cards clickable while the agent run is still pending (waiting for input)', async () => {
+    const intent = pendingIntent('document.create')
+    const onSelectRoom = vi.fn().mockResolvedValue(undefined)
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeRunId="run-1"
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[{ id: 'room-1', title: '产品 Room' }]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={onSelectRoom}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{ 'run-1': '2026-08-20T00:00:00.000Z' }}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{
+          'run-1': [{
+            id: 'tool-1',
+            runId: 'run-1',
+            name: 'context_room_list',
+            status: 'completed',
+            args: {},
+            result: {
+              rooms: [{ id: 'room-1', title: '产品 Room' }],
+              selectionRequired: true,
+              pendingIntent: intent,
+            },
+            startedAt: '2026-08-20T00:00:00.000Z',
+            completedAt: '2026-08-20T00:00:01.000Z',
+          }],
+        }}
+      />)
+    })
+
+    // run 未完成（activeRunId 挂着、无 completedAt）= agent 在等输入：
+    // 房间选择按钮必须可点，点击后直接进入提交。
+    const roomButton = renderer.root.findByProps({ title: '产品 Room' })
+    expect(roomButton.props.disabled).toBe(false)
+    await act(async () => {
+      roomButton.props.onClick()
+      await Promise.resolve()
+    })
+    // document.create 只需 Room；edit/continue 才会进入文档选择（第三个参数）
+    expect(onSelectRoom).toHaveBeenCalledWith(
+      { id: 'room-1', title: '产品 Room' },
+      intent,
+    )
+  })
+
   it('scrolls to and highlights a notification run after its messages load', async () => {
     const scrollIntoView = vi.fn()
     const onNotificationRunLocated = vi.fn()
