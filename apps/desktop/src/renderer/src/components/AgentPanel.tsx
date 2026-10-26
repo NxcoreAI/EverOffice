@@ -620,7 +620,9 @@ export function AgentPanel({
   )
 
   return (
-    <aside className="agent-panel">
+    // data-office-avoid：窄窗（≤1200px）下本面板是浮层、不占网格列，内嵌 Office
+    // 原生视图（画在 DOM 之上）按它让位，而不是被压在面板上。
+    <aside className="agent-panel" data-office-avoid="">
       <AgentToolbar>
         <AgentSessionSwitcher
           activeRunId={session.activeRunId}

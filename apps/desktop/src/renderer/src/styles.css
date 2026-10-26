@@ -1440,6 +1440,19 @@ summary:focus-visible {
   color: var(--subtle);
 }
 
+/* 原生视图首次出帧前的「正在打开」：转圈表示还在路上，不是坏掉。 */
+.doc-empty .doc-spinner {
+  animation: doc-spinner-rotate 0.9s linear infinite;
+}
+
+@keyframes doc-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-empty .doc-spinner { animation: none; }
+}
+
 .doc-empty strong {
   color: var(--text);
   font-size: 14px;

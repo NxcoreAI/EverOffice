@@ -718,6 +718,15 @@ function sendOsOpenToRenderer(document: OsOpenedDocument): void {
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
+  // TEMP DIAG：访达打开链路（查完删除）。
+  logDesktop('office', 'info', {
+    event: 'office.diag.os-open.send',
+    fileId: document.fileId,
+    originalName: document.originalName,
+    windowVisible: window.isVisible(),
+    windowFocused: window.isFocused(),
+    loadingMainFrame: window.webContents.isLoadingMainFrame(),
+  })
   const target = window.webContents
   if (target.isLoadingMainFrame()) {
     target.once('did-finish-load', () => {
@@ -870,7 +879,10 @@ ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
   if (id !== null && typeof id !== 'string') return false
-  return officePreviewRegistry.setActive(id === null ? null : id)
+  // TEMP DIAG：渲染端激活请求是否命中实例（查完删除）。
+  const active = officePreviewRegistry.setActive(id === null ? null : id)
+  logDesktop('office', 'info', { event: 'office.diag.ipc.set-active', id, active })
+  return active
 })
 
 ipcMain.handle('office:instance:close', async (event, id: unknown) => {
@@ -2471,6 +2483,16 @@ function registerFilesHandlers(
 
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+    const startedAt = Date.now()
+    logDesktop('office', 'info', {
+      event: 'office.diag.open-original.start',
+      fileId,
+      originalName,
+      editable: options?.editable === true,
+      hasContentHash: typeof contentHash === 'string' && contentHash.length > 0,
+      windowVisible: window.isVisible(),
+      windowFocused: window.isFocused(),
+    })
     const storagePath = await bridge.storagePath(fileId)
     const effectiveHash = contentHash ?? await hashFileBytes(storagePath)
     // 顶栏预览标签支持多开：同 fileId 复用实例，hash 变化原地重建；激活由渲染端驱动。
@@ -2502,6 +2524,14 @@ function registerFilesHandlers(
       // 旧版格式回退系统应用：渲染层据此提示「内置预览需要 LibreOffice」。
       return { openedWith: 'external' as const, legacyFallback: true }
     }
+    logDesktop('office', 'info', {
+      event: 'office.diag.open-original.done',
+      fileId,
+      kind: descriptor.kind,
+      elapsedMs: Date.now() - startedAt,
+      windowVisible: window.isVisible(),
+      windowFocused: window.isFocused(),
+    })
     return {
       openedWith: 'office' as const,
       instanceId: descriptor.id,
@@ -3403,7 +3433,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     macosPushNotifications.install()
     registerNotificationHandlers(saasClient)
     agentStatusReporter = new AgentStatusReporter(saasClient)
-    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter)
+    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter, {
+      // 用户当前浏览的 Office 页签随每次 run 注入：Agent 至少要知道“这份文档”
+      // 指的是哪一份（fileId/title/kind），才能用 file_read 读它而不是猜文稿。
+      activeFile: () => officePreviewRegistry.activeOfficeFile(),
+    })
     agentStatusReporter.setSessionsProvider(async () => (await agentGatewayBridge!.listAllSessionSnapshots()).map((snapshot) => ({
       ...snapshot.session,
       activeRun: snapshot.activeRun,

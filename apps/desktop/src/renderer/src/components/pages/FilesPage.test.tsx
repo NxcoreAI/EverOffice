@@ -122,4 +122,52 @@ describe('FilesPage', () => {
     await act(async () => { keydownHandlers.forEach((handler) => handler({ key: 'Escape' })) })
     expect(renderer.root.findAllByType('section').some((node) => node.props.className?.includes('image-preview-dialog'))).toBe(false)
   })
+
+  it('冷启动一次性渲染完整目录：剩余页拉完之前不发布只含第一页的列表', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index) =>
+      catalogFile({ id: `page1-${index}`, originalName: `第一批-${index}.pdf`, dataType: 'document' }))
+    const secondPage = Array.from({ length: 3 }, (_, index) =>
+      catalogFile({ id: `page2-${index}`, originalName: `第二批-${index}.pdf`, dataType: 'document' }))
+
+    let releaseSecondPage!: () => void
+    const secondPageGate = new Promise<void>((resolve) => { releaseSecondPage = resolve })
+    const list = vi.fn(async (_limit: number, offset: number) => {
+      if (offset === 0) return { items: firstPage, total: 203 }
+      await secondPageGate
+      return { items: secondPage, total: 203 }
+    })
+    ;(window as unknown as { nxcore: { files: { list: typeof list } } }).nxcore.files.list = list
+
+    const { FilesPage } = await import('./FilesPage')
+    await act(async () => {
+      renderer = TestRenderer.create(<FilesPage onNavigate={() => undefined} onOpenOfficePreview={() => undefined} />)
+    })
+    await flush()
+
+    // `file-category-card-head` / `-foot` 也以该前缀开头：只取可点击的分类大卡本身。
+    const categoryCardsOf = () => renderer.root.findAll((node) =>
+      typeof node.props?.className === 'string'
+      && node.props.className.startsWith('file-category-card ')
+      && typeof node.props.onClick === 'function')
+
+    // 第一页已到、剩余页仍挂起：停在占位态，不渲染任何分类卡（旧行为这里已经展示 200 条，随后被整份目录替换）
+    expect(categoryCardsOf()).toHaveLength(0)
+    expect(renderer.root.findAll((node) => node.props?.className === 'source-loading').length).toBeGreaterThan(0)
+
+    await act(async () => {
+      releaseSecondPage()
+      await Promise.resolve()
+    })
+    await flush()
+
+    const categoryCards = categoryCardsOf()
+    expect(categoryCards).toHaveLength(1)
+    await act(async () => { categoryCards[0]!.props.onClick() })
+    await flush()
+
+    const renderedIds = renderer.root.findAll((node) => node.props?.['data-file-id'])
+      .map((node) => node.props['data-file-id'] as string)
+    expect(renderedIds).toHaveLength(203)
+    expect(new Set(renderedIds).size).toBe(203)
+  })
 })

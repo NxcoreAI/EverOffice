@@ -17,6 +17,12 @@ import { isEditableOfficeDocument } from '@/lib/officeEditing'
 
 const CATALOG_PAGE_SIZE = 200
 const FILES_REFRESH_INTERVAL_MS = 2_000
+// 全量刷新要补齐剩余页（17k 条目约 87 页）。此前是一次性 Promise.all 全并发：
+// 网关侧 better-sqlite3 是同步的，87 个分页查询会把事件循环连续占满数十秒，
+// 10s 超时的 /v1/health/ready 直接 ECONNABORTED（桌面端反复重启网关、文件页卡死）。
+// 实测（17k 条目真实库，0087 索引已在位）：4/8/16 并发的健康检查峰值分别约
+// 0.5s / 0.6s / 1.3s，全量刷新 6.5s / 4.0s / 4.1s —— 取 8 兼顾首屏与网关可用性。
+const CATALOG_PAGE_FETCH_CONCURRENCY = 8
 
 interface ClassifiedFile {
   file: FileCatalogDto
@@ -153,26 +159,37 @@ export function FilesPage({
       const merged = new Map(currentById)
       for (const file of firstPage.items) merged.set(file.id, file)
 
-      if (current.length === 0 && firstPage.items.length > 0) {
-        fileCatalogCache = { items: firstPage.items, total: firstPage.total, complete: firstPage.items.length === firstPage.total }
-        filesSnapshot.current = firstPage.items
-        setFiles(firstPage.items)
-        setLoading(false)
-      }
-
       let nextFiles: FileCatalogDto[]
+      // 目录不完整时补齐剩余页。这里刻意不再「先把第一页发布出去」：否则用户会看到
+      // 先出现 200 条、随后整份目录把它替换掉的两段式跳变（冷启动空缓存时最明显）。
+      // loading 占位一直保留到整份目录就绪（17k 条目、0087 索引下约 4s）。
+      let coherent = fileCatalogCache.complete
       if (full || !fileCatalogCache.complete || merged.size !== firstPage.total) {
         const offsets = Array.from(
           { length: Math.max(0, Math.ceil(firstPage.total / CATALOG_PAGE_SIZE) - 1) },
           (_, index) => (index + 1) * CATALOG_PAGE_SIZE,
         )
-        const remainingPages = await Promise.all(offsets.map((offset) =>
-          filesApi.list(CATALOG_PAGE_SIZE, offset)))
         const complete = new Map(firstPage.items.map((file) => [file.id, file]))
-        for (const page of remainingPages) {
-          for (const file of page.items) complete.set(file.id, file)
+        let pagesFailed = false
+        for (let index = 0; index < offsets.length; index += CATALOG_PAGE_FETCH_CONCURRENCY) {
+          try {
+            const pages = await Promise.all(offsets
+              .slice(index, index + CATALOG_PAGE_FETCH_CONCURRENCY)
+              .map((offset) => filesApi.list(CATALOG_PAGE_SIZE, offset)))
+            for (const page of pages) {
+              for (const file of page.items) complete.set(file.id, file)
+            }
+          } catch {
+            // 剩余页失败：先展示已经拿到的部分，下一跳再补齐，不要让占位无限停留。
+            pagesFailed = true
+            break
+          }
         }
         nextFiles = [...complete.values()]
+        // 走完一遍（首次请求时的 total 覆盖的区间）就视为完整；期间新增/删除的文件
+        // 由下一跳的 total/内容比对兜住——若这里要求长度严格相等，扫描进行中
+        // complete 会一直为 false，页面每 2s 就要重新拉全量 87 页。
+        coherent = !pagesFailed
       } else {
         nextFiles = [...merged.values()]
       }
@@ -181,7 +198,7 @@ export function FilesPage({
       fileCatalogCache = {
         items: nextFiles,
         total: firstPage.total,
-        complete: nextFiles.length === firstPage.total,
+        complete: coherent,
       }
       filesSnapshot.current = nextFiles
       setFiles(nextFiles)

@@ -766,6 +766,12 @@ export interface StartAgentRunInput {
     /** Explicit UI-confirmed target for a global Agent session. */
     selectedRoomId?: string | null;
     activeDocument?: AgentActiveDocumentContext;
+    /**
+     * 用户当前正在浏览的 Office 文件页签（Word/Excel/PPT/PDF）。
+     * 与 activeDocument（文档内核里的文稿）是两套对象：Office 文件是 file_entries，
+     * 没有 documentId/version，读取正文走 fileId。
+     */
+    activeFile?: AgentActiveFileContext;
     /** Files uploaded from the conversation composer and parsed by the unified file engine. */
     attachments?: AgentFileAttachment[];
     /** Read-only imported conversation to use once when this native session starts. */
@@ -1147,6 +1153,18 @@ export interface AgentActiveDocumentContext {
   version: number;
   defaultAnchor: "end";
   cursorAnchorCandidate?: AgentDocumentCursorAnchor;
+}
+
+/** 内嵌 Office 视图的文件形态（与桌面端 OfficePreviewKind 同构）。 */
+export type AgentActiveFileKind = "docx" | "spreadsheet" | "slides" | "pdf";
+
+/** 用户当前正在浏览的 Office 文件（页签）：Agent 感知“这份文档”指谁的最小事实。 */
+export interface AgentActiveFileContext {
+  fileId: string;
+  title: string;
+  kind: AgentActiveFileKind;
+  /** 打开时是否可编辑（只读打开的文件不承诺能改，但可以读正文）。 */
+  editable?: boolean;
 }
 
 export interface TiptapJsonContent {

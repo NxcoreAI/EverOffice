@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
   AgentEvent,
   AgentEventType,
   AgentModelPreference,
@@ -273,6 +274,27 @@ function normalizeAgentLocale(value: string | undefined): string | undefined {
     : undefined;
 }
 
+const ACTIVE_FILE_KINDS = new Set(["docx", "spreadsheet", "slides", "pdf"]);
+
+/**
+ * 用户当前浏览的 Office 文件上下文：只做形状校验（fileId/title/kind）。
+ * 文件本体是否存在交给读取工具判断——打开中的文件可能刚导入、条目尚未就绪，
+ * 这里拒绝整轮 run 只会让用户看到莫名其妙的失败。
+ */
+function normalizeActiveFile(value: AgentActiveFileContext | undefined): AgentActiveFileContext | undefined {
+  if (!value) return undefined;
+  const fileId = typeof value.fileId === "string" ? value.fileId.trim() : "";
+  const title = typeof value.title === "string" ? value.title.trim() : "";
+  const kind = typeof value.kind === "string" && ACTIVE_FILE_KINDS.has(value.kind) ? value.kind : null;
+  if (!fileId || !title || !kind) return undefined;
+  return {
+    fileId,
+    title: title.slice(0, 200),
+    kind: kind as AgentActiveFileContext["kind"],
+    ...(value.editable === false ? { editable: false } : {}),
+  };
+}
+
 function localAgentDelegationContext(input: {
   request: StartAgentRunInput;
   pageLabel: string;
@@ -430,6 +452,8 @@ export class AgentService {
     roomId: string | null;
     availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
+    /** 用户当前浏览的 Office 文件：工具（file_read）按它兜底 fileId。 */
+    activeFile?: AgentActiveFileContext;
     dispatchSource?: LocalAgentDispatchRunSource;
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
@@ -1303,6 +1327,7 @@ export class AgentService {
       ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
         ?? input.context.activeDocument
       : undefined;
+    const activeFile = normalizeActiveFile(input.context?.activeFile);
 
     // 档位（main/main-direct/main-lite）在会话创建时锁定：会话已锁档位时
     // 请求另一个档位不生效（静默沿用会话档位）；local agent 切换不受影响。
@@ -1528,6 +1553,7 @@ export class AgentService {
       roomId: runRoomId,
       availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
+      ...(activeFile ? { activeFile } : {}),
       dispatchSource: {
         priorMessages: priorMessages.slice(-LOCAL_AGENT_HISTORY_MESSAGE_LIMIT).map((message) => ({
           role: message.role,
@@ -1603,6 +1629,7 @@ export class AgentService {
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
+        ...(activeFile ? { activeFile } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });
     } catch (error) {

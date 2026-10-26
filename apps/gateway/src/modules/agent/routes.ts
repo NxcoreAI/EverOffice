@@ -408,6 +408,19 @@ export function agentRoutes(
                   affinity: Type.Literal("after"),
                 })),
               })),
+              // 用户当前浏览的 Office 文件页签（桌面 main 注入）：Agent 据此
+              // 知道“这份文档”是哪个 fileId，再用 file_read 读取正文。
+              activeFile: Type.Optional(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                title: Type.String({ minLength: 1, maxLength: 300 }),
+                kind: Type.Union([
+                  Type.Literal("docx"),
+                  Type.Literal("spreadsheet"),
+                  Type.Literal("slides"),
+                  Type.Literal("pdf"),
+                ]),
+                editable: Type.Optional(Type.Boolean()),
+              }, { additionalProperties: false })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),

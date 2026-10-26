@@ -489,6 +489,25 @@ describe('OfficePreviewRegistry', () => {
         { fileId: 'file-l1', title: 'a.docx', kind: 'docx', editable: false, active: false },
       ])
     })
+
+    it('activeOfficeFile：只认焦点实例，离开 Office 页签即为 null', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-a1', 'a.docx'))
+      // 打开 ≠ 正在浏览：渲染端切到 office-document 才会 setActive。
+      expect(registry.activeOfficeFile()).toBeNull()
+
+      await registry.open(window, { ...file('file-a2', 'b.pptx'), editable: true })
+      registry.setActive('file-a2')
+      expect(registry.activeOfficeFile()).toEqual({
+        fileId: 'file-a2',
+        title: 'b.pptx',
+        kind: 'slides',
+        editable: true,
+      })
+
+      registry.setActive(null)
+      expect(registry.activeOfficeFile()).toBeNull()
+    })
   })
 
   describe('save sync', () => {

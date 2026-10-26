@@ -555,6 +555,8 @@
   "markdownSourceDialog.startSync": "Start sync",
   "pageCanvas.officePreviewTitle": "Office preview",
   "pageCanvas.officePreviewHint": "The document is shown in the embedded preview window. If you see nothing here, reopen it from the Documents page.",
+  "pageCanvas.officePreviewLoadingTitle": "Opening document",
+  "pageCanvas.officePreviewLoadingHint": "The embedded preview is loading and will appear automatically.",
   "pageCanvas.reopenFromDocuments": "Reopen from Documents",
   "settings.checking": "Checking",
   "settings.haveRedeemCode": "Have a redeem code?",

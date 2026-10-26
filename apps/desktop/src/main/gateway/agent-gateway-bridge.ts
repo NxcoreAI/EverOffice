@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AgentActiveFileContext,
   AgentPermissionMode,
   AgentPermissionModeState,
   PendingAgentIntent,
@@ -70,14 +71,25 @@ export class AgentGatewayBridge {
       trackRun(run: AgentRun): void
       trackEvent(event: AgentEvent): void
     },
-    options: { eventChannel?: string } = {},
+    options: {
+      eventChannel?: string
+      /**
+       * 主进程侧的「用户当前正在浏览的 Office 文件」取值器：每次 startRun 时
+       * 注入 context.activeFile。放在 main 而不是渲染端——页签状态只有 main 的
+       * Office 预览注册表是权威（焦点实例），且所有入口（输入框/卡片/AI 修改）
+       * 都经过这里，不会漏。
+       */
+      activeFile?: () => AgentActiveFileContext | null
+    } = {},
   ) {
     // 默认 'agent:event' 是主 Agent UI 的通道；补全等旁路桥必须传独立
     // channel，否则两个桥的 websocket 帧会在同一渲染进程通道里串台。
     this.eventChannel = options.eventChannel ?? AGENT_EVENT_CHANNEL
+    this.activeFile = options.activeFile ?? null
   }
 
   private readonly eventChannel: string
+  private readonly activeFile: (() => AgentActiveFileContext | null) | null
 
   setEventObserver(observer: ((event: AgentEvent) => void) | null): void {
     this.eventObserver = observer
@@ -200,9 +212,15 @@ export class AgentGatewayBridge {
   }
 
   async startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
+    // 当前浏览的 Office 文件以 main 的焦点实例为准：渲染端只知道自己开了哪些
+    // 页签，谁真正可见由主进程的 setActiveInstance 决定。
+    const activeFile = this.activeFile?.() ?? null
+    const data = activeFile
+      ? { ...input, context: { ...input.context, activeFile } }
+      : input
     const run = await this.request<AgentRun>(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
-      data: input,
+      data,
     })
     this.activity?.trackRun(run)
     this.watchRun(run)

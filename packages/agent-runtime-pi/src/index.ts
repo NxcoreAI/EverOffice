@@ -33,6 +33,9 @@ import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
 import { createMemoryTools, MEMORY_TOOL_NAMES, type RoomMemorySearch } from "./memory/tools.js";
 import type { MemoryRuntimeConfig, RoomMemorySnapshot } from "./memory/types.js";
+import { buildActiveFileContext } from "./active-file-context.js";
+
+export { buildActiveFileContext } from "./active-file-context.js";
 
 export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
 export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
@@ -1067,7 +1070,14 @@ export class PiAgentRuntime implements AgentRuntime {
               ? `仅在用户明确要求当前位置时可使用光标候选：块 ${input.activeDocument.cursorAnchorCandidate.blockId}，UTF-16 偏移 ${input.activeDocument.cursorAnchorCandidate.offset}。`
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
-        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+        : input.activeFile
+          // 有 Office 页签时不要再说“没有活动文档，去调 document_list”：
+          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜文稿。
+          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先调 document_list。"
+          : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+      // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
+      // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
+      const activeFileContext = buildActiveFileContext(input.activeFile);
       const runBoundary = input.toolsEnabled === false
         ? null
         : [
@@ -1080,6 +1090,7 @@ export class PiAgentRuntime implements AgentRuntime {
         `当前工作区：${input.pageLabel}`,
         roomContext,
         documentContext,
+        ...(activeFileContext ? [activeFileContext] : []),
         ...(runBoundary ? [runBoundary] : []),
         "",
         `用户请求：${input.prompt}`,

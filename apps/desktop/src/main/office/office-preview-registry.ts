@@ -20,6 +20,7 @@ import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
+import { logOfficeDiag } from './office-diag'
 
 export interface OfficePreviewDescriptor {
   id: string
@@ -206,6 +207,15 @@ export class OfficePreviewRegistry {
   async open(window: BrowserWindow, file: OfficePreviewFile): Promise<OfficePreviewDescriptor> {
     const kind = officePreviewKindFor(file.originalName)
     if (!kind) throw new Error(`Unsupported internal Office preview: ${file.originalName}`)
+    const startedAt = Date.now()
+    logOfficeDiag('office.diag.open.start', {
+      fileId: file.id,
+      kind,
+      editable: file.editable === true,
+      hasWriteBackPath: Boolean(file.writeBackPath),
+      activeId: this.activeId,
+      openCount: this.instances.size,
+    })
     this.bindWindow(window)
     const runtime = this.ensureRuntime(window)
     const editable = file.editable === true && kind !== 'pdf'
@@ -216,10 +226,17 @@ export class OfficePreviewRegistry {
 
     const existing = this.instances.get(file.id)
     if (existing && existing.descriptor.contentHash === file.contentHash && existing.editable === editable) {
+      logOfficeDiag('office.diag.open.reuse', { fileId: file.id, elapsedMs: Date.now() - startedAt, activeId: this.activeId })
       return existing.descriptor
     }
     if (existing) {
       // 旧实例可能带未保存编辑：脏关闭守卫里取消则保留旧实例不动。
+      logOfficeDiag('office.diag.open.recreate', {
+        fileId: file.id,
+        wasActive: this.activeId === file.id,
+        hashChanged: existing.descriptor.contentHash !== file.contentHash,
+        editableChanged: existing.editable !== editable,
+      })
       const closed = await this.close(file.id)
       if (!closed) return this.instances.get(file.id)!.descriptor
     }
@@ -254,6 +271,14 @@ export class OfficePreviewRegistry {
       instance.unsubscribeSaved = onOfficeFileSaved(view.webContentsId, () => this.scheduleEditSync(fileId))
     }
     this.instances.set(file.id, instance)
+    logOfficeDiag('office.diag.open.done', {
+      fileId: file.id,
+      kind,
+      elapsedMs: Date.now() - startedAt,
+      webContentsId: view.webContentsId ?? null,
+      activeId: this.activeId,
+      openCount: this.instances.size,
+    })
     return descriptor
   }
 
@@ -359,6 +384,28 @@ export class OfficePreviewRegistry {
       .sort((a, b) => Number(b.active) - Number(a.active))
   }
 
+  /**
+   * 用户当前正在浏览的 Office 文件（页签）：Agent 运行上下文的 activeFile。
+   * activeId 只在渲染端切到 office-document 且该实例可见时被设置，其它页面为 null。
+   */
+  activeOfficeFile(): {
+    fileId: string
+    title: string
+    kind: OpenOfficeInstanceInfo['kind']
+    editable: boolean
+  } | null {
+    if (!this.activeId) return null
+    const instance = this.instances.get(this.activeId)
+    if (!instance) return null
+    return {
+      fileId: this.activeId,
+      // 与网关 route schema 的 title maxLength=300 对齐，超长文件名不至于让整轮 run 400。
+      title: instance.descriptor.title.slice(0, 300),
+      kind: instance.descriptor.kind,
+      editable: instance.editable,
+    }
+  }
+
   /** 「AI 修改」转发用的 wcId 反查：定位视图所属文件与 Room（编辑回填态里的 roomId 兜底）。 */
   findByWebContentsId(wcId: number): {
     fileId: string
@@ -395,15 +442,25 @@ export class OfficePreviewRegistry {
     if (id === null) {
       for (const instance of this.instances.values()) instance.view.setActive(false)
       this.activeId = null
+      logOfficeDiag('office.diag.registry.set-active', { id: null, found: true, openCount: this.instances.size })
       return true
     }
     const instance = this.instances.get(id)
-    if (!instance) return false
+    if (!instance) {
+      logOfficeDiag('office.diag.registry.set-active', {
+        id,
+        found: false,
+        previousActiveId: this.activeId,
+        openIds: [...this.instances.keys()],
+      })
+      return false
+    }
     for (const other of this.instances.values()) {
       if (other !== instance) other.view.setActive(false)
     }
     instance.view.setActive(true)
     this.activeId = id
+    logOfficeDiag('office.diag.registry.set-active', { id, found: true, openCount: this.instances.size })
     return true
   }
 

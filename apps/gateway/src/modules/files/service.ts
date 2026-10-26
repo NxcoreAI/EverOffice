@@ -14,6 +14,7 @@ import {
   fileVersions,
   jobs,
   parsedContents,
+  parsedDocuments,
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
 import {
@@ -455,8 +456,17 @@ export class FilesService {
 
   touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string | null): void {
     const now = new Date();
+    // parsed_id 的外键指向历史表 parsed_contents；新解析管线落的是
+    // parsed_documents（pdoc-*）。把 pdoc id 直接写进 parsed_id 会触发
+    // FOREIGN KEY constraint failed，整次导入被判 ingest_failed（Office 文件
+    // 因此永远解析不了）。旧表里有同 id 才写，否则置空，正文按 parsed_documents
+    // 反查（见 catalogMarkdownOf）。
+    const legacyParsedId = parsedId
+      ? this.db.select({ id: parsedContents.id }).from(parsedContents)
+          .where(eq(parsedContents.id, parsedId)).get()?.id ?? null
+      : null;
     this.db.update(fileVersions).set({
-      parsedId, status: "parsed", errorCode: null, errorMessage: null,
+      parsedId: legacyParsedId, status: "parsed", errorCode: null, errorMessage: null,
       processedAt: now,
     }).where(and(eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId))).run();
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
@@ -498,7 +508,7 @@ export class FilesService {
       clusterId: null,
       contentHash: version?.contentHash ?? "",
       currentVersionId: version?.id ?? null,
-      parsed: Boolean(version?.parsedId),
+      parsed: Boolean(version?.parsedId) || version?.status === "parsed",
       updatedAt: entry.updatedAt.toISOString(),
     } satisfies CatalogFileDto));
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
@@ -540,15 +550,57 @@ export class FilesService {
 
   /** 单个 catalog 条目（@ 文件引用取当前版本 id 用）。 */
   catalogEntry(fileEntryId: string): CatalogFileDto | null {
-    return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
+    // 直接按键查，不再从 listCatalog(200) 里线性找：目录超过 200 条后，
+    // 靠后的文件会拿不到条目（@ 引用/当前文件读取都会失败）。
+    const row = this.db.select({
+      entry: fileEntries,
+      version: fileVersions,
+      blob: fileBlobs,
+      classification: fileClassifications,
+    }).from(fileEntries)
+      .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
+      .where(and(eq(fileEntries.id, fileEntryId), isNull(fileEntries.deletedAt)))
+      .get();
+    if (!row) return null;
+    const { entry, version, blob, classification } = row;
+    return {
+      id: entry.id,
+      originalName: entry.originalName,
+      displayName: entry.displayName,
+      sharedTitle: entry.displayName ?? entry.originalName,
+      sourceKind: entry.sourceKind,
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : entry.sourceKind === "artifact-imported" ? "产物导入" : "历史上传"),
+      relativePath: entry.relativePath,
+      provider: entry.provider,
+      bytes: blob?.byteSize ?? 0,
+      dataType: fileFormatCapability(entry.originalName)?.dataType ?? null,
+      agentCategory: classification?.category ?? null,
+      summary: classification?.summary ?? null,
+      tags: classification?.tags ?? [],
+      processingState: entry.state === "deleted" ? "missing" : entry.state,
+      clusterId: null,
+      contentHash: version?.contentHash ?? "",
+      currentVersionId: version?.id ?? null,
+      parsed: Boolean(version?.parsedId) || version?.status === "parsed",
+      updatedAt: entry.updatedAt.toISOString(),
+    } satisfies CatalogFileDto;
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {
-    const row = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
+    const legacy = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
       .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .innerJoin(parsedContents, eq(fileVersions.parsedId, parsedContents.id))
       .where(eq(fileEntries.id, fileEntryId)).get();
-    return row?.markdown ?? null;
+    if (legacy) return legacy.markdown;
+    // 现行解析器写 parsed_documents（按 fileVersionId 挂载）；旧 parsed_id 外键
+    // 只对历史行有效，这里按当前版本反查，否则 Office 文件正文永远读不到。
+    const parsed = this.db.select({ markdown: parsedDocuments.markdown }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .innerJoin(parsedDocuments, eq(parsedDocuments.fileVersionId, fileVersions.id))
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    return parsed?.markdown ?? null;
   }
 
   catalogStoragePathOf(fileEntryId: string): string | null {

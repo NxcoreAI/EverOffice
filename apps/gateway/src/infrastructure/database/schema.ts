@@ -8,6 +8,7 @@ import {
   text,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 import type {
   AgentNavigationTarget,
   AgentDocumentExportMode,
@@ -1433,6 +1434,10 @@ export const fileEntries = sqliteTable(
     uniqueIndex("file_entries_source_key_idx").on(table.sourceKind, table.sourceKey),
     index("file_entries_state_updated_idx").on(table.state, table.updatedAt),
     index("file_entries_local_item_idx").on(table.localSourceId, table.localItemId),
+    // 文件页目录分页（WHERE deleted_at IS NULL ORDER BY updated_at DESC）的覆盖索引：
+    // 缺它时每页都要全表 SCAN + 临时 B-Tree 排序，桌面端一次全量刷新（17k 条目 ≈ 87 页
+    // 并发）会把网关主线程占满数十秒，健康检查随之超时。见 0087 迁移。
+    index("file_entries_deleted_updated_idx").on(table.deletedAt, sql`${table.updatedAt} desc`),
   ],
 );
 

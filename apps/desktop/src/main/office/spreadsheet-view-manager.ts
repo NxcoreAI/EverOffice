@@ -7,6 +7,7 @@ import type { GenOfficeSheetsRuntime } from './office-runtime'
 import { convertLegacyOfficeFile } from './legacy-convert'
 import { ensureWorkingCopyWritable } from './working-copy'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
+import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
 async function prepareSpreadsheet(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('Spreadsheet identity is invalid.')
@@ -31,13 +32,16 @@ export class SpreadsheetViewManager {
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
+  private readonly gate: OfficeViewFirstFrameGate
   private constructor(
     private readonly window: BrowserWindow,
     private readonly sheets: GenOfficeSheetsRuntime,
     private readonly view: WebContentsView,
     private readonly editable: boolean,
     readonly documentPath: string,
-  ) {}
+  ) {
+    this.gate = new OfficeViewFirstFrameGate(view, window)
+  }
 
   get webContentsId(): number {
     return this.view.webContents.id
@@ -63,9 +67,9 @@ export class SpreadsheetViewManager {
     if (active) {
       // 多实例并存时全局激活指针只有一个：每次激活都要重新指向本视图。
       this.sheets.setActiveSheetsWebContents(this.view.webContents)
-      if (this.bounds) this.view.setBounds(this.bounds)
     }
-    this.view.setVisible(active && Boolean(this.bounds?.width && this.bounds.height))
+    // 首次出帧闸门：空视图直接显示会让宿主占位界面透出来。
+    this.gate.setActive(active)
   }
 
   private readonly handleBounds = (event: Electron.IpcMainEvent, input: unknown): void => {
@@ -75,7 +79,8 @@ export class SpreadsheetViewManager {
     const content = this.window.getContentBounds()
     const x = Math.max(0, Math.round(value.x!)); const y = Math.max(0, Math.round(value.y!))
     const bounds = { x, y, width: Math.max(0, Math.min(Math.round(value.width!), content.width - x)), height: Math.max(0, Math.min(Math.round(value.height!), content.height - y)) }
-    this.bounds = bounds; this.view.setBounds(bounds); this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
+    this.bounds = bounds
+    this.gate.setBounds(bounds)
   }
 
   readonly dispose = async (): Promise<boolean> => {
@@ -85,6 +90,7 @@ export class SpreadsheetViewManager {
       if (!proceed) return false
     }
     this.disposed = true
+    this.gate.dispose()
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
     return true

@@ -1,6 +1,7 @@
 import type {
   AgentAttachmentKind,
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
   AgentEventType,
   LocalAgentDelegationContext,
   LocalAgentInvocationTarget,
@@ -34,6 +35,8 @@ export interface StartRuntimeRunInput {
   recallMemory?: boolean;
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
+  /** 用户当前正在浏览的 Office 文件页签（file_entries），工具按 fileId 读取正文。 */
+  activeFile?: AgentActiveFileContext;
   /** Prior Agent chat made available to Main as an on-demand, read-only context source. */
   referencedConversationId?: string;
   /** @ mentioned local CLI Agents; Main stays the speaker and decides which to dispatch via local_agent_dispatch. */

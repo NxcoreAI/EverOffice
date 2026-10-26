@@ -603,6 +603,13 @@
       "when": 1792748200000,
       "tag": "0086_drop_room_compat_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "6",
+      "when": 1792749000000,
+      "tag": "0087_file_entries_deleted_updated_idx",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { FilePenLine } from 'lucide-react'
+import { FilePenLine, LoaderCircle } from 'lucide-react'
 
 import type { OfficePreviewTab } from '../../../shared/sources'
 import type { PageId } from '@/data/navigation'
@@ -20,6 +20,7 @@ export function PageCanvas({
   onOpenOfficePreview,
   agentFileFocus,
   onStartFullOnboarding,
+  officeViewStalled = false,
 }: {
   page: PageId
   agentDocumentFocus: {
@@ -32,6 +33,8 @@ export function PageCanvas({
   onOpenOfficePreview: (tab: OfficePreviewTab) => void
   agentFileFocus?: { fileId: string; requestId: number } | null
   onStartFullOnboarding?: () => void
+  /** 预览页打开后原生视图迟迟未显示（超过宽限期）：此时才值得给出「重新打开」的兜底。 */
+  officeViewStalled?: boolean
 }) {
   const { t } = useLocale()
   let content = null
@@ -39,17 +42,30 @@ export function PageCanvas({
   if (page === 'office') content = <AgentStatusPage />
   if (page === 'office-document') {
     // 页体不承载内容：Office 文档由主进程 WebContentsView 叠在 workspace-main 上显示
-    //（App 依 activeOfficeInstanceId 挂载）；PageCanvas 拿不到实例状态，所以只留兜底空态，
-    // 不硬编码「正在加载」假装进度。原生视图未就绪时给一条回文稿页重开的出口。
+    //（App 依 activeOfficeInstanceId 挂载）。原生视图就绪前先给「正在打开」，
+    // 超过宽限期仍未显示才退化成「回文稿页重开」的兜底——直接摆兜底文案会让
+    // 首次打开（内嵌视图冷启动）看起来像坏了。
     content = (
       <div className="page">
-        <div className="doc-empty">
-          <FilePenLine aria-hidden="true" strokeWidth={1.6} />
-          <strong>{t('surface:pageCanvas.officePreviewTitle')}</strong>
-          <small>{t('surface:pageCanvas.officePreviewHint')}</small>
-          <button type="button" className="primary-button" onClick={() => onNavigate('docs')}>
-            {t('surface:pageCanvas.reopenFromDocuments')}
-          </button>
+        <div className="doc-empty" role={officeViewStalled ? undefined : 'status'} aria-live={officeViewStalled ? undefined : 'polite'}>
+          {officeViewStalled
+            ? <FilePenLine aria-hidden="true" strokeWidth={1.6} />
+            : <LoaderCircle className="doc-spinner" aria-hidden="true" strokeWidth={1.8} />}
+          <strong>
+            {t(officeViewStalled
+              ? 'surface:pageCanvas.officePreviewTitle'
+              : 'surface:pageCanvas.officePreviewLoadingTitle')}
+          </strong>
+          <small>
+            {t(officeViewStalled
+              ? 'surface:pageCanvas.officePreviewHint'
+              : 'surface:pageCanvas.officePreviewLoadingHint')}
+          </small>
+          {officeViewStalled ? (
+            <button type="button" className="primary-button" onClick={() => onNavigate('docs')}>
+              {t('surface:pageCanvas.reopenFromDocuments')}
+            </button>
+          ) : null}
         </div>
       </div>
     )

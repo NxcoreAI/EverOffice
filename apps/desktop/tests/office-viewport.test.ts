@@ -127,6 +127,42 @@ describe('officeViewport：原生视图显隐时序', () => {
     )
   })
 
+  it('窄窗下 AI 侧栏是浮层：原生视图裁到面板左侧，而不是被面板盖住', () => {
+    const { setWorkspaceBounds } = installBridge()
+    const { host } = installHost(REAL_RECT)
+    const panel = document.createElement('aside')
+    panel.setAttribute('data-office-avoid', '')
+    document.body.append(panel)
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+      x: 210, y: 20, width: 100, height: 200, top: 20, right: 310, bottom: 220, left: 210,
+    } as DOMRect)
+
+    attachment = attachOfficeViewport(host)
+    expect(setWorkspaceBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ x: 10, y: 20, width: 200, height: 200 }),
+    )
+  })
+
+  it('让位面板不算遮挡：盖住多数采样点也只让位，不隐藏视图', async () => {
+    const { setWorkspaceBounds } = installBridge()
+    const { host } = installHost(REAL_RECT)
+    const panel = document.createElement('aside')
+    panel.setAttribute('data-office-avoid', '')
+    document.body.append(panel)
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+      x: 210, y: 20, width: 100, height: 200, top: 20, right: 310, bottom: 220, left: 210,
+    } as DOMRect)
+    ;(document as unknown as { elementsFromPoint: () => Element[] }).elementsFromPoint = () => [panel]
+
+    attachment = attachOfficeViewport(host)
+    dispatchPointerDown()
+    await vi.waitFor(() => {
+      expect(setWorkspaceBounds).toHaveBeenLastCalledWith(
+        expect.objectContaining({ x: 10, y: 20, width: 200, height: 200 }),
+      )
+    })
+  })
+
   it('detach 立即发零尺寸：页签切换当帧隐藏', () => {
     const { setWorkspaceBounds } = installBridge()
     const { host } = installHost(REAL_RECT)

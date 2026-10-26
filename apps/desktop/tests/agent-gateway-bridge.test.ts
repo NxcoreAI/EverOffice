@@ -174,4 +174,78 @@ describe('AgentGatewayBridge requests', () => {
       messages: [{ role: 'user', text: '你是谁' }],
     })).rejects.toThrow('AI 额度不足')
   })
+
+  it('injects the currently viewed Office tab into every run context', async () => {
+    const bodies: string[] = []
+    const server = createServer(async (request, response) => {
+      bodies.push(await body(request))
+      json(response, 202, { id: 'run-1', sessionId: 'session-1' })
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const activeFile = vi.fn(() => ({
+      fileId: 'file-contract',
+      title: '软件开发合同.docx',
+      kind: 'docx' as const,
+      editable: true,
+    }))
+    const bridge = new AgentGatewayBridge(supervisor, undefined, { activeFile })
+
+    await bridge.startRun('session-1', {
+      prompt: '这份文档里面是什么东西',
+      idempotencyKey: 'idem-1',
+      context: { pageLabel: 'Office' },
+    })
+
+    expect(activeFile).toHaveBeenCalledOnce()
+    expect(JSON.parse(bodies[0]!)).toMatchObject({
+      prompt: '这份文档里面是什么东西',
+      context: {
+        pageLabel: 'Office',
+        activeFile: {
+          fileId: 'file-contract',
+          title: '软件开发合同.docx',
+          kind: 'docx',
+          editable: true,
+        },
+      },
+    })
+  })
+
+  it('leaves the run context untouched when no Office tab is focused', async () => {
+    let sentBody = ''
+    const server = createServer(async (request, response) => {
+      sentBody = await body(request)
+      json(response, 202, { id: 'run-2', sessionId: 'session-1' })
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor, undefined, { activeFile: () => null })
+
+    await bridge.startRun('session-1', {
+      prompt: '你好',
+      idempotencyKey: 'idem-2',
+      context: { pageLabel: '首页' },
+    })
+
+    expect(JSON.parse(sentBody)).toEqual({
+      prompt: '你好',
+      idempotencyKey: 'idem-2',
+      context: { pageLabel: '首页' },
+    })
+  })
 })

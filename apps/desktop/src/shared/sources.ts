@@ -603,8 +603,8 @@ export interface NxcoreDesktopApi {
     onMaximizedChange(listener: (maximized: boolean) => void): () => void
   }
   office: {
-    /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。 */
-    setActiveInstance(id: string | null): Promise<void>
+    /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。false = 实例未找到。 */
+    setActiveInstance(id: string | null): Promise<boolean>
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
     /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
     closeInstance(id: string): Promise<boolean>

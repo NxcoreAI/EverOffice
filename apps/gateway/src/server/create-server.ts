@@ -94,6 +94,7 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { SlideImageStore } from "../modules/slides-style/image-store.js";
 import { slideImageRoutes } from "../modules/slides-style/image-routes.js";
 import { FilesService } from "../modules/files/service.js";
+import { createFileReadPiTool } from "../modules/files/pi-tools.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
 import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
@@ -689,6 +690,12 @@ export async function createServer(config: GatewayConfig) {
     tools: [
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
+      // 当前浏览的 Office 文件（file_entries）正文读取：filesService 与本服务
+      // 都晚于本对象创建，用惰性取值；activeFile 由运行期 input 提供。
+      createFileReadPiTool({
+        files: () => filesService,
+        understanding: () => documentUnderstandingService,
+      }),
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,

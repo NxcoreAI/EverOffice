@@ -555,6 +555,8 @@
   "markdownSourceDialog.startSync": "开始同步",
   "pageCanvas.officePreviewTitle": "Office 预览",
   "pageCanvas.officePreviewHint": "文档由内嵌预览窗口显示。若此处看不到内容，请回文稿页重新打开。",
+  "pageCanvas.officePreviewLoadingTitle": "正在打开文档",
+  "pageCanvas.officePreviewLoadingHint": "内置预览正在加载，完成后会自动显示。",
   "pageCanvas.reopenFromDocuments": "在文稿页重新打开",
   "settings.checking": "正在检查",
   "settings.haveRedeemCode": "有兑换码？",

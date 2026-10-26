@@ -73,6 +73,12 @@ function readStoredTheme(): ThemeId {
 const AGENT_WIDTH_STORAGE_KEY = 'nxcore-ce:agent-width:v1'
 const AGENT_WIDTH_DEFAULT = 360
 const AGENT_WIDTH_MIN = 280
+/**
+ * Office 预览页的宽限期：原生视图首次创建要等页面提交首帧才显示（否则会是
+ * 「可见但没有内容」的空白视图），冷启动约几百毫秒。超过这个时间还没看到
+ * 文档，才把「回文稿页重新打开」的兜底露给用户。
+ */
+const OFFICE_VIEW_STALL_MS = 8_000
 
 function readStoredAgentWidth(): number {
   try {
@@ -85,6 +91,19 @@ function readStoredAgentWidth(): number {
 
 function readInitialPage(): PageId {
   return 'home'
+}
+
+/** TEMP DIAG：「首次打开文档只显示占位界面」定因用（查完删除）。 */
+function logOfficeUiDiag(event: string, payload: Record<string, unknown> = {}): void {
+  try {
+    window.nxcore?.diagnostics?.log?.({
+      module: 'context-room-overview',
+      level: 'info',
+      event: { diag: event, t: Math.round(performance.now()), ...payload },
+    })
+  } catch {
+    // 诊断不影响打开流程。
+  }
 }
 
 export function App() {
@@ -114,7 +133,13 @@ export function App() {
   } | null>(null)
   const documentFocusRequestIdRef = useRef(0)
   const agentNavigationTimerRef = useRef<number | null>(null)
-  const workspaceMainRef = useRef<HTMLElement>(null)
+  /**
+   * 工作区宿主用 state 持有而不是 ref：启动期（RuntimeConfigGate 还没放行、或登录页）
+   * 访达直接打开文档时，`<main>` 还没挂载；用一次性 effect + ref 会永远拿不到宿主，
+   * 矩形也就不再上报，原生视图一直隐藏（首次打开只显示「Office 预览」占位）。
+   * 改成状态后，宿主挂载/卸载都会重跑挂载 effect。
+   */
+  const [workspaceMain, setWorkspaceMain] = useState<HTMLElement | null>(null)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 1200px)').matches)
   const [fullOnboardingStage, setFullOnboardingStage] = useState<OnboardingFlowStage>('idle')
@@ -122,6 +147,7 @@ export function App() {
   const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [agentFileFocus, setAgentFileFocus] = useState<{ fileId: string; requestId: number } | null>(null)
+  const [officeViewStalled, setOfficeViewStalled] = useState(false)
   const agentFileFocusRequestIdRef = useRef(0)
   const fullOnboardingCompletedRef = useRef(readFullOnboardingCompleted())
   const fullOnboardingStageRef = useRef<OnboardingFlowStage>('idle')
@@ -136,9 +162,13 @@ export function App() {
   useEffect(() => {
     const office = window.nxcore?.office
     if (!office) return
-    void office.setActiveInstance(focusedOfficeInstanceId).catch((error) => {
-      console.error('Failed to update the Office view visibility.', error)
-    })
+    // TEMP DIAG：首次打开文档只出占位界面（查完删除）。
+    logOfficeUiDiag('office-ui.activate', { id: focusedOfficeInstanceId, activePage })
+    void office.setActiveInstance(focusedOfficeInstanceId)
+      .then((active) => logOfficeUiDiag('office-ui.activate.done', { id: focusedOfficeInstanceId, active }))
+      .catch((error) => {
+        console.error('Failed to update the Office view visibility.', error)
+      })
   }, [focusedOfficeInstanceId])
 
   // office-document 顶栏页：矩形上报与弹层遮挡显隐交给共享视口模块
@@ -146,10 +176,33 @@ export function App() {
   // 由模块内 ResizeObserver 跟随，不随 agentOpen 重挂）。
   useEffect(() => {
     if (activePage !== 'office-document' || !focusedOfficeInstanceId) return
-    const workspace = workspaceMainRef.current
-    if (!workspace) return
-    const attachment = attachOfficeViewport(workspace)
-    return () => attachment.detach()
+    if (!workspaceMain) {
+      // 宿主还没挂载（启动 gate/登录页）：等 workspaceMain 变化后 effect 会重跑。
+      logOfficeUiDiag('office-ui.viewport.wait-host', { id: focusedOfficeInstanceId, activePage })
+      return
+    }
+    const rect = workspaceMain.getBoundingClientRect()
+    // TEMP DIAG：首次打开文档只出占位界面（查完删除）。
+    logOfficeUiDiag('office-ui.viewport.attach', {
+      id: focusedOfficeInstanceId,
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    })
+    const attachment = attachOfficeViewport(workspaceMain)
+    return () => {
+      logOfficeUiDiag('office-ui.viewport.detach', { id: focusedOfficeInstanceId })
+      attachment.detach()
+    }
+  }, [activePage, focusedOfficeInstanceId, workspaceMain])
+
+  // 预览页宽限计时：切到预览页/换标签时重新计时，超时仍未看到文档才展示兜底出口。
+  useEffect(() => {
+    setOfficeViewStalled(false)
+    if (activePage !== 'office-document' || !focusedOfficeInstanceId) return
+    const timer = window.setTimeout(() => {
+      setOfficeViewStalled(true)
+      logOfficeUiDiag('office-ui.viewport.stalled', { id: focusedOfficeInstanceId })
+    }, OFFICE_VIEW_STALL_MS)
+    return () => window.clearTimeout(timer)
   }, [activePage, focusedOfficeInstanceId])
 
   useEffect(() => {
@@ -388,6 +441,8 @@ export function App() {
 
   // 文件页打开 Office 预览 → 顶栏新标签（同文件复用标签），焦点切到该预览。
   const openOfficeTab = useCallback((tab: OfficePreviewTab) => {
+    // TEMP DIAG：首次打开文档只出占位界面（查完删除）。
+    logOfficeUiDiag('office-ui.tab.open', { id: tab.id, kind: tab.kind })
     setOfficeTabs((current) => (
       current.some((item) => item.id === tab.id)
         ? current.map((item) => item.id === tab.id ? tab : item)
@@ -404,6 +459,8 @@ export function App() {
     if (!files?.onOpenFromOs) return
     const openFromSystem = (document: OsOpenedDocument) => {
       const editable = isEditableOfficeDocument(document.originalName)
+      // TEMP DIAG：首次打开文档只出占位界面（查完删除）。
+      logOfficeUiDiag('office-ui.os-open', { fileId: document.fileId, originalName: document.originalName, editable })
       void files.openOriginal(
         document.fileId,
         document.originalName,
@@ -411,6 +468,11 @@ export function App() {
         editable ? { editable: true } : undefined,
       )
         .then((result) => {
+          logOfficeUiDiag('office-ui.os-open.done', {
+            fileId: document.fileId,
+            openedWith: result?.openedWith ?? null,
+            instanceId: (result as { instanceId?: string } | undefined)?.instanceId ?? null,
+          })
           if (result?.openedWith === 'office') {
             openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })
             return
@@ -724,11 +786,12 @@ export function App() {
         onOpenSearch={() => setSearchOpen(true)}
       />
       <Sidebar activePage={activePage} onNavigate={navigate} />
-      <main ref={workspaceMainRef} className="workspace-main">
+      <main ref={setWorkspaceMain} className="workspace-main">
         <PageCanvas
           page={activePage}
           agentDocumentFocus={agentDocumentFocus}
           agentFileFocus={agentFileFocus}
+          officeViewStalled={officeViewStalled}
           onNavigate={navigate}
           onFocusAgent={focusAgent}
           onOpenOfficePreview={openOfficeTab}
@@ -758,6 +821,9 @@ export function App() {
           aria-orientation="vertical"
           aria-label={t('surface:agentPanel.resizeWidth')}
           className="agent-panel-divider"
+          // 拖拽条同样是 DOM：不声明让位会被内嵌 Office 原生视图整条盖住，
+          // 看文档时拉不动对话区宽度。
+          data-office-avoid=""
           onPointerDown={startAgentResize}
           onKeyDown={resizeAgentByKey}
           onFocus={() => setAgentResizing(true)}
