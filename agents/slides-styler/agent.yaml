@@ -19,4 +19,8 @@ policy:
   maxConcurrency: 2
   # 纯文本判断，无工具调用预算需求；给少量余量容纳重试。
   maxToolCalls: 8
-  timeoutSeconds: 240
+  timeoutSeconds: 600
+  model:
+    # styler 同样走 background 档：风格卡 + 效果说明的 JSON 显式给足输出上限，
+    # 避免 8192 打满后被判 length 失败。
+    maxTokens: 32768

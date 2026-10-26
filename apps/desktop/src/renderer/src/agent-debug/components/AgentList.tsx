@@ -2,6 +2,7 @@ import type { AgentDebugAgent, AgentDebugRun } from '@nxcore/agent-contract'
 import { memo, useMemo } from 'react'
 
 import { formatRelativeTime } from '../format'
+import { useBrowsingList, useBrowsingOrder } from '../useBrowsingList'
 import { AGENT_KIND_LABEL } from './Indicators'
 
 export type AgentKindTab = 'all' | 'builtin' | 'developer' | 'local'
@@ -21,6 +22,8 @@ interface AgentListProps {
   selectedAgentId: string
   onSelectAgent: (agentId: string) => void
 }
+
+const agentIdOf = (agent: AgentDebugAgent): string => agent.id
 
 function sortAgents(agents: AgentDebugAgent[]): AgentDebugAgent[] {
   const weight: Record<AgentDebugAgent['state'], number> = { running: 0, error: 1, idle: 2 }
@@ -53,6 +56,10 @@ export const AgentList = memo(function AgentList({
     [agents, kindTab],
   )
 
+  // 向下滚动回看时冻结行顺序（否则 snapshot 每次刷新都会按 running/最近活动重排）。
+  const { scrollRef, browsing, onScroll, scrollToTop } = useBrowsingList(kindTab)
+  const orderedAgents = useBrowsingOrder(visibleAgents, agentIdOf, browsing, kindTab)
+
   const globalStats = useMemo(() => {
     let running = 0
     for (const run of runs) if (run.status === 'running') running += 1
@@ -80,10 +87,11 @@ export const AgentList = memo(function AgentList({
           </button>
         ))}
       </div>
-      <div className="scroll agent-list">
+      <div className="scroll agent-list" ref={scrollRef} onScroll={onScroll}>
         <button
           type="button"
           className="agent-row"
+          data-row-key="__all__"
           data-selected={selectedAgentId === 'all'}
           onClick={() => onSelectAgent('all')}
         >
@@ -96,13 +104,14 @@ export const AgentList = memo(function AgentList({
           </span>
           <span className="agent-sub">所有 run · {globalStats.total} 个</span>
         </button>
-        {visibleAgents.map((agent) => {
+        {orderedAgents.map((agent) => {
           const total = runStats.get(agent.id) ?? 0
           return (
             <button
               key={agent.id}
               type="button"
               className="agent-row"
+              data-row-key={agent.id}
               data-selected={selectedAgentId === agent.id}
               title={`${agent.name}${agent.description ? `\n${agent.description}` : ''}\nid: ${agent.id}`}
               onClick={() => onSelectAgent(agent.id)}
@@ -121,6 +130,16 @@ export const AgentList = memo(function AgentList({
         })}
         {visibleAgents.length === 0 ? <div className="empty-inline">暂无该类型 Agent</div> : null}
       </div>
+      {browsing ? (
+        <button
+          type="button"
+          className="browse-jump"
+          onClick={scrollToTop}
+          title="浏览历史位置时列表顺序已固定（行内容仍实时更新）；点击回到顶部并恢复实时排序"
+        >
+          回到顶部
+        </button>
+      ) : null}
     </aside>
   )
 })

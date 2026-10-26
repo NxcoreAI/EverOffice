@@ -2,6 +2,7 @@ import type { AgentDebugEvent, AgentDebugRun } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { formatClock } from '../format'
+import { isArchivedRun, sessionLabelOf, sessionShortId } from '../history'
 import type { DebugFilters, RunTimelineModel } from '../reducer'
 import { copyText } from './CopyButton'
 import { LiveDuration, runStatusLabel } from './Indicators'
@@ -48,9 +49,13 @@ export function RunDetail({ run, events, model, filters, eventsError }: RunDetai
   }, [run.runId])
 
   const running = run.status === 'running'
+  // 归档 run 来自磁盘、只读回放：不显示「实时更新」，也不再拉增量（终态轮询自然停止）。
+  const archived = isArchivedRun(run)
+  const shortSessionId = sessionShortId(run.sessionId)
   const meta = [
     `runtime ${run.runtimeId ?? '—'}`,
     `session ${run.sessionId ?? '—'}`,
+    `会话 ${sessionLabelOf(run)}${shortSessionId ? ` (#${shortSessionId})` : ''}`,
     `page ${run.pageLabel ?? '—'}`,
     `开始 ${formatClock(run.startedAt)}`,
     `结束 ${run.completedAt ? formatClock(run.completedAt) : '—'}`,
@@ -63,6 +68,9 @@ export function RunDetail({ run, events, model, filters, eventsError }: RunDetai
       <header className="detail-head">
         <div className="detail-line">
           <span className="detail-status" data-status={run.status}>{runStatusLabel(run.status)}</span>
+          {archived ? (
+            <span className="detail-origin" title="来自磁盘归档的历史 run，事件只读回放">历史归档 · 只读</span>
+          ) : null}
           <span className="detail-agent">{run.agentName}</span>
           <button type="button" className="runid" onClick={copyRunId} title="点击复制 runId">
             {copiedRunId ? '已复制' : run.runId}
@@ -92,7 +100,7 @@ export function RunDetail({ run, events, model, filters, eventsError }: RunDetai
             {item.label}
           </button>
         ))}
-        {running ? <span className="detail-hint">实时更新</span> : null}
+        {running && !archived ? <span className="detail-hint">实时更新</span> : null}
       </div>
       <div className="detail-body">
         {tab === 'timeline' ? (
@@ -101,7 +109,13 @@ export function RunDetail({ run, events, model, filters, eventsError }: RunDetai
             blocks={model.blocks}
             filters={filters}
             runStatus={run.status}
-            emptyHint={eventsError ? `事件拉取失败：${eventsError}（自动重试中）` : '等待该 run 的事件'}
+            emptyHint={eventsError
+              ? archived
+                ? `历史归档事件读取失败：${eventsError}`
+                : `事件拉取失败：${eventsError}（自动重试中）`
+              : archived
+                ? '该归档 run 没有可回放的事件'
+                : '等待该 run 的事件'}
           />
         ) : null}
         {tab === 'events' ? (

@@ -21,7 +21,7 @@
 
 - `planArrangeBatches`：按 8 页切批（27 页 → 7/7/7/6，9 页 → 5/4；均分避免尾批只剩 1 页）。
 - 每批是独立 `slides-planner` 调用，输入只含本批 `draftPages/sources/materialHits`，并带 `arrangeBatch` 元信息（全局批序、起始页、全册标题、前后页标题）。
-- 单批上限由 `orchestrator.dispatch({ timeoutMs })` 收紧到 5 分钟（框架只允许比 agent policy 更紧）。
+- 单批不额外收紧超时：沿用 `slides-planner` 的 policy（冒烟期 1800s）。此前按批收紧到 5 分钟，在大册/多素材批次上会把整册打成 `slides_arrange_batch_failed`；容量等待预算单独放宽到 10 分钟。
 - 并发 2 批；单批失败重试 1 次，不阻塞其他批。
 
 ### 2.2 确定性合并，而不是让模型记全册
@@ -36,9 +36,9 @@
 
 ### 2.3 checkpoint：用户重试只补失败批
 
-- key = 草稿文档 + 指令 + 风格/参考风格 + 来源 hash + 批大小；任一变化即新编排。
-- 成功批结果存入进程内 checkpoint（30 分钟 TTL、最多 8 册）；整册合并成功后删除。
-- 用户重试（新 runId）命中 checkpoint 时跳过已完成批；进程重启后失效，但单批已足够小，重跑成本可控。
+- key = Room + 草稿文档 + 指令 + 风格/参考风格 + 来源 hash + 批大小 + Agent Revision + 模型配置 + 素材命中；任一变化即新编排。
+- 成功批结果、deck 文件与已落页号、累计预算写入 SQLite `slides_generation_checkpoints`；整册落页成功后删除。
+- 用户重试（新 runId）或 Gateway 重启后，命中 checkpoint 时跳过已完成批与已落定页，继续使用同一个 deck 文件。
 - 单批失败返回 `slides_arrange_batch_failed`，消息明确「重试只补未完成批次」。
 
 ### 2.4 素材检索与配图预热
@@ -54,7 +54,7 @@
 
 ## 4. 边界
 
-- checkpoint 是进程内内存：网关重启后从零开始；后续可落库（按 draftDocumentId + sourceHash）。
+- 生产装配必须传入数据库 checkpoint store；未装配数据库的测试宿主仅使用实例内存。
 - 批次间叙事一致性靠 `previousPageTitles/nextPageTitle` + 全局校验；不追求跨批逐字衔接。
 - 单批 ≤12 页（模块上限）；批大小调整只需改 `ARRANGE_BATCH_SIZE`。
 

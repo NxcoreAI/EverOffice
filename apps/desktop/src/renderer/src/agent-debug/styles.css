@@ -124,6 +124,15 @@ pre {
   color: var(--text);
 }
 
+.text-btn:disabled {
+  color: var(--border);
+  cursor: default;
+}
+
+.text-btn:disabled:hover {
+  color: var(--border);
+}
+
 .text-btn--accent {
   color: var(--accent);
 }
@@ -214,6 +223,29 @@ pre {
   gap: var(--sp-3);
 }
 
+/* 范围三态 + 归档概况 */
+.topbar-label--range {
+  margin-left: var(--sp-2);
+}
+
+.topbar-range {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.archive-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
 /* ── 三栏 ── */
 .main {
   flex: 1 1 auto;
@@ -224,6 +256,7 @@ pre {
 }
 
 .col {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -259,6 +292,12 @@ pre {
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
   color: var(--muted);
+}
+
+/* Agent / Run 两栏自己接管滚动锚定（useBrowsingList），关闭浏览器原生锚定避免双重校正。 */
+.agent-list,
+.run-list {
+  overflow-anchor: none;
 }
 
 /* ── 左栏：Agent ── */
@@ -407,6 +446,116 @@ pre {
   white-space: nowrap;
 }
 
+/* 来源标签：仅 muted 文字 + 现有边框色（历史 run） */
+.run-origin {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  font-size: var(--fs-label);
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* 会话标签：单行省略，贴右 */
+.run-session {
+  margin-left: auto;
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* 会话短 id：标题重复时靠它区分（等宽、更淡） */
+.run-session-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--muted);
+}
+
+/* 会话分组：全部会话视图下按会话分组，组头可点击筛选 */
+.run-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.run-group-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--secondary);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.run-group:first-child > .run-group-head {
+  border-top: 0;
+}
+
+.run-group-head:hover {
+  background: var(--hover);
+}
+
+.run-group-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.run-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-group-meta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-group-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--muted);
+}
+
+/* 会话筛选提示条：明确当前只看哪个会话，一键回到全部 */
+.session-filter-bar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--hover);
+  font-size: var(--fs-micro);
+  color: var(--secondary);
+}
+
+.session-filter-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-filter-bar .text-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .run-task {
   font-size: var(--fs-body);
   line-height: 1.45;
@@ -432,8 +581,25 @@ pre {
   margin-left: 0;
 }
 
-.follow-btn {
+/* 会话筛选：列表头的无边框下拉，风格与来源选择器一致。
+   标签形如「标题 · MM-DD HH:mm · #短id」，所以比原来更宽。 */
+.session-select {
+  max-width: 196px;
+  min-width: 96px;
   margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--secondary);
+  font-size: var(--fs-micro);
+  outline: none;
+  cursor: pointer;
+}
+
+.follow-btn {
+  margin-left: var(--sp-2);
   font-size: var(--fs-micro);
 }
 
@@ -462,6 +628,13 @@ pre {
 
 .detail-status[data-status="failed"] {
   color: var(--danger);
+}
+
+/* 归档 run 的只读标记（纯 muted 文本，不引入新色） */
+.detail-origin {
+  font-size: var(--fs-label);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .detail-agent {
@@ -803,7 +976,9 @@ pre {
   color: var(--muted);
 }
 
-.tl-jump {
+/* 浮动的回顶 / 回底入口：时间线「回到最新」、列表浏览锁序「回到顶部」共用同一套平铺样式。 */
+.tl-jump,
+.browse-jump {
   position: absolute;
   right: var(--sp-4);
   bottom: var(--sp-4);
@@ -815,7 +990,8 @@ pre {
   color: var(--secondary);
 }
 
-.tl-jump:hover {
+.tl-jump:hover,
+.browse-jump:hover {
   color: var(--text);
 }
 

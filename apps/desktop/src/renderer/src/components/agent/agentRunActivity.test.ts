@@ -102,6 +102,115 @@ describe('Agent run activity', () => {
     ])
   })
 
+  const mappedToolNames = [
+    'connector_apps', 'connector_run', 'connector_schema', 'connector_search',
+    'connector_data_search', 'connector_record_get', 'connector_sync_status', 'send_notification',
+    'submit_format_mapping', 'tool_search', 'context_room_document_intent', 'context_room_document_list',
+    'context_room_document_read', 'context_room_document_delete', 'context_room_document_comment_add', 'context_room_list',
+    'context_room_create', 'context_room_patch_begin', 'context_room_patch_commit', 'context_room_patch_hunk',
+    'context_room_patch_abort', 'context_room_write_append', 'context_room_write_begin', 'context_room_write_commit',
+    'context_room_write_abort', 'context_room_office_create', 'context_room_sheets_create', 'context_room_slides_create',
+    'context_room_slides_set_page', 'context_room_slides_read', 'context_room_slides_edit', 'slides_draft',
+    'slides_image_prewarm', 'slides_layout_validate', 'context_room_context_get', 'context_room_overview_regenerate',
+    'context_room_correction_propose', 'context_room_correction_apply', 'context_room_correction_apply_citation', 'context_room_correction_revoke',
+    'context_room_action_delete', 'context_room_task_create', 'context_room_task_complete', 'context_room_task_read',
+    'context_room_task_start', 'context_room_task_update', 'context_room_task_clarify', 'context_room_task_attach',
+    'context_room_schedule_create', 'room_task_create', 'room_schedule_create', 'room_context_get',
+    'room_analysis', 'room_correction_draft', 'content_analysis', 'document_analysis',
+    'document_draft', 'document_export', 'document_import_search', 'document_import_preview',
+    'document_import_commit', 'document_parse_native', 'document_read_artifact', 'document_read_content',
+    'document_analyze_visuals', 'document_validate_artifact', 'route_mindmap_finalize', 'diary_source_read',
+    'memory_search', 'screen_memory_search', 'conversation_search', 'wiki_search',
+    'wiki_read', 'web_search', 'web_fetch', 'agent_catalog',
+    'agent_dispatch', 'local_agent_dispatch', 'lite_assist', 'agent_conversation_query',
+    'subagent_submit_result', 'agent_schedule_list', 'agent_schedule_run', 'everroom',
+    'everroom_fetch', 'everroom_list_rooms', 'everroom_search', 'everroom_read_file',
+    'everroom_get_rules', 'everroom_get_status', 'everroom_register_file', 'everroom_submit',
+    'everroom_submit_status', 'read_file', 'read', 'write_file',
+    'write', 'edit', 'patch', 'apply_patch',
+    'glob', 'grep', 'list_dir', 'ls',
+    'bash', 'shell', 'command', 'terminal',
+    'search', 'think', 'create', 'delete',
+    'move', 'tool',
+  ] as const
+
+  function toolNamed(name: string, args: Record<string, unknown> = {}) {
+    return {
+      id: name,
+      runId: 'run-1',
+      name,
+      args,
+      status: 'running' as const,
+      startedAt: new Date().toISOString(),
+    }
+  }
+
+  const zh = (message: string, values?: Record<string, string | number>) => translate('zh-CN', message, values)
+  const en = (message: string, values?: Record<string, string | number>) => translate('en-US', message, values)
+
+  it('gives every mapped tool a distinct localized running/completed label', () => {
+    for (const name of mappedToolNames) {
+      const runningZh = agentToolLabel(toolNamed(name), false, zh)
+      const completedZh = agentToolLabel(toolNamed(name), true, zh)
+      expect(runningZh, name).toBeTruthy()
+      expect(runningZh, name).not.toBe(name)
+      expect(completedZh, name).not.toBe(name)
+      expect(completedZh, name).not.toBe(runningZh)
+
+      const runningEn = agentToolLabel(toolNamed(name), false, en)
+      const completedEn = agentToolLabel(toolNamed(name), true, en)
+      expect(runningEn, name).toBeTruthy()
+      expect(runningEn, name).not.toBe(name)
+      expect(completedEn, name).not.toBe(runningEn)
+    }
+  })
+
+  it('does not misclassify document, image, memory, or search tools by name substring', () => {
+    expect(agentToolLabel(toolNamed('document_draft'), false, zh)).toBe('起草文档')
+    expect(agentToolLabel(toolNamed('document_analysis'), false, zh)).toBe('分析文档')
+    expect(agentToolLabel(toolNamed('document_draft'), false, zh)).not.toBe('读取文件')
+    expect(agentToolLabel(toolNamed('document_analysis'), false, zh)).not.toBe('读取文件')
+    expect(agentToolLabel(toolNamed('document_import_search'), false, zh)).not.toBe('搜索网页')
+    expect(agentToolLabel(toolNamed('slides_image_prewarm'), false, zh)).not.toBe('查看图像')
+    expect(agentToolLabel(toolNamed('screen_memory_search'), false, zh)).not.toBe('查询个人记忆')
+    expect(agentToolLabel(toolNamed('everroom_search'), false, zh)).not.toBe('搜索网页')
+    expect(agentToolLabel(toolNamed('room_schedule_create'), false, zh)).not.toContain('执行')
+    expect(agentToolLabel(toolNamed('context_room_task_create'), false, zh)).not.toContain('执行')
+  })
+
+  it('falls back to the humanized name for unknown tools instead of guessing a family', () => {
+    expect(agentToolLabel(toolNamed('zzz_unknown_tool'), false, zh)).toBe('执行 zzz unknown tool')
+    expect(agentToolLabel(toolNamed('zzz_unknown_tool'), true, zh)).toBe('已执行 zzz unknown tool')
+    expect(agentToolLabel(toolNamed('zzz_document_tool'), false, zh)).toBe('执行 zzz document tool')
+    expect(agentToolLabel(toolNamed('zzz_unknown_tool'), false, en)).toBe('Executing zzz unknown tool')
+  })
+
+  it('prefers the real target argument for mapped tools', () => {
+    expect(agentToolSubject(toolNamed('document_draft', { code: 'not-the-target', input: 'not-the-target', title: '季度报告' }))).toBe('季度报告')
+    expect(agentToolSubject(toolNamed('document_draft', { instruction: '续写第三章' }))).toBe('续写第三章')
+    expect(agentToolSubject(toolNamed('context_room_slides_create', { title: '产品发布' }))).toBe('产品发布')
+    expect(agentToolSubject(toolNamed('document_import_search', { query: '季度复盘' }))).toBe('季度复盘')
+    expect(agentToolSubject(toolNamed('agent_dispatch', { agentId: 'researcher', task: '调研竞品' }))).toBe('researcher · 调研竞品')
+    expect(agentToolSubject(toolNamed('context_room_slides_set_page', { slideIndex: 2 }))).toBe('2')
+    expect(agentToolSubject(toolNamed('everroom_read_file', { fileId: 'file-9' }))).toBe('file-9')
+    expect(agentToolSubject(toolNamed('screen_memory_search', { query: '报价单' }))).toBe('报价单')
+    // 未映射工具仍走原来的通用 key 顺序。
+    expect(agentToolSubject(toolNamed('zzz_unknown_tool', { command: 'ls' }))).toBe('ls')
+  })
+
+  it('maps tool kinds from the same explicit table and leaves unknown tools as other', () => {
+    expect(toolKind('document_draft')).toBe('document')
+    expect(toolKind('document_analysis')).toBe('document')
+    expect(toolKind('slides_image_prewarm')).toBe('image')
+    expect(toolKind('screen_memory_search')).toBe('memory')
+    expect(toolKind('context_room_task_create')).toBe('task')
+    expect(toolKind('context_room_slides_create')).toBe('slides')
+    expect(toolKind('everroom_search')).toBe('search')
+    expect(toolKind('zzz_unknown_tool')).toBe('other')
+    expect(toolKind('zzz_document_tool')).toBe('other')
+    expect(toolKind('zzz_image_tool')).toBe('other')
+  })
+
   it('keeps commentary and tools in event order and separates the final answer', () => {
     const activity = reduceAgentRunActivity([
       event(1, 'run.started'),

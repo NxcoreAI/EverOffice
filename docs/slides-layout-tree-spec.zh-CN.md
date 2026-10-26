@@ -28,7 +28,7 @@
 | `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。语义内容模式由 Layouter 根据实际设计选择；旧模式等于输入的 composition。 |
 | `safeArea` | `content`（默认）/ `full` | 图片与色块用节点 `bleed` 出血。 |
 | `grid` | `cols 1~12`、`rows 1~12`、`gutter 0~48`、`rowGutter 0~48`、`margin 0~96` | 可省略，用风格卡默认（12 列 × 8 行）。 |
-| `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 可省略；`pageNumbers` 由网关注入页码。 |
+| `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 语法可省略，使用规则见 SYSTEM.md。仅显式写 `pageNumbers:true` 时网关填入页码；省略 footer 不生成页码与页脚线。`inverse` 适用于深色页且不绘制页脚线。 |
 | `background` | 色号，≤9 字符（如 `"#0E0D0C"`） | 可省略，缺省用主题底色。 |
 | `dark` | `true` | 整页深色口径。封面/收尾角色在风格卡 `darkCover` 下自动深色。 |
 | `notes` | 字符串，≤2000 字 | 演讲备注；输入超过此容量时报告阻塞，避免引擎截断。 |

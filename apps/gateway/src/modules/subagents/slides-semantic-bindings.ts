@@ -1,5 +1,6 @@
 import type { SemanticPage } from "./slides-semantic-contract.js";
 import { payloadStrings } from "./slides-semantic-contract.js";
+import { normalizeSpeakerNotes } from "../slides-layout/tree/v2/schema.js";
 
 export interface ContentBinding { blockId: string; paths: string[] }
 const compact = (value: string) => value.replace(/\s+/gu, "");
@@ -92,6 +93,11 @@ export function checkSemanticRendered(page: SemanticPage, spec: { elements: unkn
       if (!found) errors.push(`编译后必留内容缺失 ${block.id}: ${expected.slice(0, 60)}`);
     }
   }
-  if (page.notes && spec.notes !== page.notes) errors.push("讲稿未完整保留");
+  // 讲稿按 schema 归一后的口径比较（trim + 2000 字上限）；模型改写/追加由提交期 validator 纠正，
+  // 这里仍保留闸门，防止落页侧编译把讲稿弄丢。2026-10-24：严格 !== 让「标注为」一字之差永久拒收。
+  const expectedNotes = page.notes ? normalizeSpeakerNotes(page.notes) : "";
+  if (expectedNotes && spec.notes !== expectedNotes) {
+    errors.push(`讲稿未完整保留（期望 ${expectedNotes.length} 字，实际 ${spec.notes?.length ?? 0} 字）`);
+  }
   return errors;
 }

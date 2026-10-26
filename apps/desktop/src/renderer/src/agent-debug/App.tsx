@@ -5,6 +5,18 @@ import { errorMessage, loadRunEvents, loadSnapshot, loadSources, type DebugSourc
 import { AgentList, type AgentKindTab } from './components/AgentList'
 import { RunDetail } from './components/RunDetail'
 import { RunList } from './components/RunList'
+import {
+  ALL_SESSIONS,
+  archiveSummaryOf,
+  buildSessionOptions,
+  emptyRunsText,
+  filterRunsByOrigin,
+  filterRunsBySession,
+  latestArchivedRunId,
+  RANGE_MODES,
+  snapshotQueryFor,
+  type RangeMode,
+} from './history'
 import { mergeRunEvents, reduceRunTimeline, type DebugFilters } from './reducer'
 
 const SNAPSHOT_INTERVAL_MS = 1200
@@ -63,6 +75,8 @@ export function App() {
   const [paused, setPaused] = useState(false)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [filters, setFilters] = useState<DebugFilters>(DEFAULT_FILTERS)
+  const [rangeMode, setRangeMode] = useState<RangeMode>('all')
+  const [sessionFilter, setSessionFilter] = useState<string>(ALL_SESSIONS)
   const [selectedAgentId, setSelectedAgentId] = useState<string>('all')
   const [kindTab, setKindTab] = useState<AgentKindTab>('all')
   const [followLatest, setFollowLatest] = useState(true)
@@ -108,14 +122,15 @@ export function App() {
     }
   }, [refreshNonce])
 
-  // ── snapshot：1200ms；暂停时只做一次（手动刷新仍可拍快照） ──
+  // ── snapshot：1200ms；暂停时只做一次（手动刷新仍可拍快照）；范围切换后立即重新拉 ──
   useEffect(() => {
     if (!sourceId) return undefined
+    const query = snapshotQueryFor(rangeMode)
     let cancelled = false
     let timer: number | undefined
     const tick = async (): Promise<void> => {
       try {
-        const next = await loadSnapshot(sourceId)
+        const next = await loadSnapshot(sourceId, query)
         if (cancelled) return
         setSnapshotState({ sourceId, snapshot: next })
         setConnection('online')
@@ -132,12 +147,34 @@ export function App() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [sourceId, paused, refreshNonce])
+  }, [sourceId, paused, refreshNonce, rangeMode])
 
   // 切换来源后丢弃旧快照（避免把上一个 Gateway 的 run 当成当前来源）。
   const snapshot = snapshotState && snapshotState.sourceId === sourceId ? snapshotState.snapshot : null
   const agents = snapshot?.agents ?? EMPTY_AGENTS
   const runs = snapshot?.runs ?? EMPTY_RUNS
+
+  // 归档概况：快照未回时不渲染；旧 Gateway 不返回 archive 字段，同样视为历史不可用。
+  const archiveSummary = useMemo(() => {
+    if (!snapshot) return null
+    if (!snapshot.archive) {
+      return {
+        enabled: false,
+        text: '历史未启用',
+        title: '当前 Gateway 未返回归档信息（旧版本），历史 run 不可浏览',
+      }
+    }
+    return archiveSummaryOf(snapshot.archive)
+  }, [snapshot])
+  const archiveDisabled = archiveSummary !== null && !archiveSummary.enabled
+
+  // 范围三态在客户端再过滤一次：切模式后新快照回来前，不会短暂展示错误来源的 run。
+  const modeRuns = useMemo(() => filterRunsByOrigin(runs, rangeMode), [runs, rangeMode])
+
+  // 归档被关闭时不留「历史」模式（例如运行中通过 env 关掉了归档）。
+  useEffect(() => {
+    if (archiveDisabled && rangeMode === 'archive') setRangeMode('all')
+  }, [archiveDisabled, rangeMode])
 
   // ── 选中 Agent / run 的自动跟随 ──
   const selectedAgent = selectedAgentId === 'all'
@@ -151,31 +188,55 @@ export function App() {
   }, [agents, selectedAgentId, snapshot])
 
   const agentRuns = useMemo(
-    () => (selectedAgentId === 'all' ? runs : runs.filter((run) => run.agentId === selectedAgentId)),
-    [runs, selectedAgentId],
+    () => (selectedAgentId === 'all' ? modeRuns : modeRuns.filter((run) => run.agentId === selectedAgentId)),
+    [modeRuns, selectedAgentId],
   )
+
+  // 会话筛选下拉选项由当前（按 Agent 过滤后的）runs 推导，筛选本身在客户端完成。
+  const sessionOptions = useMemo(() => buildSessionOptions(agentRuns), [agentRuns])
+
+  // 切换 Agent / 范围后，丢弃已不存在的会话筛选键，回到「全部会话」。
+  useEffect(() => {
+    if (!sessionOptions.some((option) => option.key === sessionFilter)) setSessionFilter(ALL_SESSIONS)
+  }, [sessionOptions, sessionFilter])
+
+  const visibleRuns = useMemo(
+    () => filterRunsBySession(agentRuns, sessionFilter),
+    [agentRuns, sessionFilter],
+  )
+
+  const emptyText = emptyRunsText({
+    mode: rangeMode,
+    sessionFiltered: sessionFilter !== ALL_SESSIONS,
+    agentFiltered: selectedAgentId !== 'all',
+  })
 
   useEffect(() => {
     setSelectedRunId((current) => {
-      if (agentRuns.length === 0) return null
+      if (visibleRuns.length === 0) return null
       if (followLatest) {
-        const active = agentRuns.find((run) => run.status === 'running')
+        const active = visibleRuns.find((run) => run.status === 'running')
         if (active) return active.runId
       }
-      if (current && agentRuns.some((run) => run.runId === current)) return current
-      const running = agentRuns.find((run) => run.status === 'running')
-      return running?.runId ?? agentRuns[0]!.runId
+      if (current && visibleRuns.some((run) => run.runId === current)) return current
+      // 历史模式默认选中最新一条历史 run（归档 run 全是终态，不参与「跟随运行中」）。
+      if (rangeMode === 'archive') {
+        const latestArchived = latestArchivedRunId(visibleRuns)
+        if (latestArchived) return latestArchived
+      }
+      const running = visibleRuns.find((run) => run.status === 'running')
+      return running?.runId ?? visibleRuns[0]!.runId
     })
-  }, [agentRuns, followLatest])
+  }, [visibleRuns, followLatest, rangeMode])
 
-  const selectedRunInSnapshot = selectedRunId !== null && runs.some((run) => run.runId === selectedRunId)
+  const selectedRunInSnapshot = selectedRunId !== null && modeRuns.some((run) => run.runId === selectedRunId)
 
-  // ── 选中 run 的增量事件：运行中 400ms，终态/暂停后停止 ──
+  // ── 选中 run 的增量事件：运行中 400ms，终态/暂停后停止；归档 run 全是终态，只拉一次 ──
   useEffect(() => {
     if (!sourceId || !selectedRunId || !selectedRunInSnapshot) return undefined
     const runId = selectedRunId
     if (eventsRef.current.sourceId !== sourceId || eventsRef.current.runId !== runId) {
-      setEventsState({ ...EMPTY_RUN_EVENTS, sourceId, runId, run: runs.find((run) => run.runId === runId) ?? null })
+      setEventsState({ ...EMPTY_RUN_EVENTS, sourceId, runId, run: modeRuns.find((run) => run.runId === runId) ?? null })
       eventsRef.current = { ...EMPTY_RUN_EVENTS, sourceId, runId }
     }
     let cancelled = false
@@ -249,8 +310,8 @@ export function App() {
     if (eventsState.sourceId === sourceId && eventsState.runId === selectedRunId && eventsState.run) {
       return eventsState.run
     }
-    return runs.find((run) => run.runId === selectedRunId) ?? null
-  }, [eventsState.run, eventsState.runId, eventsState.sourceId, runs, selectedRunId, sourceId])
+    return modeRuns.find((run) => run.runId === selectedRunId) ?? null
+  }, [eventsState.run, eventsState.runId, eventsState.sourceId, modeRuns, selectedRunId, sourceId])
 
   const activeEvents = eventsState.sourceId === sourceId && eventsState.runId === selectedRunId
     ? eventsState.events
@@ -295,6 +356,29 @@ export function App() {
         {connection === 'offline' && connectionError ? (
           <span className="conn-error" title={connectionError}>{connectionError}</span>
         ) : null}
+        <span className="topbar-label topbar-label--range">范围</span>
+        <div className="topbar-range" role="group" aria-label="Run 范围">
+          {RANGE_MODES.map((definition) => {
+            const disabled = definition.id === 'archive' && archiveDisabled
+            return (
+              <button
+                key={definition.id}
+                type="button"
+                className="text-btn"
+                data-active={rangeMode === definition.id}
+                aria-pressed={rangeMode === definition.id}
+                disabled={disabled}
+                onClick={() => setRangeMode(definition.id)}
+                title={disabled ? `${definition.hint}（历史归档未启用）` : definition.hint}
+              >
+                {definition.label}
+              </button>
+            )
+          })}
+        </div>
+        {archiveSummary ? (
+          <span className="archive-summary" title={archiveSummary.title}>{archiveSummary.text}</span>
+        ) : null}
         <div className="topbar-spacer" />
         <div className="topbar-filters" role="group" aria-label="事件过滤">
           {FILTER_DEFS.map((definition) => (
@@ -333,20 +417,25 @@ export function App() {
         <main className="main">
           <AgentList
             agents={agents}
-            runs={runs}
+            runs={modeRuns}
             kindTab={kindTab}
             onKindTabChange={setKindTab}
             selectedAgentId={selectedAgentId}
             onSelectAgent={setSelectedAgentId}
           />
           <RunList
-            runs={agentRuns}
+            runs={visibleRuns}
             selectedRunId={selectedRunId}
             onSelectRun={setSelectedRunId}
             agentTitle={selectedAgent ? selectedAgent.name : '全部 Agent'}
             showAgent={selectedAgentId === 'all'}
             followLatest={followLatest}
             onToggleFollow={() => setFollowLatest((value) => !value)}
+            sessionFilter={sessionFilter}
+            sessionOptions={sessionOptions}
+            onSessionFilterChange={setSessionFilter}
+            emptyText={emptyText}
+            browseKey={`${rangeMode}|${selectedAgentId}|${sessionFilter}`}
           />
           {selectedRun ? (
             <RunDetail
@@ -362,7 +451,9 @@ export function App() {
               <div className="empty">
                 <p className="empty-text">
                   {snapshot
-                    ? '选择一个 run 查看时间线、事件与输出。'
+                    ? rangeMode === 'archive'
+                      ? '历史归档里还没有可回看的 run；归档只保存终态 run。'
+                      : '选择一个 run 查看时间线、事件与输出。'
                     : connectionError ?? '正在连接 Gateway'}
                 </p>
               </div>

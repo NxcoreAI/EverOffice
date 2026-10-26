@@ -1,12 +1,14 @@
 import type {
   AgentDebugAgent,
   AgentDebugAgentKind,
+  AgentDebugArchiveInfo,
   AgentDebugEvent,
   AgentDebugRun,
   AgentDebugRunStatus,
   AgentEventType,
 } from "@nxcore/agent-contract";
 import type { RuntimeEvent } from "@nxcore/agent-runtime";
+import { DISABLED_ARCHIVE_INFO, type AgentDebugArchive } from "./archive.js";
 
 /** 每个 run 保留的事件条数上限。 */
 export const MAX_EVENTS_PER_RUN = 3_000;
@@ -49,6 +51,9 @@ export interface AgentDebugEventPage {
   /** 当前缓冲内的最大 seq（下一次 afterSeq）。 */
   latestSeq: number;
 }
+
+/** snapshot 的归档范围：混合本次进程与历史 / 仅历史 / 仅本次进程。 */
+export type AgentDebugArchivedFilter = "include" | "only" | "exclude";
 
 interface MergedDelta {
   /** 分片保存，避免每来一个 token 就做一次整串拼接（O(n²)）。 */
@@ -148,11 +153,16 @@ function errorMessageOf(error: unknown): string {
  *
  * 该模块不参与任何业务链路，store 自身异常不应影响 Agent run；`recordEvent`
  * 对未知/已淘汰 run 静默忽略。
+ *
+ * 可选注入 {@link AgentDebugArchive}：run 到达终态后 fire-and-forget 落盘，
+ * 重启后可从归档找回历史 run（`origin:"archive"`）；归档关闭时不传实例。
  */
 export class AgentDebugTraceStore {
   private readonly runs = new Map<string, StoredRun>();
   private droppedRunCount = 0;
   private disposed = false;
+
+  constructor(private readonly archive?: AgentDebugArchive) {}
 
   /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数。 */
   get droppedRuns(): number {
@@ -231,7 +241,7 @@ export class AgentDebugTraceStore {
     if (terminal) this.finishRun(runId, terminal, payloadError(event));
   }
 
-  /** 幂等收尾：run 已处于终态时忽略，保证终态只写一次。 */
+  /** 幂等收尾：run 已处于终态时忽略，保证终态只写一次；终态后异步落盘归档。 */
   finishRun(runId: string, status: AgentDebugRunStatus, errorMessage?: string | null): void {
     if (this.disposed) return;
     const run = this.runs.get(runId);
@@ -239,31 +249,55 @@ export class AgentDebugTraceStore {
     run.status = status;
     run.completedAt = new Date().toISOString();
     if (errorMessage) run.errorMessage = errorMessage;
+    this.scheduleArchive(run);
   }
 
+  /** 内存没有时回落到磁盘归档；未知 run 返回 null。 */
   getRun(runId: string): AgentDebugRun | null {
     const run = this.runs.get(runId);
-    return run ? this.toDebugRun(run) : null;
+    if (run) return this.toDebugRun(run);
+    return this.archive?.getRun(runId) ?? null;
   }
 
-  /** 最近 run：运行中的永远在最前，其余按 startedAt 倒序。 */
-  listRuns(limit: number): AgentDebugRun[] {
-    const runs = [...this.runs.values()].sort((left, right) => {
+  /**
+   * 最近 run：运行中的永远在最前，其余按 startedAt 倒序。
+   *
+   * `archived` 控制是否合并磁盘归档：`include`（默认）混合本次进程与历史 run，
+   * `only` 只返回历史，`exclude` 只返回本次进程。live run 补 `origin:"live"`，
+   * 归档 run 由归档条目带 `origin:"archive"`；同 runId 以内存为准不重复出现。
+   */
+  listRuns(limit: number, archived: AgentDebugArchivedFilter = "include"): AgentDebugRun[] {
+    const max = Math.max(0, limit);
+    if (archived === "only") return this.archive?.listRuns(max) ?? [];
+    const liveRuns = [...this.runs.values()]
+      .sort((left, right) => {
+        const leftRunning = left.status === "running" ? 0 : 1;
+        const rightRunning = right.status === "running" ? 0 : 1;
+        if (leftRunning !== rightRunning) return leftRunning - rightRunning;
+        return Date.parse(right.startedAt) - Date.parse(left.startedAt);
+      })
+      .slice(0, max)
+      .map((run): AgentDebugRun => ({ ...this.toDebugRun(run), origin: "live" }));
+    if (archived === "exclude" || !this.archive) return liveRuns;
+    const liveRunIds = new Set(liveRuns.map((run) => run.runId));
+    const merged = [...liveRuns, ...this.archive.listRuns(max, liveRunIds)];
+    merged.sort((left, right) => {
       const leftRunning = left.status === "running" ? 0 : 1;
       const rightRunning = right.status === "running" ? 0 : 1;
       if (leftRunning !== rightRunning) return leftRunning - rightRunning;
       return Date.parse(right.startedAt) - Date.parse(left.startedAt);
     });
-    return runs.slice(0, Math.max(0, limit)).map((run) => this.toDebugRun(run));
+    return merged.slice(0, max);
   }
 
   /**
    * 增量事件：返回 `seq > afterSeq` 的事件；若缓冲尾部仍是可合并的 delta
    * 事件（seq 未变、内容仍在增长），额外附带它，供客户端按 seq upsert。
+   * 内存没有时回落到磁盘归档读取（历史 run 终态静态、无尾部重放）。
    */
   listEvents(runId: string, afterSeq = 0, limit = 1_000): AgentDebugEventPage | null {
     const run = this.runs.get(runId);
-    if (!run) return null;
+    if (!run) return this.archive?.readEvents(runId, afterSeq, limit) ?? null;
     const tail = run.events[run.events.length - 1];
     const events: AgentDebugEvent[] = [];
     const max = Math.max(0, limit);
@@ -273,6 +307,11 @@ export class AgentDebugTraceStore {
     }
     if (tail?.merged && tail.seq <= afterSeq) events.push(this.materialize(tail));
     return { events, latestSeq: tail?.seq ?? 0 };
+  }
+
+  /** 磁盘归档概况；归档关闭时返回 enabled=false 的占位对象。 */
+  archiveInfo(): AgentDebugArchiveInfo {
+    return this.archive ? this.archive.info() : { ...DISABLED_ARCHIVE_INFO };
   }
 
   /** 缓冲里观测到的 Agent（主网关用于合并 status 未覆盖的本机 CLI Agent）。 */
@@ -326,10 +365,31 @@ export class AgentDebugTraceStore {
       .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
   }
 
-  dispose(): void {
+  /**
+   * 停用 store：仍是 running 的 run 按 interrupted 收尾（归档为中断态），
+   * 等待所有排队写入完成后再清空内存。调用方需 `await`。
+   */
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    for (const run of [...this.runs.values()]) {
+      if (run.status === "running") this.finishRun(run.runId, "interrupted");
+    }
+    await this.archive?.flush();
     this.runs.clear();
     this.droppedRunCount = 0;
     this.disposed = true;
+  }
+
+  /** 终态 run 落盘（fire-and-forget）：不 await、不阻塞事件流、异常吞掉。 */
+  private scheduleArchive(run: StoredRun): void {
+    const archive = this.archive;
+    if (!archive) return;
+    try {
+      const events = run.events.map((event) => this.materialize(event));
+      void archive.archiveRun(this.toDebugRun(run), events).catch(() => {});
+    } catch {
+      // 归档是旁路：序列化/写盘异常都不应影响 Agent run。
+    }
   }
 
   private appendDelta(run: StoredRun, type: AgentEventType, delta: string, occurredAt: string): void {

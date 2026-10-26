@@ -269,11 +269,25 @@ describe("runLayouterTail", () => {
       status: "blocked", reason: "缺少数据", attempts: ["检查已有来源"], requestedAction: "提供原始表格",
     } } } as unknown as SubagentInvocation));
     harness.deps.dispatchPage = dispatch;
-    const result = await runLayouterTail(harness.deps, tailArgs(planOf([QUOTE_TREE]), harness));
-    expect(JSON.parse(result.content)).toMatchObject({ status: "blocked", blockedPages: [{ pageIndex: 0, requestedAction: "提供原始表格" }] });
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    const result = await runLayouterTail(harness.deps, tailArgs(planOf([QUOTE_TREE, QUOTE_TREE]), harness));
+    expect(JSON.parse(result.content)).toMatchObject({ status: "blocked", blockedPages: [
+      { pageIndex: 0, requestedAction: "提供原始表格" }, { pageIndex: 1, requestedAction: "提供原始表格" },
+    ] });
+    expect(dispatch).toHaveBeenCalledTimes(2);
     expect(harness.bridge.fillPage).not.toHaveBeenCalled();
     expect(harness.trashed).toEqual([]);
+  });
+
+  it("settles restored pages even when a resumed stream ends before supplying new content", async () => {
+    const harness = makeHarness([]);
+    const plan = planOf([QUOTE_TREE, QUOTE_TREE]);
+    const result = await runLayouterTail(harness.deps, { ...tailArgs(plan, harness),
+      existingDeck: { fileEntryId: "old-deck", originalName: "deck.pptx", totalPages: 2, appliedPages: [0] },
+      stream: { totalPages: 2, outline: ["第一页", "第二页"], pages: { async *[Symbol.asyncIterator]() {} } },
+    });
+    expect(JSON.parse(result.content)).toMatchObject({ status: "partial", fileEntryId: "old-deck", appliedPages: [0], failedPages: [1] });
+    expect(harness.bridge.generate).not.toHaveBeenCalled();
+    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
   });
 
   it("semantic mode accepts simple text and identical adjacent layouts without richness or diversity rerolls", async () => {
@@ -287,13 +301,22 @@ describe("runLayouterTail", () => {
       const tree = input.currentTree ?? { version: 2, role: "content", composition: "swiss", notes: page.notes,
         nodes: page.blocks.map((b, i) => ({ type: "text", token: i === 0 ? "h1" : "body", text: (b as any).text, slot: { col: [1, 12], row: [i * 2 + 1, i * 2 + 2] } })),
       };
-      return { status: "completed", result: { structuredOutput: { tree, designIntent: "先标题，再并列收益", bindings: page.blocks.map((b, i) => ({ blockId: b.id, paths: [`nodes/${i}`] })) } } } as any;
+      return { status: "completed", result: { structuredOutput: { tree,
+        designIntent: input.currentTree ? "自审后的表述" : `第 ${String(input.pageIndex)} 页：先标题，再并列收益`,
+        bindings: page.blocks.map((b, i) => ({ blockId: b.id, paths: [`nodes/${i}`] })),
+      } } } as any;
     };
     const plan = { title: "test", pages: [{ content: page, neighbors: [{ role: "content", message: page.message }] }, { content: page }] };
     const result = JSON.parse((await runLayouterTail(harness.deps, tailArgs(plan, harness))).content);
     expect(result.status).toBe("completed");
     expect(calls).toHaveLength(4); // Two designs and two image reviews; no forced decoration/reroll.
     expect(calls.every(c => !c.skeleton && !c.form && !c.composition)).toBe(true);
+    expect(calls.filter(c => !c.currentTree).every(c => c.previousDesignIntent === undefined)).toBe(true);
+    const reviews = calls.filter(c => c.currentTree);
+    expect(reviews).toHaveLength(2);
+    for (const review of reviews) {
+      expect(review.previousDesignIntent).toBe(`第 ${String(review.pageIndex)} 页：先标题，再并列收益`);
+    }
     expect(result.visualValidation).toEqual(["reviewed", "reviewed"]);
   });
 

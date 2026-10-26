@@ -396,6 +396,9 @@ export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
   return [LAYOUTER_VALIDATE_TOOL];
 }
 
+/** 同一 invocation 连续提交失败的收口上限：超限后改走 blocked，避免 validate↔submit 空转撞墙钟。 */
+const LAYOUT_SUBMIT_MAX_ATTEMPTS = 3;
+
 /**
  * slides 布局树类子代理（layouter/reviewer）的提交期校验：树必须过归一，否则拒收。
  * 真机 2026-10-17 深圳 deck 第 6 页：validate 三轮通过的是好树，提交时模型重抄 JSON
@@ -403,14 +406,23 @@ export function createSlidesLayouterAgentTools(): PiAgentRuntimeTool[] {
  * 给一次可恢复重试），模型手里还是刚校验过的那棵树，重交即中。
  */
 export function createSlidesTreeResultValidator(): SubagentResultValidator {
+  /** invocationInput 对象在整条 invocation 生命周期内复用，用它做提交失败计数器的 key。 */
+  const rejections = new WeakMap<object, number>();
   return (invocationInput, result) => {
     if (result.status === "blocked") return;
+    const input = invocationInput as { content?: SemanticPage; materials?: Array<{ url: string }>; deckToken?: string } | null;
+    const counterKey = typeof invocationInput === "object" && invocationInput !== null ? invocationInput : null;
     const tree = result !== null && typeof result === "object" && !Array.isArray(result)
       ? (result as Record<string, unknown>).tree
       : undefined;
     if (tree === undefined || tree === null) {
-      if ((invocationInput as { content?: unknown } | null)?.content) throw new Error("subagent_result_tree_invalid: 缺少布局树");
+      if (input?.content) throw new Error("subagent_result_tree_invalid: 缺少布局树");
       return;
+    }
+    if (input?.content?.notes?.trim() && typeof tree === "object" && tree !== null && !Array.isArray(tree)) {
+      // 讲稿的唯一权威是内容契约 content.notes：模型改写/追加（「标注为」、编排提示）不该让提交
+      // 永远失败。落页编译用的是同一棵树，这里改写的正是最终写进 PPTX notesSlide 的文本。
+      (tree as Record<string, unknown>).notes = input.content.notes;
     }
     let normalized;
     try {
@@ -421,12 +433,19 @@ export function createSlidesTreeResultValidator(): SubagentResultValidator {
     if (normalized.version !== 2) {
       throw new Error("subagent_result_tree_invalid: 提交的树不是 v2 页面（缺少 version: 2）——布局只有 v2 一种格式");
     }
-    const input = invocationInput as { content?: SemanticPage; materials?: Array<{ url: string }> } | null;
     if (input?.content) {
       const errors = checkSemanticBindings(input.content, normalized.v2, result, (input.materials ?? []).map(m => m.url));
-      const context = getDeckLayoutContext((invocationInput as { deckToken?: string }).deckToken);
+      const context = getDeckLayoutContext(input.deckToken);
       if (context) errors.push(...checkSemanticRendered(input.content, compileTree(normalized, context.contract).spec));
-      if (errors.length) throw new Error(`subagent_result_content_invalid: ${errors.join("; ")}`);
+      if (errors.length) {
+        const attempts = counterKey ? (rejections.get(counterKey) ?? 0) + 1 : 1;
+        if (counterKey) rejections.set(counterKey, attempts);
+        if (attempts >= LAYOUT_SUBMIT_MAX_ATTEMPTS) {
+          throw new Error(`subagent_result_content_unrecoverable: 连续 ${attempts} 次提交未通过内容契约（${errors.slice(0, 3).join("; ")}）。不要再用 done 重交；如需上游补内容，改用 status:"blocked" 并给出 reason/attempts/requestedAction。`);
+        }
+        throw new Error(`subagent_result_content_invalid: ${errors.join("; ")}`);
+      }
+      if (counterKey) rejections.delete(counterKey);
     }
   };
 }

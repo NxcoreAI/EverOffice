@@ -157,6 +157,10 @@ const RawConfigSchema = Type.Object(
     notificationBridgeToken: Type.String(),
     officeBridgeUrl: Type.String(),
     officeBridgeToken: Type.String(),
+    agentDebugArchiveEnabled: Type.Boolean(),
+    agentDebugArchiveDays: Type.Integer({ minimum: 1, maximum: 3_650 }),
+    agentDebugArchiveRuns: Type.Integer({ minimum: 1, maximum: 100_000 }),
+    agentDebugArchiveMaxMb: Type.Integer({ minimum: 64, maximum: 65_536 }),
   },
   { additionalProperties: false },
 );
@@ -308,6 +312,20 @@ export interface DocumentIndexBackfillConfig {
   readTriggerCooldownMs: number;
 }
 
+/**
+ * Agent 调试台历史归档（文件型，写入 dataDir/agent-debug/<source>/）。
+ * 仅调试数据面：默认开启，`NXCORE_AGENT_DEBUG_ARCHIVE=0` 可整体关闭。
+ */
+export interface AgentDebugArchiveConfig {
+  enabled: boolean;
+  /** 保留天数；超过即清理最旧 run。 */
+  retentionDays: number;
+  /** 最多保留的 run 条数。 */
+  maxRuns: number;
+  /** 归档总字节上限。 */
+  maxBytes: number;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -324,6 +342,8 @@ export interface GatewayConfig {
   /** 新 L1 记忆自动绑定 Room（推导 worker）：缺省视为开启（enabled=true/300s），仅 gateway 侧消费。 */
   memoryRoomDerive?: MemoryRoomDeriveConfig;
   documentIndexBackfill?: DocumentIndexBackfillConfig;
+  /** Agent 调试台历史归档；可选（旧测试/手写 config 对象缺省视为开启）。 */
+  agentDebugArchive?: AgentDebugArchiveConfig;
   pi: PiRuntimeConfig | null;
   cursorCompletionPi: PiRuntimeConfig | null;
   knowledge: KnowledgeGatewayConfig | null;
@@ -417,6 +437,13 @@ export const DEFAULT_BACKGROUND_MAX_CONCURRENT = 2;
  */
 export const DEFAULT_SLIDES_DECK_CONCURRENCY = 16;
 
+/** Agent 调试台归档默认保留天数。 */
+export const DEFAULT_AGENT_DEBUG_ARCHIVE_DAYS = 7;
+/** Agent 调试台归档默认最多 run 条数。 */
+export const DEFAULT_AGENT_DEBUG_ARCHIVE_RUNS = 2_000;
+/** Agent 调试台归档默认总字节上限（MB）。 */
+export const DEFAULT_AGENT_DEBUG_ARCHIVE_MAX_MB = 1_024;
+
 /** agent MCP 配置文件路径（NXCORE_MCP_CONFIG 优先，缺省 dataDir/agent/mcp.json）。 */
 export function resolveMcpConfigPath(dataDir: string, overridePath?: string): string {
   return resolve(overridePath?.trim() || join(dataDir, "agent", "mcp.json"));
@@ -464,6 +491,24 @@ function parsePositiveInteger(name: string, value: string): number {
     throw new Error(`Invalid ${name}: ${value}`);
   }
   return Number(value);
+}
+
+/** 带范围校验的正整数配置：格式/范围错误都报 `Invalid <name>: <value>`。 */
+function parseBoundedInteger(name: string, value: string, minimum: number, maximum: number): number {
+  const parsed = parsePositiveInteger(name, value);
+  if (parsed < minimum || parsed > maximum) {
+    throw new Error(`Invalid ${name}: ${value}`);
+  }
+  return parsed;
+}
+
+/** 归档开关：缺省开启；1/true/on/yes 开，0/false/off/no 关，其余报错。 */
+function parseArchiveEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return true;
+  if (["1", "true", "on", "yes"].includes(normalized)) return true;
+  if (["0", "false", "off", "no"].includes(normalized)) return false;
+  throw new Error(`Invalid NXCORE_AGENT_DEBUG_ARCHIVE: ${value}`);
 }
 
 /** Return the first non-empty environment value, allowing renamed variables to fall back safely. */
@@ -905,6 +950,25 @@ export function loadConfig(
     notificationBridgeToken: env.NXCORE_NOTIFICATION_BRIDGE_TOKEN?.trim() ?? "",
     officeBridgeUrl: env.NXCORE_OFFICE_BRIDGE_URL?.trim() ?? "",
     officeBridgeToken: env.NXCORE_OFFICE_BRIDGE_TOKEN?.trim() ?? "",
+    agentDebugArchiveEnabled: parseArchiveEnabled(env.NXCORE_AGENT_DEBUG_ARCHIVE),
+    agentDebugArchiveDays: parseBoundedInteger(
+      "NXCORE_AGENT_DEBUG_ARCHIVE_DAYS",
+      env.NXCORE_AGENT_DEBUG_ARCHIVE_DAYS ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_DAYS),
+      1,
+      3_650,
+    ),
+    agentDebugArchiveRuns: parseBoundedInteger(
+      "NXCORE_AGENT_DEBUG_ARCHIVE_RUNS",
+      env.NXCORE_AGENT_DEBUG_ARCHIVE_RUNS ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_RUNS),
+      1,
+      100_000,
+    ),
+    agentDebugArchiveMaxMb: parseBoundedInteger(
+      "NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB",
+      env.NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_MAX_MB),
+      64,
+      65_536,
+    ),
   };
 
   if (!Value.Check(RawConfigSchema, rawConfig)) {
@@ -1123,6 +1187,13 @@ export function loadConfig(
       llmEnabled: rawConfig.documentIndexBackfillLlmEnabled,
       rescanMs: rawConfig.documentIndexBackfillRescanMs,
       readTriggerCooldownMs: rawConfig.documentIndexBackfillReadTriggerCooldownMs,
+    },
+    // 调试数据面：默认开启；关闭时 create-server 不创建归档实例（store 不接收 archive）。
+    agentDebugArchive: {
+      enabled: rawConfig.agentDebugArchiveEnabled,
+      retentionDays: rawConfig.agentDebugArchiveDays,
+      maxRuns: rawConfig.agentDebugArchiveRuns,
+      maxBytes: rawConfig.agentDebugArchiveMaxMb * 1_024 * 1_024,
     },
     databasePath: join(dataDir, "database", "gateway.sqlite"),
     migrationsDir: resolve(

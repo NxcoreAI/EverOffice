@@ -32,8 +32,14 @@ const OVERLAP_TOLERANCE_PX = 6;
 /** overlay 子节点的最小尺寸下限（角标类小件，低于常规叶子下限）。 */
 const OVERLAY_MIN_W = 48;
 const OVERLAY_MIN_H = 32;
-/** 与 genoffice 引擎同口径的 emoji 判定（含变体选择符/零宽连接符区段）。 */
-const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/u;
+/**
+ * 与 genoffice 引擎同口径的 emoji 判定（引擎：apps/desktop/vendor/genoffice/apps/slides/src/main/page-spec.ts
+ * 的 emojiCodePoints）。引擎只拒 pictograph 区段（1F000–1FAFF）、VS16（FE0F），以及
+ * 2600–27BF 里被 VS16 强制的符号（由 FE0F 分支覆盖）；裸 ★/●/▲ 与箭头（2190–21FF）都是合法文本字形。
+ * 旧正则把 2190–21FF（「→」）也算成 emoji，而内容必留文本里的「→」要求逐字保留，
+ * 造成 validate 永远不收敛、落页被拒（2026-10-24 页 14/15 各空转 1800s 的根因）。
+ */
+const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{FE0F}]/u;
 
 interface InkBox { label: string; x: number; y: number; w: number; h: number }
 

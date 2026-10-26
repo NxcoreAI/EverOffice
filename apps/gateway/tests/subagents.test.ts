@@ -98,7 +98,7 @@ afterEach(async () => {
 });
 
 describe("shipped slides-planner bundle", () => {
-  it("预算与模型档位对齐 27 页 deck 的实测：900s / 80 tools / 显式输出上限", async () => {
+  it("冒烟期放宽墙钟、长链路不设工具预算：planner 1800s / 显式输出上限", async () => {
     const root = await mkdtemp(join(tmpdir(), "everroom-subagents-shipped-"));
     temporaryDirectories.push(root);
     const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
@@ -113,23 +113,35 @@ describe("shipped slides-planner bundle", () => {
     const planner = registry.get("slides-planner");
     expect(planner).not.toBeNull();
     expect(planner!.revision.policy).toMatchObject({
-      timeoutMs: 900_000,
-      maxToolCalls: 80,
+      timeoutMs: 1_800_000,
       model: { reasoning: "off", maxTokens: 32_768 },
     });
+    expect(planner!.revision.policy.maxToolCalls).toBeUndefined();
     // arrange 的素材命中由网关预取、长 deck 由网关分批：输入契约必须接住两者。
     const inputSchema = planner!.revision.inputSchema as { properties?: Record<string, unknown> } | null;
     expect(inputSchema?.properties).toHaveProperty("materialHits");
     expect(inputSchema?.properties).toHaveProperty("arrangeBatch");
-    // 布局代理与主 Agent 同底座（主模型）：输出上限显式给 32k；思考档按 bundle 配置。
-    // 工具调用不设硬上限——长链路「读资料 → 多轮校验/提交」不能半路被预算 abort。
+    // 布局代理与主 Agent 同底座（主模型）：输出上限显式给 128k（整页 v2 树 + 校验修复轮）；
+    // 思考档按 bundle 配置。工具调用不设硬上限——长链路「读资料 → 多轮校验/提交」
+    // 不能半路被预算 abort。
     const layouter = registry.get("slides-layouter");
     expect(layouter).not.toBeNull();
     expect(layouter!.revision.policy).toMatchObject({
-      timeoutMs: 1_000_000,
-      model: { reasoning: "low", maxTokens: 32_768 },
+      timeoutMs: 1_800_000,
+      model: { reasoning: "low", maxTokens: 131_072 },
     });
     expect(layouter!.revision.policy.maxToolCalls).toBeUndefined();
+    // 修复器同样不设工具预算；builder/styler 走 background 档，必须显式抬输出上限。
+    expect(registry.get("slides-editor")!.revision.policy).toMatchObject({ timeoutMs: 900_000 });
+    expect(registry.get("slides-editor")!.revision.policy.maxToolCalls).toBeUndefined();
+    expect(registry.get("slides-builder")!.revision.policy).toMatchObject({
+      timeoutMs: 1_800_000,
+      model: { maxTokens: 32_768 },
+    });
+    expect(registry.get("slides-styler")!.revision.policy).toMatchObject({
+      timeoutMs: 600_000,
+      model: { maxTokens: 32_768 },
+    });
   });
 });
 

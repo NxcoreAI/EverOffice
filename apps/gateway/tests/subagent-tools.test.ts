@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
 import type { SubagentInvocation } from '@nxcore/agent-contract'
+import { Ajv } from 'ajv'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { RoomContextDigest } from '../src/modules/context-rooms/room-context-digest.js'
@@ -552,6 +553,21 @@ describe('createSubagentPiTools slides_draft', () => {
     blocks: [],
     markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：Q1: 1.2 亿；Q2: 1.5 亿\n\n## 计划\n- 三线扩张\n',
   }
+
+  it('工具 schema 按 task 隔离字段，并允许无 instruction 的生成续接', () => {
+    const slidesDraft = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorReturning({}))
+      .find((tool) => tool.name === 'slides_draft')!
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(slidesDraft.parameters)
+
+    expect(validate({ task: 'draft', instruction: '做一份季度汇报', outline: ['封面'] })).toBe(true)
+    expect(validate({ task: 'style_select', styleSessionId: 'style-1', candidateIndex: 2 })).toBe(true)
+    expect(validate({ task: 'generate', draftDocumentId: 'draft-1', pageImagesDecision: 'accept' })).toBe(true)
+    expect(validate({ task: 'generate', styleSessionId: 'style-1', pageImagesDecision: 'accept' })).toBe(true)
+    expect(validate({ task: 'generate', pageImagesDecision: 'accept' })).toBe(false)
+    expect(validate({ task: 'edit', instruction: '放大标题', fileId: 'file-1' })).toBe(true)
+    expect(validate({ task: 'edit', instruction: '放大标题', rejectPageImage: 2 })).toBe(false)
+    expect(validate({ task: 'style_select', styleSessionId: 'style-1', candidateIndex: 2, instruction: '选这个' })).toBe(false)
+  })
 
   it('draft：planner 产内容草稿 → 服务端落成草稿文档即停（draft_ready），不调度落页代理', async () => {
     const orchestrator = orchestratorByAgent({
@@ -1256,15 +1272,11 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
-    const missingId = await slidesDraft.execute(
+    await expect(slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
       { task: 'generate', instruction: '生成' } as never,
       undefined,
-    )
-    expect(JSON.parse((missingId as { content: string }).content)).toMatchObject({
-      status: 'failed',
-      errorCode: 'slides_draft_document_required',
-    })
+    )).rejects.toThrow('slides_draft_document_required')
 
     const emptyDraft = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
@@ -1331,9 +1343,16 @@ describe('createSubagentPiTools slides_draft', () => {
       slidesDraft.execute(run as never, { task: 'edit', instruction: '字号调大' } as never, undefined),
     ).rejects.toThrow('ROOM_SELECTION_REQUIRED')
 
-    await slidesDraft.execute(
+    await expect(slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
       { task: 'edit', instruction: '字号调大', style: 'boardroom' } as never,
+      undefined,
+    )).rejects.toThrow('slides_draft_parameter_not_allowed:edit:style')
+    expect(orchestrator.dispatch).not.toHaveBeenCalled()
+
+    await slidesDraft.execute(
+      { ...run, roomId: 'room-1' } as never,
+      { task: 'edit', instruction: '字号调大' } as never,
       undefined,
     )
     expect(orchestrator.dispatch).toHaveBeenCalledTimes(1)
@@ -1560,7 +1579,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const { styleSessionId } = JSON.parse(first.content as string) as { styleSessionId: string }
     await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1, referenceStyle } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 1, referenceStyle } as never,
       undefined, undefined,
     )
     const settleCall = orchestrator.dispatch.mock.calls.find((call) => call[0].input?.task === 'settle')
@@ -1697,7 +1716,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const badUpdate = vi.fn()
     const bad = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 9 } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 9 } as never,
       undefined, badUpdate,
     )
     expect((JSON.parse(bad.content as string) as { status: string }).status).toBe('failed')
@@ -1713,7 +1732,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const onUpdate = vi.fn()
     const selected = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 2 } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 2 } as never,
       undefined, onUpdate,
     )
     const payload = JSON.parse(selected.content as string) as { status: string; warnings?: string[] }
@@ -1781,7 +1800,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     const selected = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 2 } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 2 } as never,
       undefined, undefined,
     )
     expect((JSON.parse(selected.content as string) as { status: string }).status).toBe('style_card_ready')
@@ -1907,12 +1926,12 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     // 走到 card_ready → generate 注入 styleParams 给 builder。
     await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1 } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 1 } as never,
       undefined, undefined,
     )
     const generated = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'generate', instruction: '生成', styleSessionId } as never,
+      { task: 'generate', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
     expect((JSON.parse(generated.content as string) as { status: string }).status).toBe('completed')
@@ -1927,6 +1946,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const plannerCalls = (orchestratorTwo.dispatch as ReturnType<typeof vi.fn>).mock.calls
       .filter((call) => (call[0] as { agentId: string }).agentId === 'slides-planner')
     expect(plannerCalls.length).toBeGreaterThan(0)
+    expect((plannerCalls[0]![0] as { input?: { instruction?: string } }).input?.instruction).toBe('商务科技风')
     const plannerInput = (plannerCalls[plannerCalls.length - 1]![0] as { input?: { deckStyle?: Record<string, unknown> } }).input
     expect(plannerInput?.deckStyle).toMatchObject({ composition: expect.any(String), darkCover: expect.any(Boolean), motif: expect.any(String) })
     expect(deps.sessions.byId(styleSessionId)?.stage).toBe('confirmed')
@@ -2010,7 +2030,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1 } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 1 } as never,
       undefined, undefined,
     )
     const generated = await slidesDraft.execute(
@@ -2129,7 +2149,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
-      { task: 'style_select', instruction: '选定', styleSessionId, candidateIndex: 1 } as never,
+      { task: 'style_select', styleSessionId, candidateIndex: 1 } as never,
       undefined, undefined,
     )
 

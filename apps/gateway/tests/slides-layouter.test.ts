@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSlidesLayouterAgentTools, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
+import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
 import { registerDeckLayoutContext, dropDeckLayoutContext } from "../src/modules/slides-layout/deck-contract-context.js";
 import { contractFromStyleParams } from "../src/modules/slides-layout/tree/layout-contract.js";
+import type { SemanticPage } from "../src/modules/subagents/slides-semantic-contract.js";
 
 const AGENT_DIR = join(import.meta.dirname, "../../../agents/slides-layouter");
 
@@ -93,7 +94,12 @@ describe("slides-layouter agent 包完整性", () => {
     const input = JSON.parse(readFileSync(join(AGENT_DIR, "schemas/input.schema.json"), "utf8"));
     const output = JSON.parse(readFileSync(join(AGENT_DIR, "schemas/output.schema.json"), "utf8"));
     expect(input.required).toContain("deckToken");
-    expect(output.required).toEqual(["status", "tree"]);
+    // blocked 分支是无解页的出口（内容契约连续失败后由 validator 引导到这里），必须合法且不带 tree。
+    const branches = output.oneOf as Array<{ properties: { status: { const: string } }; required: string[] }>;
+    expect(output.required).toEqual(["status"]);
+    expect(branches.find(b => b.properties.status.const === "done")!.required).toContain("tree");
+    expect(branches.find(b => b.properties.status.const === "blocked")!.required)
+      .toEqual(expect.arrayContaining(["reason", "attempts", "requestedAction"]));
   });
 
   it("SKILL.md 带 frontmatter（缺 --- 会被注册器整包拒绝）", () => {
@@ -128,5 +134,74 @@ describe("技能语法示例与网关归一一致", () => {
     dropDeckLayoutContext(token);
     expect(outcome.ok).toBe(false);
     expect(outcome.defects[0]!.detail).toMatch(/v1 树/);
+  });
+
+  it("必留文本里的「→」不再被误判 emoji（2026-10-24 落页死锁）", () => {
+    const token = "arrow-token-005";
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const outcome = validateLayoutTree(token, {
+      version: 2,
+      role: "content",
+      composition: "swiss",
+      nodes: [{ type: "text", token: "h1", text: "Road／Gravel → XC／MTB／Folding", slot: { col: [1, 12], row: [1, 2] } }],
+    });
+    dropDeckLayoutContext(token);
+    expect(outcome.defects.filter((d) => d.type === "emoji")).toEqual([]);
+  });
+});
+
+describe("slides-layouter 提交期内容契约", () => {
+  const token = "validator-notes-token-006";
+  const content: SemanticPage = {
+    id: "page-1",
+    sourceRefs: ["source-1"],
+    role: "content",
+    message: "讲稿测试页",
+    blocks: [{
+      id: "b1", sourceRefs: ["source-1"], priority: "primary", mustShow: true,
+      type: "text", text: "讲稿测试页",
+    }],
+    relations: [],
+    focusRefs: ["source-1"],
+    constraints: { verbatimRefs: [] },
+    notes: "这是讲稿原文。",
+    omissions: [],
+  };
+  const pageTree = () => ({
+    version: 2 as const,
+    role: "content",
+    composition: "swiss",
+    nodes: [{ type: "text", token: "h1", text: "讲稿测试页", slot: { col: [1, 8], row: [1, 2] } }],
+  });
+  const doneResult = () => ({
+    status: "done",
+    tree: pageTree() as Record<string, unknown>,
+    notes: "交付完成",
+    designIntent: "单标题页",
+    bindings: [{ blockId: "b1", paths: ["nodes/0"] }],
+  });
+
+  it("讲稿以 content.notes 为准：模型改写/追加会被纠正而不是永久拒收", () => {
+    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
+    const validator = createSlidesTreeResultValidator();
+    const submitted = doneResult();
+    submitted.tree.notes = "这是讲稿原文，标注为改写版。";
+    expect(() => validator({ content, deckToken: token }, submitted)).not.toThrow();
+    expect(submitted.tree.notes).toBe(content.notes);
+    dropDeckLayoutContext(token);
+  });
+
+  it("连续 3 次内容契约未通过后收口为 blocked，不再无限重交", () => {
+    const validator = createSlidesTreeResultValidator();
+    const invocationInput = { content, deckToken: token };
+    const bad = () => {
+      const submitted = doneResult();
+      // message 未展示：绑定路径指向的节点文本与页面 message 不符
+      submitted.tree = { ...pageTree(), nodes: [{ type: "text", token: "h1", text: "别的标题", slot: { col: [1, 8], row: [1, 2] } }] } as unknown as Record<string, unknown>;
+      return submitted;
+    };
+    expect(() => validator(invocationInput, bad())).toThrow(/subagent_result_content_invalid/);
+    expect(() => validator(invocationInput, bad())).toThrow(/subagent_result_content_invalid/);
+    expect(() => validator(invocationInput, bad())).toThrow(/subagent_result_content_unrecoverable.*blocked/s);
   });
 });

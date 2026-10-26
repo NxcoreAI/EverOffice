@@ -31,7 +31,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
-            "description": "Concise, accurate page title. Prefer an evidence-backed conclusion for argument pages; use actual names for covers, contents, and sections. Preserve user-specified wording."
+            "description": "Display-ready page headline. Prefer an evidence-backed conclusion for argument pages; use actual names for covers, contents, and sections. Aim for 8-20 Chinese characters or equivalent reading length; preserve meaning, necessary qualifiers and user-specified wording. In arrange, use the same headline as content.message and the title block; display it once."
           },
           "role": {
             "type": "string",
@@ -45,7 +45,7 @@
               "standard",
               "dense"
             ],
-            "description": "arrange only. Content-driven density: sparse = a few core ideas; standard = regular argument; dense = structured data. Choose for meaning and narrative rhythm, without forced alternation."
+            "description": "arrange only. Content-driven density: sparse = a few core ideas; standard = regular argument; dense = structured data. High information density comes from distinct facts and clear relationships. Keep prose concise at every density; use structured blocks for full datasets."
           },
           "points": {
             "type": "array",
@@ -54,12 +54,12 @@
               "type": "string",
               "maxLength": 200
             },
-            "description": "Self-contained content points / evidence for this page; the builder sees no retrieval output, so every point must stand alone."
+            "description": "Display-ready short evidence or action statements, each adding distinct information beyond the headline. For regular argument pages, aim for 2-4 points of 12-28 Chinese characters each (usually no more than 40), or equivalent reading length; fewer when sufficient. Preserve subjects, conditions and uncertainty. These become mandatory on-screen sources after confirmation: put background explanation in notes and avoid repeating data. These targets are writing guidance, not truncation limits."
           },
           "data": {
             "type": "string",
             "maxLength": 2000,
-            "description": "draft only. Real data in readable sentences, preserving values, units, dates, scope, and source context. In arrange, represent confirmed data with structured content blocks."
+            "description": "draft only. Real data as compact metric-value entries or tables, preserving values, units, dates, scope, uncertainty and source context. These become mandatory on-screen sources after confirmation. Avoid repeating the same data in points. In arrange, use structured content blocks."
           },
           "materialHints": {
             "type": "string",
@@ -101,7 +101,7 @@
           "notes": {
             "type": "string",
             "maxLength": 300,
-            "description": "Directional emphasis/layout suggestions for the builder (no pixel-level commands)."
+            "description": "Background explanation, derivation, editorial gaps or directional emphasis/layout suggestions, separated from display-ready copy (no pixel-level commands). In draft, notes are optional sources for arrange; they do not replace required on-screen facts or necessary qualifiers."
           },
           "message": {
             "type": "string",

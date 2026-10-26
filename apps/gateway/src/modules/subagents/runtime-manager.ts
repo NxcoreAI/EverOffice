@@ -103,7 +103,9 @@ export class SubagentResultCollector {
         const message = error instanceof Error ? error.message : String(error);
         if (!message.startsWith("subagent_result_")) return null;
         const recoverable = !message.startsWith("subagent_result_invocation_mismatch")
-          && !message.startsWith("subagent_result_already_submitted");
+          && !message.startsWith("subagent_result_already_submitted")
+          // 内容契约连续失败后的收口：不再引导重交 done，模型应改走 blocked 分支。
+          && !message.startsWith("subagent_result_content_unrecoverable");
         return {
           category: message.split(":", 1)[0]!,
           recoverable,

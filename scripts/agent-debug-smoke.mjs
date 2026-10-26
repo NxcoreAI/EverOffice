@@ -310,6 +310,47 @@ async function main() {
     assert.ok(finalSnapshot.runs.every((run) => typeof run.eventCount === 'number'))
   })
 
+  // ── 历史归档：概况 / origin / archived 三态 / sessionTitle 补全 ───────────
+  check('snapshot 带 archive 概况且本次进程 run 标 origin=live', () => {
+    assert.ok(finalSnapshot.archive && typeof finalSnapshot.archive === 'object', '缺少 archive 字段')
+    assert.equal(typeof finalSnapshot.archive.enabled, 'boolean')
+    assert.ok(finalSnapshot.archive.retentionDays >= 0)
+    assert.ok(finalSnapshot.archive.runCount >= 0)
+    assert.ok(finalSnapshot.archive.bytes >= 0)
+    if (finalSnapshot.archive.enabled) {
+      assert.ok(finalSnapshot.archive.retentionDays >= 1)
+    }
+    assert.equal(finalA.origin, 'live')
+    assert.equal(finalB.origin, 'live')
+    assert.ok('sessionTitle' in finalA, 'run 缺少 sessionTitle 字段')
+    assert.ok(finalA.sessionTitle === null || typeof finalA.sessionTitle === 'string')
+  })
+  if (finalSnapshot.archive?.enabled) {
+    await checkAsync('snapshot?archived=exclude 只返回本次进程 run（origin=live）', async () => {
+      const exclude = await request('/v1/agent-debug/snapshot?runs=50&archived=exclude')
+      assert.equal(exclude.status, 200)
+      assert.ok(exclude.body.runs.every((run) => run.origin === 'live'))
+      assert.ok(exclude.body.runs.some((run) => run.runId === runA))
+    })
+    await checkAsync('snapshot?archived=only 只返回归档历史 run（origin=archive）', async () => {
+      const only = await request('/v1/agent-debug/snapshot?runs=300&archived=only')
+      assert.equal(only.status, 200)
+      assert.ok(only.body.runs.every((run) => run.origin === 'archive'))
+      // 注意：本次进程已落盘的 run 会同时出现在归档索引里（only 视图以 archive 来源代表它），
+      // 因此这里只断言来源，不断言「不含 runA」——include 视图的 live 优先级由下一条覆盖。
+    })
+    await checkAsync('snapshot?archived=include 混合视图仍带 archive 字段与 live run', async () => {
+      const mixed = await request('/v1/agent-debug/snapshot?runs=50')
+      assert.equal(mixed.status, 200)
+      assert.ok(mixed.body.runs.some((run) => run.runId === runA && run.origin === 'live'))
+      assert.equal(mixed.body.archive.enabled, true)
+    })
+  }
+  await checkAsync('snapshot archived 非法取值 → 400', async () => {
+    const invalid = await request('/v1/agent-debug/snapshot?archived=bogus')
+    assert.equal(invalid.status, 400)
+  })
+
   console.log(`\n== 结果：${failures === 0 ? '全部 PASS' : `${failures} 项 FAIL`} ==`)
   if (failures > 0) process.exitCode = 1
 }

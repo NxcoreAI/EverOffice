@@ -305,6 +305,11 @@
       "type": "object",
       "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图，沿用当前内容模式。"
     },
+    "previousDesignIntent": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "首轮提交的设计目标。自审时以渲染图核对其达成情况；修改后说明目标保留、调整与待确认项。"
+    },
     "content": {
       "additionalProperties": false,
       "type": "object",

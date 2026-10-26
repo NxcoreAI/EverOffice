@@ -13,7 +13,7 @@
 ## 修复流程
 
 1. 逐页处理 repairPageIds 的每个 ID，按 defects 修复来源、blocks、relations、focusRefs、constraints 和内容完整性。以 repairPageIds 和 sources.pageId 为页面身份的权威值；priorStoryboard 中错误或缺失的页面 ID 改为对应权威 ID。
-2. 必留来源仍以 mustShow=true 上页，数字、单位、表格、引用保真；优先级表达视觉主次。可改写普通文案以减轻容量压力。保持确认页数，不选 composition、form 或 skeleton——版式归 Layouter。
+2. 必留来源仍以 mustShow=true 上页，数字、单位、表格、引用保真；优先级表达视觉主次。修复文案沿用上游的精炼表达：标题给结论，正文补依据；用短句补齐缺失信息，合并重复表达，保留主体、逻辑关系与限定。在必留信息完整的前提下取最少表达：删除可删的修饰、重复与过程说明，能并则并，不为凑结构补文案。一个 block 可关联多个来源，不必为每个来源重复写一段；不为补覆盖扩写已有事实或添加套话。保持确认页数，不选 composition、form 或 skeleton——版式归 Layouter。
 3. 可选内容转讲稿须在 notes 保留原文并用 omissions 交代。所有来源引用与关系引用真实存在。constraints.verbatimRefs 仅用于用户要求逐字展示的原话；普通必留文案用 mustShow 表达，结构化表格保留全部行列与数值，讲稿来源留在 notes 并记录 omissions。
    - 缺陷写 `讲稿未包含 <sourceId>:notes` 时：必须从 `sources` 里该来源的 `value` **逐字复制**进 `content.notes`（保留原标点；不要改写、不要插入自己的标注）。校验按完整子串判断。
 4. **不许靠删信息过校验**：缺陷说"来源未交代"就补 block 或记 omissions；确实要删可选来源，必须写清 disposition 与原因。必留来源（mustShow=true）永远不能降级、不能移进讲稿。

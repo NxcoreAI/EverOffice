@@ -15,12 +15,13 @@
     "notes": {
       "type": "string",
       "maxLength": 500,
-      "description": "交付状态或限制，包括无需修改、强制收口与未解决缺陷；演讲备注保存在 tree.notes。"
+      "description": "交付状态或限制；自审时记录图上关键观察、修改或保留理由、未解决问题与修改后待确认项。校验状态简述；演讲备注保存在 tree.notes。"
     },
     "designIntent": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 1000
+      "maxLength": 1000,
+      "description": "按目标／依据／取舍说明焦点、阅读路径、关系线索与空间分配。首轮写预期效果；自审对照 previousDesignIntent 区分图片已确认、未达成与修改后待确认的效果。依据须为可指认的视觉事实，取舍如实说明限制。"
     },
     "bindings": {
       "type": "array",

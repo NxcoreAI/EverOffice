@@ -6,17 +6,24 @@ export interface GenerationBudgetSnapshot {
   invocations: number;
 }
 
+/**
+ * 生成预算上限。字段缺省或为 `Infinity` 表示该维度不设上限：
+ * 冒烟测试期按真实用量跑完整册，不再出现「本轮生成预算耗尽」的中断。
+ * 只有显式传入有限值时才在该维度限流（单元测试与需要硬边界的宿主用）。
+ */
 export interface GenerationBudgetLimits {
-  maxDurationMs: number;
-  maxTokens: number;
-  maxInvocations: number;
+  maxDurationMs?: number;
+  maxTokens?: number;
+  maxInvocations?: number;
 }
 
-export const DEFAULT_GENERATION_BUDGET: GenerationBudgetLimits = {
-  maxDurationMs: 30 * 60_000,
-  maxTokens: 2_000_000,
-  maxInvocations: 128,
-};
+/** 默认不设预算：整条生成链路只受父级取消与各子代理自身的超时约束。 */
+export const DEFAULT_GENERATION_BUDGET: GenerationBudgetLimits = {};
+
+/** 只有有限正数才构成上限；`undefined` / `Infinity` 一律视为不设限。 */
+function isLimited(limit: number | undefined): limit is number {
+  return limit !== undefined && Number.isFinite(limit);
+}
 
 export class GenerationBudgetError extends Error {
   constructor(readonly code: string) {
@@ -41,6 +48,7 @@ export class SlidesGenerationBudget {
     private readonly onChange?: (snapshot: GenerationBudgetSnapshot) => void,
   ) {
     for (const value of Object.values(limits)) {
+      if (value === undefined || value === Number.POSITIVE_INFINITY) continue;
       if (!Number.isFinite(value) || value <= 0) throw new Error("slides_generation_budget_invalid");
     }
     this.signal = parentSignal ? AbortSignal.any([parentSignal, this.controller.signal]) : this.controller.signal;
@@ -65,7 +73,8 @@ export class SlidesGenerationBudget {
   claim(invocationId: string): void {
     this.check();
     if (this.claimed.has(invocationId)) return;
-    if (this.snapshot().invocations >= this.limits.maxInvocations) {
+    const maxInvocations = this.limits.maxInvocations;
+    if (isLimited(maxInvocations) && this.snapshot().invocations >= maxInvocations) {
       this.controller.abort(new GenerationBudgetError("slides_generation_invocation_budget_exceeded"));
       this.signal.throwIfAborted();
     }
@@ -80,22 +89,28 @@ export class SlidesGenerationBudget {
       return sum + (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0);
     }, 0);
     this.usageByInvocation.set(invocationId, Math.max(this.usageByInvocation.get(invocationId) ?? 0, total));
-    if (this.snapshot().tokens >= this.limits.maxTokens) {
+    const maxTokens = this.limits.maxTokens;
+    if (isLimited(maxTokens) && this.snapshot().tokens >= maxTokens) {
       this.controller.abort(new GenerationBudgetError("slides_generation_token_budget_exceeded"));
     }
     this.onChange?.(this.snapshot());
   }
 
+  /** 剩余活动时长；未设上限时返回 `Infinity`（调用方不要把它直接交给 setTimeout）。 */
   remainingMs(): number {
     this.check();
-    return Math.max(1, this.limits.maxDurationMs - this.snapshot().elapsedMs);
+    const maxDurationMs = this.limits.maxDurationMs;
+    if (!isLimited(maxDurationMs)) return Number.POSITIVE_INFINITY;
+    return Math.max(1, maxDurationMs - this.snapshot().elapsedMs);
   }
 
   check(): void {
-    if (this.snapshot().tokens >= this.limits.maxTokens) {
+    const maxTokens = this.limits.maxTokens;
+    if (isLimited(maxTokens) && this.snapshot().tokens >= maxTokens) {
       this.controller.abort(new GenerationBudgetError("slides_generation_token_budget_exceeded"));
     }
-    if (this.snapshot().elapsedMs >= this.limits.maxDurationMs) {
+    const maxDurationMs = this.limits.maxDurationMs;
+    if (isLimited(maxDurationMs) && this.snapshot().elapsedMs >= maxDurationMs) {
       this.controller.abort(new GenerationBudgetError("slides_generation_time_budget_exceeded"));
     }
     this.signal.throwIfAborted();
@@ -107,9 +122,11 @@ export class SlidesGenerationBudget {
 
   private armDeadline(): void {
     clearTimeout(this.timer);
+    const maxDurationMs = this.limits.maxDurationMs;
+    if (!isLimited(maxDurationMs)) return;
     this.timer = setTimeout(() => {
       this.controller.abort(new GenerationBudgetError("slides_generation_time_budget_exceeded"));
-    }, Math.max(0, this.limits.maxDurationMs - this.snapshot().elapsedMs));
+    }, Math.max(0, maxDurationMs - this.snapshot().elapsedMs));
     this.timer.unref();
   }
 }

@@ -1,5 +1,7 @@
 import type {
   AgentDebugAgent,
+  AgentDebugEvent,
+  AgentDebugRun,
   AgentDebugRunEvents,
   AgentDebugSnapshot,
   LocalAgentInvocationTarget,
@@ -12,11 +14,15 @@ import type {
   StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { auth } from "../src/server/auth.js";
 import type { GatewayConfig, SubagentFrameworkConfig } from "../src/config.js";
 import { AgentResolver } from "../src/modules/agent/resolver.js";
+import { AgentDebugArchive } from "../src/modules/agent-debug/archive.js";
 import {
   AgentDebugTraceStore,
   MAX_EVENTS_PER_RUN,
@@ -29,6 +35,7 @@ import {
   debugAgentsFromResolver,
   debugAgentsFromStatusSnapshot,
   mergeDebugAgents,
+  type AgentDebugRoutesOptions,
 } from "../src/modules/agent-debug/routes.js";
 import { LocalAgentRuntimeRegistry } from "../src/modules/local-agents/runtime-registry.js";
 import type { LoadedSubagentRevision } from "../src/modules/subagents/types.js";
@@ -44,15 +51,23 @@ const AUTH_TOKEN = "agent-debug-test-token-0123456789";
 const DESCRIPTOR = { agentId: "main", agentName: "EverRoom", agentKind: "builtin" as const, description: "主 Agent" };
 
 const stores: AgentDebugTraceStore[] = [];
+const tempDirs: string[] = [];
 
-afterEach(() => {
-  for (const store of stores.splice(0)) store.dispose();
+afterEach(async () => {
+  for (const store of stores.splice(0)) await store.dispose();
+  for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-function createStore(): AgentDebugTraceStore {
-  const store = new AgentDebugTraceStore();
+function createStore(archive?: AgentDebugArchive): AgentDebugTraceStore {
+  const store = new AgentDebugTraceStore(archive);
   stores.push(store);
   return store;
+}
+
+async function tempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "agent-debug-routes-"));
+  tempDirs.push(dir);
+  return dir;
 }
 
 function event(type: RuntimeEvent["type"], payload: unknown = {}): RuntimeEvent {
@@ -510,11 +525,51 @@ describe("agent debug routes", () => {
     }];
   }
 
-  async function buildApp(store: AgentDebugTraceStore) {
+  async function buildApp(store: AgentDebugTraceStore, options?: AgentDebugRoutesOptions) {
     const app = Fastify();
     await app.register(auth, { token: AUTH_TOKEN });
-    await app.register(agentDebugRoutes(store, catalog));
+    await app.register(agentDebugRoutes(store, catalog, options));
     return app;
+  }
+
+  function archivedRun(runId: string, overrides: Partial<AgentDebugRun> = {}): AgentDebugRun {
+    return {
+      runId,
+      agentId: "main",
+      agentName: "EverRoom",
+      agentKind: "builtin",
+      runtimeId: "pi:main",
+      sessionId: "session-history",
+      pageLabel: "Home",
+      task: "历史任务",
+      status: "completed",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:00:05.000Z",
+      eventCount: 3,
+      droppedEvents: 0,
+      toolCallCount: 0,
+      reasoningChars: 0,
+      lastEventAt: "2026-01-01T00:00:05.000Z",
+      errorMessage: null,
+      ...overrides,
+    };
+  }
+
+  function archivedEvents(): AgentDebugEvent[] {
+    return [
+      { seq: 1, type: "run.started", occurredAt: "2026-01-01T00:00:00.000Z", payload: {} },
+      { seq: 2, type: "message.delta", occurredAt: "2026-01-01T00:00:01.000Z", payload: { delta: "hi" } },
+      { seq: 3, type: "run.completed", occurredAt: "2026-01-01T00:00:05.000Z", payload: {} },
+    ];
+  }
+
+  async function seededArchive(): Promise<AgentDebugArchive> {
+    const dir = await tempDir();
+    // 固定 now 到归档时间之后一天，避免历史 run 被默认 7 天保留策略裁剪。
+    const archive = new AgentDebugArchive({ dir, now: () => Date.parse("2026-01-02T00:00:00.000Z") });
+    await archive.archiveRun(archivedRun("run-history"), archivedEvents());
+    await archive.flush();
+    return archive;
   }
 
   function headers(): Record<string, string> {
@@ -595,6 +650,132 @@ describe("agent debug routes", () => {
       headers: headers(),
     });
     expect(missing.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("supports archived=include|only|exclude with origin and archive info", async () => {
+    const archive = await seededArchive();
+    const store = createStore(archive);
+    begin(store, "run-live");
+    const app = await buildApp(store);
+
+    const include = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/snapshot",
+      headers: headers(),
+    })).json() as AgentDebugSnapshot;
+    expect(include.runs.map(({ runId, origin }) => ({ runId, origin }))).toEqual([
+      { runId: "run-live", origin: "live" },
+      { runId: "run-history", origin: "archive" },
+    ]);
+    expect(include.archive).toEqual(expect.objectContaining({
+      enabled: true,
+      retentionDays: 7,
+      runCount: 1,
+      oldestStartedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    expect(include.archive?.bytes).toBeGreaterThan(0);
+
+    const only = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/snapshot?archived=only",
+      headers: headers(),
+    })).json() as AgentDebugSnapshot;
+    expect(only.runs.map(({ runId, origin }) => ({ runId, origin }))).toEqual([
+      { runId: "run-history", origin: "archive" },
+    ]);
+
+    const exclude = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/snapshot?archived=exclude",
+      headers: headers(),
+    })).json() as AgentDebugSnapshot;
+    expect(exclude.runs.map(({ runId, origin }) => ({ runId, origin }))).toEqual([
+      { runId: "run-live", origin: "live" },
+    ]);
+
+    const invalid = await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/snapshot?archived=bogus",
+      headers: headers(),
+    });
+    expect(invalid.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("serves archived run events with origin archive and keeps 404 for unknown runs", async () => {
+    const archive = await seededArchive();
+    const store = createStore(archive);
+    const app = await buildApp(store);
+
+    const full = await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/runs/run-history/events",
+      headers: headers(),
+    });
+    expect(full.statusCode).toBe(200);
+    const body = full.json() as AgentDebugRunEvents;
+    expect(body.run).toMatchObject({ runId: "run-history", origin: "archive", status: "completed" });
+    expect(body.events.map(({ seq }) => seq)).toEqual([1, 2, 3]);
+    expect(body.latestSeq).toBe(3);
+
+    const incremental = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/runs/run-history/events?afterSeq=1&limit=1",
+      headers: headers(),
+    })).json() as AgentDebugRunEvents;
+    expect(incremental.events.map(({ seq }) => seq)).toEqual([2]);
+    expect(incremental.latestSeq).toBe(3);
+
+    const missing = await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/runs/missing/events",
+      headers: headers(),
+    });
+    expect(missing.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("batch fills sessionTitle for live and archived runs in one lookup", async () => {
+    const archive = await seededArchive();
+    const store = createStore(archive);
+    begin(store, "run-live", { sessionId: "session-live" });
+    begin(store, "run-subagent", {
+      sessionId: null,
+      agentId: "slides-planner",
+      agentName: "Slides Planner",
+      agentKind: "developer",
+    });
+    const lookups: string[][] = [];
+    const app = await buildApp(store, {
+      sessionTitles: (sessionIds) => {
+        lookups.push([...sessionIds]);
+        return new Map([
+          ["session-live", "本次对话"],
+          ["session-history", "历史对话"],
+        ]);
+      },
+    });
+
+    const snapshot = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/snapshot",
+      headers: headers(),
+    })).json() as AgentDebugSnapshot;
+    expect(lookups).toHaveLength(1);
+    expect(new Set(lookups[0])).toEqual(new Set(["session-live", "session-history"]));
+    const byRunId = new Map(snapshot.runs.map((run) => [run.runId, run]));
+    expect(byRunId.get("run-live")?.sessionTitle).toBe("本次对话");
+    expect(byRunId.get("run-history")?.sessionTitle).toBe("历史对话");
+    expect(byRunId.get("run-subagent")?.sessionTitle).toBeNull();
+
+    // events 路由同样补全会话标题（历史 run 来自归档）。
+    const historyEvents = (await app.inject({
+      method: "GET",
+      url: "/v1/agent-debug/runs/run-history/events",
+      headers: headers(),
+    })).json() as AgentDebugRunEvents;
+    expect(historyEvents.run.sessionTitle).toBe("历史对话");
     await app.close();
   });
 

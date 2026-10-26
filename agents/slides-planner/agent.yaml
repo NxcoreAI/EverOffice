@@ -18,12 +18,11 @@ policy:
   allowedCallers: [primary-agent]
   # 分批编排时一册 deck 最多 2 批在飞；留到 4 让两册并发也排队而不被硬拒。
   maxConcurrency: 4
-  # 方案阶段预算：draft/arrange 文档读取 + 大纲撰写 + 配图预热，不落页。
-  # 2026-10-22：27 页 deck 的 8 次 arrange 全败（5×420s 超时、2×40 次工具上限），
-  # 成功样本 p95 已 343s、max 412s——原预算是按 19 页 deck 定的，页数一多就触顶。
-  # 素材检索已前移到网关（输入 materialHits），这里的余量留给整册方案的生成。
-  maxToolCalls: 80
-  timeoutSeconds: 900
+  # 不设工具调用上限：planner 是「读资料 → 成稿 → 提交」的长链路，硬预算中途 abort
+  # 会把已收敛的方案一起丢掉（历史 40/80 次上限都打穿过）；run 只受 timeoutSeconds
+  # 与输出预算约束。
+  # 冒烟测试期放宽单次墙钟：整册 draft 与 ≤8 页单批 arrange 都吃这一档。
+  timeoutSeconds: 1800
   model:
     # planner 是「整册长文一次成稿」：思考档固定关掉，输出上限显式给足。
     # 27 页实测 submit 参数约 7k token、32 页按 1~2 万 token 估算，32768 足够覆盖整册；

@@ -1,8 +1,9 @@
 # Agent 调试页（独立浏览器调试台）
 
-> 状态：已交付并独立验收（2026-10-23）
-> 日期：2026-10-23
-> 范围：Gateway runtime 埋点 + 独立浏览器调试页（不进入产品导航、不落库）
+> 状态：已交付并独立验收（2026-10-23）；2026-10-24 增补「终态 run 磁盘归档 / 历史找回」
+> 日期：2026-10-23（历史归档 2026-10-24）
+> 范围：Gateway runtime 埋点 + 独立浏览器调试页（不进入产品导航、不落数据库）
+> 设计细案：`docs/agent-debug-persistence.zh-CN.md`
 
 ## 1. 背景与目标
 
@@ -12,12 +13,13 @@ EverRoom 现在同时运行多类 Agent：内置 Agent（`main`/`knowledge`/`web
 
 1. 看到所有 Agent 的实时工作进度（谁在跑、跑到哪一步、成功/失败）；
 2. 看每一次 run 的**工具调用**（参数、结果、耗时、错误）和**思考过程**（`reasoning.delta`）；
-3. 随时切换跟踪的 Agent，查看不同 Agent 的执行流与最终输出。
+3. 随时切换跟踪的 Agent，查看不同 Agent 的执行流与最终输出；
+4. **桌面应用重启后仍能找回历史 run**：终态 run 落盘归档，按「会话 / 时间 / 来源（本次 or 历史）」区分并回放（2026-10-24 新增）。
 
 非目标：
 
 - 不进入产品 UI 导航，不随 Desktop 打包发布；
-- 不做持久化归档，不新增数据库表；
+- 不新增数据库表 / 迁移（持久化用 `dataDir/agent-debug/` 下的文件型归档）；
 - 不改变任何 Agent 的业务行为与权限；
 - 不做远程/多人共享（只绑 `127.0.0.1`）。
 
@@ -35,6 +37,11 @@ flowchart LR
  本机 CLI Agent"] --> T
     T --> API["/v1/agent-debug/*
  snapshot / runs/:id/events"]
+    T -->|终态 run
+ fire-and-forget| A["AgentDebugArchive
+ dataDir/agent-debug/main
+ index.json + runs/*.ndjson"]
+    A --> API
   end
 
   subgraph Page["独立调试页（Vite dev server）"]
@@ -56,13 +63,22 @@ flowchart LR
 
 > developer 类型 Agent 在 `AgentResolver` 中也注册了定义（用于状态页），但其 runtime 来自 `SubagentRuntimeManager.acquire()`。为避免同一 run 被记录两次，`AgentResolver` 对 `kind === "developer"` **不再包 trace**。
 
-主网关与补全专用网关（`cursor-completion-server`）各自创建自己的 store 与路由；调试页通过 manifest 自动发现多个网关来源。KnowledgeService 内部自建的 `AgentResolver` 也注入了同一个 store（`createKnowledgeAgentResolver(config.dataDir, config.llm, agentDebugStore)`）。
+主网关与补全专用网关（`cursor-completion-server`）各自创建自己的 store、归档目录与路由；调试页通过 manifest 自动发现多个网关来源。KnowledgeService 内部自建的 `AgentResolver` 也注入了同一个 store（`createKnowledgeAgentResolver(config.dataDir, config.llm, agentDebugStore)`）。
+
+持久化取舍：**归档在 runtime 边界之外旁路完成**，不进入业务表。每个 Gateway 进程写自己的 `<dataDir>/agent-debug/<source>/`（`main` / `cursor-completion`），索引互不覆盖；archive 只接收「终态 run」，写入是 fire-and-forget 串行队列，失败只 warn，不影响 Agent 行为。
 
 ## 3. 数据面
 
 ### 3.1 契约类型
 
-新增在 `@nxcore/agent-contract`：`AgentDebugAgent`、`AgentDebugRun`、`AgentDebugEvent`、`AgentDebugSnapshot`、`AgentDebugRunEvents`。
+定义在 `@nxcore/agent-contract`：`AgentDebugAgent`、`AgentDebugRun`、`AgentDebugEvent`、`AgentDebugSnapshot`、`AgentDebugRunEvents`，以及 2026-10-24 新增的 `AgentDebugRunOrigin`（`live` / `archive`）、`AgentDebugArchiveInfo`。
+
+`AgentDebugRun` 新增两个查询时补全字段（均为可选，兼容旧 Gateway）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `origin?: "live" \| "archive"` | 数据来源；缺省按 `live` 处理。`archive` = 来自磁盘归档的历史 run |
+| `sessionTitle?: string \| null` | 会话标题（`agent_sessions.title`），用于按对话区分/找回；子 Agent / 会话已删除为 null。**不落归档**，每次查询时补全 |
 
 ### 3.2 AgentDebugTraceStore（内存环形缓冲）
 
@@ -82,7 +98,10 @@ flowchart LR
 - 相邻同类 `reasoning.delta` / `message.delta` 合并为一条累计事件（**seq 不变**，payload 分片保存、读取时物化），避免流式 token 把缓冲冲爆。`reasoningChars` 只累计 `reasoning.delta` 字符数。
 - 增量接口在返回 `seq > afterSeq` 的事件之外，还会额外带回**最后一条可合并的尾部事件**（其 seq 可能 ≤ `afterSeq`，内容仍可能在增长）；调试页必须按 seq **upsert**（替换同 seq 事件）而不是只追加。
 - run 元数据在 `beginRun` 时确定，`finishRun` 补齐终态；终态只允许写一次（幂等）。若同一 `runId` 再次 `beginRun`（resume 复用 runId），保留已累计事件并把状态拉回 `running`、清空终态字段，保证下一次终态仍可回写。
-- `dispose()` 清理缓冲。
+- run 到达终态后 fire-and-forget 落盘归档（见 §3.5）；live run 在 snapshot 里带 `origin: "live"`，归档历史 run 带 `origin: "archive"`。
+- `listRuns(limit, archived)`：`include`（默认）合并内存 run 与归档历史（同 runId 以内存为准、不重复）；`only` 只返回历史；`exclude` 只返回本次进程。排序仍是「运行中永远最前，其余 `startedAt` 倒序」。
+- `getRun` / `listEvents` 在内存没有时回落到归档（历史 run 终态静态、无尾部 delta 重放）。
+- `dispose()` 改为 async：仍处于 `running` 的 run 先按 `interrupted` 收尾并归档，再 `await archive.flush()` 等写盘队列排空，最后清空缓冲。Gateway 的 `onClose` 会 await 它。
 
 ### 3.3 埋点语义
 
@@ -100,15 +119,45 @@ trace 包装 `AgentRuntime.start()` / `resume()`（`apps/gateway/src/modules/age
 
 | 方法 | 路径 | 参数 | 说明 |
 | --- | --- | --- | --- |
-| GET | `/v1/agent-debug/snapshot` | `runs`：整数 1–300，默认 150 | Agent 目录 + 最近 run 摘要 + `droppedRuns` |
-| GET | `/v1/agent-debug/runs/:runId/events` | `afterSeq`：整数 ≥0，默认 0；`limit`：整数 1–5000，默认 1000 | 单个 run 的事件增量；返回 `{ run, events, latestSeq }` |
+| GET | `/v1/agent-debug/snapshot` | `runs`：整数 1–300，默认 150；`archived`：`include` / `only` / `exclude`，默认 `include` | Agent 目录 + 最近 run 摘要 + `droppedRuns` + `archive` 概况 |
+| GET | `/v1/agent-debug/runs/:runId/events` | `afterSeq`：整数 ≥0，默认 0；`limit`：整数 1–5000，默认 1000 | 单个 run 的事件增量（内存 run 或归档历史 run）；返回 `{ run, events, latestSeq }` |
 
 响应要点：
 
-- `snapshot` = `{ generatedAt, agents, runs, droppedRuns }`；`agents` 是 `AgentDebugAgent[]`（`id/name/description/kind/state/activeRunCount/lastRunAt`），`runs` 运行中优先、其余按 `startedAt` 倒序，`runs[i].eventCount` 是**缓冲内保留**的事件数。
-- `events` 按 seq 升序；`latestSeq` 是缓冲内当前最大 seq（下一次 `afterSeq` 的上界参考）；页被 `limit` 截断时客户端应以**本页最后一条事件的 seq** 推进游标，而不是直接跳到 `latestSeq`。
+- `snapshot` = `{ generatedAt, agents, runs, droppedRuns, archive }`；`agents` 是 `AgentDebugAgent[]`（`id/name/description/kind/state/activeRunCount/lastRunAt`），`runs` 运行中优先、其余按 `startedAt` 倒序，`runs[i].eventCount` 是**缓冲/归档内保留**的事件数；`runs[i].origin` 区分本次与历史；`runs[i].sessionTitle` 为会话标题（查不到 null）。
+- `snapshot.archive` = `{ enabled, retentionDays, runCount, bytes, oldestStartedAt }`；归档关闭时 `enabled=false`。
+- `events` 按 seq 升序；`latestSeq` 是当前最大 seq（下一次 `afterSeq` 的上界参考）；页被 `limit` 截断时客户端应以**本页最后一条事件的 seq** 推进游标，而不是直接跳到 `latestSeq`。归档 run 的历史事件一次性读取（终态静态）。
 - `snapshot.agents` 来源：主网关用 `AgentStatusService.snapshot()`（内置 + developer），再合并缓冲里观测到的本机 Agent；补全网关用 resolver 定义 + activity 推导。
-- 边界：无/错误 token → `401`；未知（或已被缓冲淘汰的）run → `404`；`runs>300`、`limit>5000` 等参数越界 → `400`。
+- 边界：无/错误 token → `401`；未知（或已被缓冲淘汰且不在归档里的）run → `404`；`runs>300`、`limit>5000`、`archived` 非法取值 → `400`。
+
+### 3.5 磁盘归档（历史找回，2026-10-24）
+
+文件位置（不写数据库、不加迁移）：
+
+```text
+<dataDir>/agent-debug/main/                     # 主网关；补全网关为 cursor-completion/
+  index.json                                    # { version: 1, runs: [{ run, file, bytes }] }
+  runs/<YYYYMMDD>/<safeRunId>.ndjson            # 第 1 行 run meta，其后每行一个事件
+```
+
+- 写入时机：run 到达终态（`finishRun`）后异步写入；进程正常退出时 `dispose()` 会把仍在运行的 run 收尾为 `interrupted` 再落盘。**进程被 SIGKILL 时运行中的 run 不保证保留**。
+- 原子性：先写 `.tmp` 再 `rename`；`index.json` 同样处理。写入串行排队、同 runId 幂等；异常只 warn，不影响 Agent 与 Gateway 启动。
+- 自愈：`index.json` 缺失/损坏时扫描 `runs/**/*.ndjson` 首行重建；单个坏行/坏文件跳过。
+- 保留：默认 **7 天 / 最多 2000 条 run / 总 1 GiB**，写入后即时从最旧开始裁剪。env 见 §4.1 后的配置表。
+- 读取：历史事件仅在选中该 run 时按需读文件；`eventCount` 为本归档内事件数。
+- 会话识别：run 记录 `sessionId`/`pageLabel`/`task`/`startedAt`；查询时批量补 `sessionTitle`，历史找回时可按「会话 + 绝对时间 + 任务摘要」定位。
+- 关闭开关：`NXCORE_AGENT_DEBUG_ARCHIVE=0`（`false`/`off` 同义）时完全不写盘，调试页显示「历史未启用」并禁用历史入口。
+
+Gateway 侧归档配置（`.env` / `.env.example`）：
+
+| 变量 | 默认 | 含义 |
+| --- | --- | --- |
+| `NXCORE_AGENT_DEBUG_ARCHIVE` | `true` | 归档总开关；`0`/`false`/`off` 关闭 |
+| `NXCORE_AGENT_DEBUG_ARCHIVE_DAYS` | `7` | 保留天数（1–3650） |
+| `NXCORE_AGENT_DEBUG_ARCHIVE_RUNS` | `2000` | 最多 run 条数（1–100000） |
+| `NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB` | `1024` | 归档总字节上限（MB，64–65536） |
+
+> 归档是调试数据：只在本机、不加密、不进 Sentry；需要手动清理时可直接删除 `<dataDir>/agent-debug/<source>/`（Gateway 下次启动会从空索引开始）。
 
 ## 4. 独立浏览器调试页
 
@@ -155,12 +204,13 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ Agent · 来源 · 连接状态 · 过滤 · 刷新 · 暂停                              │
+│ Agent · 来源 · 连接状态 · 范围(全部/本次/历史) · 归档概况 · 过滤 · 刷新 · 暂停 │
 ├──────────────┬──────────────┬────────────────────────────────────────────┤
 │ Agent 列表   │ 该 Agent 的  │ Run 详情                                   │
 │ 全部/内置/子 │ run 列表     │ ┌ 时间线：思考 / 工具调用 / 消息 / 系统事件 │
-│ Agent/本机   │ 运行中置顶   │ ├ 原始事件（事件列表 + JSON，点击查看）     │
-│ 状态标记+次数│ 耗时/工具数  │ └ 输出（最终消息 + 结构化结果）             │
+│ Agent/本机   │ 会话筛选     │ ├ 原始事件（事件列表 + JSON，点击查看）     │
+│ 状态标记+次数│ 运行中置顶   │ └ 输出（最终消息 + 结构化结果）             │
+│              │ 历史/时间/会话│                                            │
 └──────────────┴──────────────┴────────────────────────────────────────────┘
 ```
 
@@ -168,10 +218,16 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 
 - 左侧点选 Agent = **切换跟踪对象**；切换时 run 列表按 `agentId` 过滤，事件缓冲按 `sourceId + runId` 重置为 0 增量重新拉取；点「全部 Agent」看全局 run 流。
 - Agent 类型页签：全部 / 内置（builtin）/ 子 Agent（developer）/ 本机 Agent（local）。
-- run 列表自动跟随最新活跃 run（可关闭「跟随」）；终态 run 保留在缓冲里可回看。
+- 顶栏「范围」三态：`全部`（本次 + 历史，默认）/ `本次`（仅内存 run）/ `历史`（仅归档 run）。历史模式 snapshot 请求 `runs=300`，其它模式 150；切换即重新拉快照。归档关闭或旧 Gateway 不返回 `archive` 时显示「历史未启用」并禁用历史入口。
+- 顶栏归档概况：`历史 N 条 · 保留 D 天`，hover 显示字节数与最旧时间。
+- run 列表：每行显示状态、任务摘要、耗时/工具数/思考字数/事件数；历史 run 额外有「历史」文字标签与 `MM-DD HH:mm` 开始时间；会话标签显示 `sessionTitle`（回退 `pageLabel`），并始终附 `#短id`（sessionId 前 8 位），标题相同也能区分。
+- 会话筛选与分组（2026-10-24 增强）：列表头「会话」下拉的每个选项是「主名 · 首次时间 · #短id」，主名优先 `sessionTitle`、缺失时用该会话首条 run 的任务摘要（比 `Home`/`Room` 更可辨认），hover 可看完整 sessionId / 时间范围 / run 数；「全部会话」视图下 run 列表按会话分组，组头（同样带时间与短 id）可点击直接筛选到该会话；筛选后顶部有「筛选：… / 全部会话」提示条，可一键回到全部。空态区分「无本次 run / 无历史记录 / 该会话暂无 run」。
+- 浏览时锁序（2026-10-26）：Agent / Run 两栏离开顶部（>8px）后**冻结行顺序**，snapshot 只在原位置更新行内容，不再按「运行中置顶 / 最近活动」重排；新出现的 Agent / run 插到列表最前，并通过视口锚定（`data-row-key` + `useLayoutEffect` 校正 `scrollTop`）保持正在看的那一行不动。滚回顶部或点右下角「回到顶部」即恢复实时排序；切换 Agent / 会话筛选 / 范围时列表回到顶部并重置锁序。实现见 `browseOrder.ts`（纯函数）与 `useBrowsingList.ts`（滚动锚点 Hook）。
+- run 列表自动跟随最新活跃 run（可关闭「跟随」）；历史模式默认选中最新一条历史 run。
 - 时间线：思考块可折叠；工具行可展开参数/结果/失败错误，展开内容为纯 mono JSON；另有上下文用量文本、压缩提示、审批、系统事件行。
 - 「原始事件」页签：事件列表 + 选中事件的 JSON（列表最多渲染最近 1200 条，顶栏过滤可缩小范围；JSON 预览超过 240k 字符会截断提示）。
 - 「输出」页签：最终 assistant 文本 + `subagent_submit_result` 结构化结果（依次尝试 `tool.completed.result.content` 里的 JSON、`result` 本身、`tool.started.args`，并标注提取来源）。
+- 历史 run 的详情显示「历史归档 · 只读」、不显示「实时更新」；事件只拉取一次（终态不轮询），时间线/事件/输出页签均可回放。
 - 轮询策略：snapshot 1200ms；选中 run 运行中 400ms 增量拉事件（终态后停止）；暂停后完全停止轮询；事件按 seq upsert 合并。
 
 #### 视觉规范（浅色极简，2026-10-23 改版）
@@ -200,33 +256,44 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 ## 5. 文件清单
 
 ```text
-packages/agent-contract/src/index.ts                     # 调试契约类型
+packages/agent-contract/src/index.ts                     # 调试契约类型（含 origin/sessionTitle/archive）
 apps/gateway/src/modules/agent-debug/
-  trace-store.ts                                         # 内存缓冲 + 合并/淘汰
+  trace-store.ts                                         # 内存缓冲 + 合并/淘汰 + 归档回落
+  archive.ts                                             # 文件型磁盘归档（index.json + ndjson、保留/自愈）
   instrument.ts                                          # runtime 边界 trace 包装
-  routes.ts                                              # /v1/agent-debug/*
+  routes.ts                                              # /v1/agent-debug/*（archived 参数 / sessionTitle）
+apps/gateway/src/config.ts                               # 归档 env 解析（4 个 NXCORE_AGENT_DEBUG_ARCHIVE*）
 apps/gateway/src/modules/agent/resolver.ts               # 接入 trace（跳过 developer）
 apps/gateway/src/modules/subagents/runtime-manager.ts    # 接入 trace
 apps/gateway/src/modules/local-agents/runtime-registry.ts# 接入 trace
 apps/gateway/src/modules/knowledge/service.ts            # 内部 resolver 注入同一 store
-apps/gateway/src/server/create-server.ts                 # 创建 store、注册路由
+apps/gateway/src/server/create-server.ts                 # 创建 store/归档、sessionTitle 查询、注册路由
 apps/gateway/src/server/create-cursor-completion-server.ts
-apps/gateway/tests/agent-debug.test.ts                   # store/埋点/路由单测（29 个）
+apps/gateway/tests/agent-debug.test.ts                   # store/埋点/路由单测（32 个，含 archived 三态）
+apps/gateway/tests/agent-debug-archive.test.ts           # 归档单测（14 个：落盘/重建/裁剪/dispose）
+apps/gateway/tests/config.test.ts                        # 归档 env 默认值/覆盖/非法值
 apps/desktop/vite.agent-debug.config.mts                 # dev server + 网关代理插件
 apps/desktop/debug/agent-debug.html                      # 页面入口
-apps/desktop/src/renderer/src/agent-debug/               # React 调试台源码（App/api/reducer/components/format/styles）
+apps/desktop/src/renderer/src/agent-debug/               # React 调试台源码（App/api/reducer/history/components/format/styles）
 apps/desktop/tests/agent-debug-reducer.test.ts           # reducer/upsert/输出提取单测（17 个）
-scripts/agent-debug-smoke.mjs                            # fake 网关端到端冒烟（可重复执行）
+apps/desktop/tests/agent-debug-history.test.ts           # 范围/来源/会话标签与分组纯函数单测（29 个）
+apps/desktop/src/renderer/src/agent-debug/browseOrder.ts # 浏览时锁序纯逻辑（顺序冻结 / 视口锚点换算）
+apps/desktop/src/renderer/src/agent-debug/useBrowsingList.ts # 滚动锚点 + 锁序 Hook（browsing/scrollToTop）
+apps/desktop/tests/agent-debug-browse-order.test.ts      # 浏览时锁序 / 锚点纯函数单测
+scripts/agent-debug-smoke.mjs                            # fake 网关端到端冒烟（含 archive 断言）
+scripts/agent-debug-archive-e2e.mjs                      # 「停止网关 → 同 dataDir 重启 → 历史找回」e2e
 screenshots/agent-debug/                                 # 验收截图
 docs/agent-debug-page.zh-CN.md                           # 本文
+docs/agent-debug-persistence.zh-CN.md                    # 历史归档设计细案
 ```
 
 ## 6. 安全与资源边界
 
 - 调试页只监听 `127.0.0.1`，通过 dev server 代理访问网关，浏览器侧拿不到 Bearer token；`/@agent-debug/sources`、页面 HTML/DOM/构建产物（`out/agent-debug`）均不含 token。
 - 页面无 `window.nxcore` / Electron / Node `require` 依赖，可独立在普通浏览器打开。
-- 数据只存在 Gateway 进程内存里，网关退出即清空；不写入数据库、不写日志、不进 Sentry。
-- payload 截断上限 64KB、每 run 8MB / 3000 条、总 run 150 条，避免长时间运行吃内存。
+- 本次进程的 run 只在 Gateway 内存里；终态 run 会写本机文件归档（`<dataDir>/agent-debug/`，明文、不加密、不进 Sentry）。不写入产品数据库、不写业务日志。
+- 归档有独立上限并自动裁剪：默认 7 天 / 2000 run / 1 GiB；单 run 事件仍受内存层 3000 条 / 8MB / 单条 64KB 预算约束。进程内缓冲上限（150 run）不变。
+- 归档路径由 `dataDir` + 固定 `source` 目录拼出；runId 落文件名前会 sanitize（`[A-Za-z0-9._-]`），索引中的相对路径读取时校验必须位于归档目录内，避免路径穿越。
 - 生产构建不包含调试页；Gateway 路由本身只读，无写操作。
 
 ## 7. 验收记录（2026-10-23）
@@ -319,12 +386,66 @@ EVERROOM_AGENT_DEBUG_MANIFEST=$PWD/../../.tmp-pnpm/e2e-data/runtime/gateway.json
 
 > 旧深色截图保留为改版前历史证据；`final-real-app-agents.png` 已用新 UI 覆盖。
 
+### 7.7 历史归档 / 重启找回（2026-10-24 增补，PASS）
+
+环境：macOS，系统 `node v22.23.1`；共 4 个并行工作流（契约/设计由 Lead，Gateway 归档、Desktop UI 各一名工程师，Lead 终验）。全部命令均用 `node node_modules/...` 直跑，未 `pnpm install` / `pnpm --filter`。
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| Gateway typecheck | `cd apps/gateway && node node_modules/typescript/bin/tsc --noEmit` | exit 0，无输出 |
+| Gateway 单测 | `node node_modules/vitest/vitest.mjs run tests/agent-debug.test.ts tests/agent-debug-archive.test.ts tests/config.test.ts` | 3 files / **74 tests passed**（archive 14 / config 28 / agent-debug 32） |
+| Gateway 相邻回归 | 追加 `tests/cursor-completion-server.test.ts tests/agent.test.ts` | 5 files / **83 tests passed** |
+| Desktop 单测 | `cd apps/desktop && node node_modules/vitest/vitest.mjs run tests/agent-debug-reducer.test.ts tests/agent-debug-history.test.ts` | 2 files / **46 tests passed**（history 29，含会话分组/标签去重） |
+| Desktop typecheck | `node node_modules/typescript/bin/tsc --noEmit` | 仍为既有 ThoughtsPane `10` 条基线错误，agent-debug 0 新增 |
+| 调试页构建 | `node node_modules/vite/bin/vite.js build --config vite.agent-debug.config.mts` | exit 0，1590 modules → css 16.79 kB / js 190.16 kB |
+| 冒烟脚本 | fake runtime 起真实网关后 `node scripts/agent-debug-smoke.mjs --base ... --token ...` | 全部 PASS（原 22 项 + 归档概况/origin/archived 三态/非法 400） |
+| **重启找回 e2e** | `node scripts/agent-debug-archive-e2e.mjs` | **12 项全部 PASS** |
+
+重启找回 e2e 的实际验证链路（脚本可重复执行，临时目录隔离、结束清理）：
+
+1. 起 fake runtime Gateway（`--port 0`，manifest 自动分配端口）→ 建会话 → 起一轮 run 并等 `completed`，快照里该 run `origin=live`；
+2. 轮询到 `<dataDir>/agent-debug/main/` 出现 `index.json` 与该 run 的 ndjson（首行 run meta、其后事件行）；
+3. SIGTERM 停网关（桌面端同款 5s 兜底 SIGKILL）→ 用同一 dataDir 重启；
+4. `snapshot?archived=only` 找回该 run：`origin=archive`、状态/事件数/sessionId 与停前一致、带 `sessionTitle` 字段；`archive.{enabled,runCount,bytes,oldestStartedAt}` 正常；
+5. `runs/:id/events` 完整回放 `run.started → … → run.completed`、seq 严格递增；`archived=exclude` 不含历史；`archived=include` 仍带 archive 字段；
+6. 历史 run 的 `afterSeq=latestSeq` 返回空（终态静态）。
+
+调试页历史 UI（范围三态 / 归档概况 / 历史标签 / 会话筛选 / 只读详情 / 归档关闭置灰）另用 headless Chrome + 临时 mock gateway 做了浏览器级验证：无未捕获异常、无新增 console error（仅既有 favicon 404）；视觉自检仍满足 §4.3 的 10 色/无渐变阴影动画约束。真实「跑 run → 停网关 → 重启 → 历史回放」链路也在 headless Chrome 里截图留证：`screenshots/agent-debug/history-restart-1680.png`（顶栏显示「历史 1 条 · 保留 7 天」，run 行带「历史」标签，详情为「历史归档 · 只读」，会话标题与时间线完整回放）。
+
+会话辨识验证（2026-10-24 二次增强）：用 3 个会话（其中两个同为 pageLabel `Home`、且当时都还没有标题）跑 run → 重启 → headless Chrome 截图 + dump-dom 断言：
+
+- 会话下拉选项互不相同且形如 `任务摘要 · MM-DD HH:mm · #短id`（标题缺失时用首条 run 任务摘要兜底），dump-dom 实得 3 个不同选项；
+- run 列表按会话分组，3 个组头分别带「主名 / 首次时间 / #短id / run 数」，点击组头可筛选，行内也带 `#短id`；
+- 截图：`screenshots/agent-debug/session-groups-1680.png`。
+
+### 7.8 滚动浏览时列表跳动修复（2026-10-26 增补，PASS）
+
+问题：Agent / Run 两栏按 snapshot 轮询（1200ms）重排（运行中置顶 + 最近活动 / 会话分组），用户向下滚动回看历史时行会不停换位；实测浏览器原生滚动锚定还会把 scrollTop 拉走（agents 列 3s 内 Δ=-105px），表现为「整个列表被刷新」。
+
+修复：`browseOrder.ts`（纯函数：顺序冻结 / 会话分组冻结 / 视口锚点换算）+ `useBrowsingList.ts`（滚动锚点 Hook，`useLayoutEffect` 校正 scrollTop；两栏 `overflow-anchor: none`）。两栏离开顶部后冻结行顺序、新行插顶并保持视口锚点，滚回顶部或点右下角「回到顶部」恢复实时排序；行内容与轮询照常更新。
+
+验证 harness：`.tmp-inspect/agent-debug-scroll-e2e/`（gitignored 临时目录，mock gateway + headless Chrome CDP，一条命令重跑 `node .tmp-inspect/agent-debug-scroll-e2e/run.mjs --mode both`）；基线在修复落盘前采集（`baseline.patch` 留证）。
+
+| 列表 | 修复前（3s / 3 次轮询） | 修复后（3s / 2–3 次轮询） |
+| --- | --- | --- |
+| agents | DOM 顺序变化 yes、顶部可见标签变化 yes、scrollTop Δ=-105px | DOM 顺序冻结、scrollTop Δ=0、24 行内容仍在更新、jump 可见可点、回顶后 live 排序恢复 |
+| runs | DOM 顺序变化 yes、顶部可见标签变化 yes、scrollTop Δ=0 | DOM 顺序冻结、scrollTop Δ=0、40 行内容仍在更新、回顶后 live 排序恢复 |
+
+- 深滚场景（agents-deep400）同样顺序冻结、scrollTop Δ=0；两列同时滚动时各自独立渲染「回到顶部」。
+- 上方插入新行（纯新增夹具：3 次轮询各插 1 个新 Agent + 1 个新 run/会话组头）验证视口锚定：锚点行偏移 A→B 保持不变（agents Δ=0px、runs Δ=1px）且仍是顶部可见行；旧行相对顺序不变、新行排在它们之前；scrollTop 按插入高度补偿（agents 105→210 = +105px、runs 2652→2973 = +321px）；点「回到顶部」后新行出现在 live 排序最前。harness 原始证据见 `.tmp-inspect/agent-debug-scroll-e2e/REPORT.md`（含 `postfix-insert` 表）。
+- 回归：Desktop typecheck 仍只有既有 ThoughtsPane `10` 条基线错误（agent-debug 0 新增）；`agent-debug-reducer / agent-debug-history / agent-debug-browse-order` 单测 **64 passed**；调试页 `vite build` exit 0（1592 modules → css 16.88 kB / js 193.35 kB）；页面 console error 0。
+- 视觉：回顶按钮复用时间线「回到最新」的平铺样式（1px 边框、`border-radius: 2px`、无阴影）；两列同时滚动见 `screenshots/agent-debug/scroll-lock-both-columns.png`（本机验收截图，`screenshots/` 不入库）。
+
 ## 8. 已知限制
 
-- 仅内存：Gateway 重启后历史 run/事件全部丢失；不落库、不跨进程共享。
+- 历史归档只保存**终态 run**：进程被 SIGKILL（强杀/断电）时，运行中的 run 不保证保留；正常退出（SIGTERM，桌面端 shutdown 会等 5s）会把 running 收尾为 `interrupted` 并落盘。
+- 历史浏览上限：snapshot 最多 300 条（历史模式即 300）；更早的 run 需直接查看 `<dataDir>/agent-debug/<source>/runs/<YYYYMMDD>/*.ndjson`。归档默认保留 7 天 / 2000 条 / 1 GiB，超出自动清理最旧。
+- `sessionTitle` 是查询时按当前 `agent_sessions` 补全的：会话被删除后历史 run 仍可按任务文本、时间、pageLabel 找回，但标题为 null。会话标签已统一带「首次时间 + sessionId 前 8 位」，标题重复/缺失也能区分；若要拿完整 sessionId，hover 会话下拉/组头或看 Run 详情 meta。
+- 会话列表来源于当前快照里的 run（最多 300 条，历史模式）：超出该窗口的老会话不会出现在下拉里，需直接看归档 ndjson。
 - 单机调试：dev server 与 Gateway 都只绑 `127.0.0.1`，不支持远程/多人访问。
 - fake runtime 只产生 `run.started/reasoning.delta/message.*/run.completed`，不产生工具/审批事件；工具卡、审批卡、失败态需用 mock 数据或真实 runtime 验证（见 7.3）。
 - 事件缓冲有上限：长 run 或大量 run 时旧事件会被淘汰（`droppedEvents`/`droppedRuns` 提示），时间线可能不完整。
 - 调试页是 dev-only 页面：`vite build` 仅用于验证/占位，不随 Desktop 发布。
 - resume 复用同一 runId：`beginRun` 保留既有事件与计数，并把终态重新拉回 `running`（清空 `completedAt`/`errorMessage`），后续终态可正常回写。当前 Gateway 业务链路尚未调用 `runtime.resume()`，该行为为前瞻性兜底。
 - 页面轮询是固定间隔的全量快照 + 增量事件，不做推送；超高频事件流下 400ms 轮询可能合并多批。
+- 两栏列表的「浏览时锁序」（§4.3）只在离开顶部（scrollTop > 8px）后生效：停在顶部时仍按实时排序刷新（运行中置顶），这是刻意的「跟随最新」行为；想看稳定顺序请向下滚一点或点「暂停」。

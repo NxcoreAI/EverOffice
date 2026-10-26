@@ -284,12 +284,21 @@ export interface SubagentInvocationEvent {
 
 // ── Agent 调试页（独立浏览器调试台的只读数据契约） ──
 // Gateway 侧在 runtime 边界记录所有 Agent 的 run 事件（内存环形缓冲），
-// 通过 /v1/agent-debug/* 暴露给本地调试页；不落库、不参与产品链路。
+// 通过 /v1/agent-debug/* 暴露给本地调试页。
+// run 结束后会异步写入 dataDir/agent-debug 下的磁盘归档（只读回放，不参与产品链路），
+// 桌面应用重启后仍可按会话/时间找回历史记录；运行中的 run 只在内存缓冲里。
 
 /** 调试页里 Agent 的三类来源：内置、dispatch-only 子 Agent、本机 CLI Agent。 */
 export type AgentDebugAgentKind = "builtin" | "developer" | "local";
 
 export type AgentDebugAgentState = "idle" | "running" | "error";
+
+/**
+ * run 的数据来源：
+ * - `live`：当前 Gateway 进程内存缓冲（可为 running 或刚结束）；
+ * - `archive`：磁盘归档里的历史 run（终态，事件只读回放）。
+ */
+export type AgentDebugRunOrigin = "live" | "archive";
 
 export type AgentDebugRunStatus =
   | "running"
@@ -319,6 +328,15 @@ export interface AgentDebugRun {
   runtimeId: string | null;
   sessionId: string | null;
   pageLabel: string | null;
+  /**
+   * 会话标题（主对话取 agent_sessions.title，便于在历史里按对话区分/找回）；
+   * 无法解析（子 Agent、会话已删除）为 null。由 Gateway 查询时补全，不落归档。
+   */
+  sessionTitle?: string | null;
+  /**
+   * 数据来源；缺省按 `live` 处理（旧版 Gateway）。`archive` 表示来自磁盘归档的历史 run。
+   */
+  origin?: AgentDebugRunOrigin;
   task: string;
   status: AgentDebugRunStatus;
   startedAt: string;
@@ -345,13 +363,33 @@ export interface AgentDebugEvent {
   truncatedBytes?: number;
 }
 
+/** 调试归档概况（调试页用于展示"历史记录是否可用/保留多久"）。 */
+export interface AgentDebugArchiveInfo {
+  /** 归档是否启用（`NXCORE_AGENT_DEBUG_ARCHIVE=0` 可关闭）。 */
+  enabled: boolean;
+  /** 归档保留天数；超过即清理最旧 run。 */
+  retentionDays: number;
+  /** 当前归档里的 run 条数。 */
+  runCount: number;
+  /** 归档文件总字节数。 */
+  bytes: number;
+  /** 归档里最旧一条 run 的开始时间；空归档为 null。 */
+  oldestStartedAt: string | null;
+}
+
 export interface AgentDebugSnapshot {
   generatedAt: string;
   agents: AgentDebugAgent[];
-  /** 最近 run，按 startedAt 倒序；运行中的 run 永远在缓冲最前。 */
+  /**
+   * 最近 run：运行中的 run 永远最前，其余按 startedAt 倒序。
+   * `archived=include`（默认）时混合当前进程 run 与磁盘归档历史 run，用 `origin` 区分；
+   * `exclude` 只返回当前进程 run，`only` 只返回归档历史。
+   */
   runs: AgentDebugRun[];
-  /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数。 */
+  /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数（仅当前进程）。 */
   droppedRuns: number;
+  /** 磁盘归档概况；归档关闭时为 `{ enabled: false, ... }`。 */
+  archive?: AgentDebugArchiveInfo;
 }
 
 export interface AgentDebugRunEvents {

@@ -479,4 +479,61 @@ describe("loadConfig", () => {
       apiKey: "test-key",
     });
   });
+
+  it("loads agent debug archive defaults and honours env overrides", () => {
+    const defaults = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(defaults.agentDebugArchive).toEqual({
+      enabled: true,
+      retentionDays: 7,
+      maxRuns: 2_000,
+      maxBytes: 1_024 * 1_024 * 1_024,
+    });
+
+    const custom = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "0",
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "30",
+      NXCORE_AGENT_DEBUG_ARCHIVE_RUNS: "50",
+      NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB: "256",
+    });
+    expect(custom.agentDebugArchive).toEqual({
+      enabled: false,
+      retentionDays: 30,
+      maxRuns: 50,
+      maxBytes: 256 * 1_024 * 1_024,
+    });
+
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "off",
+    }).agentDebugArchive?.enabled).toBe(false);
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "true",
+    }).agentDebugArchive?.enabled).toBe(true);
+  });
+
+  it("rejects invalid agent debug archive values", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "maybe",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "0",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_DAYS");
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "abc",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_DAYS");
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "3651",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_DAYS");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_RUNS: "0",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_RUNS");
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_RUNS: "100001",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_RUNS");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB: "63",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB");
+  });
 });

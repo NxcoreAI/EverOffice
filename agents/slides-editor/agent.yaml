@@ -16,13 +16,12 @@ outputSchema: ./schemas/output.schema.json
 
 policy:
   allowedCallers: [primary-agent]
-  # 12~24 页 storyboard 的 JSON 输出量接近 planner 方案，90s 实测必超时；
-  # 与 planner 对齐 420s，并留出一次 schema 修正的调用余量。
-  maxToolCalls: 8
+  # 12~24 页 storyboard 的 JSON 输出量接近 planner 方案，90s 实测必超时。
   maxConcurrency: 16
-  # 不设工具调用上限：单页是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
-  # abort 会把已收敛的树一起丢掉；run 仍受 timeoutSeconds 与输出预算约束。
-  timeoutSeconds: 500
+  # 不设工具调用上限：修复是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
+  # abort 会把已收敛的树一起丢掉；run 只受 timeoutSeconds 与输出预算约束。
+  # 冒烟测试期放宽到 900s，与 planner 的修复轮余量对齐。
+  timeoutSeconds: 900
   model:
     # 与主 Agent 同底座（主模型，deepseek 系；已具备视觉能力，自审直接看渲染图）。
     # 输出预算 32768 覆盖「整页 v2 树 + 校验修复轮」；思考档位按 A/B 结论调整

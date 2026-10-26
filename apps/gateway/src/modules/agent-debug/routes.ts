@@ -1,5 +1,6 @@
 import type {
   AgentDebugAgent,
+  AgentDebugRun,
   AgentDebugRunEvents,
   AgentDebugSnapshot,
   AgentStatusSnapshot,
@@ -9,8 +10,15 @@ import { Type } from "@sinclair/typebox";
 import type { AgentResolver } from "../agent/resolver.js";
 import type { AgentDebugTraceStore } from "./trace-store.js";
 
+const ArchivedQuery = Type.Union([
+  Type.Literal("include"),
+  Type.Literal("only"),
+  Type.Literal("exclude"),
+]);
+
 const SnapshotQuery = Type.Object({
   runs: Type.Optional(Type.Integer({ minimum: 1, maximum: 300 })),
+  archived: Type.Optional(ArchivedQuery),
 });
 
 const RunParams = Type.Object({
@@ -71,17 +79,53 @@ export function mergeDebugAgents(
   return merged;
 }
 
+/** 会话标题批量查询（调用方注入 drizzle 查询；缺省或查询失败按 null 处理）。 */
+export interface AgentDebugRoutesOptions {
+  sessionTitles?: (sessionIds: readonly string[]) => ReadonlyMap<string, string | null>;
+}
+
+/**
+ * 返回前批量补全 `sessionTitle`：对唯一 sessionId 只查一次库；
+ * 子 Agent / 已删除会话 / 查询失败一律为 null（字段始终存在，便于 UI 判断）。
+ */
+export function withSessionTitles(
+  runs: readonly AgentDebugRun[],
+  lookup?: AgentDebugRoutesOptions["sessionTitles"],
+): AgentDebugRun[] {
+  if (runs.length === 0) return [];
+  const sessionIds = [...new Set(
+    runs
+      .map((run) => run.sessionId)
+      .filter((sessionId): sessionId is string => typeof sessionId === "string" && sessionId.length > 0),
+  )];
+  let titles: ReadonlyMap<string, string | null> = new Map();
+  if (lookup && sessionIds.length > 0) {
+    try {
+      titles = lookup(sessionIds);
+    } catch {
+      // 调试数据面：标题查询失败不影响 run 列表返回。
+    }
+  }
+  return runs.map((run) => ({
+    ...run,
+    sessionTitle: run.sessionId ? titles.get(run.sessionId) ?? null : null,
+  }));
+}
+
 /**
  * Agent 调试页只读 HTTP API。
  *
  * - `catalog` 由调用方注入（主网关走 AgentStatusService，补全网关走 resolver）；
  * - 缓冲里观测到的本机 Agent 会自动合并进 `agents`（按 id 去重）；
+ * - `archived` 控制 snapshot 是否合并磁盘归档（默认 include），响应带 archive 概况；
+ * - 可选 `sessionTitles` 批量补全会话标题；
  * - 增量事件默认返回 `seq > afterSeq`，尾部仍在增长的合并 delta 事件会额外
- *   重复返回一条（客户端按 seq upsert）。
+ *   重复返回一条（客户端按 seq upsert）；内存没有时回落到磁盘归档。
  */
 export function agentDebugRoutes(
   store: AgentDebugTraceStore,
   catalog: () => AgentDebugAgent[],
+  options: AgentDebugRoutesOptions = {},
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.get(
@@ -89,11 +133,13 @@ export function agentDebugRoutes(
       { schema: { tags: ["agent-debug"], querystring: SnapshotQuery } },
       async (request): Promise<AgentDebugSnapshot> => {
         const runs = request.query.runs ?? 150;
+        const archived = request.query.archived ?? "include";
         return {
           generatedAt: new Date().toISOString(),
           agents: mergeDebugAgents(catalog(), store.listObservedAgents()),
-          runs: store.listRuns(runs),
+          runs: withSessionTitles(store.listRuns(runs, archived), options.sessionTitles),
           droppedRuns: store.droppedRuns,
+          archive: store.archiveInfo(),
         };
       },
     );
@@ -114,7 +160,11 @@ export function agentDebugRoutes(
         if (!page) {
           return reply.code(404).send({ error: "not_found", message: "Agent debug run not found" });
         }
-        return { run, events: page.events, latestSeq: page.latestSeq };
+        return {
+          run: withSessionTitles([run], options.sessionTitles)[0] ?? run,
+          events: page.events,
+          latestSeq: page.latestSeq,
+        };
       },
     );
   };

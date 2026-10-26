@@ -4,6 +4,8 @@
  */
 import type { AgentDebugRunEvents, AgentDebugSnapshot } from '@nxcore/agent-contract'
 
+import { snapshotSearchParams, type SnapshotQuery } from './history'
+
 export interface DebugSource {
   id: string
   label: string
@@ -79,9 +81,13 @@ export async function loadSources(): Promise<SourcesResult> {
   return { sources, warning }
 }
 
-export async function loadSnapshot(sourceId: string): Promise<AgentDebugSnapshot> {
+/**
+ * 拉取快照。`query.archived` 控制归档范围：include（默认，本次 + 历史）/
+ * exclude（仅本次进程）/ only（仅历史）；历史模式由调用方传 `runs: 300`。
+ */
+export async function loadSnapshot(sourceId: string, query: SnapshotQuery = {}): Promise<AgentDebugSnapshot> {
   const response = await fetch(
-    `${gatewayBase(sourceId)}/v1/agent-debug/snapshot?runs=150`,
+    `${gatewayBase(sourceId)}/v1/agent-debug/snapshot?${snapshotSearchParams(query)}`,
     { cache: 'no-store' },
   )
   return readJson<AgentDebugSnapshot>(response)

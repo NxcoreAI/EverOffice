@@ -19,7 +19,7 @@ import {
 } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
 import { agentSessions } from "../infrastructure/database/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
 import { KnowledgeServiceClient, createKnowledgeTools } from "@nxcore/agent-runtime-pi";
 import { systemRoutes } from "../modules/system/routes.js";
@@ -202,6 +202,7 @@ import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-co
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
+import { AgentDebugArchive } from "../modules/agent-debug/archive.js";
 import { AgentDebugTraceStore } from "../modules/agent-debug/trace-store.js";
 import { agentDebugRoutes, debugAgentsFromStatusSnapshot } from "../modules/agent-debug/routes.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
@@ -773,7 +774,41 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await documentMcpHost.capabilities.recover();
   // Agent 调试页（独立浏览器调试台）的内存 trace：不落库、不参与业务链路，
   // 仅在 runtime 边界旁路记录，供 /v1/agent-debug/* 只读查询。
-  const agentDebugStore = new AgentDebugTraceStore();
+  // run 终态后异步落到 dataDir/agent-debug/main（文件型归档，重启后仍可回放）；
+  // 归档关闭（NXCORE_AGENT_DEBUG_ARCHIVE=0）时不创建实例，store 只保留内存缓冲。
+  const agentDebugArchiveConfig = config.agentDebugArchive;
+  const agentDebugArchive = agentDebugArchiveConfig?.enabled === false
+    ? undefined
+    : new AgentDebugArchive({
+        dir: join(config.dataDir, "agent-debug", "main"),
+        ...(agentDebugArchiveConfig
+          ? {
+              retentionDays: agentDebugArchiveConfig.retentionDays,
+              maxRuns: agentDebugArchiveConfig.maxRuns,
+              maxBytes: agentDebugArchiveConfig.maxBytes,
+            }
+          : {}),
+        warn: (message, error) => app.log.warn({ err: error }, message),
+      });
+  const agentDebugStore = new AgentDebugTraceStore(agentDebugArchive);
+  // 调试页 run 列表补全会话标题：唯一 sessionId 一次 inArray 查询；查不到为 null。
+  const agentDebugSessionTitles = (
+    sessionIds: readonly string[],
+  ): ReadonlyMap<string, string | null> => {
+    const titles = new Map<string, string | null>();
+    if (sessionIds.length === 0) return titles;
+    try {
+      const rows = db
+        .select({ id: agentSessions.id, title: agentSessions.title })
+        .from(agentSessions)
+        .where(inArray(agentSessions.id, [...sessionIds]))
+        .all();
+      for (const row of rows) titles.set(row.id, row.title ?? null);
+    } catch (error) {
+      app.log.warn({ err: error }, "agent debug session titles lookup failed");
+    }
+    return titles;
+  };
   const agentResolver = createAgentResolver(config, agentDebugStore);
   // knowledge 模块先行构建：pi runtime 的会话级 Room wiki 解析依赖它。
   const knowledgeService = new KnowledgeService(
@@ -1684,7 +1719,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     knowledgePreferences.dispose();
     await asrService.dispose();
     await agentResolver.dispose();
-    agentDebugStore.dispose();
+    // 先把自己仍在 running 的 run 归档为 interrupted，再等待写盘队列排空。
+    await agentDebugStore.dispose();
     await notificationMcpHost.close();
     sqlite.close();
     await gatewayLogger.close();
@@ -1695,6 +1731,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   await app.register(agentDebugRoutes(
     agentDebugStore,
     () => debugAgentsFromStatusSnapshot(agentStatusService.snapshot()),
+    { sessionTitles: agentDebugSessionTitles },
   ));
   await app.register(subagentRoutes(subagentOrchestrator));
   const reloadMcpRuntimes = async (): Promise<void> => {

@@ -52,6 +52,31 @@ describe("shared slides generation budget", () => {
     budget.dispose();
   });
 
+  it("defaults to no budget: token / call / wall-clock never abort a smoke-test run", () => {
+    vi.useFakeTimers();
+    const budget = new SlidesGenerationBudget();
+    try {
+      for (let index = 0; index < 200; index += 1) budget.claim(`inv-${index}`);
+      budget.observeUsage("inv-0", { input: 1_500_000, output: 1_500_000 });
+      budget.restore({ elapsedMs: 0, tokens: 2_000_000, invocations: 128 });
+      vi.advanceTimersByTime(4 * 60 * 60_000);
+      expect(budget.remainingMs()).toBe(Number.POSITIVE_INFINITY);
+      expect(budget.snapshot()).toMatchObject({ tokens: 5_000_000, invocations: 328 });
+      expect(budget.signal.aborted).toBe(false);
+      expect(() => budget.check()).not.toThrow();
+    } finally { budget.dispose(); }
+  });
+
+  it("accepts Infinity as an explicit no-limit marker", () => {
+    const budget = new SlidesGenerationBudget({ maxDurationMs: Infinity, maxTokens: Infinity, maxInvocations: Infinity });
+    try {
+      budget.claim("planner");
+      budget.observeUsage("planner", { input: 50_000_000 });
+      expect(budget.remainingMs()).toBe(Number.POSITIVE_INFINITY);
+      expect(() => budget.check()).not.toThrow();
+    } finally { budget.dispose(); }
+  });
+
   it("stops a stalled page producer immediately on parent cancellation", async () => {
     const parent = new AbortController();
     const budget = new SlidesGenerationBudget(limits, parent.signal);

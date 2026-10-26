@@ -620,7 +620,7 @@ async function dispatchWithPageRetry(
 function treeFromInvocation(
   invocation: SubagentInvocation,
   page: PageInput,
-): { tree: LayoutTree; fellBack: boolean; reason?: string; blocked?: Record<string, unknown> } {
+): { tree: LayoutTree; fellBack: boolean; designIntent?: string; reason?: string; blocked?: Record<string, unknown> } {
   if (invocation.status === "completed") {
     const structured = invocation.result?.structuredOutput;
     if (structured !== null && typeof structured === "object" && !Array.isArray(structured)) {
@@ -639,7 +639,10 @@ function treeFromInvocation(
                 Array.isArray(page.materials) ? (page.materials as PageMaterial[]).flatMap(m => typeof m.url === "string" ? [m.url] : []) : []);
               if (errors.length) return { tree: fallbackPage(page), fellBack: true, reason: errors.join("; ") };
             }
-            return { tree, fellBack: false };
+            return { tree, fellBack: false,
+              ...(typeof result.designIntent === "string" && result.designIntent.trim()
+                ? { designIntent: result.designIntent.slice(0, 1000) } : {}),
+            };
           }
           return { tree: fallbackPage(page), fellBack: true, reason: "交回的是 v1 树，已按 v2 兜底页落页" };
         } catch (error) {
@@ -915,6 +918,11 @@ export async function runLayouterTail(
 
   let fileEntryId = "";
   let originalName: string | null = null;
+  const checkpoint = () => {
+    if (!fileEntryId) return;
+    args.onCheckpoint?.({ fileEntryId, originalName, totalPages,
+      appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b) });
+  };
 
   /** 最终全量快照：全部页落定后的真完成载荷（failedPages 用 0 起页序）。 */
   const finalPayloadFor = (completed: boolean, failedPages: number[]): Record<string, unknown> => ({
@@ -989,8 +997,6 @@ export async function runLayouterTail(
       originalName = created.originalName ?? null;
     }
 
-    const checkpoint = () => args.onCheckpoint?.({ fileEntryId, originalName, totalPages,
-      appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b) });
     checkpoint();
     args.signal?.throwIfAborted();
     const styleBrief = styleBriefFrom(args.styleParams);
@@ -1005,6 +1011,7 @@ export async function runLayouterTail(
     type TreeOutcome = {
       tree: LayoutTree;
       fellBack: boolean;
+      designIntent?: string;
       unavailable?: boolean;
       reason?: string;
       blocked?: Record<string, unknown>;
@@ -1134,9 +1141,10 @@ export async function runLayouterTail(
         const reviewInput = {
           ...layouterInputFor(base, pages[index]!, index),
           currentTree: outcome.tree.v2,
+          ...(outcome.designIntent ? { previousDesignIntent: outcome.designIntent } : {}),
           revisionFeedback: pages[index]!.content
-            ? "这是当前树的真实渲染图。检查必留信息、主焦点、关系表达、阅读顺序、可读性与裁切。保留全部内容。返回完整 tree、designIntent 和 bindings；无问题原样交回。"
-            : "这是你刚写这一页的渲染图。逐项核对：文字是否被裁/压图、元素是否对齐、是否出现大片空白或拥挤、有没有视觉锚点。有问题就返回修正后的完整 v2 页面；没问题原样返回 currentTree。",
+            ? "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码；对照 previousDesignIntent 验收。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 tree、designIntent、bindings。无需修改则原样交树；修改版不会再次回投看图。"
+            : "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码及旧模式兼容门槛。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 v2 tree。无需修改则原样交树；修改版不会再次回投看图。",
         };
         const invocation = await dispatchWithPageRetry(() =>
           deps.dispatchPage(
@@ -1422,7 +1430,8 @@ export async function runLayouterTail(
     }
 
     // 页间相似度审计：相邻同签名页重排一次（带邻页签名提示），重排结果替换重落。
-    const rerollTargets = pages.some(p => p?.content) ? [] : auditSimilarity(trees.map((t) => t.tree));
+    const rerollTargets = pages.some(p => p?.content) ? [] : auditSimilarity(trees.map((t) => t.tree))
+      .filter(index => pages[index] && !trees[index]?.skipped && !trees[index]?.blocked);
     for (const index of rerollTargets.slice(0, 2)) {
       const signatures = [
         ...(index > 0 ? [treeSignature(trees[index - 1]!.tree)] : []),
@@ -1450,6 +1459,7 @@ export async function runLayouterTail(
         !appliedPages.has(index) || degradedPages.has(index) || trees[index]?.fellBack === true),
     )].sort((a, b) => a - b);
     const completed = appliedPages.size === totalPages && (!pages.some(p => p?.content) || failedPages.length === 0);
+    checkpoint();
     if (appliedPages.size === 0 && blockedPages.length > 0) {
       await notifyComplete(false, failedPages);
       return { content: JSON.stringify({ status: "blocked", fileEntryId, appliedPages: [], blockedPages,
@@ -1516,6 +1526,7 @@ export async function runLayouterTail(
       },
     };
   } catch (error) {
+    checkpoint();
     // 异常也尽量给出可定位的失败页并补完成通知，避免前端停在「生成中」。
     const failedPages = Array.from({ length: totalPages }, (_, index) => index).filter((index) => !appliedPages.has(index));
     const catchPayload = finalPayloadFor(false, failedPages);

@@ -20,6 +20,15 @@ export function formatClock(iso: string | null | undefined): string {
   return date.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+/** 绝对时间 `MM-DD HH:mm`（本地时区），历史 run 需要跨天辨认。 */
+export function formatMonthDayTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 export function formatRelativeTime(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '—'
   const time = Date.parse(iso)

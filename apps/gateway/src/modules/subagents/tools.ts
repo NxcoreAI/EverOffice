@@ -2,7 +2,7 @@ import { SlidesGenerationBudget, DEFAULT_GENERATION_BUDGET, GenerationBudgetErro
 import { SlidesGenerationCheckpointStore } from "./slides-generation-checkpoints.js";
 import type { DispatchSubagentInput } from "./orchestrator.js";
 import { createHash } from "node:crypto";
-import { Type } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
@@ -83,12 +83,11 @@ const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> 
     "referenceOutline", "targetPages", "sourceDocumentIds", "roomId",
   ]),
   style: new Set([
-    "task", "instruction", "title", "draftDocumentId", "regenerate", "referencePath", "referencePaths",
-    "referenceStyle", "roomId",
+    "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle", "roomId",
   ]),
   style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle", "roomId"]),
   generate: new Set([
-    "task", "instruction", "draftDocumentId", "styleSessionId", "referencePath", "referencePaths",
+    "task", "resetGenerationBudget", "instruction", "draftDocumentId", "styleSessionId",
     "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "regeneratePageImage",
     "regeneratePageImages", "regenerateFeedback", "rejectPageImage", "rejectPageImages", "restorePageImage",
     "restorePageImages", "roomId",
@@ -112,9 +111,6 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
   if (task === "style" && params.regenerate === true && !instruction) {
     throw new Error("slides_draft_regenerate_feedback_required");
   }
-  if (task === "style" && !(typeof params.draftDocumentId === "string" && params.draftDocumentId.trim())) {
-    throw new Error("slides_draft_document_required");
-  }
   if (task === "style_select") {
     if (!(typeof params.styleSessionId === "string" && params.styleSessionId.trim())) {
       throw new Error("slides_style_session_required");
@@ -129,10 +125,97 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
   return task;
 }
 
+function slidesDraftTaskSchema(task: SlidesDraftTask, fields: Record<string, TSchema>) {
+  return Type.Object({
+    task: Type.Literal(task),
+    roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    ...fields,
+  }, { additionalProperties: false });
+}
+
+const SLIDES_GENERATE_FIELDS: Record<string, TSchema> = {
+  resetGenerationBudget: Type.Optional(Type.Boolean({ description: "用户明确要求在预算耗尽后继续生成时才设 true；保留已完成页面并重新授权本轮预算。" })),
+  /** 续接调用可省略；网关会从绑定的风格会话恢复最初的主题与受众要求。 */
+  instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
+  referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
+  targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
+  pageImagesDecision: Type.Optional(Type.Union([
+    Type.Literal("generate"),
+    Type.Literal("skip"),
+    Type.Literal("accept"),
+  ])),
+  regeneratePageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
+  /** 批量重生成：一次调用内循环处理并逐张广播（1 起页序，≤8 项）。 */
+  regeneratePageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
+  regenerateFeedback: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+  rejectPageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
+  /** 批量打回（落页时退化图形版式）。 */
+  rejectPageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
+  restorePageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
+  /** 批量恢复使用。 */
+  restorePageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
+};
+
+function slidesGenerateTaskSchema(
+  fields: Record<string, TSchema>,
+): TSchema {
+  return Type.Union([
+    slidesDraftTaskSchema("generate", {
+      ...fields,
+      draftDocumentId: Type.String({ minLength: 1, maxLength: 128 }),
+      styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    }),
+    slidesDraftTaskSchema("generate", {
+      ...fields,
+      draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      styleSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+    }),
+  ]);
+}
+
+const SLIDES_DRAFT_PARAMETERS = Type.Union([
+  slidesDraftTaskSchema("draft", {
+    instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 32 })),
+    /** 参考 deck 的本地 PDF/PPTX/图片路径（拖进对话区后主 Agent 可直接传路径）。 */
+    referencePath: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    /** 多张参考图/多个参考文件；支持 PDF/PPTX/PNG/JPG/WebP 混传。 */
+    referencePaths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 12 })),
+    /** 参考 deck 抽取结果（reference-style/v1）；有它时 styler/planner 按参考色板/密度/页数走。 */
+    referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    /** 参考 deck 的章节标题（可含 27 页原序）；planner 用它补全主干，最多 32 页。 */
+    referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
+    /** 目标页数；缺省由参考 style.pageBudget 或 planner 判断。 */
+    targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
+    /** draft 阶段点名要读的 Room 文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
+    sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
+  }),
+  slidesDraftTaskSchema("style", {
+    instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    regenerate: Type.Optional(Type.Boolean()),
+    referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  }),
+  slidesDraftTaskSchema("style_select", {
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    styleSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+    candidateIndex: Type.Integer({ minimum: 1, maximum: 8 }),
+    referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  }),
+  slidesGenerateTaskSchema(SLIDES_GENERATE_FIELDS),
+  slidesDraftTaskSchema("edit", {
+    instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
+    fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  }),
+]);
+
 const CONCURRENCY_RETRY_DELAYS_MS = [500, 1_500];
 
 /** slides 长链路容量等待预算：整册生成以分钟计，宁可慢也不产出兜底整册。 */
-const SLIDES_CONCURRENCY_BUDGET_MS = 6 * 60_000;
+const SLIDES_CONCURRENCY_BUDGET_MS = 20 * 60_000;
 
 /** generate 分批流水线：内容批次一就绪就推进来的页（页序为全册 0 基）。 */
 interface SlidePageStreamItem {
@@ -221,13 +304,13 @@ function deckStateOf(plan: Record<string, unknown>): LayouterExistingDeck | null
 
 /**
  * arrange 分批（2026-10-23 根因修复）：把「整册一次成稿」拆成 8 页一批。
- * - 单批超时 5 分钟（agent policy 900s 只管整批上限，实际按批收紧）；
+ * - 单批不额外收紧超时：沿用 slides-planner policy（1800s），5 分钟硬顶在
+ *   大册/多素材批次上会把整册打成 slides_arrange_batch_failed；
  * - 单批失败重试 1 次，其他批继续；已完成批写 checkpoint；
  * - checkpoint 同一草稿/指令/风格/来源跨用户重试复用，只补失败批。
  */
 const ARRANGE_BATCH_SIZE = 8;
 const ARRANGE_BATCH_CONCURRENCY = 2;
-const ARRANGE_BATCH_TIMEOUT_MS = 5 * 60_000;
 const ARRANGE_BATCH_ATTEMPTS = 2;
 interface ConcurrencyRetryOptions {
   /** 满窗时的容量等待（入参为单次等待上限）；缺省只做短退避。 */
@@ -267,7 +350,7 @@ function arrangeBatchRetry(orchestrator: SubagentOrchestrator): ConcurrencyRetry
       ? { awaitCapacity: (timeoutMs: number, signal?: AbortSignal) => orchestrator.awaitCapacity(timeoutMs, undefined, "slides-planner", signal) }
       : {}),
     capacityWaitMs: 30_000,
-    budgetMs: 2 * 60_000,
+    budgetMs: 10 * 60_000,
     delaysMs: [500, 1_500, 4_000],
   };
 }
@@ -1389,78 +1472,14 @@ export function createSubagentPiTools(
     const slidesDraftTool: PiAgentRuntimeTool = {
       name: "slides_draft",
       label: "Create or edit a slides deck",
-      description: "调度 slides 子代理按「草稿 → 风格 → 生成」三步产出或修改演示文稿（PPT）。"
-        + "draft：先由 slides-planner 收集背景信息，产出内容草稿文档（一个章节 = 一页，含要点/数据/配图建议）——到此即停，"
-        + "可选 referencePath/referencePaths：用户给出参考文件（PDF/PPTX/PNG/JPG/WebP，可多张混传）的本地路径时传它，网关自动抽色板/页标题并默认 20 页；也可直接传 referenceStyle/referenceOutline/targetPages；"
-        + "用户在文档里确认修改内容后才会进入下一步；传 instruction（主题、受众、篇幅等要求）与可选 title/outline（用户点名的页序）。"
-        + "用户点名 Room 文档作为内容依据时，把 documentId 写进 instruction 或传 sourceDocumentIds：网关会把正文随方案输入预取下发，planner 不再逐篇读取。"
-        + "style：用户确认草稿后调用，传 instruction（风格意向）与 draftDocumentId（草稿文档 id）——"
-        + "生成 2~4 张风格纵览图候选并展示挑选卡，到此即停；用户挑一张（转为 candidateIndex）；"
-        + "挑图未决时再次调用 style 只会重新展示候选（不重新生成），用户明确不满意/要换一批时传 regenerate=true（instruction 带反馈原话，反馈逐轮累积）。"
-        + "style_select：用户挑定后调用，传 styleSessionId 与 candidateIndex（1 起）——提取风格、生成风格卡（色板/字号/线框/演示页）并展示确认卡，到此即停；"
-        + "用户想改效果就在对话里说（如「标题改小点」），由 style 任务携带新反馈重出；确认后进入 generate。"
-        + "generate：用户确认风格卡后调用，传 styleSessionId（草稿 id 从风格会话取，也可显式传 draftDocumentId；当前未绑定 Room 时凭 styleSessionId 自动反查，不要猜测 roomId）——"
-        + "slides-planner 先按受众重排页序、按起承转合分配每页信息密度；配图由网关按草稿的配图建议预取本地素材随方案输入下发（方案代理不再逐页检索）。"
-        + "方案里素材检索不到但值得配图的页，AI 配图自动在后台开始生成（并发进行），过目卡逐张亮出（生成中/失败页有占位行）："
-        + "返回 page_images_review 即到此为止，期间用户随时可逐张处置——重生成传 regeneratePageImage=序号（1 起，反馈写 regenerateFeedback）；"
-        + "打回某张传 rejectPageImage=序号（落页时该页退化图形版式，restorePageImage=序号可撤销）。"
-        + "用户确认落页传 pageImagesDecision=\"accept\"（未完成的张数自动放弃，相应页退化图形版式）；"
-        + "全部不要传 pageImagesDecision=\"skip\"（直接落页）。"
-        + "网关重启会中断后台生成：用户再要继续时重传 pageImagesDecision=\"generate\" 续跑剩余。"
-        + "配图未决时无参重调 generate 只会重新展示当前过目卡（不重排不烧配额）。"
-        + "无配图缺口页或已确认后，每页由专职布局代理（slides-layouter）设计递归嵌套的布局树（容器=方向+比例，叶子=文本/图片/卡/路径/图表/表格），"
-        + "经确定性校验环收敛后由网关编译落页（逐页进度实时展示，中途不再逐页询问；相邻页结构雷同会被网关自动重排一次）。"
-        + "落页结果 warnings 里的兜底/重排/视觉复检条目如实转告用户即可，不必重跑。"
-        + "edit：传 instruction（要改什么，可含选中的元素描述）与可选 fileId（缺省 \"active\" 即当前桌面打开的那份），"
-        + "由 slides-builder 读取大纲后直接发编辑事务，页面实时更新。"
-        + "结果以返回的 status/summary 为准向用户汇报（failed/partial 时如实转告 warnings 与原因，可重试）；"
-        + "禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
-      parameters: Type.Object({
-        resetGenerationBudget: Type.Optional(Type.Boolean({ description: "用户明确要求在预算耗尽后继续生成时才设 true；保留已完成页面并重新授权本轮预算。" })),
-        task: Type.Union([
-          Type.Literal("draft"),
-          Type.Literal("style"),
-          Type.Literal("style_select"),
-          Type.Literal("generate"),
-          Type.Literal("edit"),
-        ]),
-        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
-        title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-        outline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 32 })),
-        /** 参考 deck 的本地 PDF/PPTX/图片路径（拖进对话区后主 Agent 可直接传路径）。 */
-        referencePath: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-        /** 多张参考图/多个参考文件；支持 PDF/PPTX/PNG/JPG/WebP 混传。 */
-        referencePaths: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 12 })),
-        /** 参考 deck 抽取结果（reference-style/v1）；有它时 styler/planner 按参考色板/密度/页数走。 */
-        referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-        /** 参考 deck 的章节标题（可含 27 页原序）；planner 用它补全主干，最多 32 页。 */
-        referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
-        /** 目标页数；缺省由参考 style.pageBudget 或 planner 判断。 */
-        targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
-        draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        /** draft 阶段点名要读的 Room 文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
-        sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
-        styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        candidateIndex: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
-        regenerate: Type.Optional(Type.Boolean()),
-        pageImagesDecision: Type.Optional(Type.Union([
-          Type.Literal("generate"),
-          Type.Literal("skip"),
-          Type.Literal("accept"),
-        ])),
-        regeneratePageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
-        /** 批量重生成：一次调用内循环处理并逐张广播（1 起页序，≤8 项）。 */
-        regeneratePageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
-        regenerateFeedback: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
-        rejectPageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
-        /** 批量打回（落页时退化图形版式）。 */
-        rejectPageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
-        restorePageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
-        /** 批量恢复使用。 */
-        restorePageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
-        fileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      }, { additionalProperties: false }),
+      description: "PPT 流程入口。每次只执行一个 task，参数按 task 隔离；不适用字段会拒绝。"
+        + "draft 需 instruction，生成内容草稿并暂停；完成后等用户确认。可选 title/outline、参考文件和 sourceDocumentIds。"
+        + "style 可选 draftDocumentId/instruction，生成或重显风格候选；只有用户要求换一批时传 regenerate=true 和反馈 instruction。"
+        + "style_select 需 styleSessionId 与 candidateIndex，确认候选并生成风格卡。"
+        + "generate 需 draftDocumentId 或 styleSessionId，可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
+        + "edit 需 instruction 并直接修改 PPT；fileId 可选，缺省为当前打开文件。"
+        + "结果以 status/summary 为准；失败或部分成功时如实转告 warnings 与原因。禁止主 Agent 自行拼页面内容或代替子代理重试底层工具。",
+      parameters: SLIDES_DRAFT_PARAMETERS,
       execute: async (run, params, parentSignal, onUpdate) => {
         let generationKey: string | null = null;
         let generationCompleted = false;
@@ -1480,8 +1499,14 @@ export function createSubagentPiTools(
         };
         const dispatch = async (input: DispatchSubagentInput) => {
           budget.check();
+          // 预算默认不设上限：remainingMs() 为 Infinity 时只按 agent policy 的超时收口，
+          // 不会把无边界的值丢给 orchestrator。显式限额时才把剩余时长并入单次调用超时。
+          const remaining = budget.remainingMs();
+          const policyTimeoutMs = registry.get(input.agentId)?.revision?.policy.timeoutMs;
+          const requestedTimeoutMs = input.timeoutMs ?? policyTimeoutMs ?? remaining;
+          const timeoutMs = Number.isFinite(remaining) ? Math.min(requestedTimeoutMs, remaining) : requestedTimeoutMs;
           const invocation = await orchestrator.dispatch({ ...input, signal,
-            timeoutMs: Math.min(input.timeoutMs ?? registry.get(input.agentId)?.revision?.policy.timeoutMs ?? budget.remainingMs(), budget.remainingMs()),
+            ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
             onInvocationId: id => { budget.claim(id); input.onInvocationId?.(id); },
             onUsage: (id, usage) => { budget.observeUsage(id, usage); input.onUsage?.(id, usage); },
           });
@@ -1493,9 +1518,8 @@ export function createSubagentPiTools(
         try {
           budget.check();
         const execute = async () => {
-        const task = params.task;
-        const instruction = String(params.instruction ?? "").trim();
-        if (!instruction) throw new Error("slides_draft_instruction_required");
+        const task = validateSlidesDraftTaskParams(params);
+        let instruction = String(params.instruction ?? "").trim();
         const titleArg = typeof params.title === "string" ? params.title.trim().slice(0, 120) : "";
         let referenceStyle = params.referenceStyle !== null && typeof params.referenceStyle === "object" && !Array.isArray(params.referenceStyle)
           ? params.referenceStyle as Record<string, unknown>
@@ -1563,11 +1587,21 @@ export function createSubagentPiTools(
               details: { errorCode: "slides_style_unavailable" },
             };
           }
+          const selectedStyleSession = task === "style_select" && styleSessionIdParam
+            ? styleDeps.sessions.byId(styleSessionIdParam)
+            : null;
+          if (!instruction && task === "style") {
+            instruction = "根据已确认的内容稿设计清晰、专业、易读的演示文稿视觉风格。";
+          } else if (!instruction && selectedStyleSession?.instruction) {
+            instruction = selectedStyleSession.instruction;
+          }
           // 草稿阶段预热过风格（用户阅读窗口里跑）：确认得再快也要等它落定，
           // 否则会话还没到 images_ready，下面会新开一套会话把生图重跑一遍。
           // 上限 120s：预热失败/卡住时不能把用户的这步操作一起拖死。
           {
-            const requestedDraftId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+            const requestedDraftId = (typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "")
+              || selectedStyleSession?.draftDocumentId
+              || "";
             const pendingKey = requestedDraftId
               ? stylePrefetchKey(roomId, requestedDraftId)
               : [...stylePrefetchByDraft.keys()].find((k) => k.startsWith(`${roomId}::`));
@@ -1829,11 +1863,13 @@ export function createSubagentPiTools(
 
         // ── generate：读回用户确认的草稿（风格会话可代取）→ planner arrange → builder 按风格参数落页。 ──
         if (task === "generate") {
-          const styleSessionId = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
+          let styleSessionId = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
           // 风格会话存储必须无条件加载：配图确认的续跑调用只带 draftDocumentId（桌面罐头消息
           // 不带 styleSessionId），落页尾部要靠 byDraftId 回查风格会话补注入——按 styleSessionId
           // 门控会让回查永远拿到 null，确认配图后的落页丢掉整张风格卡。
-          const styleSessions = (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions ?? null;
+          const styleDepsForResume = typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle;
+          const styleSessions = styleDepsForResume?.sessions ?? null;
+          const pageImageSessionsForResume = styleDepsForResume?.pageImageSessions ?? null;
           let styleSession: import("../slides-style/types.js").SlidesStyleSessionData | null = null;
           if (styleSessionId && styleSessions) {
             const session = styleSessions.byId(styleSessionId);
@@ -1850,6 +1886,18 @@ export function createSubagentPiTools(
             }
             styleSession = session;
           }
+          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+          if (!styleSessionId && draftDocumentId) {
+            styleSessionId = pageImageSessionsForResume?.byDraftId(roomId, draftDocumentId)?.styleSessionId
+              ?? styleSessions?.byDraftId(roomId, draftDocumentId)?.id
+              ?? "";
+            if (styleSessionId && styleSessions) styleSession = styleSessions.byId(styleSessionId);
+          }
+          if (!draftDocumentId && styleSession?.draftDocumentId) draftDocumentId = styleSession.draftDocumentId;
+          // UI continuation calls intentionally carry only a session/document id. Restore the
+          // original audience and scene requirements so retries keep the same generation intent.
+          if (!instruction && styleSession?.instruction) instruction = styleSession.instruction;
+          if (!instruction) instruction = "根据已确认的内容稿和风格卡生成演示文稿。";
           const referenceStyleParams = referenceStyle
             ? mergeReferenceStyleParams(
                 styleSession?.styleParams ? styleSession.styleParams as unknown as Record<string, unknown> : null,
@@ -1867,8 +1915,6 @@ export function createSubagentPiTools(
           const effectiveStyleParams = (styleSession?.styleParams ?? referenceStyleParams ?? null);
           const effectivePalette = (effectiveStyleParams?.palette ?? null) as
             { primary?: string; accent?: string; background?: string } | null;
-          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
-          if (!draftDocumentId && styleSession?.draftDocumentId) draftDocumentId = styleSession.draftDocumentId;
           if (!draftDocumentId) {
             return {
               content: JSON.stringify({
@@ -2560,7 +2606,6 @@ export function createSubagentPiTools(
                     source: "primary_agent",
                     parentSessionId: run.sessionId,
                     parentRunId: run.runId,
-                    timeoutMs: ARRANGE_BATCH_TIMEOUT_MS,
                     ...(signal ? { signal } : {}),
                   }),
                   arrangeBatchRetry(orchestrator),
