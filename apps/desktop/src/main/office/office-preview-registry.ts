@@ -19,6 +19,7 @@ import { OfficeViewManager, prepareOfficeDocument } from './office-view-manager'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
+import { describeThesisError } from '../../shared/thesis-error-message'
 
 export interface OfficePreviewDescriptor {
   id: string
@@ -188,9 +189,15 @@ export class OfficePreviewRegistry {
             return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
         }
       } catch (error) {
-        return { ok: false as const, reason: 'error' as const, message: error instanceof Error ? error.message : String(error) }
+        // 面板只显示这一行文本：内部错误码（thesis_format_card_not_found）与上游
+        // 原样报错（nginx 502 HTML）必须翻译成人话，否则用户只看到「没反应」。
+        return {
+          ok: false as const,
+          reason: 'error' as const,
+          message: describeThesisError(error instanceof Error ? error.message : String(error)),
+        }
       }
-      return { ok: false as const, reason: 'error' as const, message: 'unknown thesis panel action' }
+      return { ok: false as const, reason: 'error' as const, message: '未知的排版操作，请重启应用后重试。' }
     })
   }
 

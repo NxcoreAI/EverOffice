@@ -29,6 +29,7 @@ import { FilterSelect } from '../shared';
 import { ConnectorMailDetailPanel, useConnectorMailDetail } from './ConnectorMailDetail';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
+import { describeThesisError } from '../../../../../../../shared/thesis-error-message'
 
 type RoomUpdater = (room: ContextRoomRecord) => ContextRoomRecord;
 
@@ -258,7 +259,7 @@ export function MaterialsPane({
     } catch (error: unknown) {
       showToast({
         title: t('contextRoom:thesisFormat.templateParseFailed'),
-        message: `${error instanceof Error ? error.message : String(error)}。${t('contextRoom:thesisFormat.templateParseFailedHint')}`,
+        message: `${describeThesisError(error instanceof Error ? error.message : String(error))}${t('contextRoom:thesisFormat.templateParseFailedHint')}`,
         variant: 'error',
       });
     } finally {
