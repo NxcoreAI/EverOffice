@@ -161,11 +161,12 @@ describe('AgentChatView', () => {
   )
 
   it('keeps decision cards clickable while the agent run is still pending (waiting for input)', async () => {
-    const intent = pendingIntent('document.create')
+    const intent = pendingIntent('document.edit')
     const onSelectRoom = vi.fn().mockResolvedValue(undefined)
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
         activeRunId="run-1"
         agentIdByRun={{}}
         agentNamesById={{}}
@@ -209,17 +210,24 @@ describe('AgentChatView', () => {
     })
 
     // run 未完成（activeRunId 挂着、无 completedAt）= agent 在等输入：
-    // 房间选择按钮必须可点，点击后直接进入提交。
+    // 房间选择按钮必须可点。document.edit 意图点完 Room 后进入文档选择，
+    // 选中文档才真正提交 —— 两步都必须在 run 未完成时可交互。
     const roomButton = renderer.root.findByProps({ title: '产品 Room' })
     expect(roomButton.props.disabled).toBe(false)
     await act(async () => {
       roomButton.props.onClick()
       await Promise.resolve()
     })
-    // document.create 只需 Room；edit/continue 才会进入文档选择（第三个参数）
+    const documentButton = renderer.root.findByProps({ title: '发布计划' })
+    expect(documentButton.props.disabled).toBe(false)
+    await act(async () => {
+      documentButton.props.onClick()
+      await Promise.resolve()
+    })
     expect(onSelectRoom).toHaveBeenCalledWith(
       { id: 'room-1', title: '产品 Room' },
       intent,
+      expect.objectContaining({ documentId: 'document-1', roomId: 'room-1' }),
     )
   })
 

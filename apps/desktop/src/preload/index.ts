@@ -223,6 +223,10 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('update:downloaded', (_event, info) => listener(info))
       return () => ipcRenderer.removeAllListeners('update:downloaded')
     },
+    onError: (listener) => {
+      ipcRenderer.on('update:error', (_event, payload) => listener(payload))
+      return () => ipcRenderer.removeAllListeners('update:error')
+    },
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
