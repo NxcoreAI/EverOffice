@@ -120,7 +120,7 @@ export class ThesisFormatService {
     const task = `映射论文块大纲到装订规格（${entry.originalName}）`;
     const input = {
       task: "bind_thesis" as const,
-      formatCard: card,
+      formatCard: cardForAgent(card),
       sourceOutline: described.outline,
       titleHint: entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300),
     };
@@ -236,6 +236,38 @@ export function factsForAgent(facts: ThesisTemplateFacts): unknown {
       coverImages: strip(member.coverImages),
     })),
     documentsText: facts.documentsText ?? [],
+  };
+}
+
+/** 单张图片的元信息（无字节）：代理只需知道「有多大、放哪儿」。 */
+function imageMeta(image: ThesisHfImage): Record<string, unknown> {
+  return {
+    hasBytes: true,
+    ...(image.widthPx !== undefined ? { widthPx: image.widthPx } : {}),
+    ...(image.heightPx !== undefined ? { heightPx: image.heightPx } : {}),
+    ...(image.floating !== undefined ? { floating: image.floating } : {}),
+    ...(image.behind !== undefined ? { behind: image.behind } : {}),
+    ...(image.posH !== undefined ? { posH: image.posH } : {}),
+    ...(image.posV !== undefined ? { posV: image.posV } : {}),
+    ...(image.posHRel !== undefined ? { posHRel: image.posHRel } : {}),
+    ...(image.posVRel !== undefined ? { posVRel: image.posVRel } : {}),
+    ...(image.posXPx !== undefined ? { posXPx: image.posXPx } : {}),
+    ...(image.posYPx !== undefined ? { posYPx: image.posYPx } : {}),
+  };
+}
+
+/**
+ * 送给装订代理的格式卡：同样剥掉图片字节。
+ *
+ * 卡片里的图片（cover.logo 122KB ≈ 4 万 token）如果随 bind_thesis 输入发出去，
+ * 会把输出窗口挤到截断——实测排版因此报「模型输出上限」。字节只在网关→桌面桥
+ * 那一跳需要，代理判断章节/标题映射时不需要。
+ */
+export function cardForAgent(card: ThesisFormatCard): unknown {
+  return {
+    ...card,
+    header: { ...card.header, images: (card.header.images ?? []).map(imageMeta) },
+    cover: { ...card.cover, ...(card.cover.logo ? { logo: imageMeta(card.cover.logo) } : {}) },
   };
 }
 

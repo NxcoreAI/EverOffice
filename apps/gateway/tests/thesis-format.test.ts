@@ -5,7 +5,7 @@ import { SubagentRegistry } from "../src/modules/subagents/registry.js";
 import { ThesisFormatCardStore } from "../src/modules/thesis-format/card-store.js";
 import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.js";
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
-import { factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
+import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -311,5 +311,22 @@ describe("factsForAgent 剥离图片字节", () => {
     expect((member.coverImages as Array<Record<string, unknown>>)[0]).toMatchObject({ hasBytes: true, widthPx: 626, posH: "center" });
     expect(member.coverText).toEqual(["通信工程学院"]);
     expect(member.styles).toEqual([]);
+  });
+});
+
+describe("cardForAgent 剥离卡片里的图片字节", () => {
+  it("封面 logo 与页眉图只留元信息，别处字段原样", () => {
+    const card = validateThesisFormatCard({
+      cover: { schoolName: "广州城市理工学院", logo: { dataUrl: `data:image/png;base64,${LOGO_PNG_BASE64}`, widthPx: 626, heightPx: 89, posH: "center" } },
+      header: { enabled: true, images: [{ dataUrl: `data:image/png;base64,${LOGO_PNG_BASE64}`, widthPx: 40, heightPx: 40 }] },
+    }, "模版.docx");
+    const forAgent = cardForAgent(card) as { cover: Record<string, unknown>; header: Record<string, unknown> };
+    const serialized = JSON.stringify(forAgent);
+    expect(serialized).not.toContain("data:image");
+    expect(forAgent.cover.schoolName).toBe("广州城市理工学院");
+    expect(forAgent.cover.logo).toMatchObject({ hasBytes: true, widthPx: 626, posH: "center" });
+    expect((forAgent.header.images as Array<Record<string, unknown>>)[0]).toMatchObject({ widthPx: 40 });
+    // 原卡不受影响（回填仍用带字节的版本）
+    expect(card.cover.logo?.dataUrl).toContain("data:image/png");
   });
 });
