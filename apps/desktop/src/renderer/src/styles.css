@@ -705,6 +705,49 @@ summary:focus-visible {
   background: var(--hover);
 }
 
+.account-gear {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--subtle);
+}
+
+/* everoffice 原型侧边栏品牌块：方标 + 双行文字 */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.sidebar-brand-mark {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.sidebar-brand-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-brand-sub {
+  color: var(--subtle);
+  font-size: 10.5px;
+}
+
 .account-avatar {
   display: inline-flex;
   width: 30px;

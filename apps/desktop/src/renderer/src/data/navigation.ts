@@ -1,11 +1,15 @@
 import type { LucideIcon } from 'lucide-react'
 import {
+  Bot,
   Building2,
+  Clock,
   FileText,
   FolderOpen,
   FolderSync,
   Home,
+  Library,
   ListTodo,
+  Plug,
   PlugZap,
   Settings,
   FilePenLine,
@@ -75,6 +79,18 @@ const docFlowItem: NavigationItem = {
   icon: FilePenLine,
   tone: 'blue',
 }
+
+/**
+ * 侧边栏一级菜单（不分组），布局对齐 everoffice 原型：
+ * 最近 / 所有文件 / Agent / 知识库 / 连接器。设置收进底部账户条的齿轮。
+ */
+export const sidebarNavigation: NavigationItem[] = [
+  { id: 'home', label: '最近', icon: Clock, tone: 'slate' },
+  { id: 'files', label: '所有文件', icon: FolderOpen, tone: 'green' },
+  { id: 'office', label: 'Agent', icon: Bot, tone: 'blue' },
+  { id: 'docs', label: '知识库', icon: Library, tone: 'indigo' },
+  { id: 'sources', label: '连接器', icon: Plug, tone: 'cyan' },
+]
 
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
   [...navigationSections.flatMap((section) => section.items), officeDocumentItem, docFlowItem]

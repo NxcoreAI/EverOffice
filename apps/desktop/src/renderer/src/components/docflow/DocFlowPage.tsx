@@ -43,8 +43,7 @@ interface Paragraph {
   text: string
   cite?: string
   aiGuess?: boolean
-  reworked?: boolean
-  reworking?: boolean
+  sentToAgent?: boolean
 }
 
 interface ChapterContent {
@@ -160,14 +159,6 @@ const REVIEW_ITEMS = [
   { level: 'warn', text: '3 处内容来自 Agent 推测（第四、五章），正文已标「待确认」' },
   { level: 'warn', text: '篇幅：第五章偏长（约 150 字），可压缩到 3 句' },
 ] as const
-
-const REWORK_VARIANTS: Record<string, string> = {
-  p8: 'Q4 建议：连接器统一方案扩展到剩余场景，摘要能力全量开放，11 月启动企业版灰度；体验小组补充 1 名数据分析师。',
-  p4: '增长主线：内容投放渠道扩展到 5 个，其中 2 个进入转化率前五。',
-  p6: '外部风险：一家服务商 9 月启动 API 限流，影响 2 个灰度客户，已切备用链路，10 月中旬恢复。',
-}
-
-/** ============ 工具 ============ */
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => (
@@ -522,10 +513,11 @@ function LayoutStep({ genState, template, setTemplate, onGenerate, onOpenEditor,
   )
 }
 
-function ReworkStep({ outline, contents, onParagraph, onExport, exporting }: {
+function ReworkStep({ outline, contents, fileName, onSendToAgent, onExport, exporting }: {
   outline: Chapter[]
   contents: ChapterContent[]
-  onParagraph: (paragraphId: string, prompt: string) => void
+  fileName: string | null
+  onSendToAgent: (paragraph: Paragraph, prompt: string) => void
   onExport: () => void
   exporting: boolean
 }) {
@@ -546,17 +538,15 @@ function ReworkStep({ outline, contents, onParagraph, onExport, exporting }: {
                 key={paragraph.id}
                 className="df-doc-para"
                 data-selected={paragraph.id === selected}
-                data-reworking={paragraph.reworking}
                 onClick={() => {
                   setSelected(paragraph.id)
                   setPrompt('')
                 }}
               >
-                {paragraph.reworking && <LoaderCircle aria-hidden="true" className="df-spin df-para-spin" />}
                 {paragraph.text}
                 {paragraph.cite && <span className="df-cite">{paragraph.cite}</span>}
                 {paragraph.aiGuess && <span className="df-badge df-badge-warn">待确认</span>}
-                {paragraph.reworked && <span className="df-badge df-badge-ok">已按你的要求重做</span>}
+                {paragraph.sentToAgent && <span className="df-badge df-badge-ok">已交给 Agent</span>}
               </p>
             ))}
           </section>
@@ -573,19 +563,23 @@ function ReworkStep({ outline, contents, onParagraph, onExport, exporting }: {
               ))}
             </div>
             <textarea rows={2} value={prompt} placeholder="说说这段怎么改" onChange={(event) => setPrompt(event.target.value)} />
-            <button
-              type="button"
-              className="df-primary"
-              disabled={!prompt.trim() || selectedPara.reworking}
-              onClick={() => onParagraph(selectedPara.id, prompt)}
-            >
-              重做这一段
-            </button>
+            {fileName ? (
+              <button
+                type="button" className="df-primary" data-testid="send-to-agent"
+                disabled={!prompt.trim()}
+                onClick={() => onSendToAgent(selectedPara, prompt)}
+              >
+                发送给 Agent 重做
+              </button>
+            ) : (
+              <p className="df-rework-hint">先在「排版出文件」生成 .docx，才能把段落交给 Agent 改。</p>
+            )}
+            <p className="df-rework-hint">Agent 在右侧对话区接单，直接改《{fileName ?? '文件'}》里的这一段；这里的预览不跟着变。</p>
           </>
         ) : (
           <>
             <strong>出完接着改</strong>
-            <p className="df-rework-hint">点正文里任何一段，说一句怎么改，Agent 只重做那一块，其余原样保留；改完可再导出一版。</p>
+            <p className="df-rework-hint">点正文里任何一段，说一句怎么改，指令会发给 Agent 只重做那一块，其余原样保留；改完可再导出一版。</p>
           </>
         )}
         <button type="button" className="df-export" disabled={exporting} onClick={onExport}>
@@ -702,28 +696,27 @@ export function DocFlowPage({ onNavigate, onOpenOfficePreview }: {
     }
   }, [genState, onOpenOfficePreview])
 
-  const reworkParagraph = (paragraphId: string, prompt: string) => {
+  /** 选段修改 → 组装指令发给 Agent（App 监听 nxcore:agent:ask 自动发送）。 */
+  const sendParagraphToAgent = (paragraph: Paragraph, prompt: string) => {
+    if (genState.phase !== 'done') return
+    const fileName = genState.originalName
+    const trimmedPrompt = prompt.trim().replace(/[。.!！]+$/, '')
+    const excerpt = paragraph.text.length > 60 ? `${paragraph.text.slice(0, 60)}…` : paragraph.text
+    window.dispatchEvent(new CustomEvent('nxcore:agent:ask', {
+      detail: {
+        message:
+          `请修改 Word《${fileName}》（fileEntryId=${genState.fileEntryId}）中这段内容：「${excerpt}」。`
+          + `要求：${trimmedPrompt}。`
+          + '先用 office_read 定位这段原文，再用 office_edit 只改这一段，其余内容保持不动。',
+        displayMessage: `把《${fileName}》选中的段落改一下：${trimmedPrompt}。`,
+      },
+    }))
     setWritten((prev) => prev.map((section) => ({
       ...section,
-      paragraphs: section.paragraphs.map((paragraph) => (
-        paragraph.id === paragraphId ? { ...paragraph, reworking: true } : paragraph
+      paragraphs: section.paragraphs.map((item) => (
+        item.id === paragraph.id ? { ...item, sentToAgent: true } : item
       )),
     })))
-    window.setTimeout(() => {
-      setWritten((prev) => prev.map((section) => ({
-        ...section,
-        paragraphs: section.paragraphs.map((paragraph) => (
-          paragraph.id === paragraphId
-            ? {
-                ...paragraph,
-                text: REWORK_VARIANTS[paragraphId] ?? `${paragraph.text.slice(0, 48)}（已按「${prompt}」重做）`,
-                reworking: false,
-                reworked: true,
-              }
-            : paragraph
-        )),
-      })))
-    }, 1000)
   }
 
   useEffect(() => {
@@ -811,7 +804,8 @@ export function DocFlowPage({ onNavigate, onOpenOfficePreview }: {
             <ReworkStep
               outline={outline}
               contents={written}
-              onParagraph={reworkParagraph}
+              fileName={genState.phase === 'done' ? genState.originalName : null}
+              onSendToAgent={sendParagraphToAgent}
               onExport={() => { setExporting(true); void generate('rework') }}
               exporting={exporting}
             />

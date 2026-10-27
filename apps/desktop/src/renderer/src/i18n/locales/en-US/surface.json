@@ -1380,5 +1380,18 @@
   "files.legacyPreviewFallbackTitle": "Opened in the default app",
   "files.legacyPreviewFallbackMessage": "Legacy Office formats (.doc / .xls / .ppt) need LibreOffice installed to open in the built-in preview.",
   "files.writeBackFailedTitle": "Saved to EverRoom, but the original file was not updated",
-  "files.writeBackFailedMessage": "The library version of “{name}” was updated, but writing back to the original file failed: {error}. Check whether the file was moved, is in use, or is read-only."
+  "files.writeBackFailedMessage": "The library version of “{name}” was updated, but writing back to the original file failed: {error}. Check whether the file was moved, is in use, or is read-only.",
+  "navigation.recent": "Recent",
+  "navigation.allFiles": "All Files",
+  "navigation.agent": "Agent",
+  "navigation.knowledge": "Knowledge",
+  "navigation.connectors": "Connectors",
+  "navigation.more": "More",
+  "home.newSection": "Create",
+  "home.recentFiles": "Recent Files",
+  "home.kind": "Kind",
+  "home.modifiedAt": "Modified",
+  "home.name": "Name",
+  "home.comingSoon": "Coming soon",
+  "home.todaySubtitle": "What file do you need today? Tell the agent, it delivers."
 }

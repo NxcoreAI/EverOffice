@@ -1380,5 +1380,18 @@
   "files.legacyPreviewFallbackTitle": "已用系统默认应用打开",
   "files.legacyPreviewFallbackMessage": "旧版 Office 格式（.doc / .xls / .ppt）需要本机安装 LibreOffice 才能在内置预览中打开。",
   "files.writeBackFailedTitle": "已保存到 EverRoom，但写回原文件失败",
-  "files.writeBackFailedMessage": "「{name}」的文件库版本已更新；写回磁盘原文件时出错：{error}。请检查文件是否被移动、占用或没有写入权限。"
+  "files.writeBackFailedMessage": "「{name}」的文件库版本已更新；写回磁盘原文件时出错：{error}。请检查文件是否被移动、占用或没有写入权限。",
+  "navigation.recent": "最近",
+  "navigation.allFiles": "所有文件",
+  "navigation.agent": "Agent",
+  "navigation.knowledge": "知识库",
+  "navigation.connectors": "连接器",
+  "navigation.more": "更多",
+  "home.newSection": "新建",
+  "home.recentFiles": "最近文件",
+  "home.kind": "类型",
+  "home.modifiedAt": "时间",
+  "home.name": "名称",
+  "home.comingSoon": "即将支持",
+  "home.todaySubtitle": "今天想交什么文件？说清要什么，Agent 分步交活。"
 }

@@ -565,6 +565,23 @@ export function App() {
     return () => window.removeEventListener('nxcore:office:open', open as EventListener)
   }, [openOfficeTab])
 
+  // 渲染层任意位置（Doc 流程「出完接着改」等）把组装好的指令发给 Agent：
+  // 打开对话区并自动发送，与 slides「AI 修改」转发同一消费通道。
+  useEffect(() => {
+    const ask = (event: Event) => {
+      const detail = (event as CustomEvent<{ message: string; displayMessage?: string }>).detail
+      if (!detail?.message) return
+      setAgentOpen(true)
+      setAgentAskRequest({
+        key: `agent-ask-${Date.now()}`,
+        message: detail.message,
+        ...(detail.displayMessage ? { displayMessage: detail.displayMessage } : {}),
+      })
+    }
+    window.addEventListener('nxcore:agent:ask', ask as EventListener)
+    return () => window.removeEventListener('nxcore:agent:ask', ask as EventListener)
+  }, [])
+
   // Agent 生成 Word（office 桥）：阶段进度提示；完成后刷新 Room 清单并导航
   // 进所属 Room、右区原位打开产物（PortedDetail 消费 focus 请求）。
   useEffect(() => {
