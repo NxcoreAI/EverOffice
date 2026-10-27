@@ -21,6 +21,8 @@ export interface ThesisFormatCardDto {
 export interface ThesisReformatOutcomeDto {
   fileEntryId: string
   originalName: string
+  /** v2 映射报告（守恒核对、每条分配规则/置信度、未匹配块、待复核章节）。 */
+  report?: Record<string, unknown>
 }
 
 export class ThesisFormatGatewayBridge {

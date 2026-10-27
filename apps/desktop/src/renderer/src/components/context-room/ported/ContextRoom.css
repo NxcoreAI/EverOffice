@@ -16316,3 +16316,110 @@ button.eg-walk.is-next:hover {
   align-items: center;
   gap: 6px;
 }
+
+/* ---- 排版弹窗：模版行（含删除模版文件）+ v2 映射报告 ---- */
+
+.context-room-thesis-dlg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-thesis-dlg-row .context-room-thesis-dlg-option {
+  flex: 1;
+  min-width: 0;
+}
+
+.context-room-thesis-dlg-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cr-tertiary, #6b7280);
+  cursor: pointer;
+}
+
+.context-room-thesis-dlg-del:hover:not(:disabled) {
+  border-color: rgba(200, 50, 50, 0.28);
+  color: #c83232;
+  background: rgba(200, 50, 50, 0.06);
+}
+
+.context-room-thesis-dlg-del:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-room-thesis-dlg-report {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.02);
+}
+
+.context-room-thesis-dlg-report-head {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-thesis-dlg-report-warn {
+  margin: 0;
+  color: #b97909;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.context-room-thesis-dlg-report-list,
+.context-room-thesis-dlg-report-gaps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 150px;
+  overflow: auto;
+}
+
+.context-room-thesis-dlg-report-list li {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 40px;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--cr-secondary, #4b5563);
+}
+
+.context-room-thesis-dlg-report-list li[data-low] {
+  color: #b97909;
+}
+
+.context-room-thesis-dlg-report-list .rule {
+  font-variant: all-small-caps;
+  color: var(--cr-tertiary, #6b7280);
+}
+
+.context-room-thesis-dlg-report-list .text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.context-room-thesis-dlg-report-list .conf {
+  text-align: right;
+}
+
+.context-room-thesis-dlg-report-gaps li {
+  font-size: 11px;
+  color: #b97909;
+  line-height: 1.5;
+}

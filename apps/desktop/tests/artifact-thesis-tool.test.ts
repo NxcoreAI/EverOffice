@@ -49,3 +49,25 @@ describe('产物区排版工具接线', () => {
     expect(dialog).toContain("window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))")
   })
 })
+describe('M5 排版弹窗：映射报告与删除模版文件', () => {
+  it('reformat 返回 report 时留在弹窗展示，不直接关闭', () => {
+    expect(dialog).toContain('const mapping = (outcome.report ?? null) as MappingReport | null')
+    expect(dialog).toContain('if (mapping) setReport(mapping)')
+    expect(dialog).toContain("t('contextRoom:thesisFormat.reportTitle'")
+    expect(dialog).toContain("t('contextRoom:thesisFormat.reportUnmatched'")
+  })
+
+  it('删除的是模版文件而不是格式卡，且只在有库内文件时出现', () => {
+    expect(dialog).toContain('deleteTemplateFile')
+    // 只调 files.delete（删文件），绝不调 removeCard（删卡）
+    expect(dialog).toContain('await files.delete(fileId)')
+    expect(dialog).not.toContain('removeCard')
+    expect(dialog).toContain('{row.sourceFileEntryId ? (')
+  })
+
+  it('删除前有确认，且提示格式卡会保留', () => {
+    expect(dialog).toContain('window.confirm(')
+    const zh = readFileSync(resolve(__dirname, '../src/renderer/src/i18n/locales/zh-CN/contextRoom.json'), 'utf8')
+    expect(zh).toContain('格式卡会保留')
+  })
+})

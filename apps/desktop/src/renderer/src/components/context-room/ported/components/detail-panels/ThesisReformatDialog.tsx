@@ -1,4 +1,4 @@
-import { LoaderCircle, Upload, Wand2 } from 'lucide-react';
+import { LoaderCircle, Trash2, Upload, Wand2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import { showToast } from '@/state/toast';
@@ -9,6 +9,17 @@ interface ThesisCardRow {
   id: string;
   sourceName: string;
   updatedAt: string;
+  /** 模版来源文件（资料区文件 id）；直传解析的模版为 null。 */
+  sourceFileEntryId?: string | null;
+}
+
+/** v2 映射报告（网关 reformat 返回）。 */
+interface MappingReport {
+  conservation?: { matched: number; unmatched: number; total: number };
+  report?: { matchedChapters: number; appendedChapters: number; unmatchedBlocks: number; notes: string[] };
+  assignments?: Array<{ headingText: string; rule: string; confidence: number; notes: string[] }>;
+  needsReview?: Array<{ chapterText: string }>;
+  gaps?: string[];
 }
 
 type Phase = 'idle' | 'parsing' | 'reformatting';
@@ -44,6 +55,8 @@ export function ThesisReformatDialog({
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [gaps, setGaps] = useState<string[]>([]);
+  const [report, setReport] = useState<MappingReport | null>(null);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
 
   const busy = phase !== 'idle';
 
@@ -72,6 +85,7 @@ export function ThesisReformatDialog({
     setPhase('idle');
     setCards(null);
     setSelectedCardId(null);
+    setReport(null);
     loadCards();
   }, [open, loadCards]);
 
@@ -90,12 +104,39 @@ export function ThesisReformatDialog({
       });
       onDone?.(outcome.originalName);
       setPhase('idle');
-      onOpenChange(false);
+      // v2 有映射报告就留在弹窗里给用户看（守恒/规则/未匹配/待复核）；
+      // 老卡片路径没有报告，按原行为直接关闭。
+      const mapping = (outcome.report ?? null) as MappingReport | null;
+      if (mapping) setReport(mapping);
+      else onOpenChange(false);
     } catch (err: unknown) {
       setError(describeThesisError(err instanceof Error ? err.message : String(err)));
       setPhase('idle');
     }
   }, [onDone, onOpenChange, roomId, t, target]);
+
+  /**
+   * 删除「模版文件」——保留格式卡（用户明确要求：卡继续可用于排版）。
+   * 只对来自资料区的模版生效；直传解析的模版没有库内文件，按钮不出现。
+   */
+  const deleteTemplateFile = async (row: ThesisCardRow) => {
+    const fileId = row.sourceFileEntryId;
+    const files = window.nxcore?.files;
+    if (!fileId || !files) return;
+    if (!window.confirm(t('contextRoom:thesisFormat.deleteTemplateFileConfirm', { name: row.sourceName }))) return;
+    setDeletingFileId(row.id);
+    setError(null);
+    try {
+      await files.delete(fileId);
+      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
+      showToast({ title: t('contextRoom:thesisFormat.deleteTemplateFileDone'), message: row.sourceName });
+      loadCards();
+    } catch (err: unknown) {
+      setError(describeThesisError(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setDeletingFileId(null);
+    }
+  };
 
   const uploadTemplate = useCallback(async () => {
     const api = window.nxcore?.thesisFormat;
@@ -156,17 +197,31 @@ export function ThesisReformatDialog({
             <div className="context-room-thesis-dlg-cards" role="radiogroup" aria-label={t('contextRoom:thesisFormat.panelTitle')}>
               <p className="context-room-thesis-dlg-cards-title">{t('contextRoom:thesisFormat.existingTemplates')}</p>
               {cards.map((row) => (
-                <label className="context-room-thesis-dlg-option" key={row.id} data-selected={selectedCardId === row.id || undefined}>
-                  <input
-                    type="radio"
-                    name="thesis-template"
-                    value={row.id}
-                    checked={selectedCardId === row.id}
-                    disabled={busy}
-                    onChange={() => setSelectedCardId(row.id)}
-                  />
-                  <span>{row.sourceName}</span>
-                </label>
+                <div className="context-room-thesis-dlg-row" key={row.id}>
+                  <label className="context-room-thesis-dlg-option" data-selected={selectedCardId === row.id || undefined}>
+                    <input
+                      type="radio"
+                      name="thesis-template"
+                      value={row.id}
+                      checked={selectedCardId === row.id}
+                      disabled={busy}
+                      onChange={() => setSelectedCardId(row.id)}
+                    />
+                    <span>{row.sourceName}</span>
+                  </label>
+                  {row.sourceFileEntryId ? (
+                    <button
+                      type="button"
+                      className="context-room-thesis-dlg-del"
+                      title={t('contextRoom:thesisFormat.deleteTemplateFileTip')}
+                      aria-label={t('contextRoom:thesisFormat.deleteTemplateFile')}
+                      disabled={busy || deletingFileId === row.id}
+                      onClick={() => void deleteTemplateFile(row)}
+                    >
+                      {deletingFileId === row.id ? <LoaderCircle className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                    </button>
+                  ) : null}
+                </div>
               ))}
             </div>
           ) : null}
@@ -184,6 +239,43 @@ export function ThesisReformatDialog({
                 ? t('contextRoom:thesisFormat.phaseParsing')
                 : t('contextRoom:thesisFormat.phaseReformatting')}
             </p>
+          ) : null}
+
+          {report ? (
+            <div className="context-room-thesis-dlg-report" role="status">
+              <p className="context-room-thesis-dlg-report-head">
+                {t('contextRoom:thesisFormat.reportTitle', {
+                  matched: report.conservation?.matched ?? 0,
+                  total: report.conservation?.total ?? 0,
+                })}
+              </p>
+              {(report.conservation?.unmatched ?? 0) > 0 ? (
+                <p className="context-room-thesis-dlg-report-warn">
+                  {t('contextRoom:thesisFormat.reportUnmatched', { count: report.conservation?.unmatched ?? 0 })}
+                </p>
+              ) : null}
+              {report.assignments && report.assignments.length > 0 ? (
+                <ul className="context-room-thesis-dlg-report-list">
+                  {report.assignments.map((entry, index) => (
+                    <li key={`${entry.headingText}-${index}`} data-low={entry.confidence < 0.7 || undefined}>
+                      <span className="rule">{entry.rule.replace(/^R\d-/, '')}</span>
+                      <span className="text">{entry.headingText}</span>
+                      <span className="conf">{Math.round(entry.confidence * 100)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {report.needsReview && report.needsReview.length > 0 ? (
+                <p className="context-room-thesis-dlg-report-warn">
+                  {t('contextRoom:thesisFormat.reportNeedsReview', { count: report.needsReview.length })}
+                </p>
+              ) : null}
+              {report.gaps && report.gaps.length > 0 ? (
+                <ul className="context-room-thesis-dlg-report-gaps">
+                  {report.gaps.slice(0, 6).map((gap) => <li key={gap}>{gap}</li>)}
+                </ul>
+              ) : null}
+            </div>
           ) : null}
 
           {error ? <p className="context-room-move-error" role="alert">{error}</p> : null}
