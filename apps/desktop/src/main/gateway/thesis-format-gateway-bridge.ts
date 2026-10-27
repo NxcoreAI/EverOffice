@@ -88,6 +88,43 @@ export class ThesisFormatGatewayBridge {
     return this.parse(roomId, { method: 'POST', body: form })
   }
 
+  /** 提交排版作业（立即返回 jobId，长任务在网关侧推进）。 */
+  async startReformatJob(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: Parameters<ThesisFormatGatewayBridge["reformat"]>[3],
+  ): Promise<{ jobId: string; phase: string }> {
+    const response = await this.request(`/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/reformat-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileEntryId, cardId, ...(options ? { options } : {}) }),
+    })
+    if (!response.ok) throw new Error(`排版作业提交失败（${response.status}）`)
+    return await response.json() as { jobId: string; phase: string }
+  }
+
+  /** 查作业状态（轮询）。 */
+  async reformatJobStatus(jobId: string): Promise<{
+    id: string
+    status: 'running' | 'completed' | 'failed'
+    phase: string
+    progress: number
+    result?: unknown
+    error?: string
+  }> {
+    const response = await this.request(`/v1/thesis-format/jobs/${encodeURIComponent(jobId)}`)
+    if (!response.ok) throw new Error(`排版作业查询失败（${response.status}）`)
+    return await response.json() as {
+      id: string
+      status: 'running' | 'completed' | 'failed'
+      phase: string
+      progress: number
+      result?: unknown
+      error?: string
+    }
+  }
+
   async removeCard(roomId: string, cardId: string): Promise<void> {
     const response = await this.request(
       `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/cards/${encodeURIComponent(cardId)}`,

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   ChevronRight,
+  Columns2,
   Download,
   FileText,
+  FileType2,
   FolderOpen,
   Loader2,
   Moon,
@@ -81,6 +83,8 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
   const [previewCard, setPreviewCard] = useState<StudioCard | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [showDiff, setShowDiff] = useState(false)
+  const [pdfBusy, setPdfBusy] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -204,27 +208,43 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
     }
   }, [loadCards, roomId])
 
-  /** 开始排版：三阶段进度按调用节点推进（网关是单次长调用，无流式事件）。 */
+  /**
+   * 开始排版：提交任务拿 jobId，再轮询真实阶段。
+   *
+   * 为什么改成任务化：单次排版 5–10 分钟，长请求会被中间层在 5 分钟掐断，
+   * 用户会看到「AI 不可用/超时」而服务端其实还在跑。短提交 + 轮询没有这个问题。
+   */
   const runReformat = useCallback(async () => {
     const api = window.nxcore?.thesisFormat
     if (!api || !selectedCard || !selectedDoc) return
     setError(null)
     setResult(null)
-    setPhase('mapping')
+    setPhase('parsing')
     try {
-      // 映射与渲染由网关一次完成：先停在中段，拿到结果再补完
-      const tick = window.setTimeout(() => setPhase('rendering'), 1500)
-      const outcome = await api.reformat(roomId, selectedDoc.id, selectedCard.id, {
+      const job = await api.reformatStart(roomId, selectedDoc.id, selectedCard.id, {
         mode,
         keepLogo,
         keepHeaderFooter,
         headingMapping: headingMap,
       })
-      window.clearTimeout(tick)
-      setResult(outcome)
+      let snapshot = await api.reformatStatus(job.jobId)
+      const started = Date.now()
+      // 轮询到终态；12 分钟后放弃（后端作业仍在跑，可重开页面再查）
+      while (snapshot.status === 'running' && Date.now() - started < 12 * 60 * 1000) {
+        setPhase(snapshot.phase === 'rendering' ? 'rendering' : snapshot.phase === 'mapping' ? 'mapping' : 'parsing')
+        await new Promise((resolve) => window.setTimeout(resolve, 900))
+        snapshot = await api.reformatStatus(job.jobId)
+      }
+      if (snapshot.status === 'failed') {
+        throw new Error(snapshot.error || 'thesis_reformat_failed')
+      }
+      if (snapshot.status !== 'completed' || !snapshot.result) {
+        throw new Error('排版仍在后台进行，请稍后刷新任务列表查看结果。')
+      }
+      setResult(snapshot.result)
       setPhase('done')
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
-      showToast({ title: '排版完成', message: outcome.originalName })
+      showToast({ title: '排版完成', message: snapshot.result.originalName })
       loadDocs()
     } catch (err: unknown) {
       setError(describeThesisError(err instanceof Error ? err.message : String(err)))
@@ -241,7 +261,34 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
     }
   }, [result])
 
-  const report = result?.report as { conservation?: { matched?: number; total?: number; unmatched?: number } } | undefined
+  /** 导出 PDF：调用主进程 LibreOffice 转换；本机没装就给出明确说明，不假装成功。 */
+  const downloadPdf = useCallback(async () => {
+    if (!result) return
+    setPdfBusy(true)
+    try {
+      const outcome = await window.nxcore?.thesisFormat.exportPdf(roomId, result.fileEntryId)
+      if (outcome && 'unavailable' in outcome && outcome.unavailable) {
+        setError('本机未检测到 LibreOffice，暂时无法导出 PDF；可以先下载 Word 再另存为 PDF。')
+      } else {
+        showToast({ title: 'PDF 已导出', message: result.originalName.replace(/\.docx$/i, '.pdf') })
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPdfBusy(false)
+    }
+  }, [result, roomId])
+
+  const report = result?.report as
+    | {
+        conservation?: { matched?: number; total?: number; unmatched?: number }
+        diff?: {
+          left: Array<{ level: number; text: string; blocks: number }>
+          right: Array<{ level: number; text: string; slotId: string; rule: string; blocks: number }>
+          appended: string[]
+        }
+      }
+    | undefined
 
   return (
     <div className="thesis-studio" data-theme={dark ? 'dark' : 'light'} role="dialog" aria-modal="true" aria-label="智能排版工作台">
@@ -432,6 +479,19 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
                 <button type="button" className="ts-primary-btn is-ghost" onClick={() => void downloadWord()}>
                   <Download size={14} /> 下载 Word
                 </button>
+                <button type="button" className="ts-ghost-btn is-bordered" onClick={() => void downloadPdf()}>
+                  {pdfBusy ? <Loader2 className="ts-spin" size={14} /> : <FileType2 size={14} />} 导出 PDF
+                </button>
+              </div>
+              <div className="ts-result-acts">
+                <button
+                  type="button"
+                  className="ts-ghost-btn is-bordered"
+                  disabled={!report?.diff}
+                  onClick={() => setShowDiff(true)}
+                >
+                  <Columns2 size={14} /> 结构对比
+                </button>
                 <button type="button" className="ts-ghost-btn is-bordered" onClick={() => void runReformat()}>
                   <RotateCcw size={14} /> 重新排版
                 </button>
@@ -511,6 +571,59 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
           </ol>
         </aside>
       </div>
+
+      {showDiff && report?.diff ? (
+        <div className="ts-drawer" role="dialog" aria-label="结构对比" onClick={() => setShowDiff(false)}>
+          <div className="ts-drawer-panel ts-diff-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="ts-drawer-head">
+              <div>
+                <h3>结构对比</h3>
+                <small>左：原文档章节 · 右：排版后落位（内容结构级，非像素级预览）</small>
+              </div>
+              <button type="button" className="ts-icon-btn" onClick={() => setShowDiff(false)} aria-label="关闭">
+                <X size={15} />
+              </button>
+            </div>
+            <div className="ts-diff">
+              <div className="ts-diff-col">
+                <h4>原内容</h4>
+                <ul>
+                  {report.diff.left.map((row, index) => (
+                    <li key={`l-${index}`} data-level={row.level}>
+                      <span className="ts-diff-level">H{row.level}</span>
+                      <span className="ts-diff-text">{row.text}</span>
+                      <span className="ts-diff-blocks">{row.blocks} 块</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="ts-diff-col">
+                <h4>排版后</h4>
+                <ul>
+                  {report.diff.right.map((row, index) => (
+                    <li key={`r-${index}`} data-level={row.level}>
+                      <span className="ts-diff-level">H{row.level}</span>
+                      <span className="ts-diff-text">{row.text}</span>
+                      <span className="ts-diff-blocks">{row.blocks} 块</span>
+                      <span className="ts-diff-rule">{row.rule}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            {report.diff.appended.length > 0 ? (
+              <div className="ts-diff-appended">
+                <b>{report.diff.appended.length} 个未匹配块已保留在文末「未归类内容」</b>
+                <ul>
+                  {report.diff.appended.slice(0, 6).map((text, index) => (
+                    <li key={`a-${index}`}>{text || '（空块）'}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {previewCard ? (
         <div className="ts-drawer" role="dialog" aria-label="模版大纲预览" onClick={() => setPreviewCard(null)}>

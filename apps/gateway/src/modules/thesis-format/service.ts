@@ -16,6 +16,7 @@ import { buildTemplateFacts, normalizeMembersToDocx, unpackTemplateInput } from 
 import { validateThesisFormatCard } from "./validate.js";
 import { buildTemplateProfile } from "./template-profile.js";
 import { buildContentProfile } from "./content-profile.js";
+import { ThesisJobRegistry, type ThesisJobSnapshot } from "./jobs.js";
 import { buildMappingPlan, sanitizeMappingDecisions, type SemanticDecision } from "./mapping-plan.js";
 import { planToBindingSpec } from "./plan-to-spec.js";
 import type { ThesisBindingSpec, ThesisFormatCard, ThesisHfImage, ThesisReformatOptions, ThesisTemplateFacts } from "./types.js";
@@ -126,12 +127,48 @@ export class ThesisFormatService {
     return { sourceName: name, card, factGaps };
   }
 
+  private readonly jobs = new ThesisJobRegistry();
+
+  /**
+   * 任务化排版：立刻返回作业快照，重活扔到后台跑。
+   *
+   * 关键收益：客户端不再挂着 5–10 分钟的长请求（那会在中间层被掐断，用户误以为
+   * 模型不可用/超时），而是短轮询；服务端该跑多久跑多久。
+   */
+  startReformatJob(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: ThesisReformatOptions,
+  ): ThesisJobSnapshot {
+    const job = this.jobs.create(roomId);
+    void (async () => {
+      try {
+        const result = await this.reformat(roomId, fileEntryId, cardId, options, (phase) => {
+          this.jobs.phase(job.id, phase);
+        });
+        this.jobs.complete(job.id, result);
+      } catch (error) {
+        this.jobs.fail(job.id, error);
+      }
+    })();
+    return job;
+  }
+
+  /** 作业快照（前端轮询用）；未知作业返回 undefined。 */
+  reformatJob(jobId: string): ThesisJobSnapshot | undefined {
+    return this.jobs.get(jobId);
+  }
+
   async reformat(
     roomId: string,
     fileEntryId: string,
     cardId?: string,
     options?: ThesisReformatOptions,
+    /** 阶段回调（任务化进度用）：parsing → mapping → rendering。 */
+    onPhase?: (phase: "parsing" | "mapping" | "rendering") => void,
   ): Promise<ThesisReformatResult> {
+    onPhase?.("parsing");
     const row = cardId ? this.store.byId(roomId, cardId) : this.store.latest(roomId);
     if (!row) throw new Error("thesis_format_card_not_found");
     const card = row.card;
@@ -148,6 +185,7 @@ export class ThesisFormatService {
     if (described.outline.length === 0) throw new Error("thesis_source_outline_empty");
 
     const titleHint = entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300);
+    onPhase?.("mapping");
     const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint, options);
     let spec: ThesisBindingSpec;
     let report: Record<string, unknown> | undefined;
@@ -180,6 +218,7 @@ export class ThesisFormatService {
           footer: { ...withNumbering.footer, enabled: false },
         }
       : withNumbering;
+    onPhase?.("rendering");
     const built = await bridge.reformatThesisDocx({
       docxBase64: bytes.toString("base64"),
       formatCard: renderCard,
@@ -253,6 +292,16 @@ export class ThesisFormatService {
     const decisions = await this.adjudicateMapping(roomId, profile, plan);
     const adjudicated = decisions.length > 0 ? buildMappingPlan({ template: profile, content, semantic: decisions }) : plan;
     if (decisions.length > 0) plan = adjudicated;
+    // 双屏对比数据（内容结构级，非像素级）：左=源文档章节，右=排版后章节归属
+    const diff = {
+      left: content.outline.map((node) => ({
+        level: node.level,
+        text: node.text,
+        blocks: node.blockEnd - node.blockStart,
+      })),
+      right: [] as Array<{ level: number; text: string; slotId: string; rule: string; blocks: number }>,
+      appended: plan.unmatched.map((range) => (content.blocks[range.blockRange[0]]?.text ?? "").slice(0, 80)),
+    };
     const { spec, notes } = planToBindingSpec({
       plan,
       content,
@@ -260,9 +309,20 @@ export class ThesisFormatService {
       ...(options?.headingMapping ? { headingMapping: options.headingMapping } : {}),
       preserveSourceFormat: options?.mode === "blend",
     });
+    diff.right = spec.chapters.map((chapter) => {
+      const assignment = plan.assignments.find((entry) => entry.blockRange[0] === chapter.blockStart);
+      return {
+        level: chapter.level,
+        text: chapter.headingText,
+        slotId: assignment?.slotId ?? "-",
+        rule: assignment?.rule ?? "-",
+        blocks: chapter.blockEnd - chapter.blockStart,
+      };
+    });
     return {
       spec,
       report: {
+        diff,
         version: 2,
         conservation: plan.conservation,
         report: plan.report,

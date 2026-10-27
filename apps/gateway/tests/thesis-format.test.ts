@@ -864,3 +864,54 @@ describe("排版选项（第二期规则面板）", () => {
     expect(plain.spec.chapters.map((chapter) => chapter.level)).toEqual([1, 2]);
   });
 });
+
+describe("任务化排版（第三期：进度与长任务）", () => {
+  it("作业阶段映射到 15/45/75/100 的进度", async () => {
+    const { ThesisJobRegistry } = await import("../src/modules/thesis-format/jobs.js");
+    const registry = new ThesisJobRegistry();
+    const job = registry.create("room-1");
+    expect(job.status).toBe("running");
+    expect(job.phase).toBe("parsing");
+    expect(job.progress).toBe(15);
+    registry.phase(job.id, "mapping");
+    expect(registry.get(job.id)?.progress).toBe(45);
+    registry.phase(job.id, "rendering");
+    expect(registry.get(job.id)?.progress).toBe(75);
+    registry.complete(job.id, { fileEntryId: "f1", originalName: "a-排版版.docx" });
+    const done = registry.get(job.id);
+    expect(done?.status).toBe("completed");
+    expect(done?.progress).toBe(100);
+    expect((done?.result as { fileEntryId: string }).fileEntryId).toBe("f1");
+  });
+
+  it("失败作业记录错误信息，未知作业返回 undefined", async () => {
+    const { ThesisJobRegistry } = await import("../src/modules/thesis-format/jobs.js");
+    const registry = new ThesisJobRegistry();
+    const job = registry.create("room-1");
+    registry.fail(job.id, new Error("thesis_source_not_docx"));
+    expect(registry.get(job.id)?.status).toBe("failed");
+    expect(registry.get(job.id)?.error).toBe("thesis_source_not_docx");
+    expect(registry.get("nope")).toBeUndefined();
+  });
+
+  it("结构对比数据带左右两侧与未匹配块", () => {
+    const content = buildContentProfile([
+      { index: 0, kind: "heading", level: 1, text: "一、业务场景分析" },
+      { index: 1, kind: "paragraph", text: "正文一" },
+    ]);
+    const template = buildTemplateProfile({
+      facts: {
+        styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
+        outline: [], numbering: { scheme: "cn-upper", levels: [] },
+      },
+      card: validateThesisFormatCard({}, "模版.docx"),
+      sourceName: "模版.docx",
+    });
+    const plan = buildMappingPlan({ template, content });
+    const { spec } = planToBindingSpec({ plan, content, titleHint: "论文" });
+    // diff 由 service 组装，这里验证左右两侧源头数据齐备
+    expect(content.outline.length).toBeGreaterThan(0);
+    expect(spec.chapters.length).toBeGreaterThan(0);
+    expect(plan.unmatched).toBeDefined();
+  });
+});

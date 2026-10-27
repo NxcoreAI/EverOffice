@@ -156,5 +156,60 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
         return reply.code(code).send({ error: message });
       }
     });
+
+    /**
+     * 任务化排版：立即返回 jobId（长任务不占客户端请求槽，避免 5 分钟被中间层掐断）。
+     * 客户端用 GET /v1/thesis-format/jobs/:jobId 轮询阶段与进度。
+     */
+    app.post("/v1/thesis-format/rooms/:roomId/reformat-jobs", {
+      schema: {
+        tags: ["thesis-format"],
+        params: RoomParams,
+        body: ReformatBody,
+        response: {
+          200: Type.Object({ jobId: Type.String(), phase: Type.String() }),
+          400: Type.Object({ error: Type.String() }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    }, async (request, reply) => {
+      try {
+        const job = service.startReformatJob(
+          request.params.roomId,
+          request.body.fileEntryId,
+          request.body.cardId,
+          request.body.options as Parameters<typeof service.reformat>[3],
+        );
+        return reply.send({ jobId: job.id, phase: job.phase });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "thesis_reformat_failed";
+        const code = message === "thesis_format_card_not_found" ? 404 : 400;
+        return reply.code(code).send({ error: message });
+      }
+    });
+
+    app.get("/v1/thesis-format/jobs/:jobId", {
+      schema: {
+        tags: ["thesis-format"],
+        params: Type.Object({ jobId: Type.String({ minLength: 1, maxLength: 80 }) }),
+        response: {
+          200: Type.Object({
+            id: Type.String(),
+            status: Type.Union([Type.Literal("running"), Type.Literal("completed"), Type.Literal("failed")]),
+            phase: Type.String(),
+            progress: Type.Number(),
+            startedAt: Type.String(),
+            finishedAt: Type.Optional(Type.String()),
+            result: Type.Optional(Type.Unknown()),
+            error: Type.Optional(Type.String()),
+          }),
+          404: Type.Object({ error: Type.String() }),
+        },
+      },
+    }, async (request, reply) => {
+      const job = service.reformatJob(request.params.jobId);
+      if (!job) return reply.code(404).send({ error: "thesis_job_not_found" });
+      return reply.send(job);
+    });
   };
 }

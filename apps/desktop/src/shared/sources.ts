@@ -1682,6 +1682,31 @@ export interface NxcoreDesktopApi {
       originalName: string
       report?: Record<string, unknown>
     }>
+    /** 任务化排版：提交即返回 jobId（长任务不占客户端请求槽）。 */
+    reformatStart(
+      roomId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        mode?: 'strict' | 'blend'
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ): Promise<{ jobId: string; phase: string }>
+    /** 轮询排版作业：phase ∈ parsing|mapping|rendering|done，progress 0–100。 */
+    reformatStatus(jobId: string): Promise<{
+      id: string
+      status: 'running' | 'completed' | 'failed'
+      phase: string
+      progress: number
+      result?: { fileEntryId: string; originalName: string; report?: Record<string, unknown> }
+      error?: string
+    }>
+    /** 导出 PDF：本机无 LibreOffice 时 unavailable=true（UI 需给出可执行说明）。 */
+    exportPdf(roomId: string, fileEntryId: string): Promise<
+      { unavailable: true } | { unavailable: false; path: string }
+    >
     onCardChanged(listener: () => void): () => void
   }
   ingest: {

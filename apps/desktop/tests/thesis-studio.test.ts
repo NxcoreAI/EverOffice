@@ -74,6 +74,25 @@ describe('智能排版工作台 · 功能要点', () => {
     expect(studio).toContain('模版章节骨架（槽位）')
   })
 
+  it('排版走任务化：提交拿 jobId + 轮询真实阶段（不再长请求）', () => {
+    expect(studio).toContain('api.reformatStart(roomId, selectedDoc.id, selectedCard.id')
+    expect(studio).toContain('api.reformatStatus(job.jobId)')
+    expect(studio).toContain("snapshot.phase === 'rendering'")
+    expect(studio).not.toContain('const outcome = await api.reformat(roomId')
+  })
+
+  it('结构对比：左原内容、右排版后 + 未匹配块单独列出', () => {
+    expect(studio).toContain('ts-diff')
+    expect(studio).toContain('原内容')
+    expect(studio).toContain('排版后')
+    expect(studio).toContain('未匹配块已保留在文末')
+  })
+
+  it('PDF 导出：本机无 LibreOffice 时给可执行说明，不假装成功', () => {
+    expect(studio).toContain('exportPdf(roomId, result.fileEntryId)')
+    expect(studio).toContain('本机未检测到 LibreOffice')
+  })
+
   it('四阶段进度 + 结果下载/重新排版', () => {
     expect(studio).toContain("label: '解析模板结构'")
     expect(studio).toContain("label: '映射内容段落'")

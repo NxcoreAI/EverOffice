@@ -813,3 +813,108 @@
 .ts-fieldset:disabled .ts-select-row {
   opacity: 0.55;
 }
+
+/* ── 结构对比（双屏） ── */
+.ts-diff-panel {
+  width: min(860px, 94vw);
+}
+
+.ts-diff {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ts-diff-col {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--ts-border);
+  border-radius: 10px;
+  background: var(--ts-surface-2);
+}
+
+.ts-diff-col h4 {
+  margin: 0;
+  color: var(--ts-text-2);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ts-diff-col ul {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.ts-diff-col li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  background: var(--ts-surface);
+  font-size: 12px;
+}
+
+.ts-diff-level {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--ts-primary-weak);
+  color: var(--ts-primary);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.ts-diff-col li[data-level='1'] .ts-diff-level {
+  background: var(--ts-primary);
+  color: #fff;
+}
+
+.ts-diff-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-diff-blocks,
+.ts-diff-rule {
+  flex: none;
+  color: var(--ts-text-2);
+  font-size: 10.5px;
+}
+
+.ts-diff-rule {
+  padding: 0 5px;
+  border: 1px solid var(--ts-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ts-diff-appended {
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--ts-danger) 30%, transparent);
+  border-radius: 9px;
+  background: var(--ts-danger-weak);
+  color: var(--ts-danger);
+  font-size: 11.5px;
+}
+
+.ts-diff-appended ul {
+  margin: 5px 0 0;
+  padding-left: 16px;
+  color: var(--ts-text-2);
+}

@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, Notification, protocol, screen, session, shell, systemPreferences } from 'electron'
+import { convertOfficeFileToPdf } from './office/legacy-convert'
 import type {
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
@@ -677,6 +678,9 @@ const THESIS_FORMAT_CHANNELS = {
   removeCard: 'thesis-format:cards:remove',
   deleteTemplate: 'thesis-format:template:delete',
   reformat: 'thesis-format:reformat',
+  reformatStart: 'thesis-format:reformat:start',
+  reformatStatus: 'thesis-format:reformat:status',
+  exportPdf: 'thesis-format:export:pdf',
   cardChanged: 'thesis-format:card-changed',
 } as const
 
@@ -2894,6 +2898,27 @@ function registerThesisFormatHandlers(
     await bridge.removeCard(roomId, cardId)
     cardChanged()
     return { fileDeleted, hadFile: Boolean(card?.sourceFileEntryId) }
+  })
+  handle(THESIS_FORMAT_CHANNELS.reformatStart, (
+    _event,
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: Parameters<typeof bridge.reformat>[3],
+  ) => bridge.startReformatJob(roomId, fileEntryId, cardId, options))
+  handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
+  /** 导出 PDF：LibreOffice 转换 → ~/Downloads/EverRoom/，并定位到文件。 */
+  handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
+    const storagePath = await files.storagePath(fileEntryId)
+    const entry = await files.catalogEntry(fileEntryId)
+    const outcome = await convertOfficeFileToPdf(
+      storagePath,
+      entry.originalName,
+      join(app.getPath('downloads'), 'EverRoom'),
+    )
+    if ('unavailable' in outcome) return { unavailable: true as const }
+    shell.showItemInFolder(outcome.pdfPath)
+    return { unavailable: false as const, path: outcome.pdfPath }
   })
   handle(THESIS_FORMAT_CHANNELS.reformat, (
     _event,

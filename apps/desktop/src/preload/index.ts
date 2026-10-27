@@ -1057,6 +1057,22 @@ const api: NxcoreDesktopApi = {
         headingMapping?: { chapter?: number; section?: number; subsection?: number }
       },
     ) => invoke('thesis-format:reformat', roomId, fileEntryId, cardId, options),
+    /** 任务化排版：立即返回 jobId，用 reformatStatus 轮询阶段进度。 */
+    reformatStart: (
+      roomId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        mode?: 'strict' | 'blend'
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ) => invoke('thesis-format:reformat:start', roomId, fileEntryId, cardId, options),
+    reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
+    /** 导出 PDF（LibreOffice）；本机未安装时返回 { unavailable: true }。 */
+    exportPdf: (roomId: string, fileEntryId: string) =>
+      invoke('thesis-format:export:pdf', fileEntryId),
     removeCard: (roomId: string, cardId: string) =>
       invoke('thesis-format:cards:remove', roomId, cardId),
     onCardChanged: (listener: () => void) => {
