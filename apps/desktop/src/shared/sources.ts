@@ -1660,6 +1660,10 @@ export interface NxcoreDesktopApi {
     pickAndSet(roomId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }>
     /** 删除一张格式卡。 */
     removeCard(roomId: string, cardId: string): Promise<void>
+    /** 工作台拖拽上传：字节直传网关解析成格式卡（不落盘）。factGaps 语义同 setFromLibrary。 */
+    parseUpload(roomId: string, name: string, bytes: ArrayBuffer): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    /** 彻底删除模版：模版文件 + 格式卡。 */
+    deleteTemplate(roomId: string, cardId: string): Promise<{ fileDeleted: boolean; hadFile: boolean }>
     /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。
      *  report 为 v2 槽位映射报告（守恒核对/规则/未匹配块/待复核章节）。 */
     reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{

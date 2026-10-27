@@ -1040,6 +1040,12 @@ const api: NxcoreDesktopApi = {
       invoke('thesis-format:parse:library', roomId, fileEntryId),
     pickAndSet: (roomId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
       invoke('thesis-format:parse:pick', roomId, options),
+    /** 工作台拖拽上传：直接把字节交给网关解析成格式卡（不落盘、不进文件库）。 */
+    parseUpload: (roomId: string, name: string, bytes: ArrayBuffer) =>
+      invoke('thesis-format:parse:upload', roomId, name, bytes),
+    /** 彻底删除模版：模版文件 + 格式卡（先删文件含 Room 成员引用级联，再删卡）。 */
+    deleteTemplate: (roomId: string, cardId: string) =>
+      invoke('thesis-format:template:delete', roomId, cardId),
     reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
       invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
     removeCard: (roomId: string, cardId: string) =>

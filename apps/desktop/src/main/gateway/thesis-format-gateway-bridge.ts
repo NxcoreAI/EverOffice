@@ -81,6 +81,13 @@ export class ThesisFormatGatewayBridge {
     return { fileDeleted, hadFile: Boolean(fileEntryId), cardKept: keepCard }
   }
 
+  /** 从内存字节解析模版（工作台拖拽上传用，不落盘）。 */
+  async parseFromBytes(roomId: string, name: string, bytes: Uint8Array): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
+    const form = new FormData()
+    form.append('file', new Blob([new Uint8Array(bytes)]), name)
+    return this.parse(roomId, { method: 'POST', body: form })
+  }
+
   async removeCard(roomId: string, cardId: string): Promise<void> {
     const response = await this.request(
       `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/cards/${encodeURIComponent(cardId)}`,

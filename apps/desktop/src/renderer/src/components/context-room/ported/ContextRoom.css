@@ -16257,3 +16257,31 @@ button.eg-walk.is-next:hover {
   align-items: center;
   gap: 6px;
 }
+
+/* 智能排版工作台入口（Room 页右下角悬浮） */
+.thesis-studio-launcher {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--cr-accent, #6366f1) 35%, transparent);
+  border-radius: 999px;
+  background: var(--cr-surface, #fff);
+  color: var(--cr-accent, #6366f1);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgb(17 24 39 / 12%);
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.thesis-studio-launcher:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--cr-accent, #6366f1) 8%, var(--cr-surface, #fff));
+  box-shadow: 0 10px 26px rgb(17 24 39 / 16%);
+}

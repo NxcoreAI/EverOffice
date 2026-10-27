@@ -673,6 +673,7 @@ const THESIS_FORMAT_CHANNELS = {
   listCards: 'thesis-format:cards:list',
   parseFromLibrary: 'thesis-format:parse:library',
   pickAndParse: 'thesis-format:parse:pick',
+  parseUpload: 'thesis-format:parse:upload',
   removeCard: 'thesis-format:cards:remove',
   deleteTemplate: 'thesis-format:template:delete',
   reformat: 'thesis-format:reformat',
@@ -2872,6 +2873,11 @@ function registerThesisFormatHandlers(
    * 「只删卡」会把模版文件留在资料区，用户看到的就是"删了还残留"。
    * 文件删除走 /v1/files/:id（硬删 + Room 成员引用级联），失败不阻断删卡。
    */
+  handle(THESIS_FORMAT_CHANNELS.parseUpload, async (_event, roomId: string, name: string, bytes: ArrayBuffer) => {
+    const meta = await bridge.parseFromBytes(roomId, name, new Uint8Array(bytes))
+    cardChanged()
+    return meta
+  })
   handle(THESIS_FORMAT_CHANNELS.deleteTemplate, async (_event, roomId: string, cardId: string) => {
     const cards = await bridge.listCards(roomId)
     const card = cards.find((entry) => entry.id === cardId)
