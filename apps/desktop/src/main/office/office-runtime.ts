@@ -93,6 +93,8 @@ export interface GenOfficeSheetsRuntime {
   /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
   requestSheetsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSheetsWebContents(contents: WebContents | null): void
+  /** 未保存编辑条数（>0 = 脏）：Agent 写回工作副本前的闸门。 */
+  sheetsPendingEditCount(webContentsId: number): number
   setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void

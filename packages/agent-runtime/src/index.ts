@@ -3,6 +3,7 @@ import type {
   AgentActiveDocumentContext,
   AgentActiveFileContext,
   AgentEventType,
+  AgentOpenFileContext,
   LocalAgentDelegationContext,
   LocalAgentInvocationTarget,
   AgentRoomReference,
@@ -37,6 +38,8 @@ export interface StartRuntimeRunInput {
   activeDocument?: AgentActiveDocumentContext;
   /** 用户当前正在浏览的 Office 文件页签（file_entries），工具按 fileId 读取正文。 */
   activeFile?: AgentActiveFileContext;
+  /** 工作区当前打开的全部 Office 页签（含 active 标记），供 Agent 感知“一共开了哪些文件”。 */
+  openFiles?: AgentOpenFileContext[];
   /** Prior Agent chat made available to Main as an on-demand, read-only context source. */
   referencedConversationId?: string;
   /** @ mentioned local CLI Agents; Main stays the speaker and decides which to dispatch via local_agent_dispatch. */

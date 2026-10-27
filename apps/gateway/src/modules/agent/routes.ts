@@ -421,6 +421,20 @@ export function agentRoutes(
                 ]),
                 editable: Type.Optional(Type.Boolean()),
               }, { additionalProperties: false })),
+              // 工作区打开的全部 Office 页签（含 active）：让 Agent 知道除了
+              // 眼前这份，工作区里还开着哪些文件。
+              openFiles: Type.Optional(Type.Array(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                title: Type.String({ minLength: 1, maxLength: 300 }),
+                kind: Type.Union([
+                  Type.Literal("docx"),
+                  Type.Literal("spreadsheet"),
+                  Type.Literal("slides"),
+                  Type.Literal("pdf"),
+                ]),
+                editable: Type.Optional(Type.Boolean()),
+                active: Type.Boolean(),
+              }, { additionalProperties: false }), { maxItems: 20 })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),

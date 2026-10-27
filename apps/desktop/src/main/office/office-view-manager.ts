@@ -107,6 +107,12 @@ export class OfficeViewManager {
     return this.view.webContents.id
   }
 
+  /** 未保存修改：Agent 覆盖工作副本前的闸门（脏 → 先把“保存后再改”告诉用户）。 */
+  async isDirty(): Promise<boolean> {
+    if (this.view.webContents.isDestroyed()) return false
+    return this.docs.docsQueryDirty(this.view.webContents)
+  }
+
   static createWithRuntime(
     window: BrowserWindow,
     docs: GenOfficeDocsRuntime,

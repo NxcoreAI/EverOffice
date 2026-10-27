@@ -23,7 +23,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type SubagentSelectionRewriteInput } from '../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -235,6 +235,12 @@ const api: NxcoreDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
       ipcRenderer.on('office:agent-ask', handler)
       return () => ipcRenderer.removeListener('office:agent-ask', handler)
+    },
+    /** Agent 改写后实例被重开：重新挂一次视口，把新原生视图的矩形上报给主进程。 */
+    onInstanceReloaded: (listener: (event: { id: string; kind: OfficePreviewKind }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { id: string; kind: OfficePreviewKind }) => listener(payload)
+      ipcRenderer.on('office:instance-reloaded', handler)
+      return () => ipcRenderer.removeListener('office:instance-reloaded', handler)
     },
   },
   locale: {

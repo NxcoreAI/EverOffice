@@ -47,6 +47,12 @@ export class SpreadsheetViewManager {
     return this.view.webContents.id
   }
 
+  /** 未保存修改（renderer 上报的 pending 编辑数 > 0）：Agent 写回前的闸门。 */
+  async isDirty(): Promise<boolean> {
+    if (this.view.webContents.isDestroyed()) return false
+    return this.sheets.sheetsPendingEditCount(this.view.webContents.id) > 0
+  }
+
   static async create(window: BrowserWindow, sheets: GenOfficeSheetsRuntime, file: { id: string; contentHash: string; originalName: string; storagePath: string }, options?: { editable?: boolean }): Promise<SpreadsheetViewManager> {
     const path = await prepareSpreadsheet(file.id, file.contentHash, file.originalName, file.storagePath)
     const editable = options?.editable === true

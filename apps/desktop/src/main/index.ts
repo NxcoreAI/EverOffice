@@ -3257,6 +3257,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       () => (fileId, req) => officePreviewRegistry.editSlidesArtifact(fileId, req),
       // 视觉复检：已打开 slides 产物的一页 → 1x PNG（渲染层离屏栅格化）。
       () => (fileId, slideIndex) => officePreviewRegistry.renderSlidesPagePng(fileId, slideIndex),
+      // Agent 改写当前打开的 Word/Excel：字节 → 工作副本 → 版本链（含访达写回）→ 重开视图。
+      () => (fileId, bytes, expectedContentHash) =>
+        officePreviewRegistry.applyAgentFileBytes(fileId, bytes, expectedContentHash),
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
@@ -3434,9 +3437,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerNotificationHandlers(saasClient)
     agentStatusReporter = new AgentStatusReporter(saasClient)
     agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter, {
-      // 用户当前浏览的 Office 页签随每次 run 注入：Agent 至少要知道“这份文档”
-      // 指的是哪一份（fileId/title/kind），才能用 file_read 读它而不是猜文稿。
-      activeFile: () => officePreviewRegistry.activeOfficeFile(),
+      // 工作区打开的全部 Office 页签随每次 run 注入：Agent 既要知道“这份文档”
+      // 指的哪一份（activeFile 由清单的 active 项推出），也要知道工作区一共
+      // 开着哪些文件，才能回答“另一个文件/都开了些什么”。
+      openFiles: () => officePreviewRegistry.openOfficeFiles(),
     })
     agentStatusReporter.setSessionsProvider(async () => (await agentGatewayBridge!.listAllSessionSnapshots()).map((snapshot) => ({
       ...snapshot.session,

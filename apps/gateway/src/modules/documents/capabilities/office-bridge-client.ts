@@ -49,6 +49,23 @@ export interface OfficeGenerateResult {
   originalName: string;
 }
 
+/** /v1/office-apply-bytes：把 Agent 改好的 Office 文件字节落回当前打开的实例。 */
+export interface OfficeApplyBytesInput {
+  fileId: string;
+  bytesBase64: string;
+  /** 基线版本内容指纹（桌面端据此判断文件在生成字节期间是否被保存过）。 */
+  expectedContentHash: string;
+}
+
+export interface OfficeApplyBytesResult {
+  ok: boolean;
+  reason?: "not_open" | "not_editable" | "unsaved" | "conflict" | "error";
+  message?: string;
+  /** 落盘后的库内版本号（桌面端回填版本链后返回）。 */
+  version?: number;
+  fileVersionId?: string;
+}
+
 /** /v1/office-edit read：活会话大纲 + op 词汇表。 */
 export interface OfficeSlidesDeckInfo {
   outline: string;
@@ -282,6 +299,44 @@ export class OfficeBridgeClient {
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
     };
+  }
+
+  /**
+   * /v1/office-apply-bytes：把 Agent 改好的字节写回「用户正开着的那份」，
+   * 由桌面端完成工作副本覆盖、版本链回填、访达原文件写回与视图重开。
+   */
+  async applyFileBytes(input: OfficeApplyBytesInput): Promise<OfficeApplyBytesResult> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-apply-bytes`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // 覆盖工作副本 + 版本回填 + 视图重开；大文件走 base64，超时放宽。
+      signal: AbortSignal.timeout(120_000),
+    })
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+    }
+    const data = parsed.data ?? {}
+    if (!response.ok) {
+      const reason = typeof data.reason === "string" ? data.reason as OfficeApplyBytesResult["reason"] : "error"
+      return {
+        ok: false,
+        ...(reason ? { reason } : {}),
+        message: typeof data.message === "string"
+          ? data.message
+          : typeof parsed.message === "string" ? parsed.message : `Office apply failed (${response.status})`,
+      }
+    }
+    return {
+      ok: true,
+      ...(typeof data.version === "number" ? { version: data.version } : {}),
+      ...(typeof data.fileVersionId === "string" ? { fileVersionId: data.fileVersionId } : {}),
+    }
   }
 
   private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {

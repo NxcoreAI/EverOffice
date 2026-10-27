@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentActiveDocumentContext,
   AgentActiveFileContext,
+  AgentOpenFileContext,
   AgentEvent,
   AgentEventType,
   AgentModelPreference,
@@ -295,6 +296,26 @@ function normalizeActiveFile(value: AgentActiveFileContext | undefined): AgentAc
   };
 }
 
+/** 打开中的页签清单上限：与运行提示的展示上限一致，超出部分对定位没有帮助。 */
+const OPEN_FILES_LIMIT = 20;
+
+/** 工作区打开的全部 Office 页签：逐条做形状校验、按 fileId 去重并限量。 */
+function normalizeOpenFiles(
+  values: readonly AgentOpenFileContext[] | undefined,
+): AgentOpenFileContext[] | undefined {
+  if (!Array.isArray(values) || values.length === 0) return undefined;
+  const seen = new Set<string>();
+  const files: AgentOpenFileContext[] = [];
+  for (const value of values) {
+    const normalized = normalizeActiveFile(value);
+    if (!normalized || seen.has(normalized.fileId)) continue;
+    seen.add(normalized.fileId);
+    files.push({ ...normalized, active: value.active === true });
+    if (files.length >= OPEN_FILES_LIMIT) break;
+  }
+  return files.length ? files : undefined;
+}
+
 function localAgentDelegationContext(input: {
   request: StartAgentRunInput;
   pageLabel: string;
@@ -454,6 +475,8 @@ export class AgentService {
     activeDocument?: AgentActiveDocumentContext;
     /** 用户当前浏览的 Office 文件：工具（file_read）按它兜底 fileId。 */
     activeFile?: AgentActiveFileContext;
+    /** 工作区打开的全部 Office 页签（含 active 标记）：运行时据此告知 Agent。 */
+    openFiles?: AgentOpenFileContext[];
     dispatchSource?: LocalAgentDispatchRunSource;
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
@@ -1327,7 +1350,11 @@ export class AgentService {
       ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
         ?? input.context.activeDocument
       : undefined;
-    const activeFile = normalizeActiveFile(input.context?.activeFile);
+    const openFiles = normalizeOpenFiles(input.context?.openFiles);
+    // 页签清单里的 active 项就是当前文件：桌面端漏传 activeFile 时也能兜住。
+    const activeFile = normalizeActiveFile(input.context?.activeFile)
+      ?? openFiles?.find((file) => file.active)
+      ?? undefined;
 
     // 档位（main/main-direct/main-lite）在会话创建时锁定：会话已锁档位时
     // 请求另一个档位不生效（静默沿用会话档位）；local agent 切换不受影响。
@@ -1554,6 +1581,7 @@ export class AgentService {
       availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
       ...(activeFile ? { activeFile } : {}),
+      ...(openFiles ? { openFiles } : {}),
       dispatchSource: {
         priorMessages: priorMessages.slice(-LOCAL_AGENT_HISTORY_MESSAGE_LIMIT).map((message) => ({
           role: message.role,
@@ -1630,6 +1658,7 @@ export class AgentService {
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
         ...(activeFile ? { activeFile } : {}),
+        ...(openFiles ? { openFiles } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });
     } catch (error) {

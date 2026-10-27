@@ -148,6 +148,8 @@ export function App() {
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
   const [agentFileFocus, setAgentFileFocus] = useState<{ fileId: string; requestId: number } | null>(null)
   const [officeViewStalled, setOfficeViewStalled] = useState(false)
+  /** Agent 改写后原生视图被重开：+1 触发视口重新挂载并上报矩形。 */
+  const [officeViewEpoch, setOfficeViewEpoch] = useState(0)
   const agentFileFocusRequestIdRef = useRef(0)
   const fullOnboardingCompletedRef = useRef(readFullOnboardingCompleted())
   const fullOnboardingStageRef = useRef<OnboardingFlowStage>('idle')
@@ -192,7 +194,18 @@ export function App() {
       logOfficeUiDiag('office-ui.viewport.detach', { id: focusedOfficeInstanceId })
       attachment.detach()
     }
-  }, [activePage, focusedOfficeInstanceId, workspaceMain])
+  }, [activePage, focusedOfficeInstanceId, workspaceMain, officeViewEpoch])
+
+  // Agent 改写落盘后主进程会重开该文件的视图（旧 WebContentsView 已销毁）：
+  // 重新挂载视口，把新视图的矩形补报上去，否则新视图一直没有 bounds。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onInstanceReloaded) return
+    return office.onInstanceReloaded((event) => {
+      logOfficeUiDiag('office-ui.instance-reloaded', { id: event.id, kind: event.kind })
+      setOfficeViewEpoch((current) => current + 1)
+    })
+  }, [])
 
   // 预览页宽限计时：切到预览页/换标签时重新计时，超时仍未看到文档才展示兜底出口。
   useEffect(() => {

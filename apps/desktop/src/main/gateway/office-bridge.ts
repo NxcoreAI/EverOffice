@@ -62,6 +62,13 @@ export interface OfficeEditRequest {
   isolation?: 'atomic' | 'per_op'
 }
 
+/** Agent 改写「用户正开着的那份」Word/Excel：字节 → 工作副本 → 版本链 → 重开视图。 */
+export interface OfficeApplyBytesRequest {
+  fileId: string
+  bytesBase64: string
+  expectedContentHash: string
+}
+
 /** 论文装订请求（gateway thesis-format → /v1/office-reformat）。 */
 export interface OfficeReformatRequest {
   action: 'describe' | 'build'
@@ -99,6 +106,14 @@ function validRenderBody(value: unknown): value is OfficeRenderRequest {
   if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
   if (!Array.isArray(input.pages) || input.pages.length === 0 || input.pages.length > 4) return false
   return input.pages.every((page) => typeof page === 'string' && page.length > 0)
+}
+
+function validApplyBytesBody(value: unknown): value is OfficeApplyBytesRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeApplyBytesRequest>
+  return typeof input.fileId === 'string' && input.fileId.trim().length > 0
+    && typeof input.bytesBase64 === 'string' && input.bytesBase64.length > 0
+    && typeof input.expectedContentHash === 'string' && /^[a-f0-9]{64}$/i.test(input.expectedContentHash)
 }
 
 const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx' }
@@ -206,6 +221,13 @@ export class OfficeBridgeServer {
     private readonly slidesRenderPage: () =>
       | ((fileId: string, slideIndex: number) => Promise<{ ok: true; pngBase64: string } | { ok: false; error: string }>)
       | null = () => null,
+    /** 写回当前打开的 Word/Excel（registry.applyAgentFileBytes；未注入 = 工具不可用）。 */
+    private readonly applyAgentBytes: () =>
+      | ((fileId: string, bytes: Buffer, expectedContentHash: string) => Promise<
+        | { ok: true; contentHash: string }
+        | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved' | 'conflict' | 'error'; message?: string }
+      >)
+      | null = () => null,
   ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
@@ -244,15 +266,25 @@ export class OfficeBridgeServer {
       || request.url === '/v1/office-render'
       || request.url === '/v1/office-render-page'
       || request.url === '/v1/office-reformat'
+      || request.url === '/v1/office-apply-bytes'
     if (!known) {
       return { status: 404, body: { message: 'Not found' } }
     }
     if (!authorized(request, this.token)) return { status: 401, body: { message: 'Unauthorized' } }
-    const read = await this.readJsonBody(request, request.url === '/v1/office-reformat' ? 60 * 1024 * 1024 : undefined)
+    const read = await this.readJsonBody(
+      request,
+      request.url === '/v1/office-reformat' || request.url === '/v1/office-apply-bytes'
+        ? 64 * 1024 * 1024
+        : undefined,
+    )
     if ('error' in read) return read.error
     if (request.url === '/v1/office-complete') {
       if (!validCompleteBody(read.parsed)) return { status: 422, body: { message: 'Invalid office complete request' } }
       return this.complete(read.parsed)
+    }
+    if (request.url === '/v1/office-apply-bytes') {
+      if (!validApplyBytesBody(read.parsed)) return { status: 422, body: { message: 'Invalid office apply-bytes request' } }
+      return this.applyBytes(read.parsed)
     }
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
@@ -271,6 +303,30 @@ export class OfficeBridgeServer {
     }
     if (!validBody(read.parsed)) return { status: 422, body: { message: 'Invalid office generate request' } }
     return this.generate(read.parsed)
+  }
+
+  /**
+   * /v1/office-apply-bytes：Agent 改写当前打开的 Word/Excel。
+   * 桌面端负责脏检查/基线校验/覆盖工作副本/版本回填/重开视图，网关只送字节。
+   */
+  private async applyBytes(req: OfficeApplyBytesRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    const apply = this.applyAgentBytes()
+    if (!apply) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }
+    const bytes = Buffer.from(req.bytesBase64, 'base64')
+    if (bytes.length === 0) return { status: 422, body: { message: 'bytesBase64 required' } }
+    const result = await apply(req.fileId.trim(), bytes, req.expectedContentHash)
+    if (!result.ok) {
+      return {
+        status: 409,
+        body: {
+          data: {
+            reason: result.reason,
+            ...(result.message ? { message: result.message } : {}),
+          },
+        },
+      }
+    }
+    return { status: 200, body: { data: { ok: true, contentHash: result.contentHash } } }
   }
 
   /**

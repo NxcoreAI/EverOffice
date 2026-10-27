@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 
@@ -54,7 +58,7 @@ vi.mock('../src/main/office/spreadsheet-view-manager', () => ({
 }))
 
 import { OfficePreviewRegistry, officePreviewKindFor } from '../src/main/office/office-preview-registry'
-import { OFFICE_TEST_INSTANCE_ID } from '../src/shared/sources'
+import { prepareOfficeDocument } from '../src/main/office/office-view-manager'
 
 /** 每个视图实例的 mock：记录 setActive/dispose 调用；disposeNextCancel 控制下一次返回。 */
 interface ViewRecord {
@@ -63,6 +67,7 @@ interface ViewRecord {
   disposed: boolean
   webContentsId: number
   disposeNextCancel: boolean
+  dirty: boolean
 }
 const viewCalls: ViewRecord[] = []
 function makeView(kind: string): {
@@ -74,6 +79,7 @@ function makeView(kind: string): {
     kind, setActive: [], disposed: false,
     webContentsId: 1000 + viewCalls.length,
     disposeNextCancel: false,
+    dirty: false,
   }
   viewCalls.push(entry)
   return {
@@ -84,6 +90,7 @@ function makeView(kind: string): {
       return true
     }),
     webContentsId: entry.webContentsId,
+    isDirty: vi.fn(async () => entry.dirty),
   }
 }
 
@@ -110,6 +117,8 @@ function makeWindow(): BrowserWindow {
   return {
     contentView: { addChildView: vi.fn() },
     once: vi.fn(),
+    isDestroyed: () => false,
+    webContents: { isDestroyed: () => false, send: vi.fn() },
     getContentBounds: () => ({ x: 0, y: 0, width: 1440, height: 900 }),
   } as unknown as BrowserWindow
 }
@@ -294,15 +303,6 @@ describe('OfficePreviewRegistry', () => {
 
     expect(viewCalls[0]!.disposed).toBe(true)
     expect(viewCalls[1]!.disposed).toBe(false)
-  })
-
-  it('exposes the dev test instance under the shared constant id', () => {
-    const window = makeWindow()
-    const descriptor = registry.openTest(window)
-
-    expect(descriptor.kind).toBe('docx')
-    expect(registry.setActive(OFFICE_TEST_INSTANCE_ID)).toBe(true)
-    expect(viewCalls[0]!.setActive).toEqual([true])
   })
 
   describe('editable docx', () => {
@@ -507,6 +507,81 @@ describe('OfficePreviewRegistry', () => {
 
       registry.setActive(null)
       expect(registry.activeOfficeFile()).toBeNull()
+    })
+
+    it('applyAgentFileBytes：覆盖工作副本、重开视图并通知渲染端', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-apply-'))
+      const target = join(directory, 'contract.docx')
+      const baseBytes = Buffer.from('old-docx-bytes')
+      await writeFile(target, baseBytes)
+      const baseHash = createHash('sha256').update(baseBytes).digest('hex')
+      vi.mocked(prepareOfficeDocument).mockResolvedValue(target)
+      try {
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-apply', 'contract.docx', baseHash), editable: true })
+        const nextBytes = Buffer.from('new-docx-bytes-from-agent')
+        const result = await registry.applyAgentFileBytes('file-apply', nextBytes, baseHash)
+
+        expect(result.ok).toBe(true)
+        expect((await readFile(target)).toString()).toBe('new-docx-bytes-from-agent')
+        expect(window.webContents.send).toHaveBeenCalledWith('office:instance-reloaded', {
+          id: 'file-apply',
+          kind: 'docx',
+        })
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
+    it('applyAgentFileBytes：工作副本与基线不符时拒绝覆盖（期间被保存过）', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-conflict-'))
+      const target = join(directory, 'contract.docx')
+      await writeFile(target, Buffer.from('saved-by-user'))
+      vi.mocked(prepareOfficeDocument).mockResolvedValue(target)
+      try {
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-conflict', 'contract.docx', 'a'.repeat(64)), editable: true })
+        const result = await registry.applyAgentFileBytes('file-conflict', Buffer.from('agent'), 'a'.repeat(64))
+        expect(result).toMatchObject({ ok: false, reason: 'conflict' })
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+
+    it('applyAgentFileBytes：未打开/只读/有未保存修改时拒绝写回', async () => {
+      const window = makeWindow()
+      expect(await registry.applyAgentFileBytes('file-missing', Buffer.from('x'), 'a'.repeat(64))).toEqual({
+        ok: false,
+        reason: 'not_open',
+        open: [],
+      })
+
+      await registry.open(window, file('file-pdf', 'manual.pdf'))
+      expect(await registry.applyAgentFileBytes('file-pdf', Buffer.from('x'), 'a'.repeat(64)))
+        .toMatchObject({ ok: false, reason: 'not_editable' })
+
+      await registry.open(window, { ...file('file-dirty', 'contract.docx'), editable: true })
+      viewCalls.at(-1)!.dirty = true
+      expect(await registry.applyAgentFileBytes('file-dirty', Buffer.from('x'), 'a'.repeat(64)))
+        .toEqual({ ok: false, reason: 'unsaved', message: '文档有未保存的修改' })
+    })
+
+    it('openOfficeFiles：完整列出工作区打开的页签，并标出焦点项', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-o1', 'a.docx'))
+      await registry.open(window, { ...file('file-o2', 'b.xlsx'), editable: true })
+      await registry.open(window, { ...file('file-o3', 'c.pptx'), editable: true })
+      registry.setActive('file-o2')
+
+      expect(registry.openOfficeFiles()).toEqual([
+        { fileId: 'file-o2', title: 'b.xlsx', kind: 'spreadsheet', editable: true, active: true },
+        { fileId: 'file-o1', title: 'a.docx', kind: 'docx', editable: false, active: false },
+        { fileId: 'file-o3', title: 'c.pptx', kind: 'slides', editable: true, active: false },
+      ])
+
+      // 切到别的页面（不关页签）后仍然知道开着哪些文件，只是没有焦点项。
+      registry.setActive(null)
+      expect(registry.openOfficeFiles().map((entry) => entry.active)).toEqual([false, false, false])
     })
   })
 

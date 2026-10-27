@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   AgentActiveFileContext,
+  AgentOpenFileContext,
   AgentPermissionMode,
   AgentPermissionModeState,
   PendingAgentIntent,
@@ -45,6 +46,12 @@ function isRecoverableConnectionError(error: unknown): boolean {
   return typeof error.message === 'string' && /socket hang up/i.test(error.message)
 }
 
+/** openFiles 的条目带 active 标记；activeFile 的 schema 不允许这个字段。 */
+function stripOpenFileFlag(file: AgentOpenFileContext): AgentActiveFileContext {
+  const { active: _active, ...rest } = file
+  return rest
+}
+
 interface Subscription {
   sessionId: string
   socket: WebSocket | null
@@ -80,16 +87,23 @@ export class AgentGatewayBridge {
        * 都经过这里，不会漏。
        */
       activeFile?: () => AgentActiveFileContext | null
+      /**
+       * 工作区当前打开的全部 Office 页签（含 active 标记）。给了它就不必再单独
+       * 给 activeFile：焦点项会从清单里推出来，两份数据不会互相打架。
+       */
+      openFiles?: () => readonly AgentOpenFileContext[]
     } = {},
   ) {
     // 默认 'agent:event' 是主 Agent UI 的通道；补全等旁路桥必须传独立
     // channel，否则两个桥的 websocket 帧会在同一渲染进程通道里串台。
     this.eventChannel = options.eventChannel ?? AGENT_EVENT_CHANNEL
     this.activeFile = options.activeFile ?? null
+    this.openFiles = options.openFiles ?? null
   }
 
   private readonly eventChannel: string
   private readonly activeFile: (() => AgentActiveFileContext | null) | null
+  private readonly openFiles: (() => readonly AgentOpenFileContext[]) | null
 
   setEventObserver(observer: ((event: AgentEvent) => void) | null): void {
     this.eventObserver = observer
@@ -213,11 +227,19 @@ export class AgentGatewayBridge {
 
   async startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
     // 当前浏览的 Office 文件以 main 的焦点实例为准：渲染端只知道自己开了哪些
-    // 页签，谁真正可见由主进程的 setActiveInstance 决定。
-    const activeFile = this.activeFile?.() ?? null
-    const data = activeFile
-      ? { ...input, context: { ...input.context, activeFile } }
-      : input
+    // 页签，谁真正可见由主进程的 setActiveInstance 决定。openFiles 是同一份
+    // 注册表的全量页签，activeFile 从清单里的 active 项推出。
+    // 20 与网关 route schema maxItems 对齐：清单本身焦点在前，截断不会丢掉当前项。
+    const openFiles = (this.openFiles?.() ?? []).slice(0, 20)
+    const focused = openFiles.find((file) => file.active)
+    const activeFile = this.activeFile?.()
+      ?? (focused ? stripOpenFileFlag(focused) : null)
+    const context = {
+      ...input.context,
+      ...(activeFile ? { activeFile } : {}),
+      ...(openFiles.length ? { openFiles } : {}),
+    }
+    const data = Object.keys(context).length ? { ...input, context } : input
     const run = await this.request<AgentRun>(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
       data,

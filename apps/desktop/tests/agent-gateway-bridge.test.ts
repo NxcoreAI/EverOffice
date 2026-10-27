@@ -248,4 +248,76 @@ describe('AgentGatewayBridge requests', () => {
       context: { pageLabel: '首页' },
     })
   })
+
+  it('injects every open Office tab and derives activeFile from the list', async () => {
+    let sentBody = ''
+    const server = createServer(async (request, response) => {
+      sentBody = await body(request)
+      json(response, 202, { id: 'run-3', sessionId: 'session-1' })
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const openFiles = vi.fn(() => [
+      { fileId: 'file-contract', title: '软件开发合同.docx', kind: 'docx' as const, editable: true, active: true },
+      { fileId: 'file-budget', title: '预算.xlsx', kind: 'spreadsheet' as const, active: false },
+    ])
+    const bridge = new AgentGatewayBridge(supervisor, undefined, { openFiles })
+
+    await bridge.startRun('session-1', {
+      prompt: '工作区都开着哪些文件',
+      idempotencyKey: 'idem-3',
+      context: { pageLabel: 'Office' },
+    })
+
+    expect(openFiles).toHaveBeenCalledOnce()
+    const payload = JSON.parse(sentBody)
+    expect(payload.context.openFiles).toEqual([
+      { fileId: 'file-contract', title: '软件开发合同.docx', kind: 'docx', editable: true, active: true },
+      { fileId: 'file-budget', title: '预算.xlsx', kind: 'spreadsheet', active: false },
+    ])
+    // activeFile 的 schema 不允许 active 字段：从清单推出来时必须剥掉。
+    expect(payload.context.activeFile).toEqual({
+      fileId: 'file-contract',
+      title: '软件开发合同.docx',
+      kind: 'docx',
+      editable: true,
+    })
+  })
+
+  it('keeps the context untouched when the workspace has no open Office tab', async () => {
+    let sentBody = ''
+    const server = createServer(async (request, response) => {
+      sentBody = await body(request)
+      json(response, 202, { id: 'run-4', sessionId: 'session-1' })
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor, undefined, { openFiles: () => [] })
+
+    await bridge.startRun('session-1', {
+      prompt: '你好',
+      idempotencyKey: 'idem-4',
+      context: { pageLabel: '首页' },
+    })
+
+    expect(JSON.parse(sentBody)).toEqual({
+      prompt: '你好',
+      idempotencyKey: 'idem-4',
+      context: { pageLabel: '首页' },
+    })
+  })
 })

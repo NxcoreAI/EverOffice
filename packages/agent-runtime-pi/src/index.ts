@@ -33,9 +33,9 @@ import { MemoryCoreClient } from "./memory/client.js";
 import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
 import { createMemoryTools, MEMORY_TOOL_NAMES, type RoomMemorySearch } from "./memory/tools.js";
 import type { MemoryRuntimeConfig, RoomMemorySnapshot } from "./memory/types.js";
-import { buildActiveFileContext } from "./active-file-context.js";
+import { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
 
-export { buildActiveFileContext } from "./active-file-context.js";
+export { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
 
 export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
 export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
@@ -1078,6 +1078,8 @@ export class PiAgentRuntime implements AgentRuntime {
       // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
       // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
       const activeFileContext = buildActiveFileContext(input.activeFile);
+      // 「工作区一共开了哪些页签」：只认识当前这份时，用户问“另一个文件”模型会失明。
+      const openFilesContext = buildOpenFilesContext(input.openFiles, input.activeFile);
       const runBoundary = input.toolsEnabled === false
         ? null
         : [
@@ -1091,6 +1093,7 @@ export class PiAgentRuntime implements AgentRuntime {
         roomContext,
         documentContext,
         ...(activeFileContext ? [activeFileContext] : []),
+        ...(openFilesContext ? [openFilesContext] : []),
         ...(runBoundary ? [runBoundary] : []),
         "",
         `用户请求：${input.prompt}`,

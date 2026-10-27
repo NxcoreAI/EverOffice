@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+
 import type { BrowserWindow } from 'electron'
 import { webContents } from 'electron'
 
@@ -52,6 +56,8 @@ interface OfficePreviewView {
   dispose(): Promise<boolean>
   /** Office 视图的 webContents id（保存事件订阅用）；pdf 缺省。 */
   readonly webContentsId?: number
+  /** 未保存修改：Agent 覆盖工作副本前必须为 false（pdf/slides 缺省）。 */
+  isDirty?(): Promise<boolean>
 }
 
 interface OfficePreviewInstance {
@@ -385,6 +391,99 @@ export class OfficePreviewRegistry {
   }
 
   /**
+   * Agent 写回「用户正开着的那份」Word/Excel：覆盖工作副本 → 版本链回填
+   * （复用保存链路，含访达原文件写回）→ 用新内容重开视图。
+   *
+   * 事先要求：实例存在且可编辑、没有未保存修改、工作副本仍是生成字节时的基线
+   * （expectedContentHash）——任何一条不满足都拒绝，绝不拿旧基线覆盖新保存。
+   */
+  async applyAgentFileBytes(
+    fileId: string,
+    bytes: Buffer,
+    expectedContentHash: string,
+  ): Promise<
+    | { ok: true; contentHash: string }
+    | {
+      ok: false
+      reason: 'not_open' | 'not_editable' | 'unsaved' | 'conflict' | 'error'
+      message?: string
+      open?: OpenOfficeInstanceInfo[]
+    }
+  > {
+    const instance = this.instances.get(fileId)
+    if (!instance) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    if (!instance.editable || !instance.documentPath) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    if (instance.descriptor.kind !== 'docx' && instance.descriptor.kind !== 'spreadsheet') {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    if (instance.view.isDirty && await instance.view.isDirty()) {
+      return { ok: false, reason: 'unsaved', message: '文档有未保存的修改' }
+    }
+    const window = this.window
+    if (!window || window.isDestroyed()) return { ok: false, reason: 'error', message: '主窗口不可用' }
+    const target = instance.documentPath
+    if (bytes.length === 0) return { ok: false, reason: 'error', message: '写回内容为空' }
+    let current: Buffer
+    try {
+      current = await readFile(target)
+    } catch {
+      return { ok: false, reason: 'error', message: '无法读取文档工作副本' }
+    }
+    const currentHash = createHash('sha256').update(current).digest('hex')
+    if (expectedContentHash && currentHash !== expectedContentHash.toLowerCase()) {
+      return { ok: false, reason: 'conflict', message: '文档在生成修改期间又被保存过' }
+    }
+    const editState = this.editStates.get(fileId)
+    const writeBackPath = editState?.writeBackPath ?? null
+    const wasActive = this.activeId === fileId
+    const originalName = instance.descriptor.title
+    const roomId = instance.roomId
+
+    // 原子覆盖：同目录临时文件 + rename，避免编辑视图/外部程序读到半个文件。
+    const tempPath = join(dirname(target), `.everroom-agent-${fileId}-${Date.now()}.tmp`)
+    try {
+      await writeFile(tempPath, bytes)
+      await rename(tempPath, target)
+    } catch (error) {
+      await rm(tempPath, { force: true }).catch(() => undefined)
+      return { ok: false, reason: 'error', message: error instanceof Error ? error.message : String(error) }
+    }
+
+    // 走与人工保存同一条回填链路：库内版本 +1（含访达原文件写回）。
+    if (editState) {
+      if (editState.runner) await editState.runner
+      editState.pending = true
+      await this.runEditSync(fileId)
+    }
+
+    const nextHash = createHash('sha256').update(bytes).digest('hex')
+    logOfficeDiag('office.diag.agent-apply', {
+      fileId,
+      kind: instance.descriptor.kind,
+      bytes: bytes.byteLength,
+      versioned: Boolean(editState),
+    })
+    await this.open(window, {
+      id: fileId,
+      contentHash: nextHash,
+      originalName,
+      storagePath: target,
+      editable: true,
+      ...(roomId ? { roomId } : {}),
+      ...(writeBackPath ? { writeBackPath } : {}),
+    })
+    if (wasActive) this.setActive(fileId)
+    if (!window.webContents.isDestroyed()) {
+      window.webContents.send('office:instance-reloaded', { id: fileId, kind: instance.descriptor.kind })
+    }
+    return { ok: true, contentHash: nextHash }
+  }
+
+  /**
    * 用户当前正在浏览的 Office 文件（页签）：Agent 运行上下文的 activeFile。
    * activeId 只在渲染端切到 office-document 且该实例可见时被设置，其它页面为 null。
    */
@@ -404,6 +503,18 @@ export class OfficePreviewRegistry {
       kind: instance.descriptor.kind,
       editable: instance.editable,
     }
+  }
+
+  /**
+   * 工作区当前打开的全部 Office 页签（焦点在前，active = 当前可见项）：
+   * Agent 运行上下文的 openFiles。只认识“当前这份”时，用户问“另一个文件”
+   * 模型会失明，所以每次 run 都带上整份清单。
+   */
+  openOfficeFiles(): OpenOfficeInstanceInfo[] {
+    return this.listOpenOffice().map((instance) => ({
+      ...instance,
+      title: instance.title.slice(0, 300),
+    }))
   }
 
   /** 「AI 修改」转发用的 wcId 反查：定位视图所属文件与 Room（编辑回填态里的 roomId 兜底）。 */

@@ -613,6 +613,8 @@ export interface NxcoreDesktopApi {
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
+    /** Agent 改写落盘后实例被重开：渲染端需重新上报视口矩形（原生视图换了一个）。 */
+    onInstanceReloaded(listener: (event: { id: string; kind: OfficePreviewKind }) => void): () => void
   }
   locale: {
     system: string

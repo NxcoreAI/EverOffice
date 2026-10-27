@@ -772,6 +772,11 @@ export interface StartAgentRunInput {
      * 没有 documentId/version，读取正文走 fileId。
      */
     activeFile?: AgentActiveFileContext;
+    /**
+     * 工作区当前打开的全部 Office 页签（含焦点项，active=true）。
+     * 让 Agent 知道“一共开着哪些文件”，而不只是用户眼前的这一份。
+     */
+    openFiles?: AgentOpenFileContext[];
     /** Files uploaded from the conversation composer and parsed by the unified file engine. */
     attachments?: AgentFileAttachment[];
     /** Read-only imported conversation to use once when this native session starts. */
@@ -1165,6 +1170,11 @@ export interface AgentActiveFileContext {
   kind: AgentActiveFileKind;
   /** 打开时是否可编辑（只读打开的文件不承诺能改，但可以读正文）。 */
   editable?: boolean;
+}
+
+/** 工作区里打开的一个 Office 页签；active = 用户此刻正在看的那一个。 */
+export interface AgentOpenFileContext extends AgentActiveFileContext {
+  active: boolean;
 }
 
 export interface TiptapJsonContent {

@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 
 import { annotations, manifest } from "./shared.js";
 import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageProgressReporter } from "./types.js";
-import type { OfficeBridgeClient, OfficeSheetBridgeInput } from "./office-bridge-client.js";
+import type {
+  OfficeApplyBytesResult,
+  OfficeBridgeClient,
+  OfficeSheetBridgeInput,
+} from "./office-bridge-client.js";
+import { applyDocxOps, DocxEditError, readDocxParagraphs, type DocxEditOp } from "../../files/docx-edit.js";
+import { applyXlsxOps, readXlsx, XlsxEditError, type XlsxEditOp } from "../../files/xlsx-edit.js";
 import {
   SlidesVisualReviewer,
   visualReviewToolPayload,
@@ -22,9 +28,11 @@ import {
  *   slideIndex<页数原地替换，=页数末尾追加——文件页数随生成进度增长，失败不留空壳；
  *   实时重绘、每页独立失败重试）。单次输出一页，避免长输出结构漂移与黑盒等待。
  * - Excel：主进程直接拼标准 OOXML（jszip，inline string）。
- * 编辑：PPT 走 slides_read/edit（文件需在 Room 产物库打开为可编辑
- * 实例；编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
- * Word/Excel 的编辑与离屏编辑留待后续迭代。
+ * 编辑：PPT 走 slides_read/edit（文件需在 Room 产物库打开为可编辑实例；
+ * 编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
+ * Word/Excel 走 office_edit / sheets_read+sheets_edit（文本级/单元格级修改）：
+ * 网关读当前版本字节 → 改字节 → 桌面端覆盖工作副本、回填版本链并重开视图。
+ * 只支持用户已经以可编辑方式打开的文件；有未保存修改时拒绝写回。
  */
 
 const MAX_HTML_LENGTH = 400_000;
@@ -34,6 +42,20 @@ const MAX_SHEETS = 20;
 const MAX_ROWS = 5000;
 const MAX_COLS = 50;
 const MAX_CELL_LENGTH = 3000;
+/** 单次 Agent 编辑接受的源文件上限：再大就不适合走 base64 桥，直接拒绝。 */
+const MAX_EDIT_BYTES = 25 * 1024 * 1024;
+
+/** `office_edit`/`sheets_edit` 需要的最小文件访问面（FilesService 的结构子集）。 */
+export interface OfficeFileAccess {
+  catalogEntry(fileEntryId: string): {
+    id: string;
+    originalName: string;
+    displayName: string | null;
+    currentVersionId: string | null;
+    contentHash: string;
+  } | null;
+  catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null>;
+}
 
 /** slides-builder 子代理独占的 4 个 PPT 工具名：主 Agent 工具面按此剔除（单一事实源）。 */
 export const SLIDES_TOOL_NAMES = [
@@ -171,6 +193,8 @@ export function officePlugin(
   slidesProgress?: SlidesPageProgressReporter | null,
   /** 落页视觉复检（preset 形态）：未注入或 VLM 未配置时复检整体跳过。 */
   visualReviewer?: SlidesVisualReviewer | null,
+  /** 文件库访问（惰性）：注入后才暴露 office_edit / sheets_read / sheets_edit。 */
+  files?: () => OfficeFileAccess | null,
 ): DocumentCapabilityPlugin {
   const officeCreate: DocumentCapabilityTool = {
     name: "office_create",
@@ -519,6 +543,274 @@ export function officePlugin(
     },
   };
 
+  // ── 改写「用户正开着的那份」Word/Excel ────────────────────────
+
+  async function resolveEditableTarget(
+    args: Record<string, unknown>,
+    context: { activeFile?: { fileId: string } },
+  ): Promise<{
+    fileId: string;
+    entry: NonNullable<ReturnType<OfficeFileAccess["catalogEntry"]>>;
+    buffer: Buffer;
+  }> {
+    const access = files?.();
+    if (!access) throw new Error("FILE_SERVICE_UNAVAILABLE: 文件服务尚未就绪");
+    const explicit = typeof args.fileId === "string" ? args.fileId.trim() : "";
+    const fileId = explicit || context.activeFile?.fileId || "";
+    if (!fileId) {
+      throw new Error("NO_ACTIVE_FILE: 当前没有打开 Office 文件；请用户先打开要修改的文件，或显式传 fileId");
+    }
+    const entry = access.catalogEntry(fileId);
+    if (!entry) {
+      throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+    }
+    if (!entry.contentHash) {
+      throw new Error(`FILE_CONTENT_UNAVAILABLE: 《${entry.displayName ?? entry.originalName}》还没有可用的文件版本`);
+    }
+    const content = await access.catalogContentOf(fileId);
+    if (!content) throw new Error(`FILE_CONTENT_UNAVAILABLE: 读取《${entry.originalName}》失败`);
+    if (content.buffer.byteLength > MAX_EDIT_BYTES) {
+      throw new Error(
+        `FILE_TOO_LARGE: 文件 ${(content.buffer.byteLength / 1024 / 1024).toFixed(1)}MB 超过单次编辑上限（25MB）`,
+      );
+    }
+    return { fileId, entry, buffer: content.buffer };
+  }
+
+  function applyFailureMessage(title: string, result: OfficeApplyBytesResult): string {
+    switch (result.reason) {
+      case "not_open":
+        return `FILE_NOT_OPEN: 《${title}》没有以可编辑方式打开。请用户在文件页打开它后再让我修改（不要假装已经改好）。`;
+      case "not_editable":
+        return `FILE_READONLY: 《${title}》是只读打开的，或该格式不支持在线编辑。请用户以可编辑方式重新打开。`;
+      case "unsaved":
+        return `FILE_UNSAVED: 《${title}》里有未保存的修改。请用户先保存（⌘S），保存后再重试这次修改。`;
+      case "conflict":
+        return `FILE_CONFLICT: 《${title}》在生成修改期间又被保存过，本次修改没有落盘。重新读取文档后再改一次。`;
+      default:
+        return `FILE_APPLY_FAILED: ${result.message ?? "桌面端写回失败"}`;
+    }
+  }
+
+  const officeRead: DocumentCapabilityTool = {
+    name: "office_read",
+    title: "读取当前打开的 Word 段落",
+    description: "按文档顺序列出 .docx 的段落纯文本（0 基序号 + 段落样式），fileId 省略 = 用户当前浏览的文件。"
+      + "office_edit 的 find 必须照抄这里的段落原文：file_read 返回的是 Markdown（带 # 与 ** 标记），"
+      + "直接拿 Markdown 文本去 find 会匹配不上。写之前先 office_read。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        maxParagraphs: { type: "integer", minimum: 1, maximum: 1000, description: "最多返回多少段（默认 300）" },
+      },
+      required: [],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: office_read 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      const paragraphs = await readDocxParagraphs(target.buffer);
+      const limit = typeof args.maxParagraphs === "number"
+        ? Math.min(Math.max(args.maxParagraphs, 1), 1000)
+        : 300;
+      return success({
+        fileId: target.fileId,
+        title: target.entry.displayName ?? target.entry.originalName,
+        totalParagraphs: paragraphs.length,
+        paragraphs: paragraphs.slice(0, limit).map((paragraph) => ({
+          index: paragraph.index,
+          text: paragraph.text.slice(0, 2_000),
+          ...(paragraph.style ? { style: paragraph.style } : {}),
+        })),
+        truncated: paragraphs.length > limit,
+      });
+    },
+  };
+
+  const officeEdit: DocumentCapabilityTool = {
+    name: "office_edit",
+    title: "修改当前打开的 Word 文档",
+    description: "直接修改用户当前浏览的 .docx（或显式 fileId 指定的 .docx），改完立即落盘并重开预览。"
+      + "按段落文本定位，不要求 blockId：先用 office_read 看段落原文（不要用 file_read 的 Markdown 标记），再按原文片段构造 ops。"
+      + "只支持文本级编辑，保留原有段落样式/编号/分页："
+      + "replace_text（{find, replace, all?} 段内子串替换，all=true 替换全文所有匹配）；"
+      + "replace_paragraph（{find, text} 整段替换，find 必须唯一命中一个段落）；"
+      + "insert_paragraph_after（{find, text} 在锚点段后插入新段落，沿用锚点段格式）；"
+      + "append_paragraph（{text} 文末追加）；delete_paragraph（{find} 删除整段）。"
+      + "一次最多 20 条，按数组顺序执行；任一条失败整批不落盘。"
+      + "不支持跨段落查找、改图片/表格结构/页眉页脚；整段替换后段内混合格式会统一。"
+      + "文件必须已经由用户以可编辑方式打开，且有未保存修改时会被拒绝（提示用户先保存）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id（fileEntryId）；省略 = 用户当前正在浏览的文件" },
+        ops: {
+          type: "array",
+          minItems: 1,
+          maxItems: 20,
+          description: "编辑操作数组（replace_text / replace_paragraph / insert_paragraph_after / append_paragraph / delete_paragraph）",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["type"],
+            properties: { type: { type: "string" } },
+          },
+        },
+      },
+      required: ["ops"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.ops) || args.ops.length === 0) {
+        throw new Error("INVALID_REQUEST: ops 必须是非空数组");
+      }
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(
+          `INVALID_TARGET: office_edit 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`
+          + (/\.(xlsx)$/i.test(target.entry.originalName) ? "。表格请改用 sheets_edit" : ""),
+        );
+      }
+      let outcome: Awaited<ReturnType<typeof applyDocxOps>>;
+      try {
+        outcome = await applyDocxOps(target.buffer, args.ops as DocxEditOp[]);
+      } catch (error) {
+        if (error instanceof DocxEditError) throw new Error(`${error.code}: ${error.message}`);
+        throw error;
+      }
+      const applied = await bridge.applyFileBytes({
+        fileId: target.fileId,
+        bytesBase64: outcome.buffer.toString("base64"),
+        expectedContentHash: target.entry.contentHash,
+      });
+      if (!applied.ok) {
+        throw new Error(applyFailureMessage(target.entry.displayName ?? target.entry.originalName, applied));
+      }
+      return success({
+        fileId: target.fileId,
+        title: target.entry.displayName ?? target.entry.originalName,
+        applied: true,
+        changes: outcome.changes,
+        ...(applied.version !== undefined ? { version: applied.version } : {}),
+        nextAction: "report_result",
+        hint: "修改已写入文件并更新版本；回复里只说明改了什么，不要复述整段正文。",
+      });
+    },
+  };
+
+  const sheetsRead: DocumentCapabilityTool = {
+    name: "sheets_read",
+    title: "读取当前打开的 Excel 表格",
+    description: "读取 .xlsx 的工作表清单、单元格值与公式（fileId 省略 = 用户当前浏览的文件）。"
+      + "先读再改：sheets_edit 的单元格地址、行号都以这里返回的结构为准。"
+      + "range 用 A1 或 A1:D20；缺省读已用区域的前 200 行 × 50 列。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        sheet: { type: "string", minLength: 1, description: "工作表名；省略读汇总 + 第一个工作表" },
+        range: { type: "string", minLength: 1, description: "A1 或 A1:D20；省略读已用区域" },
+        maxRows: { type: "integer", minimum: 1, maximum: 5000, description: "最多返回多少行（默认 200）" },
+        maxColumns: { type: "integer", minimum: 1, maximum: 200, description: "最多返回多少列（默认 50）" },
+      },
+      required: [],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.xlsx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: sheets_read 只支持 .xlsx；《${target.entry.originalName}》不是 Excel 表格`);
+      }
+      const read = await readXlsx(target.buffer, {
+        ...(typeof args.sheet === "string" && args.sheet.trim() ? { sheet: args.sheet.trim() } : {}),
+        ...(typeof args.range === "string" && args.range.trim() ? { range: args.range.trim() } : {}),
+        ...(typeof args.maxRows === "number" ? { maxRows: args.maxRows } : {}),
+        ...(typeof args.maxColumns === "number" ? { maxColumns: args.maxColumns } : {}),
+      });
+      return success({
+        fileId: target.fileId,
+        title: target.entry.displayName ?? target.entry.originalName,
+        ...read,
+      });
+    },
+  };
+
+  const sheetsEdit: DocumentCapabilityTool = {
+    name: "sheets_edit",
+    title: "修改当前打开的 Excel 表格",
+    description: "直接修改用户当前浏览的 .xlsx（或显式 fileId），改完立即落盘并重开预览。"
+      + "先用 sheets_read 确认工作表名、单元格地址与现有数据，再构造 ops（按数组顺序执行，最多 50 条，任一条失败整批不落盘）："
+      + "set_cells（{sheet?, cells:[{address, value?, formula?, numberFormat?}]}，formula 不带等号）；"
+      + "set_range（{sheet?, start, rows: [[...]]}，从 start 向右/向下铺开）；"
+      + "insert_rows / delete_rows（{sheet?, start, count?}，行号从 1 起）；"
+      + "add_sheet / rename_sheet / delete_sheet。"
+      + "写入会保留大多数样式、合并单元格、列宽与公式，但图表/图片等对象可能退化；"
+      + "文件必须有未保存修改时会被拒绝（提示用户先保存）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        ops: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          description: "编辑操作数组（set_cells / set_range / insert_rows / delete_rows / add_sheet / rename_sheet / delete_sheet）",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["type"],
+            properties: { type: { type: "string" } },
+          },
+        },
+      },
+      required: ["ops"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.ops) || args.ops.length === 0) {
+        throw new Error("INVALID_REQUEST: ops 必须是非空数组");
+      }
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.xlsx$/i.test(target.entry.originalName)) {
+        throw new Error(
+          `INVALID_TARGET: sheets_edit 只支持 .xlsx；《${target.entry.originalName}》不是 Excel 表格`
+          + (/\.docx$/i.test(target.entry.originalName) ? "。Word 文档请改用 office_edit" : ""),
+        );
+      }
+      let outcome: Awaited<ReturnType<typeof applyXlsxOps>>;
+      try {
+        outcome = await applyXlsxOps(target.buffer, args.ops as XlsxEditOp[]);
+      } catch (error) {
+        if (error instanceof XlsxEditError) throw new Error(`${error.code}: ${error.message}`);
+        throw error;
+      }
+      const applied = await bridge.applyFileBytes({
+        fileId: target.fileId,
+        bytesBase64: outcome.buffer.toString("base64"),
+        expectedContentHash: target.entry.contentHash,
+      });
+      if (!applied.ok) {
+        throw new Error(applyFailureMessage(target.entry.displayName ?? target.entry.originalName, applied));
+      }
+      return success({
+        fileId: target.fileId,
+        title: target.entry.displayName ?? target.entry.originalName,
+        applied: true,
+        changes: outcome.changes,
+        ...(applied.version !== undefined ? { version: applied.version } : {}),
+        nextAction: "report_result",
+        hint: "修改已写入文件并更新版本；回复里只说明改了哪些单元格/工作表。",
+      });
+    },
+  };
+
   return {
     manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
@@ -529,7 +821,18 @@ export function officePlugin(
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
+      "用户要求修改“我正开着的/这份 Word 或 Excel”时：Word 先 office_read 拿段落原文、Excel 先 sheets_read 看结构，"
+      + "再用 office_edit / sheets_edit 按原文片段或单元格地址改；不要用 office_create/sheets_create 重建一份新文件。"
+      + "被 FILE_UNSAVED 拒绝时先把“先保存再改”告诉用户，保存后重试；被 FILE_NOT_OPEN 拒绝时请用户先以可编辑方式打开文件。",
     ],
-    tools: [officeCreate, slidesCreate, slidesSetPage, sheetsCreate, slidesRead, slidesEdit],
+    tools: [
+      officeCreate,
+      slidesCreate,
+      slidesSetPage,
+      sheetsCreate,
+      slidesRead,
+      slidesEdit,
+      ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
+    ],
   };
 }

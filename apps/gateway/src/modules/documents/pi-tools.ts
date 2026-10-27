@@ -59,6 +59,7 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
             roomId,
             availableRooms: input.availableRooms ?? [],
             ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
+            ...(input.activeFile ? { activeFile: input.activeFile } : {}),
           },
         );
         // document_list 的 selectionRequired 是桌面端“选择要编辑的文档”卡片的唯一

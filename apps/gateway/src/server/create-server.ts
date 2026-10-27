@@ -519,6 +519,8 @@ export async function createServer(config: GatewayConfig) {
       // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
       // 设置页保存 vlm 段后 runtime config 热替换，复检无需重启网关即生效。
       slidesVisualReviewer,
+      // 改“用户正开着的那份”Word/Excel：filesService 在更后面创建，惰性取。
+      () => filesService,
     ),
     documentOperationService,
     (diagnostic) => {
