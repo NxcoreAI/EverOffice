@@ -28,12 +28,34 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain("t('aiThesisReportReview'")
   })
 
-  it('删除模版有两种：连卡删干净 / 只删文件保留格式卡', () => {
-    expect(aiTab).toContain('deleteTemplate(row.id, row.sourceName, true)')
-    expect(aiTab).toContain('deleteTemplate(row.id, row.sourceName, false)')
-    expect(aiTab).toContain('window.confirm(')
-    // 只删文件的按钮仅在模版来自资料区时出现
-    expect(aiTab).toContain('{row.sourceFileEntryId ? (')
+  it('每个模版行只有一个删除按钮，且阻止冒泡（不触发选中排版）', () => {
+    expect(aiTab).toContain('ai-thesis-card-del')
+    expect(aiTab).toContain('event.stopPropagation()')
+    expect(aiTab).toContain('event.preventDefault()')
+    // 单一删除入口：不再有第二个「只删文件」按钮
+    expect(aiTab).not.toContain('aiThesisDeleteFileTip')
+    const dels = aiTab.match(/deleteTemplate\(row\.id, row\.sourceName/g) ?? []
+    expect(dels).toHaveLength(1)
+  })
+
+  it('二次确认文案是「确定要删除该模板文件吗？」', () => {
+    expect(aiTab).toContain("window.confirm(t('aiThesisDeleteConfirm'")
+    const zh = readFileSync(resolve(docsRoot, 'src/renderer/i18n/strings-ai.ts'), 'utf8')
+    expect(zh).toContain('确定要删除该模板文件吗？')
+  })
+
+  it('确认后调后端删除并立刻从列表移除该行', () => {
+    expect(aiTab).toContain('await window.desktop.thesisDeleteTemplate(cardId, false)')
+    expect(aiTab).toContain('setCards((prev) => (prev ? prev.filter((entry) => entry.id !== cardId) : prev))')
+  })
+
+  it('删除按钮小巧、浅灰常态 hover 转红', () => {
+    const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
+    const block = css.slice(css.indexOf('.ai-thesis-card-act.ai-thesis-card-del {'))
+    expect(block).toContain('width: 20px')
+    expect(block).toContain('color: var(--text-muted)')
+    expect(block).toContain('color: var(--danger)')
+    expect(block).toContain('position: absolute')
   })
 
   it('IPC 与类型齐备：docs:thesis-delete-template + keepCard', () => {
