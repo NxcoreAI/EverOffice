@@ -6,6 +6,7 @@ import { ThesisFormatCardStore } from "../src/modules/thesis-format/card-store.j
 import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.js";
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
 import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
+import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -328,5 +329,144 @@ describe("cardForAgent 剥离卡片里的图片字节", () => {
     expect((forAgent.header.images as Array<Record<string, unknown>>)[0]).toMatchObject({ widthPx: 40 });
     // 原卡不受影响（回填仍用带字节的版本）
     expect(card.cover.logo?.dataUrl).toContain("data:image/png");
+  });
+});
+
+/** 带章节骨架 + 中文编号的模板：验证 outline/numbering 抽取。 */
+async function docxWithOutline(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>',
+  );
+  zip.file(
+    "word/styles.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + '<w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/><w:numPr><w:numId w:val="3"/></w:numPr></w:pPr></w:style>'
+    + '<w:style w:type="paragraph" w:styleId="2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>'
+    + '<w:style w:type="paragraph" w:styleId="a"><w:name w:val="Normal"/></w:style>'
+    + '</w:styles>',
+  );
+  zip.file(
+    "word/numbering.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + '<w:abstractNum w:abstractNumId="7">'
+    + '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="%1、"/><w:pPr><w:ind w:firstLine="420"/></w:pPr></w:lvl>'
+    + '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/></w:lvl>'
+    + '</w:abstractNum>'
+    + '<w:num w:numId="3"><w:abstractNumId w:val="7"/></w:num>'
+    + '</w:numbering>',
+  );
+  const paragraph = (styleId: string, text: string) =>
+    `<w:p><w:pPr><w:pStyle w:val="${styleId}"/></w:pPr><w:r><w:t>${text}</w:t></w:r></w:p>`;
+  zip.file(
+    "word/document.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+    + paragraph("a", "封面标题")
+    + '<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr></w:p>'
+    + paragraph("1", "一、项目任务")
+    + paragraph("2", "1.1 背景")
+    + paragraph("a", "正文段落")
+    + paragraph("1", "二、项目需求分析")
+    + paragraph("a", "参考资料")
+    + paragraph("1", "参考资料")
+    + '</w:body></w:document>',
+  );
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
+describe("模板正文大纲与编号方案（M1 模板剖面）", () => {
+  it("抽出章节骨架：层级、文本、封面区标记", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithOutline());
+    const outline = facts.outline;
+    expect(outline.map((entry) => `${entry.level}:${entry.text}`)).toEqual([
+      "1:一、项目任务",
+      "2:1.1 背景",
+      "1:二、项目需求分析",
+      "1:参考资料",
+    ]);
+    expect(outline[0]!.styleId).toBe("1");
+    expect(outline.every((entry) => entry.inCoverRegion === false)).toBe(true);
+  });
+
+  it("识别中文一级编号方案", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithOutline());
+    expect(facts.numbering.scheme).toBe("cn-upper");
+    expect(facts.numbering.headingNumId).toBe(3);
+    expect(facts.numbering.levels[0]).toMatchObject({ level: 1, numFmt: "chineseCounting", lvlText: "%1、", start: 1 });
+  });
+
+  it("无 numbering.xml 时 scheme = none（不编造）", async () => {
+    const zip = new JSZip();
+    zip.file(
+      "[Content_Types].xml",
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>',
+    );
+    zip.file(
+      "word/styles.xml",
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style></w:styles>',
+    );
+    zip.file(
+      "word/document.xml",
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="1"/></w:pPr><w:r><w:t>一、项目任务</w:t></w:r></w:p></w:body></w:document>',
+    );
+    const facts = await extractOoxmlFactsAsync(await zip.generateAsync({ type: "nodebuffer" }));
+    expect(facts.numbering.scheme).toBe("none");
+    expect(facts.numbering.levels).toEqual([]);
+    expect(facts.outline).toHaveLength(1);
+  });
+});
+
+describe("TemplateProfile（M1：固定元素 + 槽位骨架）", () => {
+  const cardOf = (overrides: Record<string, unknown> = {}) =>
+    validateThesisFormatCard(overrides, "模版.docx");
+
+  it("模板章节 → 槽位：锚点升级为固定槽位，其余为 body 且可扩展", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithOutline());
+    const profile = buildTemplateProfile({ facts, card: cardOf(), sourceName: "模版.docx" });
+    expect(profile.version).toBe(2);
+    expect(profile.slots.map((slot) => `${slot.kind}:${slot.title}`)).toEqual([
+      "body:一、项目任务",
+      "body:二、项目需求分析",
+      "reference:参考资料",
+    ]);
+    // 锚点槽位保留模板原标题；body 槽位用内容标题
+    expect(profile.slots[2]!.emitTemplateTitle).toBe(true);
+    expect(profile.slots[0]!.emitTemplateTitle).toBe(false);
+    expect(profile.slots[0]!.capacity).toBe("many");
+    // 匹配特征已归一化（剥掉「一、」）
+    expect(profile.slots[0]!.matchKey.normalized).toBe("项目任务");
+    expect(profile.slots[0]!.matchKey.tokens.length).toBeGreaterThan(0);
+  });
+
+  it("编号方案与页面一起进 fixed；样式锁覆盖题注/列表等语义键", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithOutline());
+    const profile = buildTemplateProfile({ facts, card: cardOf(), sourceName: "模版.docx" });
+    expect(profile.fixed.numbering.scheme).toBe("cn-upper");
+    expect(profile.fixed.page.widthMm).toBeGreaterThan(0);
+    for (const key of ["body", "h1", "h2", "caption", "tableText", "listItem", "formula"]) {
+      expect(profile.fixed.styles[key]).toBeDefined();
+    }
+    // 模板没定义题注样式 → 回退正文但必须记 gap（不静默）
+    expect(profile.fixed.styles.caption!.origin).toBe("default");
+    expect(profile.gaps.some((gap) => gap.includes("caption"))).toBe(true);
+  });
+
+  it("封面 logo 进入 fixed.logos 且角色为 cover", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithCoverLogo());
+    const card = validateThesisFormatCard({}, "模版.docx");
+    const profile = buildTemplateProfile({
+      facts,
+      card: { ...card, cover: { ...card.cover, logo: facts.coverImages[0] } },
+      sourceName: "模版.docx",
+    });
+    expect(profile.fixed.logos.some((logo) => logo.role === "cover" && logo.widthPx === 626)).toBe(true);
+  });
+
+  it("模板没有章节骨架时降级并记 gap", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithCoverLogo());
+    const profile = buildTemplateProfile({ facts, card: cardOf(), sourceName: "规范.docx" });
+    expect(profile.slots).toEqual([]);
+    expect(profile.gaps.some((gap) => gap.includes("章节标题"))).toBe(true);
   });
 });

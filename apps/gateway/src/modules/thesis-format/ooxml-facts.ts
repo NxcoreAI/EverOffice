@@ -50,6 +50,29 @@ export interface OoxmlSectionFact {
   pageFormat?: string;
 }
 
+/** 模板正文大纲条目（模板自身的章节骨架——槽位识别的唯一来源）。 */
+export interface OoxmlOutlineEntry {
+  /** 段落序号（正文段落顺序，含非标题段，用于定位插入点）。 */
+  index: number;
+  /** 1–4；来自样式或段落 pPr 的 outlineLvl。 */
+  level: number;
+  text: string;
+  styleId?: string;
+  /** 该段落自身的编号引用（numId/ilvl），用于反推编号方案。 */
+  numId?: number;
+  ilvl?: number;
+  /** 是否落在封面区（首个分节/分页之前）。 */
+  inCoverRegion: boolean;
+}
+
+/** 编号方案（numbering.xml + 标题样式的 numPr 反推）。 */
+export interface OoxmlNumberingFact {
+  scheme: "cn-upper" | "cn-lower" | "decimal-tree" | "decimal-dot" | "none";
+  levels: Array<{ level: number; numFmt: string; lvlText: string; start: number; indentTwips?: number }>;
+  /** 标题样式实际使用的 numId（可能缺省）。 */
+  headingNumId?: number;
+}
+
 export interface OoxmlFacts {
   styles: OoxmlStyleFact[];
   sections: OoxmlSectionFact[];
@@ -60,6 +83,10 @@ export interface OoxmlFacts {
   coverImages: OoxmlHfImageFact[];
   /** 封面区文本行（段落序，去空行）。代理据此填封面字段，网关也用它兜底。 */
   coverText: string[];
+  /** 模板正文大纲（模板自身的章节骨架）：槽位识别的唯一来源。 */
+  outline: OoxmlOutlineEntry[];
+  /** 编号方案（numbering.xml + 标题样式 numPr）。 */
+  numbering: OoxmlNumberingFact;
 }
 
 function attr(xml: string, name: string): number | undefined {
@@ -231,6 +258,146 @@ function runFact(rPr: string): Pick<OoxmlStyleFact, "fontEastAsia" | "fontAscii"
   return fact;
 }
 
+/** 样式 id → 大纲级别（1–4）：样式自身的 outlineLvl 优先，其次标题样式名。 */
+function outlineLevelsByStyle(stylesXml: string | undefined): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!stylesXml) return map;
+  for (const block of stylesXml.match(/<w:style [^>]*>[\s\S]*?<\/w:style>/g) ?? []) {
+    const id = block.match(/\bw:styleId="([^"]+)"/)?.[1];
+    if (!id) continue;
+    const name = block.match(/<w:name[^>]*\bw:val="([^"]+)"/)?.[1] ?? id;
+    const declared = block.match(/<w:outlineLvl[^>]*\bw:val="(\d)"/)?.[1];
+    if (declared !== undefined) {
+      map.set(id, Number(declared) + 1);
+      continue;
+    }
+    const byName = /^heading\s*([1-9])$/i.exec(name.trim()) ?? /^标题\s*([1-9])$/.exec(name.trim());
+    if (byName) map.set(id, Number(byName[1]));
+  }
+  return map;
+}
+
+/** 该段落是否有标题语义（样式大纲级 / 段落自带 outlineLvl）。 */
+function paragraphOutlineLevel(
+  pPr: string,
+  styleId: string | undefined,
+  levelsByStyle: Map<string, number>,
+): number | undefined {
+  const declared = pPr.match(/<w:outlineLvl[^>]*\bw:val="(\d)"/)?.[1];
+  if (declared !== undefined) return Number(declared) + 1;
+  if (styleId) {
+    const byStyle = levelsByStyle.get(styleId);
+    if (byStyle !== undefined) return byStyle;
+    // 样式未登记 outlineLvl 时按名字兜底（中文模板常只有"标题 1"这类名字）
+    const byName = /^heading\s*([1-9])$/i.exec(styleId) ?? /^标题\s*([1-9])$/.exec(styleId);
+    if (byName) return Number(byName[1]);
+  }
+  return undefined;
+}
+
+/** 模板正文大纲：标题段落序列（槽位骨架）。 */
+function outlineFacts(documentXml: string, stylesXml: string | undefined): OoxmlOutlineEntry[] {
+  const levelsByStyle = outlineLevelsByStyle(stylesXml);
+  const boundaries = ["<w:sectPr", 'w:type="page"']
+    .map((token) => documentXml.indexOf(token))
+    .filter((position) => position > 0);
+  const coverCut = boundaries.length > 0 ? Math.min(...boundaries) : 0;
+
+  const out: OoxmlOutlineEntry[] = [];
+  const paragraphs = documentXml.match(/<w:p[\s>][\s\S]*?<\/w:p>/g) ?? [];
+  paragraphs.forEach((paragraph, index) => {
+    const pPr = paragraph.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] ?? "";
+    const styleId = pPr.match(/<w:pStyle[^>]*\bw:val="([^"]+)"/)?.[1];
+    const level = paragraphOutlineLevel(pPr, styleId, levelsByStyle);
+    if (level === undefined || level > 4) return;
+    const text = [...paragraph.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("").trim();
+    if (!text) return;
+    const numPr = pPr.match(/<w:numPr>[\s\S]*?<\/w:numPr>/)?.[0];
+    const numId = numPr ? numAttr(numPr, "w:numId", "w:val") : undefined;
+    const ilvl = numPr ? numAttr(numPr, "w:ilvl", "w:val") : undefined;
+    out.push({
+      index,
+      level,
+      text: text.slice(0, 200),
+      ...(styleId ? { styleId } : {}),
+      ...(numId !== undefined ? { numId } : {}),
+      ...(ilvl !== undefined ? { ilvl } : {}),
+      inCoverRegion: coverCut > 0 && documentXml.indexOf(paragraph) < coverCut,
+    });
+  });
+  return out;
+}
+
+/** 编号方案：numFmt/lvlText 组合归类。 */
+function numberingSchemeOf(levels: Array<{ numFmt: string; lvlText: string }>): OoxmlNumberingFact["scheme"] {
+  if (levels.length === 0) return "none";
+  const first = levels[0]!;
+  if (/chineseCounting|chineseCountingThousand|chineseLegalSimplified|ideographTraditional/i.test(first.numFmt)) {
+    return "cn-upper";
+  }
+  if (/lowerLetter|chineseLower/i.test(first.numFmt) && !/decimal/i.test(first.numFmt)) return "cn-lower";
+  if (/decimal/i.test(first.numFmt)) {
+    // "%1.%2" 这类多级占位 = 树形编号；"%1." 单级 = 点号编号
+    return /%2|%3/.test(first.lvlText) || levels.length > 1 ? "decimal-tree" : "decimal-dot";
+  }
+  if (/none|bullet/i.test(first.numFmt)) return "none";
+  return "none";
+}
+
+/** 编号方案：解析 word/numbering.xml 的 abstractNum/lvl + num 映射。 */
+async function numberingFacts(zip: JSZip, stylesXml: string | undefined): Promise<OoxmlNumberingFact> {
+  const numberingXml = await zip.file("word/numbering.xml")?.async("string").catch(() => undefined);
+  if (!numberingXml) return { scheme: "none", levels: [] };
+
+  // 标题样式引用的 numId（决定"用哪套编号"）
+  let headingNumId: number | undefined;
+  if (stylesXml) {
+    for (const block of stylesXml.match(/<w:style [^>]*>[\s\S]*?<\/w:style>/g) ?? []) {
+      const id = block.match(/\bw:styleId="([^"]+)"/)?.[1] ?? "";
+      const name = block.match(/<w:name[^>]*\bw:val="([^"]+)"/)?.[1] ?? id;
+      if (!/^heading\s*1$/i.test(name.trim()) && !/^标题\s*1$/.test(name.trim())) continue;
+      const numId = block.match(/<w:numId[^>]*\bw:val="(\d+)"/)?.[1];
+      if (numId) headingNumId = Number(numId);
+      break;
+    }
+  }
+
+  const numToAbstract = new Map<number, number>();
+  for (const num of numberingXml.match(/<w:num [^>]*>[\s\S]*?<\/w:num>/g) ?? []) {
+    const numId = Number(num.match(/\bw:numId="(\d+)"/)?.[1] ?? NaN);
+    const abstractId = Number(num.match(/<w:abstractNumId[^>]*\bw:val="(\d+)"/)?.[1] ?? NaN);
+    if (Number.isFinite(numId) && Number.isFinite(abstractId)) numToAbstract.set(numId, abstractId);
+  }
+
+  const abstractOf = (numId: number | undefined): string | undefined => {
+    const blocks = numberingXml.match(/<w:abstractNum [^>]*>[\s\S]*?<\/w:abstractNum>/g) ?? [];
+    const target = numId !== undefined ? numToAbstract.get(numId) : undefined;
+    if (target !== undefined) {
+      const hit = blocks.find((block) => Number(block.match(/\bw:abstractNumId="(\d+)"/)?.[1]) === target);
+      if (hit) return hit;
+    }
+    return blocks[0];
+  };
+
+  const abstract = abstractOf(headingNumId);
+  if (!abstract) return { scheme: "none", levels: [] };
+  const levels: OoxmlNumberingFact["levels"] = [];
+  for (const lvl of abstract.match(/<w:lvl [^>]*>[\s\S]*?<\/w:lvl>/g) ?? []) {
+    const level = Number(lvl.match(/\bw:ilvl="(\d+)"/)?.[1] ?? NaN);
+    if (!Number.isFinite(level) || level > 3) continue;
+    const numFmt = lvl.match(/<w:numFmt[^>]*\bw:val="([^"]+)"/)?.[1] ?? "decimal";
+    const lvlText = lvl.match(/<w:lvlText[^>]*\bw:val="([^"]*)"/)?.[1] ?? "";
+    const start = Number(lvl.match(/<w:start[^>]*\bw:val="(\d+)"/)?.[1] ?? "1");
+    const indent = numAttr(lvl, "w:ind", "w:firstLine");
+    levels.push({ level: level + 1, numFmt, lvlText, start, ...(indent !== undefined ? { indentTwips: indent } : {}) });
+  }
+  return {
+    scheme: numberingSchemeOf(levels),
+    levels,
+    ...(headingNumId !== undefined ? { headingNumId } : {}),
+  };
+}
+
 export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts> {
   const zip = await JSZip.loadAsync(bytes);
 
@@ -297,8 +464,10 @@ export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts>
 
   const coverFacts = documentXml ? await coverImages(zip, documentXml) : [];
   const coverLines = documentXml ? coverText(documentXml) : [];
+  const outline = documentXml ? outlineFacts(documentXml, stylesXml) : [];
+  const numbering = await numberingFacts(zip, stylesXml);
 
-  return { styles, sections, headers, footers, coverImages: coverFacts, coverText: coverLines };
+  return { styles, sections, headers, footers, coverImages: coverFacts, coverText: coverLines, outline, numbering };
 }
 
 /** 首个分节/分页之前的段落文本行（封面区），最多 40 行、单行 120 字符。 */
