@@ -67,7 +67,7 @@ async function createReviewHarness(name: string) {
 }
 
 describe("document capability registry", () => {
-  it("document_list 回显运行上下文 roomId（桌面选择卡片依赖该字段），Phase 2i 起可为 null", async () => {
+  it("document_list 候选 roomId 恒为 null（Room 已删除，不回填运行上下文）", async () => {
     const { documents, registry } = await createReviewHarness("document-list-room-id")
     await documents.import({
       id: "doc-list-a",
@@ -90,20 +90,27 @@ describe("document capability registry", () => {
     const context = { agentSessionId: "session-list", runId: "run-list", roomId: "room-1" }
 
     const result = await registry.execute("document_list", {}, context)
-    const listed = (result.structuredContent as { documents: Array<{ id: string; roomId?: string }> })
-      .documents
-    expect(listed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
-    // 上下文携带 Room 时按原契约回显（Room 已无过滤语义，仅作元数据）。
-    expect(listed.every((document) => document.roomId === "room-1")).toBe(true)
+    const structured = result.structuredContent as {
+      roomId: string | null
+      documents: Array<{ id: string; roomId?: string | null }>
+    }
+    expect(structured.documents.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
+    // 候选自带 roomId 字段形状保留，但值恒为 null：文档本身是工作区级，
+    // 回填 context.roomId 会伪造一个不存在的归属（桌面选择卡片按缺省/空值接受）。
+    expect(structured.documents.every((document) => document.roomId === null)).toBe(true)
+    // 结果级 roomId 仍是运行上下文（旧形状，不参与过滤）。
+    expect(structured.roomId).toBe("room-1")
 
     const workspaceResult = await registry.execute("document_list", {}, {
       agentSessionId: "session-list-workspace", runId: "run-list-workspace", roomId: null,
     })
-    const workspaceListed = (workspaceResult.structuredContent as {
+    const workspaceStructured = workspaceResult.structuredContent as {
+      roomId: string | null
       documents: Array<{ id: string; roomId?: string | null }>
-    }).documents
-    expect(workspaceListed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
-    expect(workspaceListed.every((document) => document.roomId === null)).toBe(true)
+    }
+    expect(workspaceStructured.documents.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
+    expect(workspaceStructured.documents.every((document) => document.roomId === null)).toBe(true)
+    expect(workspaceStructured.roomId).toBeNull()
   })
 
   it("blocks Agent reads, patches, and selection rewrites after a document enters trash", async () => {

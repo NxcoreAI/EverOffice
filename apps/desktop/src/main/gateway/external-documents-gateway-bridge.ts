@@ -96,7 +96,7 @@ export class ExternalDocumentsGatewayBridge {
     })
   }
 
-  async importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
+  async importCommit(input: { runId: string; roomId?: string; targetDocumentId?: string }): Promise<{
     run: DocumentImportRunView
     roomImportId: string
     relation: 'primary' | 'candidate'
@@ -162,7 +162,7 @@ export class ExternalDocumentsGatewayBridge {
   }
 
   async createExport(input: {
-    roomId: string
+    roomId?: string
     documentId: string
     version?: number
     provider: ExternalDocumentProvider

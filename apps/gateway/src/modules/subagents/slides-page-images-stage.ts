@@ -109,7 +109,6 @@ function waitingResult(payload: SlidesPageImagesStageResult["content"]): SlidesP
 /** 新会话：arrange 后发现配图缺口即落库。有后台 runner 时生图立即并发开跑，过目卡实时亮出；无 runner 走确认卡（用户确认后同步生成）。 */
 export function openPageImagesConfirm(
   input: {
-    roomId: string;
     draftDocumentId: string;
     styleSessionId: string | null;
     plan: Record<string, unknown>;
@@ -145,7 +144,7 @@ export function openPageImagesConfirm(
     deps.sessions.patch(session.id, { stage: "review" });
     const live: SlidesPageImageSessionData = { ...session, stage: "review" };
     void deps.runner.start(
-      { roomId: input.roomId, draftDocumentId: input.draftDocumentId },
+      { draftDocumentId: input.draftDocumentId },
       { ...deps, sessionId: session.id },
     ).catch(() => {});
     broadcast(deps, pageImagesReviewPayload(live));
@@ -173,10 +172,9 @@ export function openPageImagesConfirm(
 
 function findSession(
   deps: SlidesPageImagesStageDeps,
-  roomId: string,
   draftDocumentId: string,
 ): SlidesPageImageSessionData | null {
-  return deps.sessions.byDraftId(roomId, draftDocumentId);
+  return deps.sessions.byDraftId(draftDocumentId);
 }
 
 function stageConflict(session: SlidesPageImageSessionData): SlidesPageImagesStageResult {
@@ -188,10 +186,10 @@ function stageConflict(session: SlidesPageImageSessionData): SlidesPageImagesSta
 
 /** 重入：无参重调只重广播当前等待卡，不烧配图额度。 */
 export function reshowPageImages(
-  input: { roomId: string; draftDocumentId: string },
+  input: { draftDocumentId: string },
   deps: SlidesPageImagesStageDeps,
 ): PageImagesStageOutcome {
-  const session = findSession(deps, input.roomId, input.draftDocumentId);
+  const session = findSession(deps, input.draftDocumentId);
   if (!session) return {
     kind: "failed",
     result: failed("slides_page_images_session_invalid", "配图会话不存在；请重新发起 generate。"),
@@ -245,10 +243,10 @@ export function reshowPageImages(
 
 /** 用户决定：generate=生图转 review；skip=跳过配图待落页；accept=按当前配图落页。 */
 export async function decidePageImages(
-  input: { roomId: string; draftDocumentId: string; decision: "generate" | "skip" | "accept" },
+  input: { draftDocumentId: string; decision: "generate" | "skip" | "accept" },
   deps: SlidesPageImagesStageDeps,
 ): Promise<PageImagesStageOutcome> {
-  const session = findSession(deps, input.roomId, input.draftDocumentId);
+  const session = findSession(deps, input.draftDocumentId);
   if (!session) return {
     kind: "failed",
     result: failed("slides_page_images_session_invalid", "配图会话不存在；请重新发起 generate 排版方案。"),
@@ -274,7 +272,7 @@ export async function decidePageImages(
     // 不再沉默等图（旧行为：转 settling 最多等 16 分钟）：立即按当前状态落页。
     // 在途生成直接 abort，未完成页标 failed 后按无图版式退化——用户点完按钮马上看到结果。
     deps.runner?.abort(session.id);
-    const latest = findSession(deps, input.roomId, input.draftDocumentId) ?? session;
+    const latest = findSession(deps, input.draftDocumentId) ?? session;
     const unfinished = latest.pages.filter((page) => !page.contentHash && !page.failed);
     const pages = unfinished.length > 0
       ? latest.pages.map((page) => (page.contentHash || page.failed ? page : { ...page, failed: true }))
@@ -312,7 +310,7 @@ export async function decidePageImages(
     }
     const pending = session.pages.filter((page) => !page.contentHash && !page.failed).length;
     void deps.runner.start(
-      { roomId: input.roomId, draftDocumentId: input.draftDocumentId },
+      { draftDocumentId: input.draftDocumentId },
       { ...deps, sessionId: session.id },
     ).catch(() => {});
     broadcast(deps, pageImagesReviewPayload(session));
@@ -369,10 +367,10 @@ export async function decidePageImages(
 
 /** 过目打回/恢复（1 起按会话页序）：打回页落页时退化图形版式；恢复即撤销打回。 */
 export function reviewPageImageReject(
-  input: { roomId: string; draftDocumentId: string; index: number; rejected: boolean },
+  input: { draftDocumentId: string; index: number; rejected: boolean },
   deps: SlidesPageImagesStageDeps,
 ): PageImagesStageOutcome {
-  const session = findSession(deps, input.roomId, input.draftDocumentId);
+  const session = findSession(deps, input.draftDocumentId);
   if (!session) return {
     kind: "failed",
     result: failed("slides_page_images_session_invalid", "配图会话不存在；请重新发起 generate。"),
@@ -404,10 +402,10 @@ export function reviewPageImageReject(
 
 /** 单张重生成（1 起按会话页序）：同提示词重掷，可选反馈拼进提示词尾部；重生成即撤销打回。 */
 export async function regeneratePageImage(
-  input: { roomId: string; draftDocumentId: string; index: number; feedback?: string },
+  input: { draftDocumentId: string; index: number; feedback?: string },
   deps: SlidesPageImagesStageDeps,
 ): Promise<PageImagesStageOutcome> {
-  const session = findSession(deps, input.roomId, input.draftDocumentId);
+  const session = findSession(deps, input.draftDocumentId);
   if (!session) return {
     kind: "failed",
     result: failed("slides_page_images_session_invalid", "配图会话不存在；请重新发起 generate。"),

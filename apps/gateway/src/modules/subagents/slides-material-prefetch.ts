@@ -1,5 +1,19 @@
-import type { MaterialHit } from "../materials/service.js";
 import type { SlidesProgressPage } from "./slides-draft-doc.js";
+
+/**
+ * 素材检索命中项：ref 即 slides PageSpec image 元素可直接使用的引用。
+ *
+ * 原本定义在 `modules/materials/service.ts`；主干的 Phase 2c 把素材检索子系统
+ * 退役后（图片对象库并入 slides-style），检索入口只剩 slides 编排链路自己用，
+ * 类型随调用方一起留在这里，避免为一份类型签名复活整个已删模块。
+ */
+export interface MaterialHit {
+  ref: string;
+  kind: "screenshot" | "photo" | "web-clip" | "document";
+  desc: string;
+  meta: string;
+  rank: number;
+}
 
 /**
  * arrange 前置素材预取：网关在派发 slides-planner 之前，按确认稿的每页配图意图

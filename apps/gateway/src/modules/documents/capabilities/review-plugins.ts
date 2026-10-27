@@ -834,7 +834,7 @@ function commitTool(backend: CapabilityBackend, operations?: DocumentOperationSe
               addedCharacters: autoApplyItems.reduce((sum, item) => sum + tiptapText({ type: "doc", content: item.after }).length, 0),
               deletedCharacters: autoApplyItems.reduce((sum, item) => sum + tiptapText({ type: "doc", content: item.before }).length, 0),
               createdAt: operation.createdAt, updatedAt: applied.operation.updatedAt,
-            }, navigation: { pageId: "rooms", title: operation.documentTitle, action: "opened", roomId: operation.roomId,
+            }, navigation: { pageId: "docs", title: operation.documentTitle, action: "opened", roomId: operation.roomId,
               objectId: operation.documentId, objectType: "document" } });
         } catch {
           // 降级：保持 awaiting_review，由用户在审阅 UI 手动接受/拒绝。
@@ -852,7 +852,7 @@ function commitTool(backend: CapabilityBackend, operations?: DocumentOperationSe
         addedCharacters: prepared.operation.items.reduce((sum, item) => sum + tiptapText({ type: "doc", content: item.after }).length, 0),
         deletedCharacters: prepared.operation.items.reduce((sum, item) => sum + tiptapText({ type: "doc", content: item.before }).length, 0),
         createdAt: operation.createdAt, updatedAt: prepared.operation.updatedAt,
-      }, navigation: { pageId: "rooms", title: operation.documentTitle, action: "opened", roomId: operation.roomId,
+      }, navigation: { pageId: "docs", title: operation.documentTitle, action: "opened", roomId: operation.roomId,
         objectId: operation.documentId, objectType: "document" } });
     },
   };

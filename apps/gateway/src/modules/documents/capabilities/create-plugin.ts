@@ -110,7 +110,7 @@ export function createPlugin(
         state: "running", nextSequence: 1, nextAction: "document_write_append",
         expiresAt: expiresAt.toISOString(),
         navigation: {
-          pageId: "rooms", title, action: "created",
+          pageId: "docs", title, action: "created",
           roomId: context.roomId, objectId: documentId, objectType: "document",
         },
       });
@@ -306,7 +306,7 @@ export function createPlugin(
         operationId, state: "completed",
         roomId: document.roomId, docId: document.id,
         navigation: {
-          pageId: "rooms", title: document.title, action: "created",
+          pageId: "docs", title: document.title, action: "created",
           roomId: document.roomId, objectId: document.id, objectType: "document",
         },
       });

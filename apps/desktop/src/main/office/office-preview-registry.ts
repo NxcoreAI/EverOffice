@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { webContents } from 'electron'
+import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
 
 import type { OfficeAgentFileEvent } from '../../shared/office'
 import { logDesktop } from '../logging/desktop-logger'
@@ -98,12 +99,15 @@ interface EditSyncState {
   runner: Promise<void> | null
 }
 
-/** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
+/**
+ * AI 页签论文排版桥（index.ts 注入网关实现；缺省 → AI 页签排版面板不可用）。
+ * Room 已删除：格式卡按工作区作用域（scope）存取，scope 可省略，缺省即工作区。
+ */
 export interface OfficeThesisPanelBridge {
-  listCards(roomId: string): Promise<unknown[]>
-  pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
-  removeCard(roomId: string, cardId: string): Promise<void>
-  reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ originalName: string }>
+  listCards(scope?: string): Promise<unknown[]>
+  pickAndSet(scope?: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+  removeCard(cardId: string, scope?: string): Promise<void>
+  reformat(fileEntryId: string, cardId?: string, scope?: string): Promise<{ originalName: string }>
 }
 
 /** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */
@@ -145,7 +149,7 @@ export class OfficePreviewRegistry {
     this.editSyncBindings = bindings
   }
 
-  /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查 Room → 注入 Room 对话框。 */
+  /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查实例 → 渲染层注入 Agent 对话框。 */
   setAgentAskForward(forward: ((event: AgentAskForwardEvent) => void) | null): void {
     this.agentAskForward = forward
   }
@@ -171,7 +175,7 @@ export class OfficePreviewRegistry {
     if (!bridge) return
     // 运行时能力守卫：论文排版桥是 genoffice 后加的导出，带着旧运行时启动时它是 undefined。
     // 缺了只跳过这个桥（AI 页签排版面板不可用），不能让 ensureRuntime 抛错——那会让
-    // 整条 open() 失败，Room 里的 Office 产物全部退回「用系统默认应用打开」。
+    // 整条 open() 失败，Office 产物全部退回「用系统默认应用打开」。
     if (typeof runtime.docs.setDocsThesisPanelHook !== 'function') {
       logDesktop('office', 'warn', {
         event: 'office.thesis-bridge-unavailable',
@@ -179,21 +183,25 @@ export class OfficePreviewRegistry {
       })
       return
     }
+    // Room 已删除：格式卡按工作区作用域存取，不再要求实例带 roomId。
+    const scope = WORKSPACE_DOCUMENT_CHANNEL
     runtime.docs.setDocsThesisPanelHook(async (wcId, action) => {
       const instance = this.findByWebContentsId(wcId)
-      const roomId = instance?.roomId ?? null
-      if (!instance || !roomId) return { ok: false, reason: 'no_room' as const }
       try {
         switch (action.kind) {
           case 'list':
-            return { ok: true as const, value: await bridge.listCards(roomId) }
+            return { ok: true as const, value: await bridge.listCards(scope) }
           case 'pick':
-            return { ok: true as const, value: await bridge.pickAndSet(roomId) }
+            return { ok: true as const, value: await bridge.pickAndSet(scope) }
           case 'remove':
-            await bridge.removeCard(roomId, action.cardId)
+            await bridge.removeCard(action.cardId, scope)
             return { ok: true as const, value: null }
           case 'reformat':
-            return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
+            // 装订产物与源文件同库，不需要实例隶属的 Room；实例只用来取源文件 fileId。
+            if (!instance) {
+              return { ok: false as const, reason: 'error' as const, message: '未找到该文档对应的打开实例' }
+            }
+            return { ok: true as const, value: await bridge.reformat(instance.fileId, action.cardId, scope) }
         }
       } catch (error) {
         return { ok: false as const, reason: 'error' as const, message: error instanceof Error ? error.message : String(error) }
@@ -359,7 +367,7 @@ export class OfficePreviewRegistry {
       .sort((a, b) => Number(b.active) - Number(a.active))
   }
 
-  /** 「AI 修改」转发用的 wcId 反查：定位视图所属文件与 Room（编辑回填态里的 roomId 兜底）。 */
+  /** 「AI 修改」转发 / 论文排版桥的 wcId 反查：定位视图所属文件（roomId 仅编辑回填兜底保留）。 */
   findByWebContentsId(wcId: number): {
     fileId: string
     title: string
@@ -584,7 +592,7 @@ export class OfficePreviewRegistry {
     }
     // Office 保存 hook（生成 + 编辑回填共享扇出，docs/slides/sheets）在首个使用者装一次。
     wireOfficeSavedHooks(this.runtime)
-    // 「AI 修改」弹层转发：slides 视图提交 → wcId 反查 Room → 广播渲染层注入（幂等）。
+    // 「AI 修改」弹层转发：slides 视图提交 → wcId 反查实例 → 广播渲染层注入（幂等）。
     if (this.agentAskForward) {
       wireSlidesAgentAsk(this.runtime, {
         resolveInstance: (wcId) => this.findByWebContentsId(wcId),

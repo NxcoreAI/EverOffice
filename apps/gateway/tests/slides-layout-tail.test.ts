@@ -187,7 +187,6 @@ function armPlanOf(plan: Record<string, unknown>) {
 
 function tailArgs(plan: Record<string, unknown>, harness: Harness) {
   return {
-    roomId: "room-1",
     sessionId: "session-1",
     runId: "run-1",
     parentRunId: "parent-1",
@@ -320,6 +319,37 @@ describe("runLayouterTail", () => {
     expect(result.visualValidation).toEqual(["reviewed", "reviewed"]);
   });
 
+  it("素材长宽比回填进 layouter 输入：模型按真实比例切框，不必盲猜", async () => {
+    const png = new Uint8Array(createCanvas(1600, 900).toBuffer("image/png")).slice();
+    const harness = makeHarness([]);
+    harness.deps.readMaterialBlob = vi.fn(async () => png);
+    const page = semanticCases[0]!.page;
+    const calls: Record<string, unknown>[] = [];
+    harness.deps.dispatchPage = async (input) => {
+      calls.push(input);
+      const tree = input.currentTree ?? {
+        version: 2, role: "content", composition: "swiss", notes: page.notes,
+        nodes: page.blocks.map((block, index) => ({
+          type: "text", token: index === 0 ? "h1" : "body", text: (block as { text: string }).text,
+          slot: { col: [1, 12], row: [index * 2 + 1, index * 2 + 2] },
+        })),
+      };
+      return {
+        status: "completed",
+        result: { structuredOutput: { tree, designIntent: "标题在上，正文顺排", bindings: page.blocks.map((block, index) => ({ blockId: block.id, paths: [`nodes/${index}`] })) } },
+      } as any;
+    };
+    const plan = {
+      title: "test",
+      pages: [{ content: page, materials: [{ url: `everroom-material://${"b".repeat(64)}`, desc: "封面图" }] }],
+    };
+    const result = JSON.parse((await runLayouterTail(harness.deps, tailArgs(plan, harness))).content);
+    expect(result.status).toBe("completed");
+    const design = calls.find(call => !call.currentTree)!;
+    const material = (design.materials as Array<{ aspectRatio?: number }>)[0]!;
+    expect(material.aspectRatio).toBeCloseTo(1600 / 900, 3);
+  });
+
   it("semantic binding failure retries complete content and leaves draft recoverable", async () => {
     const page = semanticCases[0]!.page;
     const harness = makeHarness([CONTENT_TREE]);
@@ -409,7 +439,6 @@ describe("runLayouterTail", () => {
       completed: true,
       doneCount: 2,
       totalPages: 2,
-      roomId: "room-1",
       documentId: "draft-1",
       fileEntryId: "file-1",
       fileName: "deck.pptx",
@@ -473,7 +502,6 @@ describe("runLayouterTail", () => {
     };
     const plan = planOf([CONTENT_TREE, CHART_TREE]);
     const runPromise = runLayouterTail(deps, {
-      roomId: "room-1",
       sessionId: "session-1",
       runId: "run-1",
       parentRunId: "parent-1",
@@ -526,7 +554,6 @@ describe("runLayouterTail", () => {
     };
     const plan = planOf([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
     const runPromise = runLayouterTail(deps, {
-      roomId: "room-1",
       sessionId: "session-1",
       runId: "run-1",
       parentRunId: "parent-1",

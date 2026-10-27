@@ -1311,34 +1311,6 @@ export interface RoomDocument {
   updatedAt: string;
 }
 
-/** Room 产物跨 Room 移动（产物放错房或主题更适合其它房时的整理动作）。 */
-export interface MoveRoomDocumentInput {
-  /** 文档当前所属 Room（只移除这一条归属，文档在其它 Room 的链接不受影响）。 */
-  fromRoomId: string;
-  /** 目标 Room。 */
-  roomId: string;
-}
-
-/** 批量移动：一次选择多个产物迁往同一目标 Room。 */
-export interface MoveRoomDocumentsInput {
-  documentIds: string[];
-  fromRoomId: string;
-  roomId: string;
-}
-
-export interface MovedRoomDocument {
-  documentId: string;
-  fromRoomId: string;
-  toRoomId: string;
-  title: string;
-  /** 移动后的文档（roomId 已指向目标 Room）。 */
-  document: RoomDocument;
-}
-
-export interface MoveRoomDocumentsResult {
-  items: MovedRoomDocument[];
-}
-
 export interface RoomTaskFolder {
   id: string;
   roomId: string;
@@ -1391,13 +1363,15 @@ export type DocumentBlockResolutionStatus =
   | "permission_denied";
 
 export interface DocumentBlockReferenceInput {
-  roomId: string;
+  /** 目标块所属作用域；null = 工作区文稿（旧数据里是 Room id）。 */
+  roomId?: string | null;
   documentId: string;
   blockId: string;
 }
 
 export interface ResolveDocumentBlockReferencesInput {
-  sourceRoomId: string;
+  /** 源文档作用域；null/省略 = 工作区文稿。 */
+  sourceRoomId?: string | null;
   references: DocumentBlockReferenceInput[];
 }
 
@@ -1623,6 +1597,7 @@ export interface ExternalDocumentProjectionBinding {
   sourceKind: ExternalDocumentSourceKind;
   sourceId: string;
   resourceId: string;
+  /** 作用域 id；单工作区语义下恒为工作区频道，旧数据里是 Room id。 */
   roomId: string;
   documentId: string;
   relativePath: string;
@@ -1634,7 +1609,8 @@ export interface SyncExternalDocumentProjectionInput {
   sourceKind: ExternalDocumentSourceKind;
   sourceId: string;
   resourceId: string;
-  roomId: string;
+  /** 省略/null = 工作区文稿作用域。 */
+  roomId?: string | null;
   relativePath: string;
   sourceHash: string;
   title: string;

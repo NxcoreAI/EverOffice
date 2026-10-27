@@ -61,7 +61,7 @@ export function wireOfficeSavedHooks(target: PreparedGenOfficeRuntime): void {
   hookWired = true
 }
 
-// ── 「AI 修改」转发：slides 视图里的弹层提交 → Room 对话框 ──
+// ── 「AI 修改」转发：slides 视图里的弹层提交 → 渲染层 Agent 对话框 ──
 
 /** fork slides:agent-ask 校验后透传的载荷（元素 id = 大纲/编辑 op 的 durable id）。 */
 export interface SlidesAgentAskPayload {
@@ -92,7 +92,7 @@ function describeAskTarget(target: SlidesAgentAskPayload['targets'][number]): st
   return `${target.id}（${label}「${brief}」）`
 }
 
-/** 注入 Room 对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
+/** 注入 Agent 对话的用户消息：用户口吻的修改指令 + 给 Agent 的工具定位提示。 */
 export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): string {
   const targets = op.targets.map(describeAskTarget).join('、')
   return (
@@ -108,16 +108,16 @@ export function buildAgentAskDisplayMessage(title: string, op: SlidesAgentAskPay
   return `把 PPT《${title}》第 ${op.slideIndex + 1} 页选中的内容改一下：${instruction}。`
 }
 
-/** 渲染层注入事件：room 确定后由主进程广播（channel office:agent-ask）。 */
+/** 渲染层注入事件：由主进程广播（channel office:agent-ask）；Room 已删除，roomId 恒为 null。 */
 export type AgentAskForwardEvent = OfficeAgentAskEvent
 
 let agentAskWired = false
 
-/** 全局只装一次（幂等）：slides 弹层转发 → 反查 Room → 广播给渲染层注入对话框。 */
+/** 全局只装一次（幂等）：slides 弹层转发 → wcId 反查实例 → 广播给渲染层注入对话框。 */
 export function wireSlidesAgentAsk(
   target: PreparedGenOfficeRuntime,
   deps: {
-    resolveInstance(wcId: number): { fileId: string; title: string; kind: string; roomId: string | null } | null
+    resolveInstance(wcId: number): { fileId: string; title: string; kind: string } | null
     forward(event: AgentAskForwardEvent): void
   },
 ): void {
@@ -126,11 +126,9 @@ export function wireSlidesAgentAsk(
   target.slides.setSlidesAgentAskHook(async (wcId, op) => {
     const instance = deps.resolveInstance(wcId)
     if (!instance) return { ok: false, error: '未找到该 PPT 对应的打开实例' }
-    if (!instance.roomId) {
-      return { ok: false, error: '该文件未在 Room 中打开，无法转发给 Agent（请在 Room 产物库打开后再试）' }
-    }
+    // Room 已删除：不再要求文件隶属某个 Room，转发事件以工作区语义注入。
     deps.forward({
-      roomId: instance.roomId,
+      roomId: null,
       message: buildAgentAskMessage(instance.title, op),
       displayMessage: buildAgentAskDisplayMessage(instance.title, op),
     })

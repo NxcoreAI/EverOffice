@@ -32,8 +32,8 @@ export interface OsOpenedDocument {
 
 /** slides「AI 修改」弹层转发的主进程 → 渲染层事件（channel office:agent-ask）。 */
 export interface OfficeAgentAskEvent {
-  /** 目标 Room：渲染层切到该 Room 并注入对话框。 */
-  roomId: string
+  /** 目标作用域：null = 工作区（Room 已删除，保留字段兼容旧事件）。 */
+  roomId?: string | null
   /** 已组装好的用户消息（含元素 id 与工具定位提示），直接自动发送。 */
   message: string
   /** 给用户看的人话（聊天层只展示它，不再把内部指令渲染成用户气泡）。 */

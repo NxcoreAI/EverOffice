@@ -350,6 +350,7 @@ const DOCUMENT_CHANNELS = {
   list: 'documents:list',
   listTrash: 'documents:list-trash',
   get: 'documents:get',
+  readMarkdown: 'documents:read-markdown',
   listBlocks: 'documents:list-blocks',
   listBlockBacklinks: 'documents:list-block-backlinks',
   listVersions: 'documents:list-versions',
@@ -373,8 +374,6 @@ const DOCUMENT_CHANNELS = {
   import: 'documents:import',
   save: 'documents:save',
   delete: 'documents:delete',
-  move: 'documents:move',
-  moveMany: 'documents:move-many',
   restore: 'documents:restore',
   deletePermanently: 'documents:delete-permanently',
   emptyTrash: 'documents:empty-trash',
@@ -678,7 +677,7 @@ function broadcastOfficeAgentFileEvent(event: OfficeAgentFileEvent): void {
   }
 }
 
-/** office:agent-ask 扇出：slides「AI 修改」弹层转发 → 渲染层注入对应 Room 对话框。 */
+/** office:agent-ask 扇出：slides「AI 修改」弹层转发 → 渲染层注入 Agent 对话框。 */
 function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('office:agent-ask', event)
@@ -1030,7 +1029,6 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
           sourceKind: vault.sourceType,
           sourceId: vaultId,
           resourceId: note.resourceId,
-          roomId: note.roomId,
           relativePath: note.relativePath,
           sourceHash: snapshot.sourceHash,
           title: basename(note.relativePath, extname(note.relativePath)),
@@ -1106,7 +1104,7 @@ function registerObsidianHandlers(service: ObsidianVaultService): void {
       return { kind: 'new-room', vault }
     }
     if (target.kind === 'room') {
-      if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('请选择目标 Room。')
+      if (typeof target.roomId !== 'string' || !target.roomId.trim()) throw new Error('该导入目标已失效（Room 已移除），请使用工作区导入。')
       const vault = await service.mount(rootPath, target.roomId, 'embedded', registryId)
       await projectRoomVault(vault.id)
       return { kind: 'room' as const, vault }
@@ -2248,7 +2246,6 @@ function registerDocumentHandlers(
         sourceKind: vault.sourceType,
         sourceId: input.vaultId,
         resourceId: input.resourceId,
-        roomId: vault.roomId,
         relativePath: input.relativePath,
         sourceHash: input.sourceHash,
         title: input.title,
@@ -2260,6 +2257,10 @@ function registerDocumentHandlers(
     list: (_event, roomId) => bridge.list(roomId),
     listTrash: (_event, roomId) => bridge.listTrash(roomId),
     get: (_event, documentId) => bridge.get(documentId),
+    readMarkdown: async (_event, documentId: string) => ({
+      documentId,
+      markdown: await bridge.documentMarkdown(documentId),
+    }),
     listBlocks: (_event, documentId) => bridge.listBlocks(documentId),
     listBlockBacklinks: (_event, documentId, blockId) =>
       bridge.listBlockBacklinks(documentId, blockId),
@@ -2341,8 +2342,6 @@ function registerDocumentHandlers(
       if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
       return deleted
     },
-    move: (_event, documentId, fromRoomId, roomId) => bridge.move(documentId, fromRoomId, roomId),
-    moveMany: (_event, documentIds, fromRoomId, roomId) => bridge.moveMany(documentIds, fromRoomId, roomId),
     restore: (_event, documentId) => bridge.restore(documentId),
     deletePermanently: async (_event, documentId) => {
       if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
@@ -2384,7 +2383,7 @@ async function hashFileBytes(path: string): Promise<string> {
 }
 
 /** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
-async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> {
+async function pickThesisTemplateFromDisk(): Promise<{ canceled: boolean; cardId: string; sourceName: string }> {
   const thesisBridgeForPick = thesisFormatBridgeRef
   if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '' }
   const picked = await dialog.showOpenDialog({
@@ -2394,7 +2393,7 @@ async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: b
   })
   const filePath = picked.filePaths[0]
   if (!filePath) return { canceled: true, cardId: '', sourceName: '' }
-  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
+  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(filePath) }
 }
 
 function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registry: OfficePreviewRegistry): void {
@@ -2404,23 +2403,23 @@ function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registr
     }
     registry.notifyThesisCardsChanged()
   }
-  handle(THESIS_FORMAT_CHANNELS.listCards, (_event, roomId: string) => bridge.listCards(roomId))
-  handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, roomId: string, fileEntryId: string) => {
-    const meta = await bridge.parseFromLibrary(roomId, fileEntryId)
+  handle(THESIS_FORMAT_CHANNELS.listCards, () => bridge.listCards())
+  handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, fileEntryId: string) => {
+    const meta = await bridge.parseFromLibrary(fileEntryId)
     cardChanged()
     return meta
   })
-  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string) => {
-    const meta = await pickThesisTemplateFromDisk(roomId)
+  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async () => {
+    const meta = await pickThesisTemplateFromDisk()
     if (!meta.canceled) cardChanged()
     return meta
   })
-  handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, roomId: string, cardId: string) => {
-    await bridge.removeCard(roomId, cardId)
+  handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, cardId: string) => {
+    await bridge.removeCard(cardId)
     cardChanged()
   })
-  handle(THESIS_FORMAT_CHANNELS.reformat, (_event, roomId: string, fileEntryId: string, cardId?: string) =>
-    bridge.reformat(roomId, fileEntryId, cardId))
+  handle(THESIS_FORMAT_CHANNELS.reformat, (_event, fileEntryId: string, cardId?: string) =>
+    bridge.reformat(fileEntryId, cardId))
 }
 
 function registerFilesHandlers(
@@ -3394,10 +3393,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry)
     // AI 页签（docs 视图内）论文排版桥：复用同一网关实现，pick 走磁盘选择直传。
     officePreviewRegistry.setThesisPanelBridge({
-      listCards: (roomId) => thesisFormatBridge.listCards(roomId),
-      pickAndSet: (roomId) => pickThesisTemplateFromDisk(roomId),
-      removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
-      reformat: (roomId, fileEntryId, cardId) => thesisFormatBridge.reformat(roomId, fileEntryId, cardId),
+      listCards: () => thesisFormatBridge.listCards(),
+      pickAndSet: () => pickThesisTemplateFromDisk(),
+      removeCard: (cardId) => thesisFormatBridge.removeCard(cardId),
+      reformat: (fileEntryId, cardId) => thesisFormatBridge.reformat(fileEntryId, cardId),
     })
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
     macosPushNotifications.install()

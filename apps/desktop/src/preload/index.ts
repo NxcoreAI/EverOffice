@@ -595,6 +595,7 @@ const api: NxcoreDesktopApi = {
     list: (roomId?: string | null) => invoke('documents:list', roomId),
     listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
+    readMarkdown: (documentId) => invoke('documents:read-markdown', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
     listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
@@ -620,8 +621,6 @@ const api: NxcoreDesktopApi = {
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
     delete: (documentId) => invoke('documents:delete', documentId),
-    move: (documentId, fromRoomId, roomId) => invoke('documents:move', documentId, fromRoomId, roomId),
-    moveMany: (documentIds, fromRoomId, roomId) => invoke('documents:move-many', documentIds, fromRoomId, roomId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
     emptyTrash: (roomId?: string | null) => invoke('documents:empty-trash', roomId),
@@ -765,21 +764,21 @@ const api: NxcoreDesktopApi = {
     takePendingOsOpen: () => invoke('files:take-pending-os-open'),
   },
   thesisFormat: {
-    listCards: (roomId: string): Promise<Array<{
+    listCards: (): Promise<Array<{
       id: string
       sourceName: string
       sourceFileEntryId: string | null
       updatedAt: string
       card: Record<string, unknown>
-    }>> => invoke('thesis-format:cards:list', roomId),
-    setFromLibrary: (roomId: string, fileEntryId: string) =>
-      invoke('thesis-format:parse:library', roomId, fileEntryId),
-    pickAndSet: (roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }> =>
-      invoke('thesis-format:parse:pick', roomId),
-    reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
-      invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
-    removeCard: (roomId: string, cardId: string) =>
-      invoke('thesis-format:cards:remove', roomId, cardId),
+    }>> => invoke('thesis-format:cards:list'),
+    setFromLibrary: (fileEntryId: string) =>
+      invoke('thesis-format:parse:library', fileEntryId),
+    pickAndSet: (): Promise<{ canceled: boolean; cardId: string; sourceName: string }> =>
+      invoke('thesis-format:parse:pick'),
+    reformat: (fileEntryId: string, cardId?: string) =>
+      invoke('thesis-format:reformat', fileEntryId, cardId),
+    removeCard: (cardId: string) =>
+      invoke('thesis-format:cards:remove', cardId),
     onCardChanged: (listener: () => void) => {
       const handler = () => listener()
       ipcRenderer.on('thesis-format:card-changed', handler)

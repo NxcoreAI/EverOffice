@@ -16,7 +16,11 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      maxConcurrent: 8,
+      maxConcurrent: 22,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
     });
   });
 
@@ -43,6 +47,10 @@ describe("loadConfig", () => {
       runtimeDir: join(config.dataDir, "agent", "subagents"),
       defaultTimeoutMs: 45_000,
       maxConcurrent: 7,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
     });
   });
 

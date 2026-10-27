@@ -79,7 +79,8 @@ export function measureDefects(result: CompileResult, contract: LayoutContract, 
     defects.push({ path, type, detail, hint });
 
   for (const compileDefect of result.defects) {
-    push(compileDefect.path, "overflow", compileDefect.detail, "调整该区域的权重/比例，或精简内容");
+    // 组件溢出在编译期已按真实展开能力算出最小槽位；其余溢出仍给通用建议。
+    push(compileDefect.path, "overflow", compileDefect.detail, compileDefect.hint ?? "调整该区域的权重/比例，或精简内容");
   }
 
   for (const placement of result.placements) {

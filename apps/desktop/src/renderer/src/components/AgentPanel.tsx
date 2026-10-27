@@ -3,6 +3,7 @@ import type { AgentModelPreference, AgentNavigationTarget, AgentRoomReference, A
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
+import { AgentDraftPreviewDialog } from '@/components/agent/AgentDraftPreviewDialog'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import {
@@ -88,6 +89,8 @@ export function AgentPanel({
   const [selectedExternalConversation, setSelectedExternalConversation] = useState<ExternalConversationSummary | null>(null)
   const [pendingExternalAttachment, setPendingExternalAttachment] = useState<{ fileId: string; fileName: string } | null>(null)
   const [notificationRunTarget, setNotificationRunTarget] = useState<{ key: string; runId: string } | null>(null)
+  /** 幻灯片内容稿的只读预览：SlidesProgressCard「打开草稿」传入 documentId 后打开弹窗。 */
+  const [draftPreviewDocumentId, setDraftPreviewDocumentId] = useState<string | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const previousSessionIdRef = useRef<string | null>(null)
   const handledNavigationKeysRef = useRef(new Set<string>())
@@ -683,12 +686,9 @@ export function AgentPanel({
         pendingApprovals={session.pendingApprovals}
         onRetryPrompt={(prompt, runId) => void sendPrompt(prompt, runId)}
         onOpenSessionLink={(link) => void openSessionLink(link)}
-        onOpenDraft={() => {
-          // 文稿编辑面尚未在渲染层重新落位（Room 详情随本次清理删除），先给出明确出口。
-          showToast({
-            title: t('surface:agentChat.slidesOpenDraft'),
-            message: t('surface:agentChat.slidesDraftNoRoomNotice'),
-          })
+        onOpenDraft={(documentId) => {
+          // 打开草稿 = 真实只读预览（工作区文稿），不再弹「不在当前 Room」的 toast 死路。
+          setDraftPreviewDocumentId(documentId)
         }}
         onSlidesAction={(prompt, displayText) => void sendAgentAction(prompt, displayText)}
         cancelledRunIds={session.cancelledRunIds}
@@ -722,6 +722,13 @@ export function AgentPanel({
           />
         ) : undefined}
       />
+
+      {draftPreviewDocumentId ? (
+        <AgentDraftPreviewDialog
+          documentId={draftPreviewDocumentId}
+          onClose={() => setDraftPreviewDocumentId(null)}
+        />
+      ) : null}
     </aside>
   )
 }

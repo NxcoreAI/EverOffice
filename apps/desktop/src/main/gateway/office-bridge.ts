@@ -276,7 +276,7 @@ export class OfficeBridgeServer {
   /**
    * /v1/office-reformat：论文装订。describe = 源 docx → 块大纲（装订映射的
    * 区间事实源）；build = 源 docx + 格式卡 + 装订规格 → 装订版 docx，走
-   * file-imports 入库（版本链幂等）并广播 done（渲染层 toast + 产物库刷新）。
+   * file-imports 入库（版本链幂等）并广播 done（渲染层 toast + 文件库刷新）。
    */
   private async reformat(req: OfficeReformatRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     try {
@@ -415,17 +415,17 @@ export class OfficeBridgeServer {
       const openSummary = describeOpenInstances(outcome.open)
       const message =
         outcome.reason === 'not_editable'
-          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
+          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在文件库中重新以可编辑方式打开后再试。${openSummary}`
           : req.fileId === 'active'
-            ? `当前没有已打开的 PPT。若知道目标 PPT 的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在产物库打开该文件。${openSummary}`
-            : `fileId 对应的 PPT 未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在产物库打开该文件。${openSummary}`
+            ? `当前没有已打开的 PPT。若知道目标 PPT 的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在文件库打开该文件。${openSummary}`
+            : `fileId 对应的 PPT 未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在文件库打开该文件。${openSummary}`
       return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.info ?? outcome.result ?? {} } }
   }
 
   /**
-   * 显式 fileEntryId 未打开时的自动打开：核实产物库条目是 Office 产物后，
+   * 显式 fileEntryId 未打开时的自动打开：核实文件库条目是 Office 产物后，
    * 广播 open-edit 让渲染端以可编辑方式打开（顶栏出标签，编辑实时可见）。
    * 渲染层打开失败/文件不存在时返回 false，保持原 not_open 报错路径。
    *
@@ -598,8 +598,7 @@ export class OfficeBridgeServer {
             contentHash: accepted.contentHash,
             blobDeduped: accepted.blobDeduped,
             versionDeduped: accepted.versionDeduped,
-            // Room 投影由路由决策异步完成（router 关闭时会降级不进 Room），
-            // 此字段只表达「本次是否请求了 Room 路由」。
+            // Room 已删除：roomRequested 仅表达调用方是否传了 scope，字段保留兼容旧消费方。
             roomRequested: Boolean(parsed.roomId),
             originalName,
           },

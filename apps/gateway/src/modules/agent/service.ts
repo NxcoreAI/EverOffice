@@ -29,6 +29,7 @@ import {
   MAIN_AGENT_ID,
   MODEL_PREFERENCE_AGENT_IDS,
   MODEL_TIER_AGENT_IDS,
+  WORKSPACE_DOCUMENT_CHANNEL,
   channelAgentIdFromAgentId,
   modelPreferenceFromAgentId,
 } from "@nxcore/agent-contract";
@@ -1213,7 +1214,7 @@ export class AgentService {
     capabilityId: string;
     agentSessionId: string;
     runId: string;
-    roomId: string;
+    roomId: string | null;
   }): void {
     const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, input.agentSessionId)).get();
     const run = this.db.select().from(agentRuns).where(and(
@@ -1221,7 +1222,9 @@ export class AgentService {
       eq(agentRuns.sessionId, input.agentSessionId),
     )).get();
     const execution = this.executionContexts.get(input.runId);
-    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
+    // Room 已删除：工作区操作的作用域哨兵按 null 语义校验（execution.roomId 恒为 null）。
+    const requestedRoomId = input.roomId === WORKSPACE_DOCUMENT_CHANNEL ? null : input.roomId;
+    const roomId = resolveRoomId(this.roomRegistry, requestedRoomId);
     const activeContextMatches = Boolean(run
       && (run.status === "accepted" || run.status === "running")
       && execution
@@ -1235,8 +1238,7 @@ export class AgentService {
       && run.completedAt
       && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
     if (!session || !run
-      || (!activeContextMatches && !completedSelectionRewriteMatches)
-      || !roomId) {
+      || (!activeContextMatches && !completedSelectionRewriteMatches)) {
       throw new Error("agent_operation_context_invalid");
     }
   }
@@ -1483,7 +1485,7 @@ export class AgentService {
       : null;
     const preflightTool = documentTopic
         ? {
-            name: "context_room_document_intent",
+            name: "document_create_intent",
             result: {
               clarificationRequired: true,
               originalPrompt: safePrompt.trim(),
@@ -1596,7 +1598,6 @@ export class AgentService {
         pageLabel: runPageLabel,
         roomId: runRoomId,
         availableRooms: rooms,
-        roomSelectionRequired: runRoomId === null,
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,
         toolsEnabled: input.toolsEnabled !== false,

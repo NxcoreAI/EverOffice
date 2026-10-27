@@ -60,7 +60,6 @@ const draftState: SlidesProgressState = {
   totalPages: 2,
   doneCount: 0,
   documentId: 'doc-draft-1',
-  roomId: 'room-1',
   pages: [
     { title: '封面', points: ['季度汇报'], materialHints: '简洁封面' },
     { title: '业绩', data: 'Q1: 1.2 亿；Q2: 1.5 亿' },
@@ -291,7 +290,7 @@ describe('SlidesProgressCard 草稿与动作语义（P1-1/P1-2）', () => {
 
     expect(renderer.root.findByProps({ className: 'agent-slides-card-hint' }).children).toContain(`${KEY}SLIDES_DRAFT_HINT`)
     act(() => renderer.root.findByProps({ className: 'agent-slides-actions' }).findAllByType('button')[0]!.props.onClick())
-    expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1', 'room-1')
+    expect(onOpenDraft).toHaveBeenCalledWith('doc-draft-1')
 
     act(() => buttonWithText(renderer.root, `${KEY}SLIDES_CONFIRM_CONTENT`).props.onClick())
     expect(onAction).toHaveBeenCalledTimes(1)
@@ -310,7 +309,7 @@ describe('SlidesProgressCard 草稿与动作语义（P1-1/P1-2）', () => {
 })
 
 describe('SlidesProgressCard 完成与失败（P0-3/P0-5/P0-6）', () => {
-  it('page_applied + completed：给「打开 PPT」「继续修改」；打开直接走 files.openOriginal（可编辑 + roomId）', () => {
+  it('page_applied + completed：给「打开 PPT」「继续修改」；打开直接走 files.openOriginal（可编辑）', () => {
     const openOriginal = vi.fn().mockResolvedValue({ openedWith: 'office' })
     vi.stubGlobal('window', { nxcore: { files: { openOriginal } } })
     const onAction = vi.fn()
@@ -323,7 +322,6 @@ describe('SlidesProgressCard 完成与失败（P0-3/P0-5/P0-6）', () => {
         totalPages: 8,
         fileEntryId: 'file-9',
         fileName: '季度汇报.pptx',
-        roomId: 'room-1',
       },
       toolRunning: false,
       onAction,
@@ -331,7 +329,7 @@ describe('SlidesProgressCard 完成与失败（P0-3/P0-5/P0-6）', () => {
       completedAt: '2026-09-30T00:02:00.000Z',
     }))
     act(() => buttonWithText(renderer.root, `${KEY}SLIDES_OPEN_PPT`).props.onClick())
-    expect(openOriginal).toHaveBeenCalledWith('file-9', '季度汇报.pptx', undefined, { editable: true, roomId: 'room-1' })
+    expect(openOriginal).toHaveBeenCalledWith('file-9', '季度汇报.pptx', undefined, { editable: true })
     // 完成卡显示总用时。
     expect(String(renderer.root.findByProps({ className: 'agent-slides-card-time' }).children))
       .toContain(`${KEY}SLIDES_ELAPSED_DONE?time=02:00`)

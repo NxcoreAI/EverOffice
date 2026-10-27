@@ -80,7 +80,6 @@ function sweep(): void {
 }
 
 export interface SlidesPrewarmRegisterInput {
-  roomId: string;
   draftDocumentId: string;
   stylePalette: { primary?: string; accent?: string; background?: string } | null;
   images: Pick<SlidesStyleImageGenerator, "generateImage">;

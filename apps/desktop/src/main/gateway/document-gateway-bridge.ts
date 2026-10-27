@@ -18,8 +18,6 @@ import type {
   CompleteExternalDocumentPatchInput,
   ExternalDocumentProjectionBinding,
   ImportRoomDocumentInput,
-  MoveRoomDocumentsResult,
-  MovedRoomDocument,
   PreparedExternalDocumentPatch,
   ExternalDocumentSourceKind,
   PrepareExternalDocumentPatchInput,
@@ -103,16 +101,14 @@ export class DocumentGatewayBridge {
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
-  /** roomId 传 null/省略 = 整个工作区的文稿（P0-2）；传 roomId 时按 Room 过滤。 */
-  list(roomId?: string | null): Promise<RoomDocument[]> {
-    // 打开房间的文档基线是纯读幂等：网关偶发 500（issue #259）在桥内静默重试，
-    // 瞬断自愈，不再一击即成全局报错弹窗 + 空房间。
-    return this.request(`/v1/documents${roomQuery(roomId)}`, undefined, false, 2)
+  /** 单工作区语义：文稿库只有工作区一个作用域，roomId 形参仅为旧调用方保留。 */
+  list(_roomId?: string | null): Promise<RoomDocument[]> {
+    // 工作区文稿库读取是纯读幂等：网关偶发 500（issue #259）在桥内静默重试。
+    return this.request('/v1/documents', undefined, false, 2)
   }
 
-  listTrash(roomId?: string | null): Promise<RoomDocument[]> {
-    const query = roomId ? `?${new URLSearchParams({ roomId, trashed: 'true' })}` : '?trashed=true'
-    return this.request(`/v1/documents${query}`, undefined, false, 2)
+  listTrash(_roomId?: string | null): Promise<RoomDocument[]> {
+    return this.request('/v1/documents?trashed=true', undefined, false, 2)
   }
 
   get(documentId: string): Promise<RoomDocument> {
@@ -315,20 +311,6 @@ export class DocumentGatewayBridge {
     }, true)
   }
 
-  move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument> {
-    return this.request(`/v1/documents/${encodeURIComponent(documentId)}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ fromRoomId, roomId }),
-    }, true)
-  }
-
-  moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult> {
-    return this.request('/v1/documents/move', {
-      method: 'POST',
-      body: JSON.stringify({ documentIds, fromRoomId, roomId }),
-    }, true)
-  }
-
   delete(documentId: string): Promise<void> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' })
   }
@@ -341,9 +323,9 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/permanent`, { method: 'DELETE' })
   }
 
-  /** roomId 传 null/省略 = 清空整个工作区回收站。 */
-  emptyTrash(roomId?: string | null): Promise<void> {
-    return this.request(`/v1/documents/trash${roomQuery(roomId)}`, { method: 'DELETE' })
+  /** 清空整个工作区回收站（单工作区语义）。 */
+  emptyTrash(_roomId?: string | null): Promise<void> {
+    return this.request('/v1/documents/trash', { method: 'DELETE' })
   }
 
   subscribe(contents: WebContents, roomId?: string | null): void {

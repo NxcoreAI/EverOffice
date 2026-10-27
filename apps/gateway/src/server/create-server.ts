@@ -80,6 +80,8 @@ import { DocumentServiceError } from "../modules/documents/errors.js";
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
+import { createWorkspaceFileCatalog, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
+import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
@@ -684,8 +686,15 @@ export async function createServer(config: GatewayConfig) {
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
+  // 工作区文件/图片的晚绑定 ref：filesService 在文件后段才创建，而工具装配先于它。
+  // 主 Agent 的 workspace_files_list 与 slides 素材预取都经这里取用户自己的图片。
+  const workspaceFilesRef: { current: WorkspaceFileCatalog | null } = { current: null };
+  const workspaceMaterialsRef: {
+    current: ReturnType<typeof createWorkspaceImageMaterialSearch> | null;
+  } = { current: null };
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
+    workspaceFiles: () => workspaceFilesRef.current,
     tools: [
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
@@ -727,7 +736,10 @@ export async function createServer(config: GatewayConfig) {
             slidesLayoutOffice: subagentConfig.enabled
               ? {
                   bridge: officeBridgeClient,
-                  visualReviewer: slidesVisualReviewer,
+                  // 页级窗口与 slides 池容量对齐（NXCORE_SLIDES_DECK_CONCURRENCY）。
+                  ...(subagentConfig.slidesDeckConcurrency === undefined
+                    ? {}
+                    : { deckConcurrency: subagentConfig.slidesDeckConcurrency }),
                   readMaterialBlob: async (hash) => {
                     const content = await slideImageStore.readByHash(hash).catch(() => null);
                     return content ? new Uint8Array(content.buffer) : null;
@@ -747,13 +759,14 @@ export async function createServer(config: GatewayConfig) {
                   },
                 }
               : null,
-            // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
-            createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
+            // PPT 草稿文档：planner 内容方案 → 落成工作区可编辑文档（用户确认后再生成）。
+            createSlidesDraftDocument: async ({ title, markdown }) => {
               const documentId = randomUUID();
-              const prepared = documentService.prepareAgentDocumentDraft({ documentId, roomId, title, markdown });
+              // 去 Room 后草稿一律为工作区级文稿（roomId 为 null）。
+              const prepared = documentService.prepareAgentDocumentDraft({ documentId, roomId: null, title, markdown });
               await documentService.import({
                 id: prepared.documentId,
-                roomId: prepared.roomId,
+                roomId: null,
                 title: prepared.title,
                 contentJson: prepared.content,
                 origin: "native",
@@ -764,6 +777,9 @@ export async function createServer(config: GatewayConfig) {
             trashSlidesDraftDocument: async (documentId) => {
               await documentService.delete(documentId);
             },
+            // 本地素材预取：用户工作区里的图片（晚绑定 filesService）。命中以
+            // everroom-material://<hash> 下发，planner 可直接放进页面 materials。
+            searchMaterials: (query, limit) => workspaceMaterialsRef.current?.(query, limit) ?? [],
          })
         : []),
       ...createNotificationPiTools(notificationMcpHost),
@@ -884,6 +900,10 @@ export async function createServer(config: GatewayConfig) {
   }
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
+  // 回填工作区文件/图片目录：Agent 工具装配早于 filesService 创建（晚绑定）。
+  const workspaceFiles = createWorkspaceFileCatalog(filesService);
+  workspaceFilesRef.current = workspaceFiles;
+  workspaceMaterialsRef.current = createWorkspaceImageMaterialSearch(() => workspaceFiles);
   // 论文排版管线：模版解析与装订映射走子代理，渲染走桌面 office-bridge。
   const thesisFormatService = new ThesisFormatService({
     db,

@@ -25,7 +25,8 @@ function runInput(phase?: string): StartRuntimeRunInput {
     runtimeSessionRef: null,
     prompt: "prompt",
     pageLabel: "Subagent: Slides Planner",
-    roomId: "room-1",
+    // 去 Room：slides 子 run 不再绑定房间（字段仍必填，单工作区写 null）。
+    roomId: null,
     toolsEnabled: true,
     ...(phase ? { runtimeMetadata: { subagentInput: { phase } } } : {}),
   };

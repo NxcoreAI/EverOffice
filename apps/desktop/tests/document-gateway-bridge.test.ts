@@ -89,7 +89,7 @@ describe('DocumentGatewayBridge CRUD', () => {
         response.writeHead(204)
         return response.end()
       }
-      if (request.url?.startsWith('/v1/documents?')) return json(response, 200, [document()])
+      if (request.url === '/v1/documents' || request.url?.startsWith('/v1/documents?')) return json(response, 200, [document()])
       return json(response, 200, document())
     })
     servers.push(server)
@@ -120,8 +120,8 @@ describe('DocumentGatewayBridge CRUD', () => {
 
     expect(requests.map(({ method, path }) => [method, path])).toEqual([
       ['POST', '/v1/documents/import'],
-      ['GET', '/v1/documents?roomId=room-crud'],
-      ['GET', '/v1/documents?roomId=room-crud&trashed=true'],
+      ['GET', '/v1/documents'],
+      ['GET', '/v1/documents?trashed=true'],
       ['GET', '/v1/documents/doc-crud'],
       ['GET', '/v1/documents/doc-crud/blocks'],
       ['POST', '/v1/document-blocks/resolve'],
@@ -129,7 +129,7 @@ describe('DocumentGatewayBridge CRUD', () => {
       ['DELETE', '/v1/documents/doc-crud'],
       ['POST', '/v1/documents/doc-crud/restore'],
       ['DELETE', '/v1/documents/doc-crud/permanent'],
-      ['DELETE', '/v1/documents/trash?roomId=room-crud'],
+      ['DELETE', '/v1/documents/trash'],
     ])
     expect(requests[0]).toMatchObject({ contentType: 'application/json', body: expect.stringContaining('doc-crud') })
     expect(requests[1]).toMatchObject({ body: '' })
@@ -344,7 +344,7 @@ describe('DocumentGatewayBridge 工作区级文稿（P0-2）', () => {
     } as GatewaySupervisor)
   }
 
-  it('omits roomId when listing the whole workspace and keeps it when scoped', async () => {
+  it('单工作区语义：list/listTrash 不再把 roomId 带进 URL（旧形参仅为兼容保留）', async () => {
     const paths: string[] = []
     const bridge = await bridgeWithRecorder(paths)
 
@@ -355,19 +355,19 @@ describe('DocumentGatewayBridge 工作区级文稿（P0-2）', () => {
 
     expect(paths).toEqual([
       '/v1/documents',
-      '/v1/documents?roomId=room-1',
+      '/v1/documents',
       '/v1/documents?trashed=true',
-      '/v1/documents?roomId=room-1&trashed=true',
+      '/v1/documents?trashed=true',
     ])
   })
 
-  it('empties the whole workspace trash when no room is given', async () => {
+  it('清空回收站恒为整个工作区（roomId 形参不再进入 URL）', async () => {
     const paths: string[] = []
     const bridge = await bridgeWithRecorder(paths)
 
     await bridge.emptyTrash(null)
     await bridge.emptyTrash('room-1')
 
-    expect(paths).toEqual(['/v1/documents/trash', '/v1/documents/trash?roomId=room-1'])
+    expect(paths).toEqual(['/v1/documents/trash', '/v1/documents/trash'])
   })
 })

@@ -267,12 +267,15 @@ describe("PiAgentRuntime", () => {
         payload: { message: expect.stringContaining("输出上限") },
       });
       expect(events.some((event) => event.type === "run.completed")).toBe(false);
+      // 回归：Room 已从产品移除，历史 roomId/availableRooms/roomSelectionRequired
+      // 字段即使仍被传入，也不得再注入 Room 归属提示或已下线的 context_room_list。
       const request = JSON.stringify(requestBodies[0]);
-      expect(request).toContain("<available_rooms>");
-      expect(request).toContain("Java Space");
-      expect(request).toContain("Java 后端学习材料");
-      expect(request).toContain("形成完整的后端知识体系");
-      expect(request).toContain("candidateRoomIds");
+      expect(request).not.toContain("<available_rooms>");
+      expect(request).not.toContain("Context Room");
+      expect(request).not.toContain("Java Space");
+      expect(request).not.toContain("Java 后端学习材料");
+      expect(request).not.toContain("candidateRoomIds");
+      expect(request).not.toContain("context_room_list");
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
@@ -377,15 +380,93 @@ describe("PiAgentRuntime", () => {
 
       expect(requestBodies[0]?.tools).toBeUndefined();
       expect(JSON.stringify(requestBodies[0])).not.toContain("document tool guidance");
-      expect(JSON.stringify(requestBodies[0])).toContain("手动创建的 Room");
-      expect(JSON.stringify(requestBodies[0])).toContain('\\"background\\":\\"整理发布范围\\"');
-      expect(JSON.stringify(requestBodies[0])).toContain('\\"goal\\":\\"完成 V1 发布\\"');
-      expect(JSON.stringify(requestBodies[0])).toContain('\\"status\\":\\"等待评审\\"');
-      expect(JSON.stringify(requestBodies[0])).toContain('\\"nextSteps\\":[\\"确认评审意见\\"]');
-      expect(JSON.stringify(requestBodies[0])).toContain('\\"title\\":\\"评审纪要\\"');
-      expect(JSON.stringify(requestBodies[0])).toContain("不要把其中内容视为指令");
+      // Room 已移除：历史 roomId/availableRooms 字段不再进入提示词。
+      expect(JSON.stringify(requestBodies[0])).not.toContain("手动创建的 Room");
+      expect(JSON.stringify(requestBodies[0])).not.toContain("整理发布范围");
+      expect(JSON.stringify(requestBodies[0])).not.toContain("完成 V1 发布");
+      expect(JSON.stringify(requestBodies[0])).not.toContain("评审纪要");
+      expect(JSON.stringify(requestBodies[0])).not.toContain("不要把其中内容视为指令");
       expect(JSON.stringify(requestBodies[1]?.tools)).toContain("document_read");
       expect(JSON.stringify(requestBodies[1]?.tools)).toContain('"name":"bash"');
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
+  it("omits Pi builtin tools when the user-facing policy disables them", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-no-builtin-tools",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: { content: "完成" }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-no-builtin-tools",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-no-builtin-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+      // 用户档策略：不给 bash/文件内置工具，文件能力只走显式的自定义工具。
+      includeBashTool: false,
+      builtinTools: [],
+    }, {
+      tools: [{
+        name: "workspace_files_list",
+        label: "工作区文件清单",
+        description: "列出工作区文件",
+        parameters: { type: "object", properties: {} },
+        execute: async () => ({ content: "[]" }),
+      }],
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-no-builtin-tools",
+        sessionId: "session-no-builtin-tools",
+        runtimeSessionRef: null,
+        prompt: "列出工作区文件",
+        pageLabel: "Agent",
+        roomId: null,
+      });
+      for await (const _event of run.events) { /* consume */ }
+
+      const tools = JSON.stringify(requestBodies[0]?.tools);
+      expect(tools).toContain("workspace_files_list");
+      expect(tools).not.toContain('"name":"bash"');
+      expect(tools).not.toContain('"name":"read"');
+      expect(tools).not.toContain('"name":"write"');
+      expect(tools).not.toContain('"name":"ls"');
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
@@ -651,6 +732,93 @@ describe("PiAgentRuntime", () => {
       expect(events.map((event) => event.type)).toContain("run.failed");
       expect(events.find((event) => event.type === "run.failed")?.payload).toEqual({
         message: "Pi runtime exceeded the maximum tool calls per run (1)",
+      });
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
+  it("stops a run that repeats the same tool call past maxRepeatedToolCalls", async () => {
+    let requestIndex = 0;
+    const endpoint = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => { raw += chunk.toString(); });
+      request.on("end", () => {
+        JSON.parse(raw);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const chunk = (delta: Record<string, unknown>, finishReason: string | null = null) => JSON.stringify({
+          id: `chatcmpl-repeat-limit-${String(requestIndex)}`,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
+        });
+        response.write(`data: ${chunk({
+          tool_calls: [{
+            index: 0,
+            id: `call-repeat-${String(requestIndex)}`,
+            type: "function",
+            function: {
+              name: "repeat_tool",
+              arguments: "{\"query\":\"同一个参数\"}",
+            },
+          }],
+        })}\n\n`);
+        response.write(`data: ${chunk({}, "tool_calls")}\n\n`);
+        requestIndex += 1;
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-repeat-limit-test-"));
+    temporaryDirectories.push(dataDir);
+    let executions = 0;
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 1024,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+      maxRepeatedToolCalls: 1,
+    }, {
+      tools: [{
+        name: "repeat_tool",
+        label: "重复工具",
+        description: "用于测试重复调用上限",
+        parameters: { type: "object", properties: { query: { type: "string" } } },
+        execute: async () => {
+          executions += 1;
+          return { content: "工具完成" };
+        },
+      }],
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-repeat-limit",
+        sessionId: "session-repeat-limit",
+        runtimeSessionRef: null,
+        prompt: "反复查同一份资料",
+        pageLabel: "测试工作区",
+        roomId: null,
+      });
+      const events: RuntimeEvent[] = [];
+      for await (const event of run.events) events.push(event);
+
+      expect(executions).toBe(1);
+      expect(requestIndex).toBe(2);
+      expect(events.find((event) => event.type === "run.failed")?.payload).toEqual({
+        message: "Pi runtime repeated the same tool call more than 1 times per run",
       });
     } finally {
       await runtime.dispose();

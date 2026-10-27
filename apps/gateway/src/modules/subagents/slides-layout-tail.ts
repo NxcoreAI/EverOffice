@@ -92,7 +92,6 @@ export interface LayouterExistingDeck {
 }
 
 export interface LayouterTailArgs {
-  roomId: string;
   sessionId: string;
   runId: string;
   parentRunId: string | null;
@@ -531,7 +530,7 @@ const BLOCKING_DEFECTS = new Set(["overlap", "emoji", "overflow", "font_floor", 
 
 /**
  * 桌面端「产物未以可编辑会话打开」：落页被拒的确定性原因，不是树/内容的问题。
- * 这种页要明确告诉用户「去产物库打开这本 PPT 再重试」，不要笼统记成落页失败。
+ * 这种页要明确告诉用户「去文件库打开这本 PPT 再重试」，不要笼统记成落页失败。
  */
 function isDeckNotOpenMessage(message: string): boolean {
   return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(message);
@@ -677,7 +676,14 @@ function materialUrls(pages: PageInput[]): string[] {
 
 /** 页内容 → layouter 输入（白名单拷贝，schema 对齐 agents/slides-layouter/schemas/input.schema.json）。 */
 function layouterInputFor(
-  base: { token: string; totalPages: number; styleBrief: string; styleTokens: Record<string, unknown> },
+  base: {
+    token: string;
+    totalPages: number;
+    styleBrief: string;
+    styleTokens: Record<string, unknown>;
+    /** 素材长宽比（宽/高）。validate 与落页用同一份 map 量测；这里同步给模型，避免它盲猜框比例。 */
+    imageArs: Map<string, number>;
+  },
   page: PageInput,
   index: number,
   neighborSignatures?: string[],
@@ -686,13 +692,19 @@ function layouterInputFor(
     ? (page.materials as PageMaterial[])
         .filter((m) => m !== null && typeof m === "object" && typeof m.url === "string")
         .slice(0, page.content ? 8 : 4)
-        .map((m) => ({
-          url: (m.url as string).slice(0, 500),
-          ...(typeof m.desc === "string" ? { desc: m.desc.slice(0, 200) } : {}),
-          ...(typeof m.aspectRatio === "number" && Number.isFinite(m.aspectRatio) && m.aspectRatio > 0
-            ? { aspectRatio: m.aspectRatio }
-            : {}),
-        }))
+        .map((m) => {
+          const url = (m.url as string).slice(0, 500);
+          const declared = typeof m.aspectRatio === "number" && Number.isFinite(m.aspectRatio) && m.aspectRatio > 0
+            ? m.aspectRatio
+            : base.imageArs.get(url);
+          return {
+            url,
+            ...(typeof m.desc === "string" ? { desc: m.desc.slice(0, 200) } : {}),
+            ...(declared !== undefined && Number.isFinite(declared) && declared > 0
+              ? { aspectRatio: Math.round(declared * 1000) / 1000 }
+              : {}),
+          };
+        })
     : [];
   if (page.content) return {
     task: "layout", deckToken: base.token, pageIndex: index, totalPages: base.totalPages,
@@ -932,7 +944,6 @@ export async function runLayouterTail(
     doneCount: appliedPages.size,
     // 完成顺序 ≠ 页序：落定页号集合是卡面打勾的唯一依据。
     appliedPages: [...appliedPages].sort((a, b) => a - b),
-    roomId: args.roomId,
     documentId: args.draftDocumentId,
     pages: armPlan.pages.slice(0, 32),
     completed,
@@ -953,7 +964,6 @@ export async function runLayouterTail(
         fileId: fileEntryId,
         title: deckTitle,
         ...(originalName ? { originalName } : {}),
-        roomId: args.roomId,
         completed,
         appliedPages: appliedPages.size,
         totalPages,
@@ -987,7 +997,8 @@ export async function runLayouterTail(
         title: deckTitle,
         format: "pptx",
         pages: placeholders,
-        roomId: args.roomId,
+        // 单工作区语义：PPT 不再绑定 Room，工作区产物写 null。
+        roomId: null,
         fileName: null,
         idempotencyKey: deckIdempotency,
         deferDone: true,
@@ -1000,7 +1011,7 @@ export async function runLayouterTail(
     checkpoint();
     args.signal?.throwIfAborted();
     const styleBrief = styleBriefFrom(args.styleParams);
-    const base = { token, totalPages, styleBrief, styleTokens };
+    const base = { token, totalPages, styleBrief, styleTokens, imageArs };
 
     // 每页并发取树（页序占位）。页级窗口=deps.deckConcurrency（NXCORE_SLIDES_DECK_CONCURRENCY，
     // 缺省 16）；实际同时在飞的上限还受 slides 池容量（NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT）与
@@ -1304,7 +1315,7 @@ export async function runLayouterTail(
         const message = error instanceof Error ? error.message : String(error);
         if (isDeckNotOpenMessage(message)) {
           deckNotOpen = true;
-          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在产物库打开该 PPT 后可重试`);
+          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在文件库打开该 PPT 后可重试`);
         } else {
           warnings.push(`第 ${index + 1} 页落页异常（${message.slice(0, 160)}），保留占位页`);
         }
@@ -1315,7 +1326,7 @@ export async function runLayouterTail(
         const reason = result.error ?? "桌面端拒绝";
         if (isDeckNotOpenMessage(reason)) {
           deckNotOpen = true;
-          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在产物库打开该 PPT 后可重试`);
+          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在文件库打开该 PPT 后可重试`);
         } else {
           warnings.push(`第 ${index + 1} 页落页失败（${reason}），保留占位页`);
         }
@@ -1471,7 +1482,7 @@ export async function runLayouterTail(
       args.onUpdate?.({ content: JSON.stringify(zeroPayload), details: zeroPayload });
       await notifyComplete(false, failedPages);
       return fail("slides_layout_apply_failed", deckNotOpen
-        ? "全部页面落页失败：桌面端没有以可编辑会话打开这本 PPT（not_open）。在产物库打开该 PPT 后重试即可复用已生成方案。"
+        ? "全部页面落页失败：桌面端没有以可编辑会话打开这本 PPT（not_open）。在文件库打开该 PPT 后重试即可复用已生成方案。"
         : "全部页面落页失败；方案已就绪，可重试 generate。", true, {
         fileEntryId,
         failedPages,

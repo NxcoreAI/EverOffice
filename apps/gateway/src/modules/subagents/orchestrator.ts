@@ -496,13 +496,10 @@ export class SubagentOrchestrator {
     const row = this.db.select().from(subagentInvocations)
       .where(eq(subagentInvocations.id, invocationId)).get();
     if (!row) throw new Error("subagent_invocation_not_found");
-    // Room 透传：dispatch input 携带的 roomId 绑定到子 run，文档工具（pi-tools
-    // input.roomId）据此解析，缺失保持 null（历史调用行为不变）。
+    // 去 Room 后子 run 不再绑定房间：文档工具一律走工作区文稿（input.roomId 缺省即
+    // null），派发 input 里的历史 roomId 字段也不再解读。
     const invocationInput = row.input && typeof row.input === "object" && !Array.isArray(row.input)
       ? (row.input as Record<string, unknown>)
-      : null;
-    const roomId = typeof invocationInput?.roomId === "string" && invocationInput.roomId.trim()
-      ? invocationInput.roomId.trim()
       : null;
     const prompt = [
       "<everroom-subagent-task>",
@@ -527,7 +524,8 @@ export class SubagentOrchestrator {
         originalPrompt: row.task,
         prompt,
         pageLabel: `Subagent: ${definition.name}`,
-        roomId,
+        // 去 Room：子 run 不再绑定房间，文档工具按工作区文稿解析。
+        roomId: null,
         captureMemory: false,
         recallMemory: false,
         toolsEnabled: true,

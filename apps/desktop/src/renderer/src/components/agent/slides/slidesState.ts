@@ -63,7 +63,6 @@ export interface SlidesProgressState {
   title?: string
   /** 会话最后落库时刻：轮询响应据此判新旧，防旧响应覆盖新广播。 */
   updatedAt?: number
-  roomId?: string
   documentId?: string
   totalPages?: number
   doneCount?: number

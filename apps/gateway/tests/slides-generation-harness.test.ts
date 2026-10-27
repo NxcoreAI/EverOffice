@@ -124,7 +124,7 @@ describe("durable slides generation checkpoints", () => {
   });
 
   it("invalidates reuse when content, agent revision or model configuration changes", () => {
-    const input = { roomId: "r", draftDocumentId: "d", instruction: "generate", sourcesHash: "content-a", batchSize: 8,
+    const input = { draftDocumentId: "d", instruction: "generate", sourcesHash: "content-a", batchSize: 8,
       generation: { revisions: ["rev-a"], model: "model-a" } };
     const key = arrangeBatchCheckpointKey(input);
     expect(arrangeBatchCheckpointKey({ ...input, sourcesHash: "content-b" })).not.toBe(key);

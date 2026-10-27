@@ -2,6 +2,10 @@ import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { checkSemanticStoryboard, numbersInText, semanticHash, type ContentSource, type SemanticPage, type SemanticReport, type SemanticStoryboard } from "./slides-semantic-contract.js";
 
 export const SEMANTIC_MODE = "semantic-v3";
+/** 单轮修复最多覆盖的页数：与 arrange 单批上限（12 页）对齐，不再只修前 4 页。 */
+const MAX_REPAIR_PAGES = 12;
+/** 单轮下发缺陷条数上限：覆盖满批页数，避免只喂最后几页的缺陷。 */
+const MAX_REPAIR_DEFECTS = 24;
 export interface SemanticContext { mode: typeof SEMANTIC_MODE; revision: 1; sources: ContentSource[]; sourceHash: string }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -91,7 +95,6 @@ function repairDeterministicSemanticDefects(
 export async function assembleSemanticPlan(args: {
   plan: Record<string, unknown>;
   instruction: string;
-  roomId: string;
   repair(input: Record<string, unknown>, round: number): Promise<SubagentInvocation>;
 }): Promise<{ plan: Record<string, unknown>; storyboard: SemanticStoryboard; report: SemanticReport; draftHash: string }> {
   const context = args.plan.contentContext as SemanticContext;
@@ -119,18 +122,22 @@ export async function assembleSemanticPlan(args: {
     const errorsForPage = (i: number) => report.errors.filter(e => e.startsWith(`第 ${i + 1} 页:`)
       || (sourcePageIds[i] && e.includes(sourcePageIds[i]))
       || (!e.startsWith("第 ") && !sourcePageIds.some(id => e.includes(id))));
-    const indexes = pages.map((page, i) => ({ page, i })).filter(({ i }) => errorsForPage(i).length).slice(0, 4);
+    // 修复覆盖：批内所有出错页（上限 12，与 arrange 单批上限一致）。历史实现只修前
+    // 4 页，7~8 页的批里有页永远轮不到修，两轮后整批必然失败并整批重排。
+    const indexes = pages.map((page, i) => ({ page, i }))
+      .filter(({ i }) => errorsForPage(i).length)
+      .slice(0, MAX_REPAIR_PAGES);
     const repairPageIds = indexes.map(({ i }) => sourcePageIds[i]!);
     const pageErrors = indexes.map(({ i }) => errorsForPage(i));
     const defects: string[] = [];
     // Give every selected page a defect before filling the remaining bounded feedback budget.
-    for (let depth = 0; defects.length < 12 && pageErrors.some(e => e.length > depth); depth++) {
+    for (let depth = 0; defects.length < MAX_REPAIR_DEFECTS && pageErrors.some(e => e.length > depth); depth++) {
       for (const [index, errors] of pageErrors.entries()) {
-        if (errors[depth] && defects.length < 12) defects.push(`[${repairPageIds[index]}] ${errors[depth]}`.slice(0, 300));
+        if (errors[depth] && defects.length < MAX_REPAIR_DEFECTS) defects.push(`[${repairPageIds[index]}] ${errors[depth]}`.slice(0, 300));
       }
     }
     const invocation = await args.repair({
-      contentMode: SEMANTIC_MODE, instruction: args.instruction, roomId: args.roomId,
+      contentMode: SEMANTIC_MODE, instruction: args.instruction,
       title: args.plan.title, draftPages: [], sources: context.sources.filter(s => repairPageIds.includes(s.pageId)),
       priorStoryboard: { schemaVersion: "storyboard/v3", pages: indexes.map(({ page }) => page) },
       repairPageIds, defects,
@@ -143,7 +150,14 @@ export async function assembleSemanticPlan(args: {
     });
     report = checkSemanticStoryboard(pages, context.sources);
   }
-  if (!report.passed) throw new Error(`semantic_content_invalid: ${report.errors.slice(0, 4).join("; ")}`);
+  if (!report.passed) {
+    // 把完整错误清单挂到 error 上：调用方据此在批次重排/用户重试时把具体缺陷喂回 planner。
+    const error = new Error(`semantic_content_invalid: ${report.errors.slice(0, 4).join("; ")}`) as Error & {
+      semanticErrors?: string[];
+    };
+    error.semanticErrors = report.errors;
+    throw error;
+  }
   report.warnings.push(...identityWarnings, ...deterministicWarnings);
   const valid = pages as SemanticPage[];
   const storyboard: SemanticStoryboard = { schemaVersion: "storyboard/v3", title: String(args.plan.title ?? ""), pages: valid, sources: context.sources };

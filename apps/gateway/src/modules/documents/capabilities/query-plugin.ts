@@ -40,8 +40,9 @@ export function queryPlugins(
         roomId: context.roomId,
         documents: backend.list().map((document) => ({
           id: document.id,
-          // 桌面端选择卡片要求每条候选文档自带 roomId（否则按无效条目丢弃，卡片永远为空）
-          roomId: context.roomId,
+          // Room 已删除：候选恒为工作区文稿，roomId 固定 null，不再回填运行的
+          // context.roomId（否则会伪造一个文档并不存在的归属）。
+          roomId: null,
           title: document.title,
           version: document.version,
           updatedAt: document.updatedAt,

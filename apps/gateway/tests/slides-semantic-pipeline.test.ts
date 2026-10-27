@@ -39,7 +39,7 @@ describe("semantic generation pipeline", () => {
       trashSlidesDraftDocument: trash,
       slidesLayoutOffice: { bridge: { generate: async () => ({ fileEntryId: "deck" }), fillPage, renderPage: async () => "" }, readMaterialBlob: async () => null, fetchImageHead: async () => null } as any,
     }).find(t => t.name === "slides_draft")!;
-    const execute = () => tool.execute({ runId: "run", sessionId: "session", roomId: "room" } as any, { task: "generate", instruction: "目录", draftDocumentId: "draft" });
+    const execute = () => tool.execute({ runId: "run", sessionId: "session", roomId: null } as any, { task: "generate", instruction: "目录", draftDocumentId: "draft" });
     return { dispatch, save, trash, fillPage, execute, content, generationConfig };
   }
   it("passes source IDs into arrange and semantic content through to layout and persistence", async () => {
@@ -89,7 +89,6 @@ describe("semantic generation pipeline", () => {
         pages: [{ title: "团队", density: "standard", role: "content", content }],
       },
       instruction: "",
-      roomId: "room",
       repair: async () => { throw new Error("unexpected repair"); },
     });
     expect(result.report.passed).toBe(true);
@@ -120,7 +119,6 @@ describe("semantic generation pipeline", () => {
         pages: [{ title: "封面", density: "sparse", role: "cover", message: "一句话结论", content }],
       },
       instruction: "",
-      roomId: "room",
       repair: async () => { throw new Error("unexpected repair"); },
     });
     expect(result.report.passed).toBe(true);

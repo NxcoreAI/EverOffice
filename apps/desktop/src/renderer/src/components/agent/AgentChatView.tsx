@@ -348,7 +348,7 @@ export function AgentChatView({
   onOpenSessionLink: (link: AgentSessionLink) => void
   /** 卡片动作两段式：prompt 是运行时技术指令，displayText 是用户人话（气泡/标题）。 */
   onSlidesAction?: (prompt: string, displayText: string) => void
-  onOpenDraft?: (documentId: string, roomId?: string) => void
+  onOpenDraft?: (documentId: string) => void
   /** 用户主动停止的 run：卡片显示「已停止」。 */
   cancelledRunIds?: ReadonlySet<string>
   /** 网关重启等原因被中断的 run：卡片显示「运行被中断」。 */
@@ -529,8 +529,8 @@ export function AgentChatView({
   const handleSlidesAction = (prompt: string, displayText: string) => {
     onSlidesAction?.(prompt, displayText)
   }
-  const handleOpenDraft = (documentId: string, roomId?: string) => {
-    onOpenDraft?.(documentId, roomId)
+  const handleOpenDraft = (documentId: string) => {
+    onOpenDraft?.(documentId)
   }
 
   const activeHasAssistant = activeRunId

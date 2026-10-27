@@ -18,7 +18,7 @@ import type {
   V2Bleed, V2ChartNode, V2GroupChild, V2GroupDirection, V2GroupPanel, V2ImageNode, V2Node, V2Page, V2Run,
   V2ShapeNode, V2Slot, V2StatsNode, V2TableNode, V2TextNode,
 } from "./schema.js";
-import { expandComponent } from "../components/index.js";
+import { expandComponent, type ComponentLeaf } from "../components/index.js";
 import { DARK_COVER_ROLES, pageMotifElements } from "../components/kit.js";
 import { isTreeErrorLike } from "../leaf-renderers.js";
 
@@ -518,6 +518,9 @@ interface CompileState {
   backdrop: string | null;
   /** 主题缝隙：row 用 gutter、column 用 rowGutter（页面 grid 覆盖优先）。 */
   gap: { row: number; column: number };
+  /** 本页内容区与栅格口径：组件溢出时用它把"需要多大"换算成列×行。 */
+  area: Frame;
+  grid: { cols: number; rows: number; gutter: number; rowGutter: number };
   elements: SpecElement[];
   placements: LeafPlacement[];
   defects: CompileDefect[];
@@ -529,6 +532,45 @@ interface CompileState {
 function groupGap(direction: "row" | "column", gapScale: number | undefined, state: CompileState): number {
   const base = direction === "row" ? state.gap.row : state.gap.column;
   return Math.max(0, Math.round(base * (gapScale ?? 1)));
+}
+
+/** 组件溢出时按当前内容量反推最小槽位：逐档扩框重试展开，取第一个装得下的尺寸。 */
+const COMPONENT_HINT_SCALES = [1.1, 1.25, 1.5, 2, 3] as const;
+
+/**
+ * 组件装不下时的可执行建议。
+ *
+ * 为什么不写死"每个组件最小几列"：同样一个组件，条目数和单条字数不同，需要的最小区域也不同；
+ * 静态表只能给经验值。这里用真实展开器在放大后的帧上重试，得到的是**本页内容量**下的实际下限，
+ * 再换算成 layouter 能直接改的列×行。
+ */
+function componentSlotHint(leaf: ComponentLeaf, frame: Frame, state: CompileState): string {
+  const generic = "该组件在当前内容量下无法在可用区域内铺开：减少条目，或改用更简单的节点/组件";
+  try {
+    const { theme, area, grid } = state;
+    const maxW = Math.max(frame.w, Math.round(area.x + area.w - frame.x));
+    const maxH = Math.max(frame.h, Math.round(area.y + area.h - frame.y));
+    for (const scale of COMPONENT_HINT_SCALES) {
+      const w = Math.round(frame.w * scale);
+      const h = Math.round(frame.h * scale);
+      if (w > maxW || h > maxH) break;
+      try {
+        expandComponent(leaf, { ...frame, w, h }, theme, "slot-hint");
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("LAYOUT_LEAF_INVALID:")) continue;
+        return generic;
+      }
+      const colW = (area.w - (grid.cols - 1) * grid.gutter) / grid.cols;
+      const rowH = (area.h - (grid.rows - 1) * grid.rowGutter) / grid.rows;
+      const cols = Math.min(grid.cols, Math.ceil((w + grid.gutter) / (colW + grid.gutter)));
+      const rows = Math.min(grid.rows, Math.ceil((h + grid.rowGutter) / (rowH + grid.rowGutter)));
+      return `该组件至少需要约 ${w}×${h}px（${cols} 列 × ${rows} 行，当前 ${frame.w}×${frame.h}px）：先扩大槽位，不要缩字号或删内容`;
+    }
+    return generic;
+  } catch {
+    // 建议是尽力而为：提示生成失败不能把整页编译带崩，退回通用建议。
+    return generic;
+  }
 }
 
 /** 按 weights 切子帧：先扣缝隙，再按比例分（取整余数给末位，至少 1px）。 */
@@ -762,7 +804,12 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     } catch (error) {
       // 组件装不下（LAYOUT_LEAF_INVALID）在 v1 转缺陷；v2 同样不中断整页，回给 layouter 自纠。
       if (isTreeErrorLike(error)) {
-        state.defects.push({ path, type: "overflow", detail: (error as Error).message.replace(/^LAYOUT_LEAF_INVALID: /, "") });
+        state.defects.push({
+          path,
+          type: "overflow",
+          detail: (error as Error).message.replace(/^LAYOUT_LEAF_INVALID: /, ""),
+          hint: componentSlotHint(node.component, frame, state),
+        });
       } else {
         throw error;
       }
@@ -795,6 +842,13 @@ export function compileV2Page(page: V2Page, contract: LayoutContract, options: C
     gap: {
       row: page.grid?.gutter ?? theme.spacing.gutter,
       column: page.grid?.rowGutter ?? 16,
+    },
+    area: areaFor(page, theme),
+    grid: {
+      cols: page.grid?.cols ?? 12,
+      rows: page.grid?.rows ?? 8,
+      gutter: page.grid?.gutter ?? theme.spacing.gutter,
+      rowGutter: page.grid?.rowGutter ?? 16,
     },
     elements,
     placements,

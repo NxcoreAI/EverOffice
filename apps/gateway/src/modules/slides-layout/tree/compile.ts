@@ -47,6 +47,8 @@ export interface CompileDefect {
   path: string;
   type: "overflow";
   detail: string;
+  /** 可执行的改法（如"该组件至少需要约 640×320px（6 列 × 4 行）"）；缺省时量测层给通用建议。 */
+  hint?: string;
 }
 
 export interface CompileResult {

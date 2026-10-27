@@ -14,6 +14,7 @@ import type { FormatMappingService } from "../connectors/format-mapping-service.
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
+import { createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "./workspace-files-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
 import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
@@ -24,6 +25,8 @@ export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
   externalCalls?: ExternalCallBudgetService;
+  /** 工作区文件目录（晚绑定 getter）：filesService 在 runtime 装配之后才创建。 */
+  workspaceFiles?: () => WorkspaceFileCatalog | null;
 }
 
 function agentDirectories(config: GatewayConfig, agentId: string) {
@@ -100,13 +103,18 @@ function createUserFacingRuntime(
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
   if (!pi || !isPiRuntimeConfigured(pi)) return null;
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
-  const directories = agentDirectories(config, agentId);
   return new PiAgentRuntime({
     ...withAgentDirectories(config, agentId, pi),
-    bashSandbox: {
-      allowedRoots: [directories.workingDirectory],
-      timeoutMs: 30_000,
-    },
+    // 用户档不给 Pi 内置工具（bash / read / write / edit / grep / find / ls）：
+    // 会话只应通过文档/Office/连接器工具工作。历史上 bash 默认开启，模型因此
+    // 可以用 `sqlite3` 直读 ~/Library/Application Support/EverRoom 下的私有
+    // 数据库与 blob 存储来「找 room 图片」（一次 run 30+ 次工具调用后 413 失败）。
+    // 清理后文件能力走 workspace_files_list（只读目录），不暴露 shell。
+    includeBashTool: false,
+    builtinTools: [],
+    // 用户档护栏：单轮工具预算 + 同一调用重复上限，超限即停并如实反馈。
+    maxToolCallsPerRun: 60,
+    maxRepeatedToolCalls: 3,
     runtimeRole: "user-facing",
     skillsEnabled: true,
     skillPrompts: bundle.skillPrompts,
@@ -114,6 +122,10 @@ function createUserFacingRuntime(
   }, {
     tools: [
       ...(integrations?.tools ?? []),
+      // 工作区文件（含用户上传图片）的一等入口：只读清单 + 可引用句柄。
+      ...(integrations?.workspaceFiles
+        ? createWorkspaceFilesPiTools(integrations.workspaceFiles)
+        : []),
       // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
       // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。

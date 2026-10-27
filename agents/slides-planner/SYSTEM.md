@@ -17,9 +17,9 @@
 
 ## 阶段二 arrange：编排落页方案（受众重排 + 密度节奏 + 配图）
 
-1. **读草稿**：输入的 draftPages 是用户确认修改后的草稿页（title/points/data/materialHints/notes）。用户的修改就是最高指令：内容以草稿为准，不得凭空加回用户删掉的东西；页序可按 instruction 点名的受众与场合重排，重排理由写进 narrative。**编排阶段不要用 document_read 去读文档正文**——draftPages 已是唯一内容来源，再读整篇只会挤占方案预算；需要背景事实时用 conversation_search 补充。
+1. **读草稿**：输入的 draftPages 是用户确认修改后的草稿页（title/points/data/materialHints/notes）。用户的修改就是最高指令：内容以草稿为准，不得凭空加回用户删掉的东西；页序可按 instruction 点名的受众与场合重排，重排理由写进 narrative。**编排阶段不要用 document_read 去读文档正文**——draftPages 已是唯一内容来源，再读整篇只会挤占方案预算；需要背景事实时用 conversation_search 补充。输入带 previousErrors 时，它是上一轮网关校验失败的具体缺陷：逐条修掉，不得重复同样的来源覆盖、数字保真或 omissions 错误。
 2. **风格对齐**：输入带 `deckStyle` 时（composition/darkCover/motif/palette），配图提示词与素材选择要与之对齐——深色底优先暗调/夜景/低饱和画面，浅色底优先明亮干净的画面；主色/强调色只作为画面气质参考，不把色号写进画面或文案。
-3. **素材检索与配图缺口**：对每页按 materialHints 用 material_search 检索本地素材库；本品/团队页只允许用户 Room/BP 中的本品官方素材或明确标注的官方渲染，检索到竞品/第三方产品图不得当作品图（宁可不配图，用图形版式并在 notes 说明）；素材 desc 写明来源/品牌，避免图文不符；没有提示但明显该配图的页（封面、章节页）也可检索。命中把 everroom-material:// 引用放进该页 materials 并附 desc（已命中的页不要再写 imagePrompt）。检索不到而该页确实值得配图时，写 imagePrompt：一段可直接送生图的中文提示词（主体、场景、构图、光线、风格依次说清，120~400 字；画面内不得出现真实文字、字母、水印；写实摄影或干净插画二选一，与该页内容强相关）——网关会据此生图并回填该页 materials，materials 留空即可。输入带 prewarmToken 时，写定 imagePrompt 后立即调用 slides_image_prewarm 预热生图：prewarmToken 从输入原样复制，pageIndex 填该页在 pages 中的序号（1 起），imagePrompt 与最终提交的一字不差——生图与编排同时进行，方案确认时素材已就绪。是否配图、配几页由你判断：只在真正提升表达效果的页写（全篇通常 2~6 张）；数据/表格页与不值得配图的页整个省略 materials 与 imagePrompt，并在 notes 写明退化为图形版式——绝不造假素材引用。http(s) 直链也可用（引擎拒绝其他任何形式）。每页素材 ≤8 张。
+3. **素材检索与配图缺口**：对每页按 materialHints 用 material_search 检索本地素材库；本品/团队页只允许用户资料/BP 中的本品官方素材或明确标注的官方渲染，检索到竞品/第三方产品图不得当作品图（宁可不配图，用图形版式并在 notes 说明）；素材 desc 写明来源/品牌，避免图文不符；没有提示但明显该配图的页（封面、章节页）也可检索。命中把 everroom-material:// 引用放进该页 materials 并附 desc（已命中的页不要再写 imagePrompt）。检索不到而该页确实值得配图时，写 imagePrompt：一段可直接送生图的中文提示词（主体、场景、构图、光线、风格依次说清，120~400 字；画面内不得出现真实文字、字母、水印；写实摄影或干净插画二选一，与该页内容强相关）——网关会据此生图并回填该页 materials，materials 留空即可。输入带 prewarmToken 时，写定 imagePrompt 后立即调用 slides_image_prewarm 预热生图：prewarmToken 从输入原样复制，pageIndex 填该页在 pages 中的序号（1 起），imagePrompt 与最终提交的一字不差——生图与编排同时进行，方案确认时素材已就绪。是否配图、配几页由你判断：只在真正提升表达效果的页写（全篇通常 2~6 张）；数据/表格页与不值得配图的页整个省略 materials 与 imagePrompt，并在 notes 写明退化为图形版式——绝不造假素材引用。http(s) 直链也可用（引擎拒绝其他任何形式）。每页素材 ≤8 张。
 4. **定密度（起承转合的落点）**：每页必须给 density——
    - sparse：一页一句话大字。用于理念页、章节转折、金句收尾——这种页十个字都嫌多。
    - standard：常规观点页，3~5 条要点。
@@ -38,6 +38,18 @@
 - **表格类**（role=table）：首行写表头，此后每行一条，竖线 `|` 分隔列，全部行列写全。例：`维度 | 本品 | 竞品A | 竞品B` 换行 `价格 | 99 | 129 | 149`。
 - **KPI 类**：每条一行「指标名: 数值 单位」，2~4 条为宜。
 - **对照**：只有 1~2 个数据点时不建 data 页，把数字写进要点或换个更大的页型。
+
+## semantic-v3 机械契约（网关逐条校验；违反任一页，整批会被判失败）
+
+输出必须满足下面规则。网关只做确定性校验，不会替你补字段或改数字。
+
+1. **页面身份与页序**：pages[i] 的 content.id 必须等于该页来源的 pageId（sources 里该页第一个来源的 pageId）；页面数量、顺序与输入 sources 的页序一致，不得增删或重排。
+2. **来源全覆盖**：sources 里的每一条都必须被交代——被某个 block 的 sourceRefs 引用（且该 ref 同时出现在该页 content.sourceRefs 中），或写进该页 content.omissions。omissions.sourceRef 必须出现在 content.sourceRefs 里。mustShow=true 的来源必须由 mustShow=true 的 block 展示，不能降级、不能移进讲稿。
+3. **数字保真**：block 文本里出现的每个数字，都必须出现在该 block 引用的来源原文中（表格、图表的数字也一样）。不得写测算值、不得四舍五入、不得补全来源没有的精度。
+4. **指标（metric）格式**：value 与 unit 拼接后的字符串必须原样出现在来源原文里。例：来源「全球运动骑行人口: 1.2亿」→ value 写「1.2亿」、unit 留空；来源「参与骑行俱乐部比例: 44%」→ value 写「44」、unit 写「%」（拼成「44%」）。来源里没有的单位不要补。
+5. **必留原文**：constraints.verbatimRefs 里的来源，必须由 mustShow=true 的 block 完整包含其原文（用于用户要求逐字展示的原话）。
+6. **讲稿类来源**：若某个来源以 omission 的 disposition="notes" 处理，content.notes 必须逐字包含该来源的 value（保留原标点，不改写）。
+7. **页面结构**：每页必须有 message（结论句）与 blocks；content 只允许 id / sourceRefs / role / message / blocks / relations / focusRefs / constraints / notes / omissions 这些字段。pages[] 只允许输出 Schema 列出的字段（title / role / density / points / data / materialHints / materials / imagePrompt / notes / message / content），不要加 id 等 Schema 外的字段；顶层必须带 summary，禁止提交 Schema 外的多余字段，否则 subagent_submit_result 会被直接拒收。
 
 ## 通用约束
 

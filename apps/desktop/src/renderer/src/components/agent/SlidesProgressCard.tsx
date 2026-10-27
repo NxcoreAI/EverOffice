@@ -75,7 +75,7 @@ export interface SlidesProgressCardProps {
   runId?: string
   toolStatus?: DisplayAgentToolStatus
   onAction?: (prompt: string, displayText: string) => void
-  onOpenDraft?: (documentId: string, roomId?: string) => void
+  onOpenDraft?: (documentId: string) => void
   cancelledRunIds?: ReadonlySet<string>
   interruptedRunIds?: ReadonlySet<string>
   /** 已完成旧卡收成一行回执。 */
@@ -121,7 +121,7 @@ function useDeckOpener(
       state.fileEntryId,
       state.fileName ?? title,
       undefined,
-      { editable: true, roomId: state.roomId },
+      { editable: true },
     ).catch(() => onError(t('surface:agentChat.SLIDES_OPEN_FAILED')))
   }
 }
@@ -188,7 +188,7 @@ export function SlidesProgressCard({
   const openDeck = useDeckOpener(state, title, setOpenError)
   const openDraft = () => {
     if (!state.documentId) return
-    onOpenDraft?.(state.documentId, state.roomId)
+    onOpenDraft?.(state.documentId)
   }
 
   const phaseText = (() => {

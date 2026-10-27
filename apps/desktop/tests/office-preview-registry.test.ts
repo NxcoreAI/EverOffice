@@ -54,7 +54,7 @@ vi.mock('../src/main/office/spreadsheet-view-manager', () => ({
 }))
 
 import { OfficePreviewRegistry, officePreviewKindFor } from '../src/main/office/office-preview-registry'
-import { OFFICE_TEST_INSTANCE_ID } from '../src/shared/sources'
+import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
 
 /** 每个视图实例的 mock：记录 setActive/dispose 调用；disposeNextCancel 控制下一次返回。 */
 interface ViewRecord {
@@ -137,10 +137,11 @@ describe('officePreviewKindFor', () => {
 
 describe('OfficePreviewRegistry', () => {
   // 论文排版桥是 genoffice 后加的导出：旧运行时（vendored 子模块还没升到含该导出的提交）
-  // 缺这个函数时，曾把整个 ensureRuntime 打挂，Room 内所有 Office 内嵌预览一起退回
+  // 缺这个函数时，曾把整个 ensureRuntime 打挂，Office 内嵌预览一起退回
   // 「用系统默认应用打开」。这里钉住「缺能力只跳过桥、预览照开」。
   describe('thesis panel bridge', () => {
     type DocsWithThesisHook = { setDocsThesisPanelHook?: (hook: (wcId: number, action: unknown) => Promise<unknown>) => void }
+    type ThesisHook = (wcId: number, action: unknown) => Promise<unknown>
 
     afterEach(() => {
       delete (runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook
@@ -176,6 +177,45 @@ describe('OfficePreviewRegistry', () => {
 
       expect(hook).toHaveBeenCalledTimes(1)
       expect(typeof hook.mock.calls[0]![0]).toBe('function')
+    })
+
+    it('Room 已删除：实例不带 roomId 也按工作区 scope 列卡/删除/装订（不再报 no_room）', async () => {
+      const hook = vi.fn()
+      ;(runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook = hook
+      const window = makeWindow()
+      const listCards = vi.fn(async () => [])
+      const removeCard = vi.fn(async () => undefined)
+      const reformat = vi.fn(async () => ({ originalName: '论文-排版版.docx' }))
+      registry.setThesisPanelBridge({
+        listCards,
+        pickAndSet: vi.fn(async () => null),
+        removeCard,
+        reformat,
+      })
+
+      // 打开实例时不传 roomId：论文排版桥以前会在这里返回 no_room。
+      await registry.open(window, file('file-1', 'file-1.docx'))
+      const thesisHook = hook.mock.calls[0]![0] as ThesisHook
+      const wcId = viewCalls[0]!.webContentsId
+
+      await expect(thesisHook(wcId, { kind: 'list' })).resolves.toEqual({ ok: true, value: [] })
+      expect(listCards).toHaveBeenCalledWith(WORKSPACE_DOCUMENT_CHANNEL)
+
+      await expect(thesisHook(wcId, { kind: 'remove', cardId: 'card-1' })).resolves.toEqual({ ok: true, value: null })
+      expect(removeCard).toHaveBeenCalledWith('card-1', WORKSPACE_DOCUMENT_CHANNEL)
+
+      // 装订只需要实例的源文件 fileId，不看实例的 roomId。
+      await expect(thesisHook(wcId, { kind: 'reformat', cardId: 'card-1' })).resolves.toEqual({
+        ok: true,
+        value: { originalName: '论文-排版版.docx' },
+      })
+      expect(reformat).toHaveBeenCalledWith('file-1', 'card-1', WORKSPACE_DOCUMENT_CHANNEL)
+
+      // 未知 wcId：列卡不需要实例（工作区作用域），装订才要源文件 fileId → 通用 error。
+      await expect(thesisHook(999_999, { kind: 'list' })).resolves.toEqual({ ok: true, value: [] })
+      const unknownReformat = await thesisHook(999_999, { kind: 'reformat', cardId: 'card-1' }) as { ok: boolean; reason?: string }
+      expect(unknownReformat).toMatchObject({ ok: false, reason: 'error' })
+      expect(unknownReformat.reason).not.toBe('no_room')
     })
   })
 
@@ -296,15 +336,6 @@ describe('OfficePreviewRegistry', () => {
     expect(viewCalls[1]!.disposed).toBe(false)
   })
 
-  it('exposes the dev test instance under the shared constant id', () => {
-    const window = makeWindow()
-    const descriptor = registry.openTest(window)
-
-    expect(descriptor.kind).toBe('docx')
-    expect(registry.setActive(OFFICE_TEST_INSTANCE_ID)).toBe(true)
-    expect(viewCalls[0]!.setActive).toEqual([true])
-  })
-
   describe('editable docx', () => {
     it('creates an editable view and treats editable as instance identity', async () => {
       const window = makeWindow()
@@ -382,7 +413,7 @@ describe('OfficePreviewRegistry', () => {
       })
     })
 
-    it('findByWebContentsId：按视图 wcId 反查文件与 Room（「AI 修改」转发用）', async () => {
+    it('findByWebContentsId：按视图 wcId 反查文件（roomId 仅编辑回填兜底保留）', async () => {
       const window = makeWindow()
       await registry.open(window, { ...file('file-e1', 'deck-edit.pptx'), editable: true, roomId: 'room-e1' })
       await registry.open(window, file('file-d1', 'notes.docx'))
@@ -393,7 +424,7 @@ describe('OfficePreviewRegistry', () => {
         kind: 'slides',
         roomId: 'room-e1',
       })
-      // 非 Room 打开的实例 roomId 为空（转发层据此报错引导）。
+      // 不带 roomId 的工作区实例：转发层（「AI 修改」/论文排版）已不依赖它。
       expect(registry.findByWebContentsId(viewCalls[1]!.webContentsId)).toMatchObject({
         fileId: 'file-d1',
         roomId: null,

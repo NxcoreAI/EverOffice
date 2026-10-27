@@ -469,7 +469,7 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   }, 15_000);
 
-  it("透传 dispatch input 的 roomId 到 runtime.start（子 run 文档工具绑定）", async () => {
+  it("子 run 不再绑定 Room：dispatch input 的 roomId 不再透传到 runtime.start", async () => {
     const fixture = await createFixture();
     await fixture.registry.initialize();
 
@@ -505,8 +505,10 @@ describe("filesystem subagent framework", () => {
       source: "primary_agent",
       parentRunId: "run-room",
     });
-    expect(recording.startedInputs.at(-1)?.roomId).toBe("room-9");
+    // 去 Room：即使调用方仍带历史 roomId 字段，子 run 也不再绑定房间（文档工具走工作区）。
+    expect(recording.startedInputs.at(-1)?.roomId).toBeNull();
     // 结构化输入同时以 runtimeMetadata 交给工具（planner 据此区分 draft/arrange）。
+    // 原始 input 原样保留在元数据里，只是不再解读 roomId。
     expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
       subagentAgentId: "researcher",
       subagentInput: { topic: "EverRoom", roomId: "room-9" },

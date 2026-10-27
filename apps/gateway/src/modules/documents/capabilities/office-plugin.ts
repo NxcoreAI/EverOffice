@@ -12,7 +12,7 @@ import {
 /**
  * Agent 写 Office：Word（受限 HTML）、PPT（两阶段：建文件 + 逐页生成）、Excel
  * （sheets→rows）三个工具，经桌面 office-bridge 生成真实文件并走
- * file-imports 入库，Room 产物库由路由决策自动投影展示。
+ * file-imports 入库，产物在文件库可见（Room 已删除，不再有 Room 投影）。
  * - Word：隐藏 GenOffice docs view（HTML 子集与 vendored
  *   apps/docs/src/renderer/ai/protocol.ts 的 HTML_RULES 一致）。
  * - PPT：两阶段生成。create 只带 outline（页序蓝图：每页标题、长度即页数上限），
@@ -22,7 +22,7 @@ import {
  *   slideIndex<页数原地替换，=页数末尾追加——文件页数随生成进度增长，失败不留空壳；
  *   实时重绘、每页独立失败重试）。单次输出一页，避免长输出结构漂移与黑盒等待。
  * - Excel：主进程直接拼标准 OOXML（jszip，inline string）。
- * 编辑：PPT 走 slides_read/edit（文件需在 Room 产物库打开为可编辑
+ * 编辑：PPT 走 slides_read/edit（文件需在文件库打开为可编辑
  * 实例；编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
  * Word/Excel 的编辑与离屏编辑留待后续迭代。
  */
@@ -174,8 +174,8 @@ export function officePlugin(
 ): DocumentCapabilityPlugin {
   const officeCreate: DocumentCapabilityTool = {
     name: "office_create",
-    title: "生成 Word 文档入 Room",
-    description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前 Room（产物库 Office 产物 + 文件库），"
+    title: "生成 Word 文档",
+    description: "用本地 Word 引擎生成一份新的 .docx 文档并保存到文件库，"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
       + "普通速记、笔记、随手总结仍用文档创建工具（markdown），不要用本工具。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
@@ -219,7 +219,7 @@ export function officePlugin(
         format: "docx",
         roomId: context.roomId,
         deduped: result.versionDeduped || result.blobDeduped,
-        // Room 资料页投影由路由决策异步完成（知识路由关闭时会降级为仅入库）。
+        // Room 已删除：roomId 恒为空、roomRoutingRequested 恒为 false，字段保留兼容旧消费方。
         roomRoutingRequested: result.roomRequested,
         nextAction: "report_result",
       });
@@ -228,8 +228,8 @@ export function officePlugin(
 
   const slidesCreate: DocumentCapabilityTool = {
     name: "slides_create",
-    title: "创建 PPT 入 Room",
-    description: "创建一份新 .pptx 演示文稿并加入当前 Room（产物库 Office 产物 + 文件库），"
+    title: "创建 PPT",
+    description: "创建一份新 .pptx 演示文稿并保存到文件库，"
       + "适合汇报、提案、培训等演示场景。只传 outline（每页一个标题，是页序蓝图：数组顺序即页序、"
       + `长度即页数上限，共 1~${MAX_SLIDES_PAGES} 页）；创建的文件初始只有 1 页骨架，页数随后续逐页生成增长。`
       + "第二步必须用 slides_set_page 一页一页生成——slideIndex=0 替换骨架页，"
@@ -365,8 +365,8 @@ export function officePlugin(
 
   const sheetsCreate: DocumentCapabilityTool = {
     name: "sheets_create",
-    title: "生成 Excel 表格入 Room",
-    description: "生成本地排版的一份新 .xlsx 电子表格并加入当前 Room（产物库 Office 产物 + 文件库），"
+    title: "生成 Excel 表格",
+    description: "生成本地排版的一份新 .xlsx 电子表格并保存到文件库，"
       + "适合数据清单、预算、对比表、统计汇总等结构化数据。title 用作默认文件名（<title>.xlsx，可用 fileName 覆盖）。"
       + `sheets 是工作表数组。${SHEETS_GUIDE}`
       + "生成完成后桌面端会自动打开预览；在回复中告知文件名与表结构即可。",
@@ -432,12 +432,12 @@ export function officePlugin(
   const slidesRead: DocumentCapabilityTool = {
     name: "slides_read",
     title: "读取 PPT 大纲与操作词汇",
-    description: "读取一份 Room 产物库中的 .pptx 产物的大纲与可编辑操作词汇表。"
+    description: "读取一份文件库中的 .pptx 产物的大纲与可编辑操作词汇表。"
       + "fileId 缺省（或 \"active\"）= 用户当前打开的那个 PPT；传显式 fileEntryId 时未打开的 PPT 会自动以可编辑方式打开（应用重启后同会话也能继续改）。"
       + "大纲列出每页的元素（id | 类型 | 文本摘要），是编辑时定位元素的唯一依据；"
       + "opVocabulary 列出 slides_edit 可用的全部操作及其签名。"
       + "文件不存在会报错并列出当前打开的 Office 文件；editable=false 表示只读打开（能读大纲，"
-      + "要编辑需用户在产物库重新以可编辑方式打开）。"
+      + "要编辑需用户在文件库重新以可编辑方式打开）。"
       + "编辑前先读本工具，之后按大纲里的元素 id 发编辑事务。",
     inputSchema: {
       type: "object",
@@ -466,7 +466,7 @@ export function officePlugin(
   const slidesEdit: DocumentCapabilityTool = {
     name: "slides_edit",
     title: "编辑已打开的 PPT",
-    description: "向一份 Room 产物库中的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
+    description: "向一份文件库中的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
       + "fileId 可用 \"active\"（当前打开的那个）或显式 fileEntryId（未打开会自动以可编辑方式打开）。"
       + "常用操作：setText/setFont/setFill 改已有元素，addElement/addSlideWithLayout 新增，"
       + "deleteElement/deleteSlide 删除，moveSlide 调序，findReplace 全稿替换，setNotes 备注页；"
@@ -528,7 +528,7 @@ export function officePlugin(
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
-      "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
+      "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在文件库（Office 产物）中可见。",
     ],
     tools: [officeCreate, slidesCreate, slidesSetPage, sheetsCreate, slidesRead, slidesEdit],
   };

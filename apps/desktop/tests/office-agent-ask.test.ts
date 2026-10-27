@@ -1,4 +1,4 @@
-/** 「AI 修改」转发：buildAgentAskMessage 文案组成 + wireSlidesAgentAsk 守卫与转发。 */
+/** 「AI 修改」转发：buildAgentAskMessage 文案组成 + wireSlidesAgentAsk 转发（Room 已删除，事件 roomId 恒 null）。 */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: vi.fn(() => '/tmp') } }))
@@ -94,21 +94,13 @@ describe('wireSlidesAgentAsk', () => {
     expect(forward).not.toHaveBeenCalled()
   })
 
-  it('实例无 roomId（非 Room 打开）→ 报错引导，不转发', async () => {
-    resolveInstance.mockReturnValue({ fileId: 'f1', title: 't.pptx', kind: 'slides', roomId: null })
-    const result = await askHook!(9, OP)
-    expect(result.ok).toBe(false)
-    expect(result.ok === false && result.error).toContain('未在 Room 中打开')
-    expect(forward).not.toHaveBeenCalled()
-  })
-
-  it('命中 → 组装消息转发到 Room 频道', async () => {
-    resolveInstance.mockReturnValue({ fileId: 'f1', title: '季度汇报.pptx', kind: 'slides', roomId: 'room-9' })
+  it('实例不带 roomId（工作区语义）→ 照常转发，事件 roomId=null', async () => {
+    resolveInstance.mockReturnValue({ fileId: 'f1', title: '季度汇报.pptx', kind: 'slides' })
     const result = await askHook!(9, OP)
     expect(result).toEqual({ ok: true })
     expect(forward).toHaveBeenCalledTimes(1)
     expect(forward).toHaveBeenCalledWith({
-      roomId: 'room-9',
+      roomId: null,
       message: buildAgentAskMessage('季度汇报.pptx', OP),
       displayMessage: buildAgentAskDisplayMessage('季度汇报.pptx', OP),
     })

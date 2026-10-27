@@ -4,7 +4,8 @@ import type {
 } from '@nxcore/agent-contract'
 
 export interface ActiveDocumentDescriptor {
-  roomId: string
+  /** null/缺省 = 工作区级文稿（无 Room 归属）。 */
+  roomId?: string | null
   documentId: string
   title: string
   version: number
@@ -103,15 +104,16 @@ export function buildActiveDocumentRunContext(
   options: BuildActiveDocumentContextOptions = {},
 ): AgentActiveDocumentContext | null {
   if (!descriptor) return null
-  const roomId = cleanString(descriptor.roomId)
+  // 单工作区语义：roomId 允许 null/缺省（工作区级文稿），不再作为硬性校验。
+  const roomId = typeof descriptor.roomId === 'string' ? cleanString(descriptor.roomId) : ''
   const documentId = cleanString(descriptor.documentId)
   const title = cleanString(descriptor.title)
-  if (!roomId || !documentId || !title || !Number.isInteger(descriptor.version) || descriptor.version < 0) {
+  if (!documentId || !title || !Number.isInteger(descriptor.version) || descriptor.version < 0) {
     return null
   }
 
   const context: AgentActiveDocumentContext = {
-    roomId,
+    roomId: roomId || null,
     documentId,
     title,
     version: descriptor.version,

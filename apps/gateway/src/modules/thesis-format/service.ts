@@ -2,6 +2,9 @@
  * thesis-format 编排：模版解析（归一化 → 子代理 parse_template → 校验入库）
  * 与论文装订（桌面 describe → 子代理 bind_thesis → 桌面 build 渲染入库）。
  * 块区间的事实源是桌面 describe 的 Block 序号，bind 只做映射不重算索引。
+ *
+ * Room 已删除：格式卡按 scope 存取，工作区作用域由路由传
+ * `WORKSPACE_DOCUMENT_CHANNEL`（写入 thesis_format_cards.room_id 历史列）。
  */
 
 import { randomUUID } from "node:crypto";
@@ -45,25 +48,25 @@ export class ThesisFormatService {
     return this.store;
   }
 
-  async parseFromLibrary(roomId: string, fileEntryId: string): Promise<ThesisParseResult> {
+  async parseFromLibrary(scope: string, fileEntryId: string): Promise<ThesisParseResult> {
     const entry = this.deps.files.catalogEntry(fileEntryId);
     if (!entry) throw new Error("thesis_template_file_not_found");
     const storagePath = this.deps.files.catalogStoragePathOf(fileEntryId);
     if (!storagePath) throw new Error("thesis_template_file_not_readable");
     const bytes = await readFile(storagePath);
     const result = await this.parseBytes(bytes, entry.originalName);
-    const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId, sourceName: entry.originalName });
+    const row = this.store.upsertInScope({ scope, card: result.card, sourceFileEntryId: fileEntryId, sourceName: entry.originalName });
     return { cardId: row.id, sourceName: result.sourceName, card: result.card };
   }
 
-  async parseFromUpload(roomId: string, bytes: Buffer, name: string): Promise<ThesisParseResult> {
+  async parseFromUpload(scope: string, bytes: Buffer, name: string): Promise<ThesisParseResult> {
     const result = await this.parseBytes(bytes, name);
-    const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: null, sourceName: name });
+    const row = this.store.upsertInScope({ scope, card: result.card, sourceFileEntryId: null, sourceName: name });
     return { cardId: row.id, sourceName: result.sourceName, card: result.card };
   }
 
-  removeCard(roomId: string, cardId: string): boolean {
-    return this.store.remove(roomId, cardId);
+  removeCard(scope: string, cardId: string): boolean {
+    return this.store.removeInScope(scope, cardId);
   }
 
   private async parseBytes(bytes: Buffer, name: string): Promise<{ sourceName: string; card: ThesisFormatCard }> {
@@ -83,8 +86,8 @@ export class ThesisFormatService {
     return { sourceName: name, card };
   }
 
-  async reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<ThesisReformatResult> {
-    const row = cardId ? this.store.byId(roomId, cardId) : this.store.latest(roomId);
+  async reformat(scope: string, fileEntryId: string, cardId?: string): Promise<ThesisReformatResult> {
+    const row = cardId ? this.store.byIdInScope(scope, cardId) : this.store.latestInScope(scope);
     if (!row) throw new Error("thesis_format_card_not_found");
     const card = row.card;
     const bridge = this.deps.officeBridge;
@@ -113,7 +116,8 @@ export class ThesisFormatService {
       docxBase64: bytes.toString("base64"),
       formatCard: card,
       bindingSpec: spec,
-      roomId,
+      // Room 已删除：桌面入库桥的 roomId 字段保留，工作区作用域传哨兵值。
+      roomId: scope,
       sourceFileName: entry.originalName,
       sourceFileEntryId: fileEntryId,
       idempotencyKey: `thesis-reformat:${fileEntryId}:${row.id}:${card.cardMeta.parsedAt}`,

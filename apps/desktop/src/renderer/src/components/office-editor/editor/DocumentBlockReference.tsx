@@ -68,7 +68,11 @@ function invalidationMatches(
   detail: DocumentBlockReferenceInvalidation,
   reference: DocumentBlockReferenceAttrs,
 ): boolean {
-  return documentBlockReferenceInvalidationMatches(detail, reference)
+  return documentBlockReferenceInvalidationMatches(detail, {
+    roomId: reference.roomId ?? '',
+    documentId: reference.documentId,
+    blockId: reference.blockId,
+  })
 }
 
 function attrsFromNodeView(node: NodeViewProps['node']): DocumentBlockReferenceAttrs {

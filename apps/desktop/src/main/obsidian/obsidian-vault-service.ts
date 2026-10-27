@@ -16,6 +16,8 @@ import {
 import { basename, dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 
+import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
+
 import type {
   ObsidianVaultBinding,
   ObsidianVaultCandidate,
@@ -375,9 +377,9 @@ export class ObsidianVaultService {
         existing.memoryEnabled = true
       } else if (existing.mountMode === 'memory') {
         existing.mountMode = mountMode
-        existing.roomId = roomId ?? `vault-room-${randomUUID().slice(0, 8)}`
+        existing.roomId = roomId ?? WORKSPACE_DOCUMENT_CHANNEL
       } else if (roomId && existing.roomId !== roomId) {
-        throw new Error(`该 Vault 已导入到另一个 Room（${existing.name}）。`)
+        throw new Error(`该 Vault 已在工作区导入，不能挂到另一个作用域（${existing.name}）。`)
       }
       existing.status = 'connected'
       if (effectiveRegistryId) {
@@ -392,7 +394,7 @@ export class ObsidianVaultService {
     const now = new Date().toISOString()
     const vault: StoredVault = {
       id: `vault-${randomUUID()}`,
-      roomId: roomId ?? `vault-room-${randomUUID().slice(0, 8)}`,
+      roomId: roomId ?? WORKSPACE_DOCUMENT_CHANNEL,
       mountMode,
       sourceType,
       memoryEnabled: mountMode === 'memory',

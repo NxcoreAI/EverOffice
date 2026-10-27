@@ -1,4 +1,5 @@
 import type { SubagentInvocation } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -209,22 +210,25 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input).not.toHaveProperty("roomId");
   });
 
-  it("Room 透传：显式 roomId 不在 availableRooms 时拒绝；命中则放行", async () => {
+  it("去 Room 回归：显式 roomId 不再对照 availableRooms 校验，一律原样透传、绝不抛错", async () => {
     const orchestrator = orchestratorReturning({});
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {});
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
     const availableRooms = [{ id: "room-1", title: "Room 1" }, { id: "room-2", title: "Room 2" }];
-    await expect(tool.execute(
+    // Room 已删除：单工作区语义下没有 roomId 门禁，快照里不存在的 id 也照常派发。
+    await tool.execute(
       { ...baseRun, roomId: undefined, availableRooms } as never,
       { task: "draft-create", instruction: "起草文档", roomId: "room-ghost" } as never,
       undefined,
-    )).rejects.toThrow("ROOM_SELECTION_REQUIRED");
+    );
+    const ghostInput = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
+    expect(ghostInput.roomId).toBe("room-ghost");
     await tool.execute(
       { ...baseRun, roomId: undefined, availableRooms } as never,
       { task: "draft-create", instruction: "起草文档", roomId: "room-2" } as never,
       undefined,
     );
-    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
+    const input = (orchestrator.dispatch.mock.calls[1]![0] as { input: Record<string, unknown> }).input;
     expect(input.roomId).toBe("room-2");
   });
 
@@ -529,7 +533,7 @@ describe("createSubagentPiTools document_draft", () => {
     expect(payload).toMatchObject({ status: "timed_out", errorCode: "timeout", retryable: true });
   });
 
-  it("materialSources 透传给 doc-writer，跨 Room 来源被拒绝", async () => {
+  it("materialSources 透传给 doc-writer：缺省 roomId 归一工作区 sentinel，跨 Room 不再拒绝", async () => {
     const orchestrator = orchestratorReturning({
       result: { text: "", structuredOutput: { kind: "draft-create", title: "T", appendChunks: ["正文"], digest: { summary: "s" } } },
     });
@@ -547,13 +551,31 @@ describe("createSubagentPiTools document_draft", () => {
       { roomId: "room-1", documentId: "doc-2", blockId: "b7", label: "访谈记录", textPreview: "访谈结论……" },
     ]);
 
-    await expect(tool.execute(baseRun as never, {
+    // 省略 roomId = 工作区作用域（roomId 列/索引 URL 用频道 sentinel）。
+    await tool.execute(baseRun as never, {
+      task: "draft-create",
+      instruction: "起草",
+      materialSources: [
+        { documentId: "doc-3", blockId: "b8" },
+      ],
+    } as never, undefined);
+    const workspaceInput = (orchestrator.dispatch.mock.calls[1]![0] as { input: Record<string, unknown> }).input;
+    expect(workspaceInput.materialSources).toEqual([
+      { roomId: WORKSPACE_DOCUMENT_CHANNEL, documentId: "doc-3", blockId: "b8" },
+    ]);
+
+    // Room 已删除：跨 Room 来源不再触发 ROOM_SELECTION_MISMATCH，按传入值透传。
+    await tool.execute(baseRun as never, {
       task: "draft-create",
       instruction: "起草",
       materialSources: [
         { roomId: "room-other", documentId: "doc-2", blockId: "b7" },
       ],
-    } as never, undefined)).rejects.toThrow(/ROOM_SELECTION_MISMATCH/);
+    } as never, undefined);
+    const crossRoomInput = (orchestrator.dispatch.mock.calls[2]![0] as { input: Record<string, unknown> }).input;
+    expect(crossRoomInput.materialSources).toEqual([
+      { roomId: "room-other", documentId: "doc-2", blockId: "b7" },
+    ]);
   });
 
   it("materialSources 对 draft-edit 同样透传（为既有文档补建索引）", async () => {    const snapshot = {
@@ -634,12 +656,12 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input.materialSources).toEqual([{ roomId: "room-1", documentId: "doc-2", blockId: "b7" }]);
   });
 
-  it("inferMaterialSourcesFromReads 只取 material 中真实出现的同 Room 顶层块", () => {
+  it("inferMaterialSourcesFromReads 不再跳过工作区文稿，缺省按工作区 sentinel 归一", () => {
     const reads = {
       documentsReadByRun: (runId: string) => runId === "run-1"
         ? [
           { roomId: "room-1", documentId: "doc-2", version: 3 },
-          { roomId: "room-1", documentId: "doc-3", version: 1 },
+          { roomId: null, documentId: "doc-w", version: 1 },
           { roomId: "room-other", documentId: "doc-x", version: 1 },
         ]
         : [],
@@ -653,20 +675,28 @@ describe("createSubagentPiTools document_draft", () => {
       ],
     });
     const material = "PyTorch 是一种基于 Torch 的开源深度学习框架，由 Meta AI 维护，支持动态计算图。\n综上……";
-    const entries = inferMaterialSourcesFromReads(reads, readDocument, "run-1", "room-1", material);
-    // doc-2 命中 b1；doc-3 同样命中其 b1（内容相同）；跨 Room 的 doc-x 被过滤；嵌套/无关块不进。
+
+    // 单工作区（目标 roomId 为空）：所有读取记录都参与推断，工作区文稿落 scope sentinel。
+    const entries = inferMaterialSourcesFromReads(reads, readDocument, "run-1", "", material);
     expect(entries).toEqual([
       { roomId: "room-1", documentId: "doc-2", blockId: "doc-2-b1", label: "文档 doc-2", textPreview: readDocument("doc-2").blocks[0]!.textPreview },
-      { roomId: "room-1", documentId: "doc-3", blockId: "doc-3-b1", label: "文档 doc-3", textPreview: readDocument("doc-3").blocks[0]!.textPreview },
+      { roomId: WORKSPACE_DOCUMENT_CHANNEL, documentId: "doc-w", blockId: "doc-w-b1", label: "文档 doc-w", textPreview: readDocument("doc-w").blocks[0]!.textPreview },
+      { roomId: "room-other", documentId: "doc-x", blockId: "doc-x-b1", label: "文档 doc-x", textPreview: readDocument("doc-x").blocks[0]!.textPreview },
+    ]);
+
+    // 旧版显式 Room 目标仍按 scope 过滤（工作区 sentinel 与其它房间都不命中）；嵌套/无关块不进。
+    const legacyScope = inferMaterialSourcesFromReads(reads, readDocument, "run-1", "room-1", material);
+    expect(legacyScope).toEqual([
+      { roomId: "room-1", documentId: "doc-2", blockId: "doc-2-b1", label: "文档 doc-2", textPreview: readDocument("doc-2").blocks[0]!.textPreview },
     ]);
     // material 过短不推断。
-    expect(inferMaterialSourcesFromReads(reads, readDocument, "run-1", "room-1", "太短")).toEqual([]);
+    expect(inferMaterialSourcesFromReads(reads, readDocument, "run-1", "", "太短")).toEqual([]);
     // 读取抛错的文档被跳过。
     expect(inferMaterialSourcesFromReads(
       reads,
       () => { throw new Error("boom"); },
       "run-1",
-      "room-1",
+      "",
       material,
     )).toEqual([]);
   });

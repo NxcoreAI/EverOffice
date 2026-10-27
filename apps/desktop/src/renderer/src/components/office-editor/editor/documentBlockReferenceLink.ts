@@ -32,7 +32,7 @@ export function toDocumentBlockReferenceNodeAttrs(
 ): DocumentBlockReferenceNodeAttrs {
   return {
     id: reference.id,
-    targetRoomId: reference.roomId,
+    targetRoomId: reference.roomId ?? '',
     targetDocumentId: reference.documentId,
     targetBlockId: reference.blockId,
     fallbackTitle: reference.fallbackTitle,
@@ -61,7 +61,7 @@ function cleanOptionalText(value: string | null | undefined): string | null {
 export function createEverroomBlockReferenceUrl(
   reference: DocumentBlockReferenceAttrs,
 ): string {
-  return createSharedBlockReferenceUrl(reference)
+  return createSharedBlockReferenceUrl({ ...reference, roomId: reference.roomId ?? '' })
 }
 
 export function parseEverroomBlockReferenceUrl(

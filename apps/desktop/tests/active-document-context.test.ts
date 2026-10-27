@@ -31,6 +31,31 @@ describe('active document Agent context', () => {
     })
   })
 
+  it('treats a workspace document without a Room as a valid active document', () => {
+    // 单工作区语义：roomId 允许 null/缺省，活动文稿不再被 Room 归属拦死。
+    const workspaceDocument = {
+      documentId: ' document-1 ',
+      title: ' 文档标题 ',
+      version: 4,
+      cursorAnchorCandidate: createCursorAnchorCandidate(' block-1 ', 7.8),
+    }
+    expect(buildActiveDocumentRunContext(workspaceDocument, '继续写完这篇文档')).toEqual({
+      roomId: null,
+      documentId: 'document-1',
+      title: '文档标题',
+      version: 4,
+      defaultAnchor: 'end',
+    })
+    expect(buildActiveDocumentRunContext({ ...activeDocument, roomId: null }, '继续写完这篇文档'))
+      .toMatchObject({ roomId: null, documentId: 'document-1' })
+  })
+
+  it('still rejects descriptors that miss the document identity', () => {
+    expect(buildActiveDocumentRunContext({ ...activeDocument, documentId: '  ' }, '继续')).toBeNull()
+    expect(buildActiveDocumentRunContext({ ...activeDocument, title: '  ' }, '继续')).toBeNull()
+    expect(buildActiveDocumentRunContext({ ...activeDocument, version: -1 }, '继续')).toBeNull()
+  })
+
   it('only includes a cursor candidate for explicit current-position intent', () => {
     expect(buildActiveDocumentRunContext(activeDocument, '请从当前光标处续写')).toEqual({
       roomId: 'room-1',
@@ -88,14 +113,14 @@ describe('active document Agent context', () => {
 })
 
 describe('Agent document selection result', () => {
-  it('parses details and normalizes id/documentId without leaking malformed items', () => {
+  it('parses details and keeps workspace candidates without a roomId', () => {
     expect(parseAgentDocumentSelectionResult({
       details: {
         selectionRequired: true,
         documents: [
           { id: 'doc-1', roomId: 'room-1', title: '第一篇', version: 2, status: 'active' },
           { documentId: 'doc-2', roomId: 'room-1', title: '第二篇' },
-          { id: 'missing-room', title: '无效' },
+          { id: 'workspace-doc', title: '工作区文稿' },
         ],
       },
     })).toEqual({
@@ -103,7 +128,22 @@ describe('Agent document selection result', () => {
       documents: [
         { documentId: 'doc-1', roomId: 'room-1', title: '第一篇', version: 2, status: 'active' },
         { documentId: 'doc-2', roomId: 'room-1', title: '第二篇' },
+        { documentId: 'workspace-doc', roomId: null, title: '工作区文稿' },
       ],
+    })
+  })
+
+  it('drops candidates without a document id or title, and normalizes blank rooms to null', () => {
+    expect(parseAgentDocumentSelectionResult({
+      selectionRequired: true,
+      documents: [
+        { title: '缺 id' },
+        { documentId: 'doc-blank-title', title: '   ' },
+        { documentId: 'doc-blank-room', roomId: '   ', title: '空 Room' },
+      ],
+    })).toEqual({
+      selectionRequired: true,
+      documents: [{ documentId: 'doc-blank-room', roomId: null, title: '空 Room' }],
     })
   })
 
@@ -175,8 +215,8 @@ describe('Agent document selection result', () => {
     ], new Set())).toBeNull()
   })
 
-  it('never surfaces a picker when the latest selection result has no usable documents', () => {
-    // 空列表（Room 无文档）与修复前入库的旧结果（候选缺 roomId 被丢弃）都不应弹卡片
+  it('surfaces a picker for workspace documents whose candidates have no roomId', () => {
+    // 单工作区语义：候选缺 roomId 是合法的工作区文稿，不应导致卡片恒空。
     const emptyResult = {
       id: 'tool-empty',
       runId: 'run-empty',
@@ -186,22 +226,29 @@ describe('Agent document selection result', () => {
       startedAt: '2026-08-17T03:00:00.000Z',
       completedAt: '2026-08-17T03:00:02.000Z',
     }
-    const legacyResult = {
-      id: 'tool-legacy',
-      runId: 'run-legacy',
+    const workspaceResult = {
+      id: 'tool-workspace',
+      runId: 'run-workspace',
       name: 'document_list',
       status: 'completed',
-      result: { selectionRequired: true, documents: [{ id: 'doc-1', title: '旧结果缺 roomId' }] },
+      result: { selectionRequired: true, documents: [{ id: 'doc-1', title: '工作区文稿' }] },
       startedAt: '2026-08-17T02:00:00.000Z',
       completedAt: '2026-08-17T02:00:02.000Z',
     }
-    const messages = [
+    const workspaceMessages = [
+      { runId: 'run-workspace', role: 'user', content: '把工作区文稿补两个示例', createdAt: '2026-08-17T02:00:00.000Z' },
+    ]
+    const emptyMessages = [
       { runId: 'run-empty', role: 'user', content: '看看文档', createdAt: '2026-08-17T03:00:00.000Z' },
-      { runId: 'run-legacy', role: 'user', content: '更早的消息', createdAt: '2026-08-17T02:00:00.000Z' },
     ]
 
-    expect(findPendingAgentDocumentSelection([emptyResult], messages, new Set())).toBeNull()
-    expect(findPendingAgentDocumentSelection([legacyResult, emptyResult], messages, new Set())).toBeNull()
+    expect(findPendingAgentDocumentSelection([workspaceResult], workspaceMessages, new Set())).toMatchObject({
+      toolId: 'tool-workspace',
+      runId: 'run-workspace',
+      originalPrompt: '把工作区文稿补两个示例',
+      documents: [{ documentId: 'doc-1', roomId: null, title: '工作区文稿' }],
+    })
+    expect(findPendingAgentDocumentSelection([emptyResult], emptyMessages, new Set())).toBeNull()
   })
 
   it('replays the original prompt with the freshly fetched authoritative document context', () => {
@@ -222,6 +269,29 @@ describe('Agent document selection result', () => {
         documentId: 'doc-authoritative',
         title: '权威标题',
         version: 9,
+        defaultAnchor: 'end',
+      },
+    })
+  })
+
+  it('replays a workspace document with roomId null', () => {
+    expect(buildAgentDocumentSelectionRunRequest('  继续补写  ', {
+      id: 'doc-workspace',
+      roomId: null,
+      title: '工作区文稿',
+      version: 3,
+      status: 'draft',
+      activeTransactionId: null,
+      contentJson: { type: 'doc', content: [] },
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T01:00:00.000Z',
+    })).toEqual({
+      prompt: '继续补写',
+      activeDocument: {
+        roomId: null,
+        documentId: 'doc-workspace',
+        title: '工作区文稿',
+        version: 3,
         defaultAnchor: 'end',
       },
     })

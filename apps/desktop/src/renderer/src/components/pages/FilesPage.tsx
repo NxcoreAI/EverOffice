@@ -6,7 +6,7 @@ import type {
   FileImportOutcome,
   FileImportProgressEvent,
 } from '../../../../shared/ingest'
-import { isRoomArtifactSourceKind, type OfficePreviewTab } from '../../../../shared/sources'
+import type { OfficePreviewTab } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { categoryForFile, FILE_CATEGORY_DEFINITIONS, type FileCategoryDefinition } from './fileCategories'
 import type { PageId } from '@/data/navigation'
@@ -410,11 +410,8 @@ export function FilesPage({
 
   const openOriginal = (file: FileCatalogDto) => {
     if (!filesApi) return
-    // Room 产物（Agent 生成 + 导入）在所属 Room 的产物库编辑预览；文件页不再重复开只读标签。
-    if (isRoomArtifactSourceKind(file.sourceKind)) {
-      setMessage(t('surface:files.agentGeneratedOpenInRoom'))
-      return
-    }
+    // Agent 生成/导入的文件同样是文件库成员：统一走 openOriginal（Office 可编辑时直接编辑），
+    // 不再按来源类型拦回 Room 产物库。
     void runFileAction(file.id, async () => {
       try {
         const editable = isEditableOfficeDocument(file.originalName)

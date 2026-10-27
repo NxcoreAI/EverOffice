@@ -54,7 +54,7 @@ import { runSlidesStyleStage, type SlidesStyleStageDeps } from "./slides-style-s
 import type { PageImagesStageOutcome } from "./slides-page-images-stage.js";
 import { assignContentSources, semanticHash, type SemanticReport } from "./slides-semantic-contract.js";
 import { assembleSemanticPlan, SEMANTIC_MODE } from "./slides-semantic-stage.js";
-import { prefetchSlidesMaterials } from "./slides-material-prefetch.js";
+import { prefetchSlidesMaterials, type MaterialHit } from "./slides-material-prefetch.js";
 import {
   arrangeBatchCheckpointKey,
   arrangeBatchMeta,
@@ -65,7 +65,6 @@ import {
   type ArrangeBatch,
   type ArrangeBatchFailure,
 } from "./slides-arrange-batches.js";
-import type { MaterialHit } from "../materials/service.js";
 import { inferSceneId, resolveScene } from "../slides-layout/scene.js";
 import type { SlidesStoryboardStore } from "./slides-storyboards-store.js";
 
@@ -80,19 +79,19 @@ type SlidesDraftTask = "draft" | "style" | "style_select" | "generate" | "edit";
 const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> = {
   draft: new Set([
     "task", "instruction", "title", "outline", "referencePath", "referencePaths", "referenceStyle",
-    "referenceOutline", "targetPages", "sourceDocumentIds", "roomId",
+    "referenceOutline", "targetPages", "sourceDocumentIds",
   ]),
   style: new Set([
-    "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle", "roomId",
+    "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle",
   ]),
-  style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle", "roomId"]),
+  style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle"]),
   generate: new Set([
     "task", "resetGenerationBudget", "instruction", "draftDocumentId", "styleSessionId",
     "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "regeneratePageImage",
     "regeneratePageImages", "regenerateFeedback", "rejectPageImage", "rejectPageImages", "restorePageImage",
-    "restorePageImages", "roomId",
+    "restorePageImages",
   ]),
-  edit: new Set(["task", "instruction", "fileId", "roomId"]),
+  edit: new Set(["task", "instruction", "fileId"]),
 };
 
 function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
@@ -128,7 +127,6 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
 function slidesDraftTaskSchema(task: SlidesDraftTask, fields: Record<string, TSchema>) {
   return Type.Object({
     task: Type.Literal(task),
-    roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     ...fields,
   }, { additionalProperties: false });
 }
@@ -189,7 +187,7 @@ const SLIDES_DRAFT_PARAMETERS = Type.Union([
     referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
     /** 目标页数；缺省由参考 style.pageBudget 或 planner 判断。 */
     targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
-    /** draft 阶段点名要读的 Room 文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
+    /** draft 阶段点名要读的工作区文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
     sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
   }),
   slidesDraftTaskSchema("style", {
@@ -577,7 +575,10 @@ function enqueueBatchPrewarm(
 
 function describeBatchFailures(failures: ArrangeBatchFailure[]): string {
   return failures
-    .map((failure) => `第 ${failure.batch.index + 1}/${failure.batch.total} 批（${failure.errorCode || failure.status}）`)
+    .map((failure) => {
+      const detail = failure.errorMessage?.trim().slice(0, 120);
+      return `第 ${failure.batch.index + 1}/${failure.batch.total} 批（${failure.errorCode || failure.status}${detail ? `：${detail}` : ""}）`;
+    })
     .join("、");
 }
 
@@ -609,10 +610,12 @@ interface MaterialSourceEntry {
 }
 
 /**
- * 块索引兜底推断（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档时，
+ * 块索引兜底推断（blockIndexMark）：主 agent 以自由文本 material 引用工作区文档时，
  * 用本 run 的 document_read 台账定位素材文档，取其顶层块中确实出现在 material 里的
  * 部分（去空白后前 80 字符包含匹配），作为 materialSources 候选注入 doc-writer。
  * 匹配不上就不注入——宁缺毋滥，避免误挂。
+ *
+ * 工作区级文稿的读取记录 `roomId` 为 null：不再跳过，按工作区 scope sentinel 归一。
  */
 export function inferMaterialSourcesFromReads(
   reads: { documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> },
@@ -628,10 +631,8 @@ export function inferMaterialSourcesFromReads(
   if (!runId || normalizedMaterial.length < 20) return [];
   const entries: MaterialSourceEntry[] = [];
   for (const read of reads.documentsReadByRun(runId)) {
-    // 工作区级文稿没有归属 Room：块索引 URI（everroom://room/{roomId}/...）无法表达，
-    // 暂不参与素材来源推断（Phase 2 随 Room 删除一并去掉 roomId 维度）。
-    if (!read.roomId) continue;
-    if (roomId && read.roomId !== roomId) continue;
+    const scopeId = roomScopeId(read.roomId);
+    if (roomId && scopeId !== roomId) continue;
     let snapshot;
     try {
       snapshot = readDocument(read.documentId);
@@ -644,7 +645,7 @@ export function inferMaterialSourcesFromReads(
       const probe = buildIndexProbe(block.textPreview);
       if (!probe || !normalizedMaterial.includes(probe)) continue;
       entries.push({
-        roomId: read.roomId,
+        roomId: scopeId,
         documentId: read.documentId,
         blockId: block.blockId,
         label: snapshot.document.title.slice(0, 200),
@@ -722,15 +723,15 @@ function compactStylePalette(
  * 生图，`runStyleImages` 会因为会话没到 images_ready 而**新开一个会话重跑一遍**，
  * 白白多烧一整套生图配额。所以 `style` 分支进来时先等这个 promise 落定。
  *
- * key = roomId + draftDocumentId：换草稿就是新一轮流程，旧预热不复用。
+ * key = draftDocumentId：换草稿就是新一轮流程，旧预热不复用（单工作区语义，草稿 id 全局唯一）。
  */
 const stylePrefetchByDraft = new Map<string, Promise<unknown>>();
 
-function stylePrefetchKey(roomId: string, draftDocumentId: string): string {
-  return `${roomId}::${draftDocumentId}`;
+function stylePrefetchKey(draftDocumentId: string): string {
+  return draftDocumentId;
 }
 
-/** draft 阶段源码预取：主 Agent 指令里点名的 Room 文档正文直接随 planner 输入下发。 */
+/** draft 阶段源码预取：主 Agent 指令里点名的工作区文档正文直接随 planner 输入下发。 */
 const DRAFT_SOURCE_DOCUMENT_MAX = 2;
 const DRAFT_SOURCE_DOCUMENT_MAX_CHARS = 40_000;
 const DRAFT_SOURCE_DOCUMENTS_TOTAL_CHARS = 60_000;
@@ -778,11 +779,10 @@ export function createSubagentPiTools(
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
     slidesGenerationBudget?: Partial<GenerationBudgetLimits>;
     /**
-     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建 Room 文档，
+     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建工作区文档，
      * 返回 documentId 供用户编辑与 generate 阶段读回。
      */
     createSlidesDraftDocument?: (input: {
-      roomId: string;
       title: string;
       markdown: string;
     }) => Promise<{ documentId: string; title: string }>;
@@ -1015,7 +1015,7 @@ export function createSubagentPiTools(
         + "rewrite 返回 replacementText，逐字作为回复片段呈现。"
         + "用户要求调整、润色或修改刚生成的内容时，传 previousInvocationId（此前 document_draft 返回的 invocationId），"
         + "doc-writer 会基于上一稿增量修改而非从头重写。"
-        + "materialSources（draft-create / draft-edit 可选）：引用了 Room 文档块的素材来源列表（roomId/documentId/blockId 取自 document_read 的 blocks），"
+        + "materialSources（draft-create / draft-edit 可选）：引用了工作区文档块的素材来源列表（roomId/documentId/blockId 取自 document_read 的 blocks；roomId 可省略，缺省按工作区处理），"
         + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
         + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
         + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
@@ -1032,10 +1032,12 @@ export function createSubagentPiTools(
         ]),
         instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
         documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        // 旧版兼容：Room 已删除，省略即工作区文稿；保留字段避免旧客户端参数被拒。
         roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         material: Type.Optional(Type.String({ maxLength: 100_000 })),
         materialSources: Type.Optional(Type.Array(Type.Object({
-          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          // 可省略：缺省按工作区 scope sentinel 处理（旧客户端可继续带上真实 roomId）。
+          roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           documentId: Type.String({ minLength: 1, maxLength: 128 }),
           blockId: Type.String({ minLength: 1, maxLength: 128 }),
           label: Type.Optional(Type.String({ maxLength: 200 })),
@@ -1056,22 +1058,15 @@ export function createSubagentPiTools(
           ? params.responseLanguage.trim()
           : null;
         const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
-          throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
-        }
+        // Room 已删除：单工作区语义下不再要求/校验 Room 绑定，文档工具按工作区文稿解析；
+        // 历史 roomId 参数仅原样透传（供旧版本兼容），绝不因此抛错。
         const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
-        // 子 run 将按该 roomId 绑定文档工具（orchestrator 透传）；显式传入的房间若在开跑快照里，
-        // 必须是快照中真实存在的 Room。
-        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
-        }
 
         let snapshot: DocumentDraftSnapshot | null = null;
         if (task === "draft-edit" || task === "draft-continue") {
           const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
           if (!documentId) throw new Error("document_draft_document_id_required");
-          if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+          // Room 已移除：工作区文稿没有归属 Room，按 documentId 解析即可，不再要求 roomId。
           if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
           try {
             snapshot = options.resolveDocumentForDraft(documentId);
@@ -1084,17 +1079,16 @@ export function createSubagentPiTools(
 
         // 块索引标记（blockIndexMark）：主 Agent 从 document_read 拿到的来源块透传给
         // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据。
+        // Room 已删除：materialSources[].roomId 可省略，缺省按工作区 scope sentinel 归一
+        // （不再做跨 Room 一致性校验，也不再因此拒绝来源）。
         const materialSources = Array.isArray(params.materialSources)
           ? params.materialSources.flatMap((item) => {
-            const entryRoomId = String(item.roomId ?? "").trim();
+            const entryRoomId = typeof item.roomId === "string" ? item.roomId.trim() : "";
             const documentId = String(item.documentId ?? "").trim();
             const blockId = String(item.blockId ?? "").trim();
-            if (!entryRoomId || !documentId || !blockId) return [];
-            if (roomId && entryRoomId !== roomId) {
-              throw new Error("ROOM_SELECTION_MISMATCH: materialSources must reference blocks in the target Room");
-            }
+            if (!documentId || !blockId) return [];
             return [{
-              roomId: entryRoomId,
+              roomId: roomScopeId(entryRoomId || null),
               documentId,
               blockId,
               ...(typeof item.label === "string" && item.label.trim()
@@ -1459,25 +1453,7 @@ export function createSubagentPiTools(
           }
         }
         const fileIdArg = typeof params.fileId === "string" ? params.fileId.trim() : "";
-        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
-          throw new Error("ROOM_SELECTION_MISMATCH: The slides target differs from the Room already bound to this run");
-        }
         const styleSessionIdParam = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
-        // 退出 Room 后 run 无房间绑定（渲染层 selectedRoomId 已空）：styleSessionId
-        // 本身是权威寻址，从风格会话反查 roomId，避免模型猜 Room 引发连环失败。
-        const styleSessionRoomId = !explicitRoomId && !run.roomId && !run.activeDocument?.roomId?.trim() && styleSessionIdParam
-          ? (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions.byId(styleSessionIdParam)?.roomId ?? ""
-          : "";
-        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || styleSessionRoomId || "";
-        if (!roomId) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
-        }
-        // 显式传入的房间必须存在于开跑快照。
-        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
-        }
 
         // ── style / style_select：无模版风格阶段（纵览候选 → 提取定参 → 风格卡）。 ──
         if (task === "style" || task === "style_select") {
@@ -1508,9 +1484,12 @@ export function createSubagentPiTools(
             const requestedDraftId = (typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "")
               || selectedStyleSession?.draftDocumentId
               || "";
+            const pendingKeys = [...stylePrefetchByDraft.keys()];
+            // 单工作区：预热 Map 以草稿 id 为键。没有点名草稿时等最近一次在飞预热
+            // （同一时间通常只有一条 PPT 流程），避免会话未到 images_ready 就重复生图。
             const pendingKey = requestedDraftId
-              ? stylePrefetchKey(roomId, requestedDraftId)
-              : [...stylePrefetchByDraft.keys()].find((k) => k.startsWith(`${roomId}::`));
+              ? stylePrefetchKey(requestedDraftId)
+              : pendingKeys[pendingKeys.length - 1];
             const pending = pendingKey ? stylePrefetchByDraft.get(pendingKey) : undefined;
             if (pending) {
               await Promise.race([
@@ -1525,7 +1504,7 @@ export function createSubagentPiTools(
           const styleResult = await runSlidesStyleStage(
             {
               task,
-              run: { runId: run.runId, sessionId: run.sessionId, roomId },
+              run: { runId: run.runId, sessionId: run.sessionId },
               instruction,
               ...(titleArg ? { title: titleArg } : {}),
               ...(typeof params.draftDocumentId === "string" && params.draftDocumentId.trim()
@@ -1589,9 +1568,9 @@ export function createSubagentPiTools(
               if (remainingChars <= 0) break;
               let snapshot: DocumentDraftSnapshot | null = null;
               try {
-                snapshot = options.resolveDocumentForDraft(documentId, roomId);
+                snapshot = options.resolveDocumentForDraft(documentId);
               } catch {
-                // 指令里引用了不存在/不属于本 Room 的 id：忽略，留给 planner 自行读取或向用户确认。
+                // 指令里引用了不存在的 documentId：忽略，留给 planner 自行读取或向用户确认。
                 continue;
               }
               const markdown = snapshot.markdown ?? "";
@@ -1611,7 +1590,6 @@ export function createSubagentPiTools(
           const plannerInput: Record<string, unknown> = {
             phase: "draft",
             instruction,
-            roomId,
             ...(titleArg ? { title: titleArg } : {}),
             ...(Array.isArray(params.outline)
               ? { outline: params.outline.map((item) => String(item ?? "").trim().slice(0, 80)).filter(Boolean) }
@@ -1623,7 +1601,6 @@ export function createSubagentPiTools(
           };
           // 阶段一开始就广播：planner 检索+成稿可到数分钟，不能只有「正在调用工具…」。
           const draftingPayload = slidesProgressPayload("drafting", {
-            roomId,
             ...(titleArg ? { title: titleArg } : {}),
           });
           onUpdate?.({ content: JSON.stringify(draftingPayload), details: draftingPayload });
@@ -1687,7 +1664,6 @@ export function createSubagentPiTools(
           let draftDocument: { documentId: string; title: string };
           try {
             draftDocument = await options.createSlidesDraftDocument({
-              roomId,
               title: gatePlan.title,
               markdown: renderDraftMarkdown(gatePlan),
             });
@@ -1711,7 +1687,6 @@ export function createSubagentPiTools(
             totalPages: gatePlan.pages.length,
             pages: gatePlan.pages,
             doneCount: 0,
-            roomId,
             documentId: draftDocument.documentId,
             updatedAt: Date.now(),
             ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
@@ -1723,11 +1698,11 @@ export function createSubagentPiTools(
           {
             const prefetchDeps = typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle;
             if (prefetchDeps) {
-              const key = stylePrefetchKey(roomId, draftDocument.documentId);
+              const key = stylePrefetchKey(draftDocument.documentId);
               const prefetch = runSlidesStyleStage(
                 {
                   task: "style",
-                  run: { runId: run.runId, sessionId: run.sessionId, roomId },
+                  run: { runId: run.runId, sessionId: run.sessionId },
                   instruction,
                   ...(titleArg ? { title: titleArg } : {}),
                   draftDocumentId: draftDocument.documentId,
@@ -1779,13 +1754,13 @@ export function createSubagentPiTools(
           let styleSession: import("../slides-style/types.js").SlidesStyleSessionData | null = null;
           if (styleSessionId && styleSessions) {
             const session = styleSessions.byId(styleSessionId);
-            if (!session || session.roomId !== roomId || session.stage !== "card_ready" || !session.styleParams) {
+            if (!session || session.stage !== "card_ready" || !session.styleParams) {
               return {
                 content: JSON.stringify({
                   status: "failed",
                   errorCode: "slides_style_session_invalid",
                   retryable: false,
-                  message: "风格会话不存在、未确认到风格卡阶段或不属于当前 Room；请先走 style → style_select 产出风格卡。",
+                  message: "风格会话不存在或未确认到风格卡阶段；请先走 style → style_select 产出风格卡。",
                 }),
                 details: { errorCode: "slides_style_session_invalid" },
               };
@@ -1794,8 +1769,8 @@ export function createSubagentPiTools(
           }
           let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
           if (!styleSessionId && draftDocumentId) {
-            styleSessionId = pageImageSessionsForResume?.byDraftId(roomId, draftDocumentId)?.styleSessionId
-              ?? styleSessions?.byDraftId(roomId, draftDocumentId)?.id
+            styleSessionId = pageImageSessionsForResume?.byDraftId(draftDocumentId)?.styleSessionId
+              ?? styleSessions?.byDraftId(draftDocumentId)?.id
               ?? "";
             if (styleSessionId && styleSessions) styleSession = styleSessions.byId(styleSessionId);
           }
@@ -1882,7 +1857,6 @@ export function createSubagentPiTools(
           ): Promise<SemanticAssembled> => assembleSemanticPlan({
             plan: planToAssemble,
             instruction,
-            roomId,
             repair: (input, round) => retryDispatch(() => dispatch({
               agentId: "slides-editor", task: "单页内容修复", input,
               idempotencyKey: dispatchKey(run.runId, "slides-editor", `${repairKeyPrefix}:${round}`, input),
@@ -1904,7 +1878,6 @@ export function createSubagentPiTools(
                 revisions: ["slides-planner", "slides-editor", "slides-layouter"].map(id => registry.get(id)?.revision?.digest),
               };
               options.slidesEditor?.store?.save({
-                roomId,
                 draftDocumentId,
                 draftHash: `semantic-v3:${semanticHash({ hash: assembled.draftHash, style: styleParamsForHash, scene: sceneId, generation })}`,
                 storyboard: assembled.storyboard,
@@ -2030,7 +2003,6 @@ export function createSubagentPiTools(
                   }), slidesConcurrencyRetry(orchestrator, "slides-layouter")),
               },
               {
-                roomId,
                 sessionId: run.sessionId,
                 runId: run.runId,
                 parentRunId,
@@ -2089,7 +2061,7 @@ export function createSubagentPiTools(
             || regenerateIndexes.length > 0 || rejectIndexes.length > 0 || restoreIndexes.length > 0;
           const existingPageImagesSession = hasPageImagesParams
             ? null
-            : pageImagesStoreRef?.byDraftId(roomId, draftDocumentId) ?? null;
+            : pageImagesStoreRef?.byDraftId(draftDocumentId) ?? null;
           const waitingPageImagesSession = existingPageImagesSession
             && (existingPageImagesSession.stage === "confirm" || existingPageImagesSession.stage === "review")
             ? existingPageImagesSession
@@ -2117,7 +2089,7 @@ export function createSubagentPiTools(
             };
             let outcome: PageImagesStageOutcome;
             if (pageImagesDecision === "generate" || pageImagesDecision === "skip" || pageImagesDecision === "accept") {
-              outcome = await decidePageImages({ roomId, draftDocumentId, decision: pageImagesDecision }, stageDeps);
+              outcome = await decidePageImages({ draftDocumentId, decision: pageImagesDecision }, stageDeps);
             } else if (batchRequested && (regenerateIndexes.length > 0 || rejectIndexes.length > 0 || restoreIndexes.length > 0)) {
               // 批量处置：一次调用内循环处理、逐张广播，返回合并 message（旧单数参数也走这里）。
               const failureNotes: string[] = [];
@@ -2131,14 +2103,13 @@ export function createSubagentPiTools(
                 failureNotes.push(`${action}失败${typeof failedContent?.message === "string" ? `：${failedContent.message}` : ""}`);
               };
               for (const index of rejectIndexes) {
-                absorb(reviewPageImageReject({ roomId, draftDocumentId, index, rejected: true }, stageDeps), `打回第 ${index} 张`);
+                absorb(reviewPageImageReject({ draftDocumentId, index, rejected: true }, stageDeps), `打回第 ${index} 张`);
               }
               for (const index of restoreIndexes) {
-                absorb(reviewPageImageReject({ roomId, draftDocumentId, index, rejected: false }, stageDeps), `恢复第 ${index} 张`);
+                absorb(reviewPageImageReject({ draftDocumentId, index, rejected: false }, stageDeps), `恢复第 ${index} 张`);
               }
               for (const index of regenerateIndexes) {
                 absorb(await regeneratePageImage({
-                  roomId,
                   draftDocumentId,
                   index,
                   ...(typeof params.regenerateFeedback === "string" ? { feedback: params.regenerateFeedback } : {}),
@@ -2172,17 +2143,16 @@ export function createSubagentPiTools(
               outcome = { kind: "waiting", result: { content: JSON.stringify(merged), details: merged } };
             } else if (regenerateIndex !== null) {
               outcome = await regeneratePageImage({
-                roomId,
                 draftDocumentId,
                 index: regenerateIndex,
                 ...(typeof params.regenerateFeedback === "string" ? { feedback: params.regenerateFeedback } : {}),
               }, stageDeps);
             } else if (rejectIndex !== null) {
-              outcome = reviewPageImageReject({ roomId, draftDocumentId, index: rejectIndex, rejected: true }, stageDeps);
+              outcome = reviewPageImageReject({ draftDocumentId, index: rejectIndex, rejected: true }, stageDeps);
             } else if (restoreIndex !== null) {
-              outcome = reviewPageImageReject({ roomId, draftDocumentId, index: restoreIndex, rejected: false }, stageDeps);
+              outcome = reviewPageImageReject({ draftDocumentId, index: restoreIndex, rejected: false }, stageDeps);
             } else {
-              outcome = reshowPageImages({ roomId, draftDocumentId }, stageDeps);
+              outcome = reshowPageImages({ draftDocumentId }, stageDeps);
             }
             if (outcome.kind !== "build") return outcome.result;
             const buildArmPlan = slidesProgressPlanFrom(outcome.plan);
@@ -2199,7 +2169,7 @@ export function createSubagentPiTools(
             }
             // 空串的 styleSessionId（续跑调用未带）必须落进回查：?? 不吃空串，用 || 串链。
             const settleStyleSessionId = styleSessionId || waitingPageImagesSession?.styleSessionId
-              || pageImagesStoreRef.byDraftId(roomId, draftDocumentId)?.styleSessionId || null;
+              || pageImagesStoreRef.byDraftId(draftDocumentId)?.styleSessionId || null;
             const resumeStyleSession = settleStyleSessionId && styleSessions
               ? styleSessions.byId(settleStyleSessionId) : null;
             const acceptNote = outcome.kind === "build" ? outcome.message : undefined;
@@ -2230,7 +2200,7 @@ export function createSubagentPiTools(
                 status: "failed",
                 errorCode: "slides_draft_document_not_found",
                 retryable: false,
-                message: "草稿文档不存在或不属于当前 Room；与用户确认文档后重新提供 draftDocumentId。",
+                message: "草稿文档不存在；与用户确认文档后重新提供 draftDocumentId。",
               }),
               details: { errorCode: "slides_draft_document_not_found" },
             };
@@ -2268,7 +2238,6 @@ export function createSubagentPiTools(
             : null;
           if (prewarmToken !== null) {
             registerPrewarm(prewarmToken, {
-              roomId,
               draftDocumentId,
               stylePalette: compactStylePalette(effectivePalette),
               images: styleDeps!.images!,
@@ -2281,7 +2250,6 @@ export function createSubagentPiTools(
           const planningPayload = slidesProgressPayload("planning", {
             title: draftSnapshot.document.title.slice(0, 120),
             totalPages: draftPages.length,
-            roomId,
             documentId: draftDocumentId,
           });
           onUpdate?.({ content: JSON.stringify(planningPayload), details: planningPayload });
@@ -2300,7 +2268,6 @@ export function createSubagentPiTools(
           // 编排 checkpoint：同一草稿/指令/风格/来源的重试只补失败批。有已完成批时不做流水线
           // （重试场景批次少、且复用的批不会重新派发，直接走整册合并路径最稳）。
           const checkpointKey = arrangeBatchCheckpointKey({
-            roomId,
             draftDocumentId,
             instruction,
             sourcesHash: semanticHash(semanticSources),
@@ -2316,6 +2283,16 @@ export function createSubagentPiTools(
           restoreGeneration(checkpointKey);
           const savedCheckpoint = generationCheckpoints.read(checkpointKey);
           const checkpoint = { batches: new Map(Object.entries(savedCheckpoint.batches).map(([index, value]) => [Number(index), value])) };
+          // 批次失败缺陷：随 checkpoint 持久化。同一次 run 的整批重试与用户重试 generate
+          // 都会把上一轮的具体缺陷随输入喂回 planner，避免整批从零盲排。
+          const batchErrors: Record<string, string[]> = { ...(savedCheckpoint.batchErrors ?? {}) };
+          const persistBatchErrors = (batchIndex: number, errors?: string[]): void => {
+            const key = String(batchIndex);
+            const normalized = (errors ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 12);
+            if (normalized.length > 0) batchErrors[key] = normalized;
+            else delete batchErrors[key];
+            generationCheckpoints.patch(checkpointKey, { batchErrors });
+          };
           // ── 分批流水线（内容→布局→落页）：批一完成就装配本批内容并推进落页尾部，不等全部批次。
           // 单批路径没有重叠收益，保持原逻辑；配图页攒到批次全部完成后再走过目卡/自动生图。
           const streamingScene = resolveScene(inferSceneId(instruction));
@@ -2338,7 +2315,6 @@ export function createSubagentPiTools(
             if (draftArmPlan) {
               const stream = createSlidePageStream();
               const tail = runLayouterTail(layouterDepsFor(streamingOffice), {
-                roomId,
                 sessionId: run.sessionId,
                 runId: run.runId,
                 parentRunId: null,
@@ -2391,7 +2367,6 @@ export function createSubagentPiTools(
             const plannerInput: Record<string, unknown> = {
               phase: "arrange",
               instruction,
-              roomId,
               title: deckTitle,
               draftPages,
               contentMode: SEMANTIC_MODE,
@@ -2478,17 +2453,17 @@ export function createSubagentPiTools(
                   totalPages: draftPages.length,
                   doneBatches: checkpoint.batches.size,
                   totalBatches: arrangeBatches.length,
-                  roomId,
                   documentId: draftDocumentId,
                 });
                 onUpdate?.({ content: JSON.stringify(progress), details: progress });
               },
               async run(batch, attempt) {
                 const hitsForBatch = batchMaterialHits(batch);
+                // attempt 0 用上次用户重试留下的缺陷；in-run 重试用本轮刚记录的缺陷。
+                const priorErrors = batchErrors[String(batch.index)] ?? [];
                 const batchInput: Record<string, unknown> = {
                   phase: "arrange",
                   instruction,
-                  roomId,
                   title: deckTitle,
                   draftPages: batch.pages,
                   contentMode: SEMANTIC_MODE,
@@ -2497,6 +2472,7 @@ export function createSubagentPiTools(
                   ...(deckStyle ? { deckStyle } : {}),
                   ...(referenceStyle ? { referenceStyle } : {}),
                   ...(hitsForBatch.length > 0 ? { materialHits: hitsForBatch } : {}),
+                  ...(priorErrors.length > 0 ? { previousErrors: priorErrors } : {}),
                 };
                 const invocation = await retryDispatch(
                   () => dispatch({
@@ -2517,21 +2493,30 @@ export function createSubagentPiTools(
                   arrangeBatchRetry(orchestrator),
                 );
                 if (invocation.status !== "completed") {
+                  const errorCode = invocation.errorCode ?? invocation.errorMessage ?? invocation.status;
+                  const errorMessage = invocation.errorMessage ?? errorCode;
+                  persistBatchErrors(batch.index, [`planner 调用未完成（${invocation.status}）：${errorMessage}`]);
                   return {
                     ok: false as const,
                     status: invocation.status,
-                    errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+                    errorCode,
+                    errorMessage,
                     invocationId: invocation.id,
+                    // 超时/输出上限/调度失败属于可重试的瞬时失败；语义契约失败才不重试。
+                    retryable: true,
                   };
                 }
                 const batchPlan = structuredPlanOf(invocation);
                 const errors = batchPlan ? validateArrangeBatchPlan(batch, batchPlan) : ["批结果不是对象"];
                 if (!batchPlan || errors.length > 0) {
+                  persistBatchErrors(batch.index, errors);
                   return {
                     ok: false as const,
                     status: "failed",
                     errorCode: errors[0] ?? "slides_arrange_batch_invalid",
+                    errorMessage: errors.slice(0, 4).join("; "),
                     invocationId: invocation.id,
+                    retryable: true,
                   };
                 }
                 // 流水线：本批内容契约一过就立刻派布局并落页，不等其他批。
@@ -2553,11 +2538,15 @@ export function createSubagentPiTools(
                       `semantic-repair:batch-${batch.index}`,
                     );
                     if (!assembled.report.passed) {
+                      persistBatchErrors(batch.index, assembled.report.errors);
                       return {
                         ok: false as const,
                         status: "failed",
                         errorCode: "slides_semantic_content_invalid",
+                        errorMessage: assembled.report.errors.slice(0, 4).join("; "),
                         invocationId: invocation.id,
+                        // 语义契约失败是确定性的：同稿再排一次只会复现同一组缺陷。
+                        retryable: false,
                       };
                     }
                     const batchPages = assembled.plan.pages as unknown as Array<Record<string, unknown>>;
@@ -2575,15 +2564,21 @@ export function createSubagentPiTools(
                       }
                     }
                   } catch (error) {
+                    const semanticErrors = (error as Error & { semanticErrors?: string[] }).semanticErrors;
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    persistBatchErrors(batch.index, semanticErrors?.length ? semanticErrors : [errorMessage]);
                     return {
                       ok: false as const,
                       status: "failed",
                       errorCode: "slides_semantic_content_invalid",
                       invocationId: invocation.id,
-                      errorMessage: error instanceof Error ? error.message : String(error),
+                      errorMessage,
+                      // 内容契约校验不通过是确定性失败，不整批重排。
+                      retryable: false,
                     };
                   }
                 }
+                persistBatchErrors(batch.index);
                 return { ok: true as const, plan: batchPlan, invocationId: invocation.id };
               },
             });
@@ -2608,7 +2603,7 @@ export function createSubagentPiTools(
                   status: "failed",
                   errorCode: "slides_arrange_batch_failed",
                   retryable: true,
-                  message: `编排未完成（${failed}失败）；已完成的批次已保留，重试只补未完成批次。`,
+                  message: `编排未完成（${failed}失败）；已完成的批次已保留，重试只补未完成批次，并对失败批次带上本次的具体缺陷重新编排。`,
                 }),
                 details: {
                   errorCode: "slides_arrange_batch_failed",
@@ -2671,7 +2666,6 @@ export function createSubagentPiTools(
             totalPages: gatePlan.pages.length,
             pages: gatePlan.pages,
             doneCount: 0,
-            roomId,
             documentId: draftDocumentId,
             updatedAt: Date.now(),
             ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
@@ -2766,7 +2760,6 @@ export function createSubagentPiTools(
           if (pendingImagePages.length > 0 && pageImagesStoreRef && styleDeps?.images) {
             const stylePalette = compactStylePalette(effectivePalette);
             const outcome = openPageImagesConfirm({
-              roomId,
               draftDocumentId,
               styleSessionId,
               plan,
@@ -2808,7 +2801,6 @@ export function createSubagentPiTools(
                   totalPages: gatePlanFinal.pages.length,
                   pages: gatePlanFinal.pages,
                   doneCount: 0,
-                  roomId,
                   documentId: draftDocumentId,
                   updatedAt: Date.now(),
                   ...(gatePlanFinal.narrative ? { narrative: gatePlanFinal.narrative } : {}),
@@ -2826,7 +2818,6 @@ export function createSubagentPiTools(
         const editInput = {
           task: "edit",
           instruction,
-          roomId,
           ...(fileIdArg ? { fileId: fileIdArg } : {}),
         };
         let editInvocation;

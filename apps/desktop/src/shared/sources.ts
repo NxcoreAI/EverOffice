@@ -23,8 +23,6 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
-  MovedRoomDocument,
-  MoveRoomDocumentsResult,
   SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -544,13 +542,6 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   return null
 }
 
-/** 产物库认可的 Room 文件来源：Agent 生成 + 用户导入的 Office 产物（其余 sourceKind 归资料）。 */
-export const ROOM_ARTIFACT_SOURCE_KINDS = ['agent-generated', 'artifact-imported'] as const
-
-export function isRoomArtifactSourceKind(sourceKind: string | null | undefined): boolean {
-  return sourceKind === 'agent-generated' || sourceKind === 'artifact-imported'
-}
-
 /** 产物库导入的 Office 扩展名（内嵌预览/编辑覆盖的格式；PDF 走资料导入，不在此列）。 */
 export const ARTIFACT_IMPORT_EXTENSIONS = [
   '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx',
@@ -704,7 +695,7 @@ export interface NxcoreDesktopApi {
     activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
     cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
     importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
-    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
+    importCommit(input: { runId: string; roomId?: string; targetDocumentId?: string }): Promise<{
       run: DocumentImportRunView
       roomImportId: string | null
       relation: 'primary' | 'candidate'
@@ -929,9 +920,12 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
-    list(roomId: string): Promise<RoomDocument[]>
-    listTrash(roomId: string): Promise<RoomDocument[]>
+    /** roomId 省略/null = 工作区文稿 */
+    list(roomId?: string | null): Promise<RoomDocument[]>
+    listTrash(roomId?: string | null): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
+    /** 工作区文稿正文 markdown（只读预览用） */
+    readMarkdown(documentId: string): Promise<{ documentId: string; markdown: string }>
     listBlocks(documentId: string): Promise<DocumentBlockList>
     listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
     listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
@@ -963,13 +957,11 @@ export interface NxcoreDesktopApi {
     import(input: ImportRoomDocumentInput): Promise<RoomDocument>
     save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
     delete(documentId: string): Promise<void>
-    move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument>
-    moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
-    emptyTrash(roomId: string): Promise<void>
+    emptyTrash(roomId?: string | null): Promise<void>
     exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
-    subscribe(roomId: string): Promise<void>
+    subscribe(roomId?: string | null): Promise<void>
     unsubscribe(roomId?: string): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
     onOperationChanged(listener: (operationId: string) => void): () => void
@@ -1047,8 +1039,8 @@ export interface NxcoreDesktopApi {
     takePendingOsOpen(): Promise<OsOpenedDocument | null>
   }
   thesisFormat: {
-    /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
-    listCards(roomId: string): Promise<Array<{
+    /** 工作区论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
+    listCards(): Promise<Array<{
       id: string
       sourceName: string
       sourceFileEntryId: string | null
@@ -1056,13 +1048,13 @@ export interface NxcoreDesktopApi {
       card: Record<string, unknown>
     }>>
     /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
-    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
+    setFromLibrary(fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
     /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
-    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    pickAndSet(): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
     /** 删除一张格式卡。 */
-    removeCard(roomId: string, cardId: string): Promise<void>
+    removeCard(cardId: string): Promise<void>
     /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */
-    reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
+    reformat(fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
     onCardChanged(listener: () => void): () => void
   }
 }

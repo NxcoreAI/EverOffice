@@ -105,11 +105,12 @@ describe('Agent run activity', () => {
   const mappedToolNames = [
     'connector_apps', 'connector_run', 'connector_schema', 'connector_search',
     'connector_data_search', 'connector_record_get', 'connector_sync_status', 'send_notification',
-    'submit_format_mapping', 'tool_search', 'context_room_document_intent', 'context_room_document_list',
+    'submit_format_mapping', 'tool_search', 'document_create_intent', 'context_room_document_intent', 'context_room_document_list',
     'context_room_document_read', 'context_room_document_delete', 'context_room_document_comment_add', 'context_room_list',
     'context_room_create', 'context_room_patch_begin', 'context_room_patch_commit', 'context_room_patch_hunk',
     'context_room_patch_abort', 'context_room_write_append', 'context_room_write_begin', 'context_room_write_commit',
-    'context_room_write_abort', 'context_room_office_create', 'context_room_sheets_create', 'context_room_slides_create',
+    'context_room_write_abort', 'context_room_office_create', 'context_room_sheets_create', 'slides_create',
+    'slides_set_page', 'slides_read', 'slides_edit', 'context_room_slides_create',
     'context_room_slides_set_page', 'context_room_slides_read', 'context_room_slides_edit', 'slides_draft',
     'slides_image_prewarm', 'slides_layout_validate', 'context_room_context_get', 'context_room_overview_regenerate',
     'context_room_correction_propose', 'context_room_correction_apply', 'context_room_correction_apply_citation', 'context_room_correction_revoke',
@@ -189,6 +190,11 @@ describe('Agent run activity', () => {
     expect(agentToolSubject(toolNamed('document_draft', { code: 'not-the-target', input: 'not-the-target', title: '季度报告' }))).toBe('季度报告')
     expect(agentToolSubject(toolNamed('document_draft', { instruction: '续写第三章' }))).toBe('续写第三章')
     expect(agentToolSubject(toolNamed('context_room_slides_create', { title: '产品发布' }))).toBe('产品发布')
+    expect(agentToolSubject(toolNamed('slides_create', { title: '产品发布' }))).toBe('产品发布')
+    expect(agentToolSubject(toolNamed('slides_set_page', { slideIndex: 2 }))).toBe('2')
+    expect(agentToolSubject(toolNamed('slides_read', { fileId: 'file-9' }))).toBe('file-9')
+    expect(agentToolSubject(toolNamed('slides_edit', { fileId: 'file-9' }))).toBe('file-9')
+    expect(agentToolSubject(toolNamed('document_create_intent', { title: '创建选项' }))).toBe('创建选项')
     expect(agentToolSubject(toolNamed('document_import_search', { query: '季度复盘' }))).toBe('季度复盘')
     expect(agentToolSubject(toolNamed('agent_dispatch', { agentId: 'researcher', task: '调研竞品' }))).toBe('researcher · 调研竞品')
     expect(agentToolSubject(toolNamed('context_room_slides_set_page', { slideIndex: 2 }))).toBe('2')
@@ -198,6 +204,20 @@ describe('Agent run activity', () => {
     expect(agentToolSubject(toolNamed('zzz_unknown_tool', { command: 'ls' }))).toBe('ls')
   })
 
+  it('shows the real slide/document tool names with the same copy as the legacy context_room_* names', () => {
+    const legacyPairs = [
+      ['slides_create', 'context_room_slides_create'],
+      ['slides_set_page', 'context_room_slides_set_page'],
+      ['slides_read', 'context_room_slides_read'],
+      ['slides_edit', 'context_room_slides_edit'],
+      ['document_create_intent', 'context_room_document_intent'],
+    ] as const
+    for (const [current, legacy] of legacyPairs) {
+      expect(agentToolLabel(toolNamed(current), false, zh), current).toBe(agentToolLabel(toolNamed(legacy), false, zh))
+      expect(agentToolLabel(toolNamed(current), true, zh), current).toBe(agentToolLabel(toolNamed(legacy), true, zh))
+    }
+  })
+
   it('maps tool kinds from the same explicit table and leaves unknown tools as other', () => {
     expect(toolKind('document_draft')).toBe('document')
     expect(toolKind('document_analysis')).toBe('document')
@@ -205,6 +225,11 @@ describe('Agent run activity', () => {
     expect(toolKind('screen_memory_search')).toBe('memory')
     expect(toolKind('context_room_task_create')).toBe('task')
     expect(toolKind('context_room_slides_create')).toBe('slides')
+    expect(toolKind('slides_create')).toBe('slides')
+    expect(toolKind('slides_set_page')).toBe('slides')
+    expect(toolKind('slides_read')).toBe('slides')
+    expect(toolKind('slides_edit')).toBe('slides')
+    expect(toolKind('document_create_intent')).toBe('document')
     expect(toolKind('everroom_search')).toBe('search')
     expect(toolKind('zzz_unknown_tool')).toBe('other')
     expect(toolKind('zzz_document_tool')).toBe('other')

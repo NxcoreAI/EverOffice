@@ -193,6 +193,17 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(plugin.manifest.requiresRoom).toBe(false);
     expect(tools.size).toBe(6);
   });
+
+  it("Room 已删除：工具文案不再指向 Room / 产物库，生成物统一落在文件库", () => {
+    const { plugin, tools } = createHarness();
+    const surface = [
+      ...plugin.promptGuidelines,
+      ...[...tools.values()].flatMap((tool) => [tool.title, tool.description]),
+    ].join("\n");
+    expect(surface).not.toContain("Room");
+    expect(surface).not.toContain("产物库");
+    expect(surface).toContain("文件库");
+  });
 });
 
 describe("office 工具：PPT 编辑（slides read / edit）", () => {

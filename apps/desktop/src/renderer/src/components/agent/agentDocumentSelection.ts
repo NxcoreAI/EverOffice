@@ -70,9 +70,10 @@ function documentsFrom(value: unknown): AgentDocumentSelectionItem[] | null {
     const candidate = record(item)
     const documentIdValue = candidate?.documentId ?? candidate?.id
     const documentId = typeof documentIdValue === 'string' ? documentIdValue.trim() : ''
-    const roomId = typeof candidate?.roomId === 'string' ? candidate.roomId.trim() : ''
+    // 单工作区语义：roomId 可缺省（null = 工作区级文稿），只有文档 id 与标题是硬性校验。
+    const roomId = typeof candidate?.roomId === 'string' ? candidate.roomId.trim() || null : null
     const title = typeof candidate?.title === 'string' ? candidate.title.trim() : ''
-    if (!documentId || !roomId || !title || seen.has(documentId)) continue
+    if (!documentId || !title || seen.has(documentId)) continue
     seen.add(documentId)
     const version = typeof candidate?.version === 'number'
       && Number.isInteger(candidate.version)
@@ -130,8 +131,8 @@ export function findPendingAgentDocumentSelection(
         selectionParseCache.set(tool, parseAgentDocumentSelectionResult(tool.result))
       }
       const result = selectionParseCache.get(tool)
-      // 空列表不弹卡片：没有可选对象时弹"选择要编辑的文档"只会造成困惑
-      // （也覆盖修复前入库的旧结果——其候选缺 roomId，解析后恒为空）
+      // 空列表不弹卡片：没有可选对象时弹"选择要编辑的文档"只会造成困惑。
+      // 候选缺 roomId 仍然可用（工作区级文稿），只有文档 id/title 缺失才丢弃。
       return result && result.documents.length > 0 ? [{ tool, result }] : []
     })
     .sort((left, right) => (
