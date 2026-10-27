@@ -14,7 +14,7 @@ import type { OfficeBridgeClient } from "../documents/capabilities/office-bridge
 import { ThesisFormatCardStore } from "./card-store.js";
 import { buildTemplateFacts, normalizeMembersToDocx, unpackTemplateInput } from "./normalize.js";
 import { validateThesisFormatCard } from "./validate.js";
-import type { ThesisBindingSpec, ThesisFormatCard } from "./types.js";
+import type { ThesisBindingSpec, ThesisFormatCard, ThesisTemplateFacts } from "./types.js";
 
 const THESIS_FORMATTER_AGENT_ID = "thesis-formatter";
 
@@ -90,7 +90,9 @@ export class ThesisFormatService {
     const structured = await this.dispatchAgent(task, input);
     const rawCard = structured?.formatCard;
     if (!rawCard || typeof rawCard !== "object") throw new Error("thesis_format_card_missing");
-    const card = validateThesisFormatCard(rawCard, name);
+    // 图片字节一律由网关从模版事实确定性写入卡片，**不经过解析代理**：
+    // 让模型回显 base64 既烧输出预算（一份 logo 动辄上万 token），又容易抄错。
+    const card = mergeTemplateImages(validateThesisFormatCard(rawCard, name), facts);
     const rawGaps = structured?.templateFactsGaps;
     const factGaps = Array.isArray(rawGaps)
       ? rawGaps.filter((g): g is string => typeof g === "string" && g.trim().length > 0).slice(0, 20)
@@ -202,4 +204,26 @@ export class ThesisFormatService {
       achievements: strArray(src.achievements).map((a) => a.slice(0, 600)),
     };
   }
+}
+
+/**
+ * 把模版里抽出的图片事实写进格式卡（页眉图 + 封面图）。
+ *
+ * 确定性合并：只补卡片里缺的字段，不覆盖已解析代理给出的合法值；没有图片事实
+ * 时保持字段缺省——绝不编造 logo。
+ */
+export function mergeTemplateImages(card: ThesisFormatCard, facts: ThesisTemplateFacts): ThesisFormatCard {
+  const members = facts.ooxml ?? [];
+  const headerImages = members.map((member) => member.headers ?? []).flat()
+    .map((header) => header.images ?? []).find((images) => images.length > 0) ?? [];
+  const coverImage = members.map((member) => member.coverImages ?? []).flat()[0];
+
+  const next: ThesisFormatCard = { ...card };
+  if ((next.header.images ?? []).length === 0 && headerImages.length > 0) {
+    next.header = { ...next.header, images: headerImages.slice(0, 6) };
+  }
+  if (!next.cover.logo && coverImage) {
+    next.cover = { ...next.cover, logo: coverImage };
+  }
+  return next;
 }

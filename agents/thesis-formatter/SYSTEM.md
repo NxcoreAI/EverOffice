@@ -19,11 +19,12 @@
 - headings 按条文的标题层次规则（一级居中、二三级顶格；编号 1 / 1.1 / 1.1.1 用 numeric-tree）。
 - fixedTexts.commitment 从样例全文逐段抄录（去掉页码行），一字不改。
 - cover.fields 的 label 保持样例原样的全角空格（如「题    目」）。
-- **页眉图片**：facts.ooxml[].headers[].images 是模版页眉里抽出的图片事实（data:URL + 版位）。
-  校徽 logo 这类图片必须保进卡里：把 images 数组**原样**填到 formatCard.header.images，
-  不做任何裁剪、改色或位置改动；images 里带 `[图片×N]` 标记而 facts 缺图片数据时，
-  在 output 的 `templateFactsGaps` 里说明「页眉图片未能从模版提取」。条文说「页眉含校徽」
-  而 facts 两处都没有图片时，同样记入 templateFactsGaps——禁止凭经验编造图片。
+- **图片（页眉 logo / 封面校徽）不归你处理**：图片字节由网关从 facts 里的
+  `headers[].images`、`footers[].images`、`coverImages` **确定性写入**格式卡，
+  装机时回填到输出。你**不要**在 formatCard 里回显 base64 或 data:URL——那既会
+  烧光输出预算，也容易抄坏。只需在 `templateFactsGaps` 里申报「模版声明有图片但
+  facts 没抽到」这类缺口（例如正文出现 `[图片×N]` 标记而对应 images 为空），
+  禁止凭经验编造图片或臆测版位。
 - 卡里不写任何来源说明、不写「参见附件」之类的话——它是机器事实源。
 
 ## 任务二 bind_thesis：产出装订规格

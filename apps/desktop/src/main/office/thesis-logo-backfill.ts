@@ -103,17 +103,85 @@ function anchoredDrawingXml(rId: number, image: LogoImage): string {
  * 把格式卡里的页眉图片回填进装订版 docx。
  * 返回原字节（无图片/找不到页眉部件时不动，由调用方决定是否提示）。
  */
+/** 过滤出结构合法的图片事实（最多 limit 张）。 */
+function pickImages(input: Array<Record<string, unknown>> | undefined, limit: number): LogoImage[] {
+  const out: LogoImage[] = []
+  for (const raw of (input ?? []).slice(0, limit)) {
+    if (!raw || typeof raw !== 'object') continue
+    const candidate = raw as { dataUrl?: unknown }
+    if (typeof candidate.dataUrl !== 'string' || !candidate.dataUrl.startsWith('data:image/')) continue
+    out.push(raw as unknown as LogoImage)
+  }
+  return out
+}
+
+/** 保证 [Content_Types].xml 里有这些图片扩展名的默认项。 */
+async function ensureContentTypes(zip: JSZip, images: LogoImage[]): Promise<void> {
+  const file = zip.file('[Content_Types].xml')
+  if (!file) return
+  let contentTypes = await file.async('string')
+  for (const ext of new Set(images.map((image) => dataUrlToPart(image.dataUrl)?.ext).filter((value): value is string => Boolean(value)))) {
+    if (new RegExp(`Extension="${ext}"`).test(contentTypes)) continue
+    const mime = ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'bmp' ? 'image/bmp' : ext === 'emf' ? 'image/x-emf' : ext === 'wmf' ? 'image/x-wmf' : 'image/png'
+    contentTypes = contentTypes.replace('</Types>', `<Default Extension="${ext}" ContentType="${mime}"/></Types>`)
+  }
+  zip.file('[Content_Types].xml', contentTypes)
+}
+
+/**
+ * 把封面图片（校徽）插到输出正文最前——装订引擎重建封面时不会带原封面图，
+ * 模版里的学校标识因此丢失（用户报「导入模版后 logo 不见了」）。
+ */
+async function injectCoverLogo(zip: JSZip, image: LogoImage): Promise<boolean> {
+  const documentFile = zip.file('word/document.xml')
+  const relsFile = zip.file('word/_rels/document.xml.rels')
+  if (!documentFile || !relsFile) return false
+  const part = dataUrlToPart(image.dataUrl)
+  if (!part) return false
+
+  let relsXml = await relsFile.async('string')
+  const nextRel = (relsXml.match(/Id="rId(\d+)"/g) ?? [])
+    .reduce((max, match) => Math.max(max, Number(match.match(/\d+/)?.[0] ?? 0)), 0) + 1
+  const mediaPath = `word/media/thesiscover${nextRel}.${part.ext}`
+  zip.file(mediaPath, part.base64, { base64: true })
+  relsXml = relsXml.replace(
+    '</Relationships>',
+    `<Relationship Id="rId${nextRel}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/thesiscover${nextRel}.${part.ext}"/></Relationships>`,
+  )
+  zip.file('word/_rels/document.xml.rels', relsXml)
+
+  const documentXml = await documentFile.async('string')
+  const bodyOpen = documentXml.indexOf('<w:body>')
+  const firstParagraph = documentXml.search(/<w:p[\s>]/)
+  if (firstParagraph < 0) return false
+  const align = image.posH === 'left' || image.posH === 'right' ? image.posH : 'center'
+  const drawing = inlineDrawingXml(nextRel, image)
+  // 居中段落 + 内联图：与模版封面「校徽在上、校名在下」的版式一致。
+  const paragraph = `<w:p><w:pPr><w:jc w:val="${align}"/></w:pPr><w:r>${drawing}</w:r></w:p>`
+  const insertAt = firstParagraph > bodyOpen && bodyOpen >= 0 ? firstParagraph : documentXml.indexOf('>', bodyOpen) + 1
+  zip.file('word/document.xml', documentXml.slice(0, insertAt) + paragraph + documentXml.slice(insertAt))
+  await ensureContentTypes(zip, [image])
+  return true
+}
+
+/** 从格式卡里取封面图（cover.logo）。 */
+export async function backfillThesisCoverLogo(
+  bytes: Uint8Array,
+  logo: Record<string, unknown> | undefined,
+): Promise<Uint8Array> {
+  const [image] = pickImages(logo ? [logo] : [], 1)
+  if (!image) return bytes
+  const zip = await JSZip.loadAsync(bytes)
+  const injected = await injectCoverLogo(zip, image)
+  if (!injected) return bytes
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } })
+}
+
 export async function backfillThesisHeaderLogos(
   bytes: Uint8Array,
   images: Array<Record<string, unknown>>,
 ): Promise<Uint8Array> {
-  const logos: LogoImage[] = []
-  for (const raw of images.slice(0, 6)) {
-    if (!raw || typeof raw !== 'object') continue
-    const candidate = raw as { dataUrl?: unknown }
-    if (typeof candidate.dataUrl !== 'string' || !candidate.dataUrl.startsWith('data:image/')) continue
-    logos.push(raw as unknown as LogoImage)
-  }
+  const logos = pickImages(images, 6)
   if (logos.length === 0) return bytes
 
   const zip = await JSZip.loadAsync(bytes)
@@ -187,16 +255,7 @@ export async function backfillThesisHeaderLogos(
   zip.file(headerRelsPath, headerRelsXml)
 
   // [Content_Types].xml 补图片默认项
-  const contentTypesFile = zip.file('[Content_Types].xml')
-  if (contentTypesFile) {
-    let contentTypes = await contentTypesFile.async('string')
-    for (const ext of new Set(logos.map((l) => dataUrlToPart(l.dataUrl)?.ext).filter((e): e is string => Boolean(e)))) {
-      if (new RegExp(`Extension="${ext}"`).test(contentTypes)) continue
-      const mime = ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'bmp' ? 'image/bmp' : ext === 'emf' ? 'image/x-emf' : ext === 'wmf' ? 'image/x-wmf' : 'image/png'
-      contentTypes = contentTypes.replace('</Types>', `<Default Extension="${ext}" ContentType="${mime}"/></Types>`)
-    }
-    zip.file('[Content_Types].xml', contentTypes)
-  }
+  await ensureContentTypes(zip, logos)
 
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } })
 }

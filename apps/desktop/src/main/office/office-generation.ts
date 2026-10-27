@@ -6,7 +6,7 @@ import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime, type ThesisBindingSpecPayload, type ThesisFormatCardPayload } from './office-runtime'
-import { backfillThesisHeaderLogos } from './thesis-logo-backfill'
+import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from './thesis-logo-backfill'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -243,6 +243,15 @@ export async function generateThesisDocx(
     } catch (error) {
       // 回填失败不阻断出稿，但要在 warnings 通道可见——挂到控制台与广播 phase
       console.warn('[thesis] 页眉 logo 回填失败', error)
+    }
+  }
+  // 模版封面上的校徽/校名标识：装订重建封面不会带入，这里补到正文最前。
+  const coverLogo = (input.formatCard.cover as { logo?: Record<string, unknown> } | undefined)?.logo
+  if (coverLogo) {
+    try {
+      bytes = await backfillThesisCoverLogo(bytes, coverLogo)
+    } catch (error) {
+      console.warn('[thesis] 封面 logo 回填失败', error)
     }
   }
   onPhase?.('saved')

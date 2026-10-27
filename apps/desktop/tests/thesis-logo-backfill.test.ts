@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { backfillThesisHeaderLogos } from '../src/main/office/thesis-logo-backfill'
+import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from '../src/main/office/thesis-logo-backfill'
 
 /** 最小可用 docx：三节结构（封面/前置/正文），正文节带默认页眉引用。 */
 async function boundDocxWithHeader(): Promise<Uint8Array> {
@@ -83,5 +83,36 @@ describe('backfillThesisHeaderLogos', () => {
     const original = await boundDocxWithHeader()
     expect(await backfillThesisHeaderLogos(original, [])).toBe(original)
     expect(await backfillThesisHeaderLogos(original, [{ dataUrl: 'not-a-data-url' }])).toBe(original)
+  })
+})
+
+describe('backfillThesisCoverLogo', () => {
+  it('把封面校徽插到正文最前，并注册 media 与文档 rels', async () => {
+    const bytes = await backfillThesisCoverLogo(await boundDocxWithHeader(), {
+      dataUrl: LOGO_PNG,
+      widthPx: 626,
+      heightPx: 89,
+      posH: 'center',
+    })
+    const zip = await JSZip.loadAsync(bytes)
+    const document = await zip.file('word/document.xml')!.async('string')
+    const drawingAt = document.indexOf('<w:drawing>')
+    const firstPara = document.search(/<w:p[\s>]/)
+    // 插在最前面（封面顶部）且居中
+    expect(drawingAt).toBeGreaterThan(0)
+    expect(drawingAt).toBeLessThan(document.indexOf('正文'))
+    expect(document.slice(firstPara, drawingAt)).toContain('<w:jc w:val="center"/>')
+    // 尺寸按模版事实换算（626px * 9525 = 5962650 EMU，容差 ±1px）
+    expect(document).toMatch(new RegExp(`<wp:extent cx="${626 * 9525}" cy="${89 * 9525}"/>`))
+
+    const rels = await zip.file('word/_rels/document.xml.rels')!.async('string')
+    expect(rels).toContain('thesiscover')
+    expect(Object.keys(zip.files).some((name) => /^word\/media\/thesiscover\d+\.png$/.test(name))).toBe(true)
+  })
+
+  it('没有封面图时原样返回', async () => {
+    const original = await boundDocxWithHeader()
+    expect(await backfillThesisCoverLogo(original, undefined)).toBe(original)
+    expect(await backfillThesisCoverLogo(original, { dataUrl: 'bad' })).toBe(original)
   })
 })

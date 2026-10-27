@@ -5,6 +5,7 @@ import { SubagentRegistry } from "../src/modules/subagents/registry.js";
 import { ThesisFormatCardStore } from "../src/modules/thesis-format/card-store.js";
 import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.js";
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
+import { mergeTemplateImages } from "../src/modules/thesis-format/service.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -166,5 +167,90 @@ describe("validateThesisFormatCard header images", () => {
   it("gives an empty array when images are absent (no fabrication)", () => {
     const card = validateThesisFormatCard({ header: { enabled: true } }, "template.docx");
     expect(card.header.images ?? []).toEqual([]);
+  });
+});
+
+/** 封面带校徽的模版：logo 在正文首个分节之前的居中段落里（不在页眉）。 */
+async function docxWithCoverLogo(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/></Types>',
+  );
+  zip.file(
+    "word/_rels/document.xml.rels",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>',
+  );
+  const document = [
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ',
+    'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ',
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ',
+    'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" ',
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>',
+    '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="114300" distR="114300">',
+    '<wp:extent cx="5958840" cy="850265"/><wp:docPr id="2" name="图片 1" descr="学校常用标识2"/>',
+    '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+    '<pic:pic><pic:blipFill><a:blip r:embed="rId10"/></pic:blipFill></pic:pic>',
+    '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>',
+    '<w:p><w:r><w:t>通信工程学院</w:t></w:r></w:p>',
+    '<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr></w:p>',
+    '<w:p><w:r><w:t>正文</w:t></w:r></w:p>',
+    '</w:body></w:document>',
+  ].join('');
+  zip.file("word/document.xml", document);
+  zip.file("word/media/image1.png", Buffer.from(LOGO_PNG_BASE64, "base64"));
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
+describe("封面 logo 提取与确定性写入", () => {
+  it("抽出封面的校徽及其尺寸/居中事实", async () => {
+    const facts = await extractOoxmlFactsAsync(await docxWithCoverLogo());
+    expect(facts.coverImages).toHaveLength(1);
+    const logo = facts.coverImages[0]!;
+    expect(logo.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(logo.widthPx).toBe(626);
+    expect(logo.heightPx).toBe(89);
+    expect(logo.posH).toBe("center");
+    // 正文分节之后的插图不算封面元素
+    expect(facts.coverImages).toHaveLength(1);
+  });
+
+  it("封面图写进 card.cover.logo，且不覆盖代理已给的值", async () => {
+    const facts = {
+      ooxml: [{
+        name: "模版.docx",
+        styles: [],
+        sections: [],
+        headers: [{ file: "header1.xml", text: "", images: [] }],
+        footers: [],
+        coverImages: [{ dataUrl: `data:image/png;base64,${LOGO_PNG_BASE64}`, widthPx: 626, heightPx: 89, posH: "center" as const }],
+      }],
+      documentsText: [],
+    };
+    const base = validateThesisFormatCard({ cover: { schoolName: "通信工程学院" } }, "模版.docx");
+    const merged = mergeTemplateImages(base, facts);
+    expect(merged.cover.logo?.widthPx).toBe(626);
+    expect(merged.cover.logo?.posH).toBe("center");
+
+    const kept = mergeTemplateImages(
+      { ...base, cover: { ...base.cover, logo: { dataUrl: `data:image/png;base64,${LOGO_PNG_BASE64}`, widthPx: 10 } } },
+      facts,
+    );
+    expect(kept.cover.logo?.widthPx).toBe(10);
+  });
+
+  it("facts 里没有图片时不写字段（绝不编造 logo）", () => {
+    const base = validateThesisFormatCard({ cover: { schoolName: "某学院" } }, "模版.docx");
+    const merged = mergeTemplateImages(base, { ooxml: [], documentsText: [] });
+    expect(merged.cover.logo).toBeUndefined();
+    expect(merged.header.images ?? []).toEqual([]);
+  });
+
+  it("非法 data:URL 的封面图被丢弃", () => {
+    const card = validateThesisFormatCard({ cover: { logo: { dataUrl: "javascript:alert(1)" } } }, "模版.docx");
+    expect(card.cover.logo).toBeUndefined();
   });
 });

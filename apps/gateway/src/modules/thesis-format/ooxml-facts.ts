@@ -55,6 +55,9 @@ export interface OoxmlFacts {
   sections: OoxmlSectionFact[];
   headers: Array<{ file: string; text: string; images: OoxmlHfImageFact[] }>;
   footers: Array<{ file: string; text: string; images: OoxmlHfImageFact[] }>;
+  /** 封面区（首个分节/分页之前）的正文图片：校徽、校名标识等。
+   *  这类图不在页眉页脚里，装订重建封面时必须显式回填，否则直接丢失。 */
+  coverImages: OoxmlHfImageFact[];
 }
 
 function attr(xml: string, name: string): number | undefined {
@@ -78,12 +81,12 @@ function numAttr(xml: string, tag: string, name: string): number | undefined {
  * 页眉/页脚部件里的展示图片（logo/水印位图）。抽取字节（data:URL）与版位事实，
  * 供解析代理识别「校徽」并让装订引擎在输出里原样回填。
  */
-async function hfImages(zip: JSZip, partPath: string, partXml: string): Promise<OoxmlHfImageFact[]> {
-  if (!partXml.includes("<a:blip") && !partXml.includes("<v:imagedata")) return [];
+/** 部件的 rels → rId → data:URL 映射（页眉页脚与正文图片共用）。 */
+async function partMediaByRid(zip: JSZip, partPath: string): Promise<Map<string, string>> {
   const relsPath = partPath.replace(/([^/]+)$/, "_rels/$1.rels");
   const relsXml = await zip.file(relsPath)?.async("string").catch(() => undefined);
-  if (!relsXml) return [];
   const mediaByRid = new Map<string, string>();
+  if (!relsXml) return mediaByRid;
   for (const rel of relsXml.match(/<Relationship\s[^>]*>/g) ?? []) {
     const id = rel.match(/\bId="([^"]+)"/)?.[1];
     const target = rel.match(/\bTarget="([^"]+)"/)?.[1];
@@ -107,32 +110,81 @@ async function hfImages(zip: JSZip, partPath: string, partXml: string): Promise<
       : "image/png";
     mediaByRid.set(id, `data:${mime};base64,${bytes.toString("base64")}`);
   }
+  return mediaByRid;
+}
+
+/** 单个绘图块 → 图片事实（字节 + 尺寸 + 浮动版位）。 */
+function drawingFact(frag: string, mediaByRid: Map<string, string>): OoxmlHfImageFact | null {
+  const rId = frag.match(/r:(?:embed|id)="([^"]+)"/)?.[1];
+  const dataUrl = rId ? mediaByRid.get(rId) : undefined;
+  if (!dataUrl) return null;
+  const image: OoxmlHfImageFact = { dataUrl };
+  const cx = numAttr(frag, "wp:extent", "cx");
+  const cy = numAttr(frag, "wp:extent", "cy");
+  if (cx !== undefined && cx > 0) image.widthPx = Math.round(cx / EMU_PER_PX);
+  if (cy !== undefined && cy > 0) image.heightPx = Math.round(cy / EMU_PER_PX);
+  if (/<wp:anchor[\s>]/.test(frag)) {
+    image.floating = true;
+    if (/behindDoc="(?:1|true)"/.test(frag)) image.behind = true;
+    const posH = frag.match(/<wp:positionH[^>]*relativeFrom="(page|margin)"[^>]*>[\s\S]*?<wp:align>(\w+)<\/wp:align>/);
+    const posV = frag.match(/<wp:positionV[^>]*relativeFrom="(page|margin|paragraph)"[^>]*>[\s\S]*?<wp:align>(\w+)<\/wp:align>/);
+    if (posH) { image.posHRel = posH[1] as "page" | "margin"; image.posH = posH[2] as "left" | "center" | "right"; }
+    if (posV) { image.posVRel = posV[1] as "page" | "margin" | "paragraph"; image.posV = posV[2] as "top" | "center" | "bottom"; }
+    const offH = frag.match(/<wp:positionH[^>]*relativeFrom="(page|margin)"[^>]*>[\s\S]*?<wp:posOffset>(-?\d+)<\/wp:posOffset>/);
+    const offV = frag.match(/<wp:positionV[^>]*relativeFrom="(page|margin|paragraph)"[^>]*>[\s\S]*?<wp:posOffset>(-?\d+)<\/wp:posOffset>/);
+    if (offH) image.posXPx = Math.round(Number(offH[2]) / EMU_PER_PX);
+    if (offV) image.posYPx = Math.round(Number(offV[2]) / EMU_PER_PX);
+  }
+  return image;
+}
+
+async function hfImages(zip: JSZip, partPath: string, partXml: string): Promise<OoxmlHfImageFact[]> {
+  if (!partXml.includes("<a:blip") && !partXml.includes("<v:imagedata")) return [];
+  const mediaByRid = await partMediaByRid(zip, partPath);
   if (mediaByRid.size === 0) return [];
 
   const out: OoxmlHfImageFact[] = [];
   for (const m of partXml.matchAll(/<w:drawing[\s\S]*?<\/w:drawing>|<v:imagedata[^>]*>/g)) {
-    const frag = m[0];
-    const rId = frag.match(/r:(?:embed|id)="([^"]+)"/)?.[1];
-    const dataUrl = rId ? mediaByRid.get(rId) : undefined;
-    if (!dataUrl) continue;
-    const image: OoxmlHfImageFact = { dataUrl };
-    const cx = numAttr(frag, "wp:extent", "cx");
-    const cy = numAttr(frag, "wp:extent", "cy");
-    if (cx !== undefined && cx > 0) image.widthPx = Math.round(cx / EMU_PER_PX);
-    if (cy !== undefined && cy > 0) image.heightPx = Math.round(cy / EMU_PER_PX);
-    if (/<wp:anchor[\s>]/.test(frag)) {
-      image.floating = true;
-      if (/behindDoc="(?:1|true)"/.test(frag)) image.behind = true;
-      const posH = frag.match(/<wp:positionH[^>]*relativeFrom="(page|margin)"[^>]*>[\s\S]*?<wp:align>(\w+)<\/wp:align>/);
-      const posV = frag.match(/<wp:positionV[^>]*relativeFrom="(page|margin|paragraph)"[^>]*>[\s\S]*?<wp:align>(\w+)<\/wp:align>/);
-      if (posH) { image.posHRel = posH[1] as "page" | "margin"; image.posH = posH[2] as "left" | "center" | "right"; }
-      if (posV) { image.posVRel = posV[1] as "page" | "margin" | "paragraph"; image.posV = posV[2] as "top" | "center" | "bottom"; }
-      const offH = frag.match(/<wp:positionH[^>]*relativeFrom="(page|margin)"[^>]*>[\s\S]*?<wp:posOffset>(-?\d+)<\/wp:posOffset>/);
-      const offV = frag.match(/<wp:positionV[^>]*relativeFrom="(page|margin|paragraph)"[^>]*>[\s\S]*?<wp:posOffset>(-?\d+)<\/wp:posOffset>/);
-      if (offH) image.posXPx = Math.round(Number(offH[2]) / EMU_PER_PX);
-      if (offV) image.posYPx = Math.round(Number(offV[2]) / EMU_PER_PX);
+    const image = drawingFact(m[0], mediaByRid);
+    if (image) out.push(image);
+  }
+  return out;
+}
+
+/**
+ * 封面区的正文图片（校徽、校名标识）。
+ *
+ * 装订是「提取规则 → 重建文档」：封面由格式卡字段重新生成，原封面里的图片不会
+ * 自动带入（用户报「导入模版后 logo 不见了」即此）。这里抽出封面几张图，让装机
+ * 时回填到重建后的封面顶部。
+ *
+ * 封面区 = 首个分节符/分页符之前的内容；最多 3 张（正常只有校徽/校名标识，
+ * 避免把正文插图误当封面元素）。
+ */
+async function coverImages(zip: JSZip, documentXml: string): Promise<OoxmlHfImageFact[]> {
+  if (!documentXml.includes("<a:blip") && !documentXml.includes("<v:imagedata")) return [];
+  const boundaries = ["<w:sectPr", 'w:type="page"']
+    .map((token) => documentXml.indexOf(token))
+    .filter((index) => index > 0);
+  const cut = boundaries.length > 0 ? Math.min(...boundaries) : documentXml.length;
+  const head = documentXml.slice(0, cut);
+  if (!head.includes("<a:blip") && !head.includes("<v:imagedata")) return [];
+  const mediaByRid = await partMediaByRid(zip, "word/document.xml");
+  if (mediaByRid.size === 0) return [];
+
+  const out: OoxmlHfImageFact[] = [];
+  for (const para of head.match(/<w:p[\s>][\s\S]*?<\/w:p>/g) ?? []) {
+    if (!/<w:drawing[\s>]|<w:pict[\s>]|<v:imagedata/.test(para)) continue;
+    // 封面文字行普遍居中；取段落对齐作为图片对齐（inline 图跟随段落）。
+    const align = para.match(/<w:jc[^>]*w:val="(left|center|right|both)"/)?.[1];
+    for (const m of para.matchAll(/<w:drawing[\s\S]*?<\/w:drawing>|<v:imagedata[^>]*>/g)) {
+      const image = drawingFact(m[0], mediaByRid);
+      if (!image) continue;
+      if (align === "center" || align === "right") image.posH = align;
+      else if (align === "left") image.posH = "left";
+      out.push(image);
+      if (out.length >= 3) return out;
     }
-    out.push(image);
   }
   return out;
 }
@@ -241,5 +293,7 @@ export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts>
     else footers.push(entry);
   }
 
-  return { styles, sections, headers, footers };
+  const coverFacts = documentXml ? await coverImages(zip, documentXml) : [];
+
+  return { styles, sections, headers, footers, coverImages: coverFacts };
 }

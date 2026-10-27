@@ -153,6 +153,9 @@ export interface ThesisCoverField {
 
 export interface ThesisCoverRule {
   schoolName: string;
+  /** 模版封面上的图片（校徽/校名标识）：装机时回填到重建后的封面顶部。
+   *  由网关从模版 OOXML 事实确定性写入，不经解析代理。 */
+  logo?: ThesisHfImage;
   /** 文种行（本科毕业论文（设计））。 */
   degreeLine: string;
   yearLine: string;
@@ -197,6 +200,8 @@ export interface ThesisTemplateFacts {
     sections: Array<{ widthMm?: number; heightMm?: number; marginTopMm?: number; marginBottomMm?: number; marginLeftMm?: number; marginRightMm?: number; gutterMm?: number; pageFormat?: string }>;
     headers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
     footers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
+    /** 封面区正文图片（校徽等）：装订重建封面时按此回填。 */
+    coverImages?: ThesisHfImage[];
   }>;
   /** 规范条文/样例全文（文件名 → 文本）。 */
   documentsText: Array<{ name: string; text: string }>;

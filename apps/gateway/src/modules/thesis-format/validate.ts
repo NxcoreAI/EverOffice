@@ -89,6 +89,12 @@ function paragraph(value: any, fallback: { align: "left" | "center" | "right" | 
 const SONG = { eastAsia: "宋体", ascii: "Times New Roman", size: 12, bold: false };
 
 /** 校验并兜底出完整格式卡；输入须是解析代理输出的对象。 */
+/** 封面图片守门：单张、data:URL 结构合法才收；缺省不写字段（不编造 logo）。 */
+function coverLogo(value: unknown): { logo: ThesisHfImage } | Record<string, never> {
+  const [image] = hfImages(value === undefined ? [] : [value]);
+  return image ? { logo: image } : {};
+}
+
 export function validateThesisFormatCard(raw: unknown, sourceName: string): ThesisFormatCard {
   if (!raw || typeof raw !== "object") throw new Error("论文格式卡必须是对象");
   const src: any = raw;
@@ -231,6 +237,7 @@ export function validateThesisFormatCard(raw: unknown, sourceName: string): Thes
     },
     cover: {
       schoolName: str(cover.schoolName, ""),
+      ...coverLogo(cover.logo),
       degreeLine: str(cover.degreeLine, "本科毕业论文（设计）"),
       yearLine: str(cover.yearLine, ""),
       fields: coverFields,
