@@ -34,12 +34,16 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain('event.preventDefault()')
     // 单一删除入口：不再有第二个「只删文件」按钮
     expect(aiTab).not.toContain('aiThesisDeleteFileTip')
-    const dels = aiTab.match(/deleteTemplate\(row\.id, row\.sourceName/g) ?? []
+    const dels = aiTab.match(/deleteTemplate\(row\.id/g) ?? []
     expect(dels).toHaveLength(1)
   })
 
-  it('二次确认文案是「确定要删除该模板文件吗？」', () => {
-    expect(aiTab).toContain("window.confirm(t('aiThesisDeleteConfirm'")
+  it('二次确认在面板内联完成，不用 window.confirm（否则会收起下拉）', () => {
+    expect(aiTab).not.toContain('window.confirm(')
+    expect(aiTab).toContain('ai-thesis-card-confirm')
+    expect(aiTab).toContain("t('aiThesisDeleteConfirmInline')")
+    expect(aiTab).toContain("t('aiThesisDeleteOk')")
+    expect(aiTab).toContain("t('aiThesisDeleteCancel')")
     const zh = readFileSync(resolve(docsRoot, 'src/renderer/i18n/strings-ai.ts'), 'utf8')
     expect(zh).toContain('确定要删除该模板文件吗？')
   })
@@ -49,13 +53,23 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain('setCards((prev) => (prev ? prev.filter((entry) => entry.id !== cardId) : prev))')
   })
 
-  it('删除按钮小巧、浅灰常态 hover 转红', () => {
+  it('删除按钮与其它行内按钮同尺寸，浅灰常态 hover 转红', () => {
     const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
-    const block = css.slice(css.indexOf('.ai-thesis-card-act.ai-thesis-card-del {'))
-    expect(block).toContain('width: 20px')
+    const selector = '.ai-thesis-card-act.ai-thesis-card-del {'
+    const from = css.indexOf(selector)
+    const block = css.slice(from, css.indexOf('}', from) + 1)
+    expect(block).toContain('width: 24px')
     expect(block).toContain('color: var(--text-muted)')
-    expect(block).toContain('color: var(--danger)')
-    expect(block).toContain('position: absolute')
+    expect(block).not.toContain('position: absolute')
+    // hover 变红在独立规则里
+    const hoverFrom = css.indexOf('.ai-thesis-card-act.ai-thesis-card-del:hover')
+    const hoverBlock = css.slice(hoverFrom, css.indexOf('}', hoverFrom) + 1)
+    expect(hoverBlock).toContain('var(--danger)')
+  })
+
+  it('点删除只切换确认态，不直接删（可取消）', () => {
+    expect(aiTab).toContain('setPendingDeleteId((current) => (current === row.id ? null : row.id))')
+    expect(aiTab).toContain('setPendingDeleteId(null)')
   })
 
   it('IPC 与类型齐备：docs:thesis-delete-template + keepCard', () => {
