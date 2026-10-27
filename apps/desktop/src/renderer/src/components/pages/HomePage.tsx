@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { PageId } from '@/data/navigation'
 import { useWorkspaceDocuments } from '@/components/documents/WorkspaceDocumentsProvider'
+import { DocTaskCard } from '@/components/docflow/DocTaskCard'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import './HomePage.css'
@@ -51,6 +52,8 @@ export function HomePage({
             <h1>{t(greetingKey)}</h1>
           </div>
         </header>
+
+        <DocTaskCard onStart={() => onNavigate('doc-flow')} />
 
         <div className="workspace-home-grid">
           <section className="workspace-home-quick-start">

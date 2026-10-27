@@ -223,6 +223,8 @@ const api: NxcoreDesktopApi = {
   office: {
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
+    /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
+    generateDocxPrototype: (input) => ipcRenderer.invoke('office:generate-docx-prototype', input),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile: (listener: (event: OfficeAgentFileEvent) => void) => {

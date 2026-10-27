@@ -70,6 +70,7 @@ import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge
 import { OfficeBridgeServer } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
+import { generateDocxFromHtml } from './office/office-generation'
 import { createEverroomMaterialResolver } from './office/office-material-resolver'
 import { openDocumentFromSystem as runSystemOpen, OsOpenQueue, osOpenPathsFromArgv } from './office/os-open'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
@@ -891,6 +892,27 @@ ipcMain.handle('office:instance:close', async (event, id: unknown) => {
   if (typeof id !== 'string') return false
   // false = 可编辑实例在脏关闭守卫里被取消：渲染层保留标签不卸载。
   return officePreviewRegistry.close(id)
+})
+
+// Doc 生成流程原型：渲染端把定稿 HTML 送 genoffice 管线生成 .docx 并入库。
+ipcMain.handle('office:generate-docx-prototype', async (_event, input: unknown) => {
+  const value = input as { title?: unknown; html?: unknown }
+  if (typeof value?.title !== 'string' || typeof value?.html !== 'string') {
+    throw new Error('生成请求缺少 title 或 html。')
+  }
+  if (!officeFilesBridge) throw new Error('文件服务尚未就绪，请稍后重试。')
+  const generated = await generateDocxFromHtml({ title: value.title, html: value.html })
+  const originalName = `${generated.title}.docx`
+  try {
+    const accepted = await officeFilesBridge.importAgentGeneratedFile({
+      filePath: generated.filePath,
+      originalName,
+      sourceKey: `prototype:docx:${randomUUID()}`,
+    })
+    return { fileEntryId: accepted.fileEntryId, originalName }
+  } finally {
+    await rm(generated.filePath, { force: true }).catch(() => undefined)
+  }
 })
 
 function focusMainWindow(): void {

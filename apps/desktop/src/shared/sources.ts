@@ -608,6 +608,8 @@ export interface NxcoreDesktopApi {
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
     /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
     closeInstance(id: string): Promise<boolean>
+    /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
+    generateDocxPrototype(input: { title: string; html: string }): Promise<{ fileEntryId: string; originalName: string }>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void

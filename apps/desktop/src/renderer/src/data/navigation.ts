@@ -11,7 +11,7 @@ import {
   FilePenLine,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'office-document' | 'docs' | 'sources' | 'files' | 'schedules' | 'agent-connections' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'doc-flow' | 'docs' | 'sources' | 'files' | 'schedules' | 'agent-connections' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -68,13 +68,21 @@ const officeDocumentItem: NavigationItem = {
   tone: 'indigo',
 }
 
+/** 隐藏页（不进侧边栏）：Doc 生成流程工作台，入口在首页任务卡。 */
+const docFlowItem: NavigationItem = {
+  id: 'doc-flow',
+  label: 'surface:navigation.officeDocument',
+  icon: FilePenLine,
+  tone: 'blue',
+}
+
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
+  [...navigationSections.flatMap((section) => section.items), officeDocumentItem, docFlowItem]
     .map((item) => [item.id, item.label])
 ) as Record<PageId, string>
 
 export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
+  [...navigationSections.flatMap((section) => section.items), officeDocumentItem, docFlowItem]
     .map((item) => [item.id, item.icon])
 ) as Record<PageId, LucideIcon>
 

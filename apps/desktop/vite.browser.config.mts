@@ -606,6 +606,7 @@ const base = {
     { id: 'thread-1', provider: 'claude', sourceId: 's1', title: '历史会话示例', agentId: 'claude', externalSessionId: 'x', messageCount: 2, lastMessageAt: '2026-09-08T00:00:00.000Z', lastMessageExcerpt: '上次的结论…', available: true },
   ], nextCursor: null }) },
   files: {
+    openOriginal: async (_fileId, originalName) => ({ openedWith: 'office', instanceId: 'inst-doc-flow', kind: 'docx', title: originalName ?? 'Q3 进展汇报.docx' }),
     list: async (limit = 200, offset = 0) => {
       const items = [
         { id: 'f-img-1', originalName: '007 一杯咖啡与一本书的相遇 — 副本.jpeg', displayName: null, sharedTitle: '007 一杯咖啡与一本书的相遇 — 副本.jpeg', sourceKind: 'manual-upload', sourceLabel: '手动上传', relativePath: null, provider: null, bytes: 430842, dataType: 'image', agentCategory: null, summary: null, tags: [], processingState: 'ready', clusterId: null, contentHash: 'a1'.repeat(32), currentVersionId: 'v1', parsed: true, updatedAt: '2026-10-17T09:24:00.000Z' },
@@ -618,6 +619,10 @@ const base = {
     },
     onImportProgress: () => () => {},
     catalogEntry: async (fileId) => null,
+  },
+  office: {
+    // Doc 生成流程原型：浏览器 mock 只回假 fileId（真实管线在 Electron 主进程）。
+    generateDocxPrototype: async (input) => ({ fileEntryId: 'proto-doc-1', originalName: (input.title || '文档') + '.docx' }),
   },
   documents: { list: async () => [], listTrash: async () => [] },
   // 完整 App 入口（/）验证用：已配置 + 已登录，越过 RuntimeConfigGate。

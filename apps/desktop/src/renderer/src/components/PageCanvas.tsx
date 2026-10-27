@@ -2,6 +2,7 @@ import { FilePenLine, LoaderCircle } from 'lucide-react'
 
 import type { OfficePreviewTab } from '../../../shared/sources'
 import type { PageId } from '@/data/navigation'
+import { DocFlowPage } from './docflow/DocFlowPage'
 import { DocsPage } from './pages/DocsPage'
 import { FilesPage } from './pages/FilesPage'
 import { HomePage } from './pages/HomePage'
@@ -39,6 +40,7 @@ export function PageCanvas({
   const { t } = useLocale()
   let content = null
   if (page === 'home') content = <HomePage onNavigate={onNavigate} onFocusAgent={onFocusAgent} />
+  if (page === 'doc-flow') content = <DocFlowPage onNavigate={onNavigate} onOpenOfficePreview={onOpenOfficePreview} />
   if (page === 'office') content = <AgentStatusPage />
   if (page === 'office-document') {
     // 页体不承载内容：Office 文档由主进程 WebContentsView 叠在 workspace-main 上显示
