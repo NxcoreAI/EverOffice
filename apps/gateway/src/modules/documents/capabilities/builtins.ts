@@ -10,12 +10,9 @@ import { queryPlugins } from "./query-plugin.js";
 import { DocumentCapabilityRegistry } from "./registry.js";
 import { DocumentReadAuthority } from "./read-authority.js";
 import { reviewPlugins } from "./review-plugins.js";
-import { routeMindmapPlugin } from "./route-mindmap-plugin.js";
 import { selectionRewritePlugin } from "./selection-rewrite-plugin.js";
 import type { CapabilityBackend } from "./shared.js";
 import type { DocumentRoomRegistry, SlidesPageProgressReporter } from "./types.js";
-import { taskPlugin, type TaskClarifyIssuerInput } from "./task-plugin.js";
-import type { TaskFolderService } from "../task-folders.js";
 import type { SlidesVisualReviewer } from "../../slides-visual-review/review.js";
 
 export function createBuiltinDocumentCapabilityRegistry(
@@ -25,29 +22,12 @@ export function createBuiltinDocumentCapabilityRegistry(
   /** 共享读凭证权威（doc-writer-subagent-plan §5.3）：传入则复用（document_draft 代发
    *  的 receipt 与 patch_begin 的 requireLatest 必须查同一个实例），缺省自建（测试兼容）。 */
   sharedReads?: DocumentReadAuthority,
-  /** 块索引标记（blockIndexMark）：Room 归属记忆权威清单；patch_begin 注入
-   *  memoryIndex，供直写模式挂记忆标记时照抄 memoryId。 */
-  resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>,
-  /** 文档评论服务（AI 审阅）：传入则启用 context_room_document_comment_add 工具。 */
+  /** 文档评论服务（AI 审阅）：传入则启用 document_comment_add 工具。 */
   comments?: DocumentCommentService,
   /** 文档事件广播：评论落库后发 document.comments.changed，桌面评论面板实时刷新。 */
   publishDocumentEvent?: (event: DocumentEvent) => void,
-  /** Office 生成桥（agent 写 Word）：传入则启用 context_room_office_create 等工具。 */
+  /** Office 生成桥（agent 写 Word）：传入则启用 office_create 等工具。 */
   officeBridge?: OfficeBridgeClient | null,
-  /** 写作路线导图拍板（聚焦改版）：服务晚于注册表构造，经 getter 惰性取用。 */
-  routeMindmapFinalize?: () => {
-    finalize(roomId: string, input: { documentId: string; requestVersion: number }): Promise<{
-      status: string;
-      writing: boolean;
-      error: string | null;
-    }>;
-  } | null,
-  /** 任务管线：任务夹服务（常驻，直接传入）。 */
-  taskFolders?: TaskFolderService,
-  /** 任务管线：澄清意图签发器（AgentService 晚于注册表构造，经 getter 惰性取用）。 */
-  issueTaskClarify?: () => {
-    issueTaskClarification(input: TaskClarifyIssuerInput): { pendingIntentId: string; status: string } | null;
-  } | null,
   /** PPT 逐页进度上报器（只报不定）：传入则 slides 落页即广播进度快照。 */
   slidesProgress?: SlidesPageProgressReporter | null,
   /** 落页视觉复检器：传入则 preset 落页后截图送 VLM 判定（未配置 VLM 时内部跳过）。 */
@@ -56,20 +36,12 @@ export function createBuiltinDocumentCapabilityRegistry(
   const registry = new DocumentCapabilityRegistry(operations);
   const reads = sharedReads ?? new DocumentReadAuthority((documentId) => backend.get(documentId));
   for (const plugin of queryPlugins(backend, rooms, reads)) registry.register(plugin);
-  for (const plugin of reviewPlugins(backend, operations, reads, resolveRoomMemoryItems)) registry.register(plugin);
+  for (const plugin of reviewPlugins(backend, operations, reads)) registry.register(plugin);
   registry.register(createPlugin(backend, operations));
   registry.register(selectionRewritePlugin(backend));
   registry.register(commentPlugin(backend, comments, publishDocumentEvent));
-  registry.register(routeMindmapPlugin(backend, routeMindmapFinalize ?? (() => null)));
   // #242：agent 文档删除（trash，带 confirm 防误删闸门）。
   registry.register(deletePlugin(backend));
-  // 任务生产管线（PPT/长文档）：夹 + workplan + 澄清表单。服务齐备才注册。
-  if (taskFolders && issueTaskClarify) {
-    registry.register(taskPlugin(backend, taskFolders, () => {
-      const issuer = issueTaskClarify();
-      return issuer ? (input) => issuer.issueTaskClarification(input) : null;
-    }));
-  }
   // agent 写 Word：桌面 office-bridge 未注入（如测试环境）时工具不暴露。
   if (officeBridge) registry.register(officePlugin(officeBridge, slidesProgress, visualReviewer ?? null));
   return registry;

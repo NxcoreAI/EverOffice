@@ -12,10 +12,10 @@ import {
 
 const EXTERNAL_SERVICE_REQUEST = /(?:Gmail|GitHub|Notion|Google\s*Drive|Slack|Dropbox|Outlook|日历|邮件|邮箱|云盘|第三方服务|OAuth)/iu;
 const EXPLICIT_EVERROOM_DOCUMENT_TARGET = /(?:(?:EverRoom|NxCore|Context\s*Room|ContextRoom|某个\s*Room|指定\s*Room|Room|房间).{0,24}(?:文档|文件|页面)|(?:文档|文件|页面).{0,24}(?:EverRoom|NxCore|Context\s*Room|ContextRoom|Room|房间)|(?:保存|写入|存入|落盘|创建).{0,24}(?:EverRoom|NxCore|Context\s*Room|ContextRoom|Room|房间))/iu;
-const DOCUMENT_ROUTE_MISMATCH = "Context Room tool route mismatch";
+const DOCUMENT_ROUTE_MISMATCH = "Document tool route mismatch";
 class DocumentRouteMismatchError extends Error {
   constructor() {
-    super(`${DOCUMENT_ROUTE_MISMATCH}: the user explicitly requested an external connected service. Use connector_search and the connector workflow; do not list or write Context Rooms.`);
+    super(`${DOCUMENT_ROUTE_MISMATCH}: the user explicitly requested an external connected service. Use connector_search and the connector workflow; do not create or edit EverRoom documents.`);
     this.name = "DocumentRouteMismatchError";
   }
 }
@@ -27,14 +27,13 @@ function toPiResult(result: DocumentMcpToolResult): PiAgentRuntimeToolResult {
   };
 }
 
+/**
+ * 文档工具面（P0-4）：不再为每个 run 粘滞「已绑定 Room」。
+ *
+ * 归属只来自本次调用的 `params.roomId` 或 run 级 `input.roomId`；
+ * 都没有即工作区级文稿（roomId 为 null），不再强求从 available_rooms 里选房。
+ */
 export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool[] {
-  return createDocumentPiToolsWithRoomBindings(host, new Map());
-}
-
-export function createDocumentPiToolsWithRoomBindings(
-  host: DocumentMcpHost,
-  routedRoomByRun: Map<string, string>,
-): PiAgentRuntimeTool[] {
   return host.listTools().map((definition) => ({
     name: definition.name,
     label: definition.title,
@@ -50,22 +49,7 @@ export function createDocumentPiToolsWithRoomBindings(
       }
       try {
         const requestedRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        const previouslyRoutedRoomId = routedRoomByRun.get(input.runId);
-        const fixedRoomId = input.roomId ?? previouslyRoutedRoomId ?? null;
-        if (requestedRoomId && fixedRoomId && requestedRoomId !== fixedRoomId) {
-          throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
-        }
-        let roomId = fixedRoomId;
-        if (definition.name === "context_room_write_begin" && !roomId) {
-          // availableRooms 是开跑快照：同一 run 内 context_room_create 新建的房间
-          // 不在其中，须以实时注册表兜底，否则新建房间的首次写入被误拒。
-          const roomKnown = input.availableRooms?.some((room) => room.id === requestedRoomId)
-            || host.roomExists(requestedRoomId);
-          if (!roomKnown) {
-            throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
-          }
-          roomId = requestedRoomId;
-        }
+        const roomId = input.roomId ?? (requestedRoomId || null);
         const result = await host.callTool(
           definition.name,
           params,
@@ -80,7 +64,7 @@ export function createDocumentPiToolsWithRoomBindings(
         // document_list 的 selectionRequired 是桌面端“选择要编辑的文档”卡片的唯一
         // 触发源；运行本身没有改/写文档诉求时（模型顺路列文档很常见）一律压掉，
         // 否则离开文档页后旧工具结果会把空卡片顶回智能区。
-        if (definition.name === "context_room_document_list" && result.structuredContent.selectionRequired === true) {
+        if (definition.name === "document_list" && result.structuredContent.selectionRequired === true) {
           const promptText = String(input.originalPrompt ?? input.prompt ?? "");
           if (!requestsDocumentModification(promptText)) {
             const payload = { ...result.structuredContent, selectionRequired: false };
@@ -89,14 +73,6 @@ export function createDocumentPiToolsWithRoomBindings(
               details: payload,
             };
           }
-        }
-        if (definition.name === "context_room_write_begin") {
-          const selectedRoomId = typeof result.structuredContent.roomId === "string"
-            ? result.structuredContent.roomId
-            : roomId;
-          if (selectedRoomId) routedRoomByRun.set(input.runId, selectedRoomId);
-        } else if (definition.name === "context_room_write_commit" || definition.name === "context_room_write_abort") {
-          routedRoomByRun.delete(input.runId);
         }
         return toPiResult(result);
       } catch (error) {
@@ -110,7 +86,7 @@ export function createDocumentPiToolsWithRoomBindings(
         category: "route_mismatch",
         recoverable: true,
         recommendedTool: "connector_search",
-        instruction: "Use the external service named in the original user request. Do not call any context_room_* tool unless the user explicitly names EverRoom, Context Room, or a Room as the destination.",
+        instruction: "Use the external service named in the original user request. Do not call document or office tools unless the user explicitly asks to create or edit an EverRoom document.",
         retryKey: "external-service-to-context-room",
         maxAttempts: 1,
       };

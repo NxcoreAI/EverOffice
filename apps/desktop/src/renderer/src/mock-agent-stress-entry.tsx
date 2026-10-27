@@ -5,9 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import type { AgentEvent, AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
 import { LocaleProvider } from './i18n/LocaleContext'
-import { ContextRoomStateProvider } from './components/context-room/ContextRoomStateProvider'
-import { RoomDocumentsProvider } from './components/context-room/RoomDocumentsProvider'
-import { desktopOperationBridge, DocumentOperationProvider } from './components/context-room/operations'
+import { desktopOperationBridge, DocumentOperationProvider } from './components/office-editor/operations/index'
 import { AgentChatView } from './components/agent/AgentChatView'
 import { useAgentSession } from './components/agent/useAgentSession'
 
@@ -159,12 +157,12 @@ const stressAgent = {
   setPermissionMode: async () => ({}),
 }
 
-const baseContextRooms = (base.contextRooms ?? {}) as Record<string, unknown>
+const baseSubagents = (base.subagents ?? {}) as Record<string, unknown>
 window.nxcore = {
   ...base,
   agent: stressAgent,
-  contextRooms: {
-    ...baseContextRooms,
+  subagents: {
+    ...baseSubagents,
     listRunSubagentInvocations: async () => [],
     listSubagentInvocationEvents: async () => [],
   },
@@ -203,7 +201,7 @@ function driveStorm(fast: boolean) {
 
   emit('run.accepted', { prompt: '压力测试：查邮件并汇总要点，多调用一些工具。' })
   emit('run.started', {})
-  const names = ['context_room_list', 'context_room_document_read', 'web_search']
+  const names = ['context_room_list', 'document_read', 'web_search']
   for (let t = 0; t < STORM_TOOLS; t += 1) {
     const toolCallId = `${runId}-t${t}`
     const name = names[t % names.length]
@@ -258,7 +256,6 @@ function StressHarness() {
       agentIdByRun={s.agentIdByRun}
       agentNamesById={{}}
       activityByRun={s.activityByRun}
-      availableRooms={[{ id: 'room-1', title: '产品调研' }]}
       composer={null}
       currentSessionId={s.sessionId}
       draftHasContent={false}
@@ -266,13 +263,11 @@ function StressHarness() {
       loading={s.loading}
       messages={s.messages}
       pendingApprovals={s.pendingApprovals}
-      onRejectDocumentIntent={() => {}}
       onRetryPrompt={() => {}}
       onOpenSessionLink={() => {}}
       onResolveApproval={() => {}}
       onSelectDocument={() => {}}
       onSelectPrompt={() => {}}
-      onSelectRoom={async () => {}}
       pendingNavigationByRun={{}}
       reasoningByRun={s.reasoningByRun}
       runCompletedAtByRun={s.runCompletedAtByRun}
@@ -290,11 +285,7 @@ function StressHarness() {
 createRoot(document.getElementById('mock-root')!).render(
   <StrictMode>
     <LocaleProvider>
-      <ContextRoomStateProvider>
-        <RoomDocumentsProvider>
-          <StressHarness />
-        </RoomDocumentsProvider>
-      </ContextRoomStateProvider>
+      <StressHarness />
     </LocaleProvider>
   </StrictMode>,
 )

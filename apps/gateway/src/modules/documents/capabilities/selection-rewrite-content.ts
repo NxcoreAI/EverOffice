@@ -18,7 +18,7 @@ export interface SelectionRewriteContentResolverDependencies {
   /** 取 invocation 完成态（SubagentOrchestrator.getInvocation 的注入形态）。 */
   getInvocation(invocationId: string): SubagentInvocation | null;
   /** 授权判定（isSelectionRewriteInvocationAuthorized 的注入形态）。 */
-  isInvocationAuthorized(invocation: SubagentInvocation | null, roomId: string): boolean;
+  isInvocationAuthorized(invocation: SubagentInvocation | null, roomId: string | null): boolean;
   /** 取权威文档（DocumentService.get 的注入形态）。 */
   getDocument(documentId: string): RoomDocument | null;
 }
@@ -37,7 +37,8 @@ export interface SelectionRewriteResolvedContent {
 export type SelectionRewriteContentResolver = (input: {
   invocationId: string;
   documentId: string;
-  roomId: string;
+  /** 工作区级文稿为 null。 */
+  roomId: string | null;
   /**
    * 用户在预览框编辑过替换文本时的覆盖文本（出路二）：
    * 重放选区替换时用它替代 invocation 输出，编辑内容不再被静默丢弃。
@@ -354,7 +355,8 @@ export function createSelectionRewriteContentResolver(
       : invocation.result?.text;
     if (!selectedText || typeof resultText !== "string") return null;
     const document = getDocument(documentId);
-    if (!document || document.roomId !== roomId || document.deletedAt) return null;
+    // Phase 2i：文稿一律工作区级（roomId 恒 null），roomId 只作调用元数据不再校验。
+    if (!document || document.deletedAt) return null;
     const userEdited = typeof userEditedReplacementText === "string";
     const built = buildSelectionRewriteProposedContent(document.contentJson, {
       selectedText,

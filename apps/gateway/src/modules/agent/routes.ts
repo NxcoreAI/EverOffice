@@ -61,13 +61,11 @@ const NavigationTarget = Type.Object({
   roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
   objectId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   blockId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  /** 仅保留存活的导航对象类型：Room/记忆/日记子系统已删（Room 表在迁移 0085 摘除）。 */
   objectType: Type.Optional(Type.Union([
-    Type.Literal("room"),
     Type.Literal("document"),
     Type.Literal("source"),
-    Type.Literal("memory"),
     Type.Literal("task"),
-    Type.Literal("diary"),
   ])),
 });
 

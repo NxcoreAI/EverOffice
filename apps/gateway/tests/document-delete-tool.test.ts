@@ -10,7 +10,7 @@ import { DocumentOperationService } from "../src/modules/documents/operations/se
 import { DocumentService } from "../src/modules/documents/service.js";
 import type { DocumentCapabilityRegistry } from "../src/modules/documents/capabilities/registry.js";
 
-const TOOL = "context_room_document_delete";
+const TOOL = "document_delete";
 
 const temporaryDirectories: string[] = [];
 const disposables: Array<() => void> = [];
@@ -40,7 +40,6 @@ async function createHarness(name: string): Promise<Harness> {
     operations,
     undefined,
     undefined,
-    undefined,
     (event) => events.push(event),
   );
   disposables.push(() => database.sqlite.close());
@@ -54,7 +53,7 @@ const CONTENT = {
   ],
 } as never;
 
-async function seedDocument(documents: DocumentService, id: string, roomId = "room-1") {
+async function seedDocument(documents: DocumentService, id: string, roomId: string | null = "room-1") {
   return documents.import({ id, roomId, title: "删除测试文档", contentJson: CONTENT });
 }
 
@@ -64,7 +63,7 @@ function expectServiceError(promise: Promise<unknown> | unknown, code: string, d
   );
 }
 
-describe("context_room_document_delete", () => {
+describe("document_delete", () => {
   it("注册进 listTools 且 promptGuidelines 包含确认要求", async () => {
     const { registry } = await createHarness("delete-tool-register");
     expect(registry.listTools().map((tool) => tool.name)).toContain(TOOL);
@@ -95,12 +94,12 @@ describe("context_room_document_delete", () => {
     expect(structured.title).toBe("删除测试文档");
 
     // 活动列表不再包含，回收站列表包含；文档本身仍在（trash 非物理删除）。
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(false);
-    expect(documents.list("room-1", true).some((item) => item.id === document.id)).toBe(true);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(false);
+    expect(documents.list(true).some((item) => item.id === document.id)).toBe(true);
 
     // 可恢复：restore 后回到活动列表。
     await documents.restore(document.id);
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(true);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(true);
   });
 
   it("缺 confirm 或 confirm=false 被拒：文档保持原状", async () => {
@@ -116,10 +115,10 @@ describe("context_room_document_delete", () => {
       documentId: document.id,
       confirm: false,
     }, { agentSessionId: "s2", runId: "run-c2", roomId: "room-1" }), "DOCUMENT_DELETE_CONFIRM_REQUIRED");
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(true);
+    expect(documents.list().some((item) => item.id === document.id)).toBe(true);
   });
 
-  it("回收站文档、跨房间文档、不存在的文档被拒", async () => {
+  it("回收站文档与不存在的文档被拒；Phase 2i 起 context.roomId 不再构成归属校验", async () => {
     const { registry, documents } = await createHarness("delete-tool-guard");
     const trashedDoc = await seedDocument(documents, "doc-del-3");
     await documents.delete(trashedDoc.id);
@@ -129,10 +128,11 @@ describe("context_room_document_delete", () => {
     }, { agentSessionId: "s3", runId: "run-trash", roomId: "room-1" }), "DOCUMENT_TRASHED");
 
     const other = await seedDocument(documents, "doc-del-4");
-    await expectServiceError(registry.execute(TOOL, {
+    const crossRoom = await registry.execute(TOOL, {
       documentId: other.id,
       confirm: true,
-    }, { agentSessionId: "s3", runId: "run-room", roomId: "room-other" }), "ROOM_MISMATCH");
+    }, { agentSessionId: "s3", runId: "run-room", roomId: "room-other" });
+    expect(crossRoom.structuredContent).toMatchObject({ documentId: other.id, deleted: true });
 
     await expectServiceError(registry.execute(TOOL, {
       documentId: "doc-missing",
@@ -140,13 +140,16 @@ describe("context_room_document_delete", () => {
     }, { agentSessionId: "s3", runId: "run-missing", roomId: "room-1" }), "NOT_FOUND");
   });
 
-  it("未选择 Room 时被拒（ROOM_SELECTION_REQUIRED）", async () => {
-    const { registry, documents } = await createHarness("delete-tool-noroom");
-    const document = await seedDocument(documents, "doc-del-5");
-    await expectServiceError(registry.execute(TOOL, {
+  it("P0-2d：工作区级文稿（roomId 为 null）也能删除", async () => {
+    const { registry, documents } = await createHarness("delete-tool-workspace");
+    const document = await seedDocument(documents, "doc-del-5", null);
+    expect(documents.get(document.id)?.roomId).toBeNull();
+    const result = await registry.execute(TOOL, {
       documentId: document.id,
       confirm: true,
-    }, { agentSessionId: "s4", runId: "run-noroom", roomId: null }), "ROOM_SELECTION_REQUIRED");
-    expect(documents.list("room-1").some((item) => item.id === document.id)).toBe(true);
+    }, { agentSessionId: "s4", runId: "run-workspace", roomId: null });
+    expect(result.structuredContent).toMatchObject({ documentId: document.id });
+    expect(documents.get(document.id)?.deletedAt).toBeTruthy();
+    expect(documents.list().some((item) => item.id === document.id)).toBe(false);
   });
 });

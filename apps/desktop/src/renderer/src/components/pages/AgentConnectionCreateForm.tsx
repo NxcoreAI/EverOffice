@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { LoaderCircle, X } from 'lucide-react'
 import type { AgentAccessScopesDto, AgentConnectionDto } from '../../../../shared/agent-access'
 import { useLocale } from '@/i18n/LocaleContext'
-
-export type CreateFormRoomsLoader = () => Promise<Array<{ id: string; title: string }>>
 
 const TOOLS: Array<{ value: string; label: string }> = [
   { value: 'claude-code', label: 'Claude Code' },
@@ -31,32 +29,18 @@ const WRITE_CAPABILITIES = [
 ]
 
 export function AgentConnectionCreateForm({
-  loadRooms,
   onCancel,
   onCreated,
 }: {
-  loadRooms: CreateFormRoomsLoader
   onCancel: () => void
   onCreated: (connection: AgentConnectionDto, token: string) => void
 }) {
   const { t } = useLocale()
   const [name, setName] = useState('')
   const [tool, setTool] = useState('claude-code')
-  const [rooms, setRooms] = useState<Array<{ id: string; title: string }>>([])
-  const [roomsLoading, setRoomsLoading] = useState(true)
-  const [allRooms, setAllRooms] = useState(true)
-  const [selectedRooms, setSelectedRooms] = useState<Set<string>>(new Set())
   const [capabilities, setCapabilities] = useState<Set<string>>(new Set(READ_CAPABILITIES.map((item) => item.value)))
-  const [writebackRoomId, setWritebackRoomId] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    void loadRooms()
-      .then((items) => setRooms(items))
-      .catch(() => setError(t('surface:agentConnections.roomsLoadFailed')))
-      .finally(() => setRoomsLoading(false))
-  }, [])
 
   const toggle = (set: Set<string>, value: string): Set<string> => {
     const next = new Set(set)
@@ -68,10 +52,12 @@ export function AgentConnectionCreateForm({
   const create = async () => {
     if (!name.trim() || capabilities.size === 0) return
     setBusy(true); setError(null)
+    // Room 已不存在：连接作用域恒为「整个工作区」（roomIds='all'），
+    // writebackRoomId 在网关 schema 里仍是必填可空字段，故显式传 null。
     const scopes: AgentAccessScopesDto = {
-      roomIds: allRooms ? 'all' : [...selectedRooms],
+      roomIds: 'all',
       capabilities: [...capabilities],
-      writebackRoomId: writebackRoomId || null,
+      writebackRoomId: null,
     }
     try {
       const created = await window.nxcore!.agentAccess.createConnection({ name: name.trim(), tool, scopes })
@@ -82,8 +68,6 @@ export function AgentConnectionCreateForm({
       setBusy(false)
     }
   }
-
-  const roomOptions = allRooms ? [] : rooms
 
   return <section className="agent-connections-form">
     <div className="agent-connections-form-header">
@@ -106,34 +90,6 @@ export function AgentConnectionCreateForm({
       </label>
 
       <fieldset className="agent-connections-form-wide">
-        <legend>{t('surface:agentConnections.rooms')}</legend>
-        <label className="agent-connections-check">
-          <input type="radio" checked={allRooms} onChange={() => setAllRooms(true)} />
-          {t('surface:agentConnections.allRooms')}
-        </label>
-        <label className="agent-connections-check">
-          <input type="radio" checked={!allRooms} onChange={() => setAllRooms(false)} />
-          {t('surface:agentConnections.selectedRooms', { count: selectedRooms.size })}
-        </label>
-        {!allRooms ? (
-          roomsLoading ? <LoaderCircle className="spin" aria-hidden="true" /> : (
-            <div className="agent-connections-room-picker" role="group">
-              {rooms.map((room) => (
-                <label key={room.id} className="agent-connections-check">
-                  <input
-                    type="checkbox"
-                    checked={selectedRooms.has(room.id)}
-                    onChange={() => setSelectedRooms((current) => toggle(current, room.id))}
-                  />
-                  {room.title}
-                </label>
-              ))}
-            </div>
-          )
-        ) : null}
-      </fieldset>
-
-      <fieldset className="agent-connections-form-wide">
         <legend>{t('surface:agentConnections.capabilities')}</legend>
         <div className="agent-connections-capabilities">
           {[...READ_CAPABILITIES, ...WRITE_CAPABILITIES].map((item) => (
@@ -148,14 +104,6 @@ export function AgentConnectionCreateForm({
           ))}
         </div>
       </fieldset>
-
-      <label className="agent-connections-form-wide">
-        {t('surface:agentConnections.writeback')}
-        <select value={writebackRoomId} onChange={(event) => setWritebackRoomId(event.target.value)}>
-          <option value="">{t('surface:agentConnections.writebackNone')}</option>
-          {rooms.map((room) => <option key={room.id} value={room.id}>{room.title}</option>)}
-        </select>
-      </label>
     </div>
 
     {error ? <div className="agent-connections-error" role="alert">{error}</div> : null}

@@ -54,13 +54,13 @@ describe("pruneToolHistory", () => {
         role: "assistant",
         content: [
           { type: "text", text: `轮 ${index}` },
-          { type: "toolCall", id: `call-${index}`, name: "context_room_document_read", arguments: { big: "a".repeat(2_000) } },
+          { type: "toolCall", id: `call-${index}`, name: "document_read", arguments: { big: "a".repeat(2_000) } },
         ],
       },
       {
         role: "toolResult",
         toolCallId: `call-${index}`,
-        toolName: "context_room_document_read",
+        toolName: "document_read",
         content: [{ type: "text", text: "r".repeat(resultChars) }],
         isError: false,
       },

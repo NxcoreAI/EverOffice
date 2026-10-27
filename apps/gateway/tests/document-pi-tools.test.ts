@@ -23,20 +23,20 @@ function harness() {
   }))
   const host = {
     listTools: () => [{
-      name: 'context_room_list',
-      title: '列出 Context Rooms',
-      description: '列出可选的 Context Room。',
+      name: 'office_create',
+      title: '创建 Office 文件',
+      description: '创建 Word/Excel 文件。',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     }],
     callTool,
   } as unknown as DocumentMcpHost
   const tool = createDocumentPiTools(host)[0]
-  if (!tool) throw new Error('context_room_list tool was not created')
+  if (!tool) throw new Error('office_create tool was not created')
   return { callTool, tool }
 }
 
 describe('Document Pi tool routing', () => {
-  it('rejects Context Room tools for an explicit Notion-only request', async () => {
+  it('rejects document tools for an explicit Notion-only request', async () => {
     const { callTool, tool } = harness()
     const input = runtimeInput('使用 Notion 帮我创建一个标题为“父页面”的私有工作区页面。')
 
@@ -48,7 +48,7 @@ describe('Document Pi tool routing', () => {
     }
 
     expect(failure).toBeInstanceOf(Error)
-    expect(String(failure)).toContain('Context Room tool route mismatch')
+    expect(String(failure)).toContain('Document tool route mismatch')
     expect(callTool).not.toHaveBeenCalled()
     expect(tool.classifyFailure?.(failure, input, {})).toMatchObject({
       category: 'route_mismatch',
@@ -58,7 +58,7 @@ describe('Document Pi tool routing', () => {
     })
   })
 
-  it('allows Context Room tools when EverRoom is the explicit destination', async () => {
+  it('allows document tools when EverRoom is the explicit destination', async () => {
     const { callTool, tool } = harness()
     const input = runtimeInput('把 Notion 页面内容保存到 EverRoom Context Room 文档。')
 
@@ -68,7 +68,7 @@ describe('Document Pi tool routing', () => {
     expect(callTool).toHaveBeenCalledOnce()
   })
 
-  it('binds an Agent-inferred available Room for the entire document creation run', async () => {
+  it('uses the Room given on each call without carrying it over to later calls in the run', async () => {
     const callTool = vi.fn(async (name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
       content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
       structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
@@ -76,11 +76,11 @@ describe('Document Pi tool routing', () => {
     const host = {
       listTools: () => [
         {
-          name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+          name: 'document_write_begin', title: 'Begin', description: 'Begin',
           inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
         },
         {
-          name: 'context_room_write_append', title: 'Append', description: 'Append',
+          name: 'document_write_append', title: 'Append', description: 'Append',
           inputSchema: { type: 'object', properties: { operationId: { type: 'string' } } },
         },
       ],
@@ -98,57 +98,57 @@ describe('Document Pi tool routing', () => {
     await begin!.execute(input, { roomId: 'room-java', title: 'Java 并发指南' })
     await append!.execute(input, { operationId: 'operation-1', sequence: 1, text: '正文' })
 
-    expect(callTool).toHaveBeenNthCalledWith(1, 'context_room_write_begin', expect.any(Object), expect.objectContaining({
+    expect(callTool).toHaveBeenNthCalledWith(1, 'document_write_begin', expect.any(Object), expect.objectContaining({
       roomId: 'room-java',
     }))
-    expect(callTool).toHaveBeenNthCalledWith(2, 'context_room_write_append', expect.any(Object), expect.objectContaining({
-      roomId: 'room-java',
+    // P0-4：归属不再为整个 run 粘滞；未再指定归属的后续调用按工作区级处理。
+    expect(callTool).toHaveBeenNthCalledWith(2, 'document_write_append', expect.any(Object), expect.objectContaining({
+      roomId: null,
     }))
   })
 
-  it('rejects an Agent-inferred Room outside the current available Room snapshot', async () => {
+  it('creates a workspace-level document when no Room is given (P0-2/P0-4)', async () => {
     const { callTool } = harness()
     const host = {
       listTools: () => [{
-        name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+        name: 'document_write_begin', title: 'Begin', description: 'Begin',
         inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
       }],
       callTool,
-      roomExists: () => false,
     } as unknown as DocumentMcpHost
     const begin = createDocumentPiTools(host)[0]!
 
-    await expect(begin.execute(runtimeInput('创建一份产品文档'), {
-      roomId: 'room-forged',
-      title: '产品文档',
-    })).rejects.toThrow('ROOM_SELECTION_REQUIRED')
-    expect(callTool).not.toHaveBeenCalled()
+    await begin.execute(runtimeInput('创建一份产品文档'), { title: '产品文档' })
+
+    expect(callTool).toHaveBeenCalledOnce()
+    expect(callTool).toHaveBeenCalledWith('document_write_begin', expect.any(Object), expect.objectContaining({
+      roomId: null,
+    }))
   })
 
-  it('accepts a Room missing from the snapshot but present in the live registry (mid-run create)', async () => {
+  it('passes an explicitly requested Room through without consulting the Room registry', async () => {
     const callTool = vi.fn(async (_name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
       content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
       structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
     }))
     const host = {
       listTools: () => [{
-        name: 'context_room_write_begin', title: 'Begin', description: 'Begin',
+        name: 'document_write_begin', title: 'Begin', description: 'Begin',
         inputSchema: { type: 'object', properties: { roomId: { type: 'string' } } },
       }],
       callTool,
-      roomExists: (roomId: string) => roomId === 'room-fresh',
     } as unknown as DocumentMcpHost
     const begin = createDocumentPiTools(host)[0]!
 
     await begin.execute(runtimeInput('创建一份文档'), { roomId: 'room-fresh', title: '文档' })
 
     expect(callTool).toHaveBeenCalledOnce()
-    expect(callTool).toHaveBeenCalledWith('context_room_write_begin', expect.any(Object), expect.objectContaining({
+    expect(callTool).toHaveBeenCalledWith('document_write_begin', expect.any(Object), expect.objectContaining({
       roomId: 'room-fresh',
     }))
   })
 
-  describe('context_room_document_list selectionRequired 意图闸门', () => {
+  describe('document_list selectionRequired 意图闸门', () => {
     function documentListHarness() {
       const callTool = vi.fn(async (): Promise<DocumentMcpToolResult> => ({
         content: [{ type: 'text', text: JSON.stringify({
@@ -164,7 +164,7 @@ describe('Document Pi tool routing', () => {
       }))
       const host = {
         listTools: () => [{
-          name: 'context_room_document_list',
+          name: 'document_list',
           title: '列出当前 Room 的文档',
           description: '列出文档。',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -172,7 +172,7 @@ describe('Document Pi tool routing', () => {
         callTool,
       } as unknown as DocumentMcpHost
       const tool = createDocumentPiTools(host)[0]
-      if (!tool) throw new Error('context_room_document_list tool was not created')
+      if (!tool) throw new Error('document_list tool was not created')
       return { callTool, tool }
     }
 

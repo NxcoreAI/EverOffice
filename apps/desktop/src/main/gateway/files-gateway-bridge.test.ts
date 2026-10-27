@@ -366,35 +366,8 @@ describe('FilesGatewayBridge.readMarkdown', () => {
   })
 })
 
-describe('FilesGatewayBridge.createClipCapture', () => {
-  it('forwards the structured capture to the dedicated Clipper endpoint', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      expect(String(input)).toBe('http://gateway.test/v1/clipper/captures')
-      expect(init?.method).toBe('POST')
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        captureId: 'capture-1', sourceUrl: 'https://example.com/article?utm_source=test',
-        canonicalUrl: 'https://example.com/article', title: 'An article', markdown: '# An article',
-        assets: [],
-      })
-      return new Response(JSON.stringify({
-        fileEntryId: 'file-1', fileVersionId: 'version-1', jobId: 'job-1',
-        contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false, pendingAssetIds: [], capture: {},
-      }), { headers: { 'Content-Type': 'application/json' } })
-    })
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
-
-    await expect(new FilesGatewayBridge(supervisor).createClipCapture({
-      markdown: '# An article', title: 'An article', url: 'https://example.com/article?utm_source=test',
-      canonicalUrl: 'https://example.com/article', capturedAt: '2026-08-24T12:00:00.000Z', captureId: 'capture-1',
-      extractionMode: 'article', extractorVersion: 'test-1', assets: [],
-    })).resolves.toMatchObject({ fileEntryId: 'file-1', fileVersionId: 'version-1' })
-  })
-})
-
 describe('FilesGatewayBridge.importAgentAttachments', () => {
-  it('uploads chat image attachments then registers them with the visual library', async () => {
+  it('uploads chat image attachments through the single byte entry', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attach-'))
     temporaryDirectories.push(directory)
     await writeFile(join(directory, 'pic.png'), 'png-bytes')
@@ -409,14 +382,6 @@ describe('FilesGatewayBridge.importAgentAttachments', () => {
           headers: { 'Content-Type': 'application/json' },
         })
       }
-      if (url === 'http://gateway.test/v1/perception/visual-observations') {
-        calls.push('register')
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-        expect(body).toMatchObject({ fileId: 'upl-1', kind: 'photo' })
-        return new Response(JSON.stringify({ observationId: 'obs-1' }), {
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
       throw new Error(`unexpected fetch: ${url}`)
     })
     const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
@@ -424,6 +389,6 @@ describe('FilesGatewayBridge.importAgentAttachments', () => {
     const attachments = await new FilesGatewayBridge(supervisor).importAgentAttachments([join(directory, 'pic.png')])
 
     expect(attachments).toEqual([expect.objectContaining({ fileId: 'upl-1', kind: 'image', mimeType: 'image/png' })])
-    expect(calls).toEqual(['upload', 'register'])
+    expect(calls).toEqual(['upload'])
   })
 })

@@ -46,9 +46,9 @@ export function createPlugin(
     return operation;
   };
   const begin: DocumentCapabilityTool = {
-    name: "context_room_write_begin",
-    title: "开始创建 Room 文档",
-    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。用户只要求创建文档而没有要求立即产出内容时（如「建个空文档」「新建一份 XX 文档」），title 直接使用用户的表述，begin 后立即 commit（finalSequence=0），不调用 document_draft——空文档会进入写作路线选择流程，由用户在思路板块选路后再拍板写正文。其余情形正文内容与标题必须来自 document_draft 的返回值（title 与 appendChunks 逐字转发），不得自行撰写。当前视口已绑定 Room 时省略 roomId；未绑定时，必须先根据文档标题、主题、拟写内容与可用 Room 的标题、类型、背景、目标和状态判断，只有存在明确唯一匹配时才填写该 Room 的 ID。无法可靠确定唯一 Room 时不得调用本工具，应调用 context_room_list 并提供最可能相关的 candidateRoomIds，等待用户选择。若句子的创建对象是 Room、Context Room 或房间，不得调用本工具；即使用途说明中出现“文档/文件/项目”，也应调用 context_room_create。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。",
+    name: "document_write_begin",
+    title: "开始创建文档",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。用户只要求创建文档而没有要求立即产出内容时（如「建个空文档」「新建一份 XX 文档」），title 直接使用用户的表述，begin 后立即 commit（finalSequence=0），不调用 document_draft——空文档会进入写作路线选择流程，由用户在思路板块选路后再拍板写正文。其余情形正文内容与标题必须来自 document_draft 的返回值（title 与 appendChunks 逐字转发），不得自行撰写。文档写入工作区文稿库（docs 页）：当前视口已绑定 Room 且用户要求归入该 Room 时才传 roomId，未绑定时省略即可，文档作为工作区级文稿保存，不需要先让用户选择 Room。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -61,9 +61,6 @@ export function createPlugin(
     },
     annotations: annotations(false),
     execute: async (args, context) => {
-      if (!context.roomId) {
-        throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room before creating a document");
-      }
       if (stringArg(args, "mode") !== "create" || stringArg(args, "format") !== "markdown") {
         throw new Error("INVALID_REQUEST: only create/markdown is supported");
       }
@@ -102,7 +99,7 @@ export function createPlugin(
         status: "running",
         draftCreate: backend.prepareAgentDocumentDraft({
           documentId,
-          roomId: context.roomId!,
+          roomId: context.roomId,
           title,
           markdown: "",
         }),
@@ -110,7 +107,7 @@ export function createPlugin(
       return success({
         operationId,
         roomId: context.roomId, docId: documentId,
-        state: "running", nextSequence: 1, nextAction: "context_room_write_append",
+        state: "running", nextSequence: 1, nextAction: "document_write_append",
         expiresAt: expiresAt.toISOString(),
         navigation: {
           pageId: "rooms", title, action: "created",
@@ -120,9 +117,9 @@ export function createPlugin(
     },
   };
   const append: DocumentCapabilityTool = {
-    name: "context_room_write_append",
-    title: "流式追加 Room 文档正文",
-    description: "按严格连续 sequence 追加本次新增的 Markdown 正文，不得重发累计全文。优先以引用方式转交：传 document_draft 返回的 invocationId 与 chunkIndex（0 起，按顺序逐块），正文由服务端从 doc-writer 结果转交，参数中不携带正文；text 仅供无法引用 invocation 的调用方直写。正文不得包含标题或一级标题（#）：context_room_write_begin.title 由界面单独渲染为页面顶部 H1；主章节从 ## 开始，子章节依次递进。",
+    name: "document_write_append",
+    title: "流式追加文档正文",
+    description: "按严格连续 sequence 追加本次新增的 Markdown 正文，不得重发累计全文。优先以引用方式转交：传 document_draft 返回的 invocationId 与 chunkIndex（0 起，按顺序逐块），正文由服务端从 doc-writer 结果转交，参数中不携带正文；text 仅供无法引用 invocation 的调用方直写。正文不得包含标题或一级标题（#）：document_write_begin.title 由界面单独渲染为页面顶部 H1；主章节从 ## 开始，子章节依次递进。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
@@ -243,8 +240,8 @@ export function createPlugin(
     },
   };
   const commit: DocumentCapabilityTool = {
-    name: "context_room_write_commit",
-    title: "提交 Room 文档",
+    name: "document_write_commit",
+    title: "提交文档",
     description: "正文完成后提交并生成不可变版本；只建空文档时也可在 begin 后直接提交（finalSequence=0）。",
     inputSchema: {
       type: "object", additionalProperties: false,
@@ -316,8 +313,8 @@ export function createPlugin(
     },
   };
   const abort: DocumentCapabilityTool = {
-    name: "context_room_write_abort",
-    title: "中止 Room 文档事务",
+    name: "document_write_abort",
+    title: "中止文档事务",
     description: "中止创建操作并删除临时文档。",
     inputSchema: {
       type: "object", additionalProperties: false,
@@ -346,11 +343,10 @@ export function createPlugin(
     },
   };
   return {
-    manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", true, false),
+    manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", false),
     promptGuidelines: [
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
-      "当前视口没有绑定 Room 时，先使用文档标题、主题和拟写内容，对照可用 Room 的标题、类型、背景、目标、状态及内容摘要判断归属。存在明确唯一匹配时，在 context_room_write_begin.roomId 中填写其 ID 并直接创建；无法可靠确定唯一目标时，调用 context_room_list，仅提交最可能相关的 2 至 5 个 candidateRoomIds，然后停止创建并等待用户选择。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",
-      "若被创建的对象是 Room、Context Room 或房间，不得使用文档创建工具；用途从句中出现文档、文件或项目不代表创建文档。“创建一个管理项目文档的 Context Room”应调用 context_room_create，“在 Context Room 里创建一份项目文档”才使用文档创建工具。",
+      "文档写入工作区文稿库（docs 页）：当前视口未绑定 Room 时直接创建，文档作为工作区级文稿保存，不需要先让用户选择 Room；只有用户明确要求归入某个已有 Room 时，才在 document_write_begin.roomId 中填写其 ID。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",
       "用户只要求创建文档而没有要求立即产出内容时：write_begin 直接用用户表述的标题，随后立即 write_commit（finalSequence=0），不调用 document_draft；空文档会进入写作路线选择流程，不要代用户选路或起草。",
       "正文内容与标题必须来自 document_draft：write_begin 使用其返回的 title，write_append 凭返回的 invocationId 与 chunkIndex（0 起，按顺序逐块）引用转交，正文由服务端从 doc-writer 结果取用，不得在工具参数中复写正文。",
     ],

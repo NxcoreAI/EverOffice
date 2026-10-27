@@ -1,4 +1,4 @@
-import { ArrowUpRight, BookOpen, Bot, Boxes, FileDown, FileText, Files, FolderOpen, Info, LoaderCircle, PlugZap, RefreshCw, Search, TriangleAlert, X } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Bot, FileText, Files, FolderOpen, Info, LoaderCircle, PlugZap, RefreshCw, Search, TriangleAlert, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
@@ -7,7 +7,6 @@ import type {
   ExternalDocumentListItem,
   ExternalDocumentProvider,
 } from '@nxcore/agent-contract'
-import type { KnowledgeRoomDto } from '../../../../shared/knowledge'
 import type { OpenConnectorConnectionSummary } from '../../../../shared/open-connector'
 import { SourceIcon } from './sources/SourceIcon'
 import { showToast } from '../../state/toast'
@@ -17,8 +16,8 @@ import './ConnectorSyncPage.css'
 
 /**
  * 连接器页"文档导入"面板：按连接全量列出飞书/Notion 文档 → 批量勾选 →
- * 「导入到 Room」走批量 commitToRoom；「AI 自动归类」走归房+孵化混合
- * （高置信进 Room，无匹配进待处理晋升队列）。批量为异步批，轮询进度可取消。
+ * 「导入到工作区文档库」走批量导入（mode=auto，全量进工作区文档库，
+ * 不再选目标 Room）。批量为异步批，轮询进度可取消。
  */
 
 const BATCH_POLL_MS = 2_000
@@ -126,13 +125,6 @@ export function ConnectorDocumentImportPanel({
   const [batchStarting, setBatchStarting] = useState(false)
   /** 发起失败的常驻错误（toast 只显示 3.2s，易被错过后只剩静默禁用的按钮）。 */
   const [startError, setStartError] = useState<string | null>(null)
-  const [roomPickerOpen, setRoomPickerOpen] = useState(false)
-  /** 已导入冲突确认：选了 Room 且勾选中存在已导入文档时进入。 */
-  const [conflict, setConflict] = useState<{ roomId: string; roomTitle: string; existingRemoteIds: Set<string> } | null>(null)
-  const [conflictChecking, setConflictChecking] = useState(false)
-  const [rooms, setRooms] = useState<KnowledgeRoomDto[]>([])
-  const [roomsLoading, setRoomsLoading] = useState(false)
-  const [roomQuery, setRoomQuery] = useState('')
   const pollRef = useRef<number | null>(null)
   const runCancelRef = useRef(false)
   const currentBatchIdRef = useRef<string | null>(null)
@@ -340,7 +332,8 @@ export function ConnectorDocumentImportPanel({
     }
   }, [external, provider, connectionName])
 
-  const startBatch = async (mode: 'room' | 'auto', roomId?: string, forceNew?: boolean) => {
+  /** 批量导入到工作区文档库：固定 mode=auto（Room 已删除，不再选目标）。 */
+  const startBatch = async () => {
     if (!external || selected.size === 0 || run?.status === 'running' || batchStarting) return
     setBatchStarting(true)
     setStartError(null)
@@ -360,9 +353,7 @@ export function ConnectorDocumentImportPanel({
           provider,
           ...(connectionName ? { connectionName } : {}),
           remoteDocumentIds: chunk,
-          mode,
-          ...(roomId ? { roomId } : {}),
-          ...(forceNew ? { forceNew } : {}),
+          mode: 'auto',
         })
         // 创建往返期间点了取消：立即取消该批，避免下一轮轮询前多导入数篇。
         if (runCancelRef.current) {
@@ -426,48 +417,6 @@ export function ConnectorDocumentImportPanel({
     }
   }
 
-  const openRoomPicker = async () => {
-    setRoomPickerOpen(true)
-    setRoomQuery('')
-    if (rooms.length === 0) {
-      setRoomsLoading(true)
-      try {
-        const response = await window.nxcore?.knowledge.listRooms()
-        setRooms(response?.items ?? [])
-      } catch {
-        setRooms([])
-      } finally {
-        setRoomsLoading(false)
-      }
-    }
-  }
-
-  /** 选定目标 Room：先查勾选中已在该 Room 导入过的文档（>50 时分批查询），
-   * 无冲突直接开批，有冲突弹确认（更新已有=默认候选链路 / 创建新的=跳过去重）。 */
-  const pickRoom = async (room: { id: string; title: string }) => {
-    if (!external || conflictChecking) return
-    setConflictChecking(true)
-    try {
-      const ids = [...selected]
-      const existing = new Set<string>()
-      for (let index = 0; index < ids.length; index += BATCH_CHUNK) {
-        const result = await external.importExistingInRoom(provider, room.id, ids.slice(index, index + BATCH_CHUNK)).catch(() => null)
-        if (!result) continue
-        for (const id of result.existingRemoteIds) existing.add(id)
-      }
-      // 部分分批预检失败但已查到冲突时仍弹确认（用已得集合），避免静默覆盖；
-      // 完全查不到冲突信息（size=0）时按默认（更新已有）继续，与旧行为一致。
-      if (existing.size === 0) {
-        setRoomPickerOpen(false)
-        await startBatch('room', room.id)
-      } else {
-        setConflict({ roomId: room.id, roomTitle: room.title, existingRemoteIds: existing })
-      }
-    } finally {
-      setConflictChecking(false)
-    }
-  }
-
   const connectionMissing = !standalone && !listLoading
     && (activeConnections.length === 0 || Boolean(listError?.includes('IMPORT_CONNECTION_REQUIRED')))
   // 授权中轮询：主进程打开授权页后，每 3s 检查一次连接，新连接出现即提示卡消失。
@@ -501,14 +450,6 @@ export function ConnectorDocumentImportPanel({
       })
     })
   }
-  const visibleRooms = useMemo(() => {
-    const keyword = roomQuery.trim().toLowerCase()
-    if (!keyword) return rooms
-    return rooms.filter((room) => room.title.toLowerCase().includes(keyword)
-      || room.kind.toLowerCase().includes(keyword)
-      || room.aliases.some((alias) => alias.toLowerCase().includes(keyword)))
-  }, [rooms, roomQuery])
-
   const originIcon = (origin: ExternalDocumentListItem['origin']) =>
     origin === 'wiki' ? <BookOpen aria-hidden="true" /> : origin === 'drive' ? <FolderOpen aria-hidden="true" /> : <FileText aria-hidden="true" />
 
@@ -733,28 +674,16 @@ export function ConnectorDocumentImportPanel({
                 <div className="connector-doc-progress-track"><div style={{ width: `${batchPercent}%` }} /></div>
               </div>
             ) : (
-              <>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={selected.size === 0 || batchStarting}
-                  title={t('surface:connectorSync.importToRoomTooltip')}
-                  onClick={() => void openRoomPicker()}
-                >
-                  <FileDown aria-hidden="true" />
-                  {t('surface:connectorSync.importToRoom')}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={selected.size === 0 || autoDisabled || batchStarting}
-                  title={t(autoDisabled ? 'surface:connectorSync.autoClassifyUnavailable' : 'surface:connectorSync.aiClassifyTooltip')}
-                  onClick={() => void startBatch('auto')}
-                >
-                  {batchStarting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Bot aria-hidden="true" />}
-                  {t('surface:connectorSync.aiAutoClassify')}
-                </button>
-              </>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={selected.size === 0 || autoDisabled || batchStarting}
+                title={autoDisabled ? t('surface:connectorSync.importToWorkspaceUnavailable') : t('surface:connectorSync.importToWorkspaceTooltip')}
+                onClick={() => void startBatch()}
+              >
+                {batchStarting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Bot aria-hidden="true" />}
+                {t('surface:connectorSync.importToWorkspace')}
+              </button>
             )}
           </div>
           {startError ? (
@@ -803,118 +732,6 @@ export function ConnectorDocumentImportPanel({
         </div>
       ) : null}
 
-      {roomPickerOpen ? (
-        <div className="connector-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setRoomPickerOpen(false)
-        }}>
-          <section className="connector-room-picker" role="dialog" aria-modal="true" aria-label={t('surface:connectorSync.chooseTargetRoom')}>
-            <header>
-              <div className="connector-room-picker-title">
-                <FileDown aria-hidden="true" />
-                <span>{t('surface:connectorSync.chooseTargetRoomCount', { count: String(selected.size) })}</span>
-              </div>
-              <button type="button" className="connector-icon-btn" onClick={() => setRoomPickerOpen(false)} aria-label={t('surface:connectorSync.chooseTargetRoom')}>
-                <X />
-              </button>
-            </header>
-            <div className="connector-doc-filter">
-              <Search aria-hidden="true" />
-              <input
-                value={roomQuery}
-                onChange={(event) => setRoomQuery(event.target.value)}
-                placeholder={t('surface:connectorSync.roomSearchPlaceholder')}
-                autoFocus
-              />
-            </div>
-            <div className="connector-room-list">
-              {roomsLoading ? <div className="connector-sync-empty"><LoaderCircle className="spin" /></div> : null}
-              {!roomsLoading && visibleRooms.length === 0 ? (
-                <div className="connector-sync-empty">{t('surface:connectorSync.noRoomsAvailable')}</div>
-              ) : null}
-      {conflict ? (
-        <div className="connector-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setConflict(null)
-        }}>
-          <section className="connector-conflict-confirm" role="dialog" aria-modal="true" aria-label={t('surface:connectorSync.conflictTitle')}>
-            <header>
-              <div className="connector-conflict-confirm-title">
-                <TriangleAlert aria-hidden="true" />
-                <span>{t('surface:connectorSync.conflictTitle')}</span>
-              </div>
-              <button type="button" className="connector-icon-btn" onClick={() => setConflict(null)} aria-label={t('surface:connectorSync.close')}>
-                <X />
-              </button>
-            </header>
-            <div className="connector-conflict-confirm-body">
-              <p>
-                {t('surface:connectorSync.conflictSummary', {
-                  count: String(conflict.existingRemoteIds.size),
-                  total: String(selected.size),
-                  room: conflict.roomTitle,
-                })}
-              </p>
-              <ul className="connector-conflict-confirm-list">
-                {items
-                  .filter((item) => conflict.existingRemoteIds.has(item.remoteDocumentId))
-                  .slice(0, 6)
-                  .map((item) => (
-                    <li key={item.remoteDocumentId}>
-                      <SourceIcon kind={provider} aria-hidden="true" />
-                      <span>{item.title}</span>
-                    </li>
-                  ))}
-                {conflict.existingRemoteIds.size > 6 ? (
-                  <li className="connector-conflict-confirm-more">
-                    {t('surface:connectorSync.conflictMoreCount', { count: String(conflict.existingRemoteIds.size - 6) })}
-                  </li>
-                ) : null}
-              </ul>
-              <p className="connector-conflict-confirm-hint">{t('surface:connectorSync.conflictUpdateHint')}</p>
-            </div>
-            <footer>
-              <button type="button" className="secondary-button" onClick={() => setConflict(null)}>
-                {t('surface:connectorSync.cancel')}
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setConflict(null)
-                  setRoomPickerOpen(false)
-                  void startBatch('room', conflict.roomId, true)
-                }}
-              >
-                {t('surface:connectorSync.conflictCreateNew')}
-              </button>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => {
-                  setConflict(null)
-                  setRoomPickerOpen(false)
-                  void startBatch('room', conflict.roomId)
-                }}
-              >
-                {t('surface:connectorSync.conflictUpdate')}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-              {visibleRooms.map((room) => (
-                <button key={room.id} type="button" className="connector-room-row" disabled={conflictChecking} onClick={() => { void pickRoom(room) }}>
-                  <span className="connector-room-icon"><Boxes aria-hidden="true" /></span>
-                  <span className="connector-room-copy">
-                    <strong>{room.title}</strong>
-                    <small>{room.kind}</small>
-                  </span>
-                  <ArrowUpRight className="connector-room-go" aria-hidden="true" />
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
-      ) : null}
     </section>
   )
 }

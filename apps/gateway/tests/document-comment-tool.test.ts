@@ -11,7 +11,7 @@ import { DocumentService } from "../src/modules/documents/service.js";
 import { DocumentCommentService } from "../src/modules/documents/comments.js";
 import type { DocumentCapabilityRegistry } from "../src/modules/documents/capabilities/registry.js";
 
-const TOOL = "context_room_document_comment_add";
+const TOOL = "document_comment_add";
 
 const temporaryDirectories: string[] = [];
 const disposables: Array<() => void> = [];
@@ -42,7 +42,6 @@ async function createHarness(name: string, withComments = true): Promise<Harness
     undefined,
     operations,
     undefined,
-    undefined,
     withComments ? comments : undefined,
     (event) => events.push(event),
   );
@@ -68,7 +67,7 @@ function expectServiceError(promise: Promise<unknown> | unknown, code: string, d
   );
 }
 
-describe("context_room_document_comment_add", () => {
+describe("document_comment_add", () => {
   it("注册进 listTools 且 promptGuidelines 包含审阅工作流", async () => {
     const { registry } = await createHarness("comment-tool-register");
     expect(registry.listTools().map((tool) => tool.name)).toContain(TOOL);
@@ -96,7 +95,7 @@ describe("context_room_document_comment_add", () => {
     expect(comments.list(document.id)).toHaveLength(1);
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("document.comments.changed");
-    expect(events[0]!.roomId).toBe("room-1");
+    expect(events[0]!.roomId).toBeNull();
     expect(events[0]!.documentId).toBe(document.id);
   });
 
@@ -109,7 +108,7 @@ describe("context_room_document_comment_add", () => {
       quotedText: "**Alpha 参考正文段落**",
     }, { agentSessionId: "s2", runId: "run-md", roomId: "room-1" }), "COMMENT_QUOTE_NOT_FOUND", {
       retryable: true,
-      nextAction: "context_room_document_read",
+      nextAction: "document_read",
     });
     expect(comments.list(document.id)).toHaveLength(0);
   });
@@ -124,7 +123,7 @@ describe("context_room_document_comment_add", () => {
     }, { agentSessionId: "s3", runId: "run-block", roomId: "room-1" }), "BLOCK_NOT_FOUND");
   });
 
-  it("回收站文档与跨房间文档被拒", async () => {
+  it("回收站文档被拒；Phase 2i 起 context.roomId 不再构成归属校验", async () => {
     const { registry, documents } = await createHarness("comment-tool-guard");
     const document = await seedDocument(documents, "doc-tool-4");
     await documents.delete(document.id);
@@ -134,10 +133,11 @@ describe("context_room_document_comment_add", () => {
     }, { agentSessionId: "s4", runId: "run-trash", roomId: "room-1" }), "DOCUMENT_TRASHED");
 
     const other = await seedDocument(documents, "doc-tool-5");
-    await expectServiceError(registry.execute(TOOL, {
+    const crossRoom = await registry.execute(TOOL, {
       documentId: other.id,
       body: "建议",
-    }, { agentSessionId: "s5", runId: "run-room", roomId: "room-other" }), "ROOM_MISMATCH");
+    }, { agentSessionId: "s5", runId: "run-room", roomId: "room-other" });
+    expect(crossRoom.structuredContent).toMatchObject({ documentId: other.id });
   });
 
   it("单 run 评论数超限后拒绝；新 run 重新计数", async () => {

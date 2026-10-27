@@ -2,7 +2,7 @@
 export type OfficeAgentFileFormat = 'docx' | 'pptx' | 'xlsx'
 
 export interface OfficeAgentFileEvent {
-  type: 'phase' | 'done' | 'error' | 'edited' | 'open-edit'
+  type: 'phase' | 'done' | 'error' | 'edited' | 'open-edit' | 'write-back-failed'
   title: string
   /** 缺省 docx（旧事件无此字段）。 */
   format?: OfficeAgentFileFormat
@@ -19,6 +19,15 @@ export interface OfficeAgentFileEvent {
   totalPages?: number
   /** done：失败/退化页 0 起页码。 */
   failedPages?: number[]
+}
+
+/**
+ * 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开文档 →
+ * 主进程导入文件库后交给渲染层的打开请求（channel files:open-from-os）。
+ */
+export interface OsOpenedDocument {
+  fileId: string
+  originalName: string
 }
 
 /** slides「AI 修改」弹层转发的主进程 → 渲染层事件（channel office:agent-ask）。 */

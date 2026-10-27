@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, History, LoaderCircle, Lock, MessagesSquare, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '../../../../shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -49,7 +49,7 @@ const PERMISSION_MODE_META: Record<AgentPermissionMode, { icon: typeof Zap; labe
 const PERMISSION_MODE_ORDER: AgentPermissionMode[] = ['ask_before_write', 'accept_edits', 'auto', 'full_access']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
-type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
+type MentionCategory = 'all' | 'agent' | 'file' | 'conversation'
 
 /** @ 弹层「对话记录」条目：导入的外部会话 + 本应用自有会话（provider 'everroom'）。 */
 interface MentionConversationItem {
@@ -107,11 +107,7 @@ function displayDate(
 }
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
-  contextSummary: string
-  contextItems: Array<{ id: string; label: string; detail: string }>
-  hasSelectedText: boolean
   /** 有可提交的上下文（引用/选区）时空输入也允许发送；缺省视为无。 */
-  hasSubmittableContext?: boolean
   resetKey: number
   value: string
   active: boolean
@@ -120,8 +116,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   selectedExternalConversation: ExternalConversationSummary | null
   /** 本机已发现的 CLI Agent 候选（@ 点名弹层数据源）。 */
   localAgents: LocalAgentInstallation[]
-  /** Room 引用候选（@ 弹层「房间」组；AgentPanel 已持有完整列表）。 */
-  rooms?: AgentRoomReference[]
   /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
   /** 实时上下文用量（context.usage 事件快照；缺省=未知，不渲染）。 */
@@ -153,22 +147,15 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onRemoveQueuedSubmission?: (id: string) => void
   onChange: (value: string) => void
   onSelectExternalConversation: (conversation: ExternalConversationSummary | null) => void
-  onClearContext: () => void
-  onRemoveContext: (id: string) => void
   onStop: () => void
   onSubmit: (files: File[], mentioned: MentionedItem[]) => void
 }>(function AgentComposer({
   active,
   available,
-  contextSummary,
-  contextItems,
-  hasSelectedText,
-  hasSubmittableContext = false,
   loading,
   resetKey,
   selectedExternalConversation,
   localAgents,
-  rooms = [],
   modelPreference,
   modelPreferenceLocked = false,
   contextUsage = null,
@@ -188,8 +175,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onRemoveQueuedSubmission,
   value,
   onChange,
-  onClearContext,
-  onRemoveContext,
   onStop,
   onSubmit,
   onSelectExternalConversation,
@@ -250,7 +235,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   useLayoutEffect(() => {
     resizeTextarea()
-  }, [attachments.length, contextItems.length, value])
+  }, [attachments.length, value])
 
   useEffect(() => {
     const shell = shellRef.current
@@ -499,10 +484,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       textarea.setSelectionRange(nextCaret, nextCaret)
     })
   }
-  const chooseRoom = (room: AgentRoomReference) => {
-    const token = allocateMentionToken(room.title, room.id, mentionHints.current)
-    applyMentionToken(token, { kind: 'room', id: room.id, displayName: room.title })
-  }
   const chooseFile = (file: { id: string; title: string }) => {
     const token = allocateMentionToken(file.title, file.id, mentionHints.current)
     applyMentionToken(token, { kind: 'file', id: file.id, displayName: file.title })
@@ -575,7 +556,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       || item.id.toLocaleLowerCase().includes(agentQueryNormalized)
       || item.provider.toLocaleLowerCase().includes(agentQueryNormalized))
     : callableLocalAgents
-  const filteredRoomItems = rooms.filter((room) => matchesQuery(room.title) || matchesQuery(room.id))
   const filteredFileItems = mentionFiles.filter((file) => matchesQuery(file.title) || matchesQuery(file.id) || matchesQuery(file.detail))
   // 查询词与当前服务端检索一致时，导入条目已按 FTS 命中（含消息正文），
   // 不再做客户端标题过滤以免误杀；应用自有会话仍走客户端过滤。
@@ -586,9 +566,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       || matchesQuery(conversation.provider)
   })
   const mentionCategoryTabs: Array<{ id: MentionCategory; labelKey: string; count: number }> = [
-    { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredRoomItems.length + filteredFileItems.length + filteredConversationItems.length },
+    { id: 'all', labelKey: 'surface:agentComposer.mentionTabAll', count: filteredAgentItems.length + filteredFileItems.length + filteredConversationItems.length },
     { id: 'agent', labelKey: 'surface:agentComposer.mentionGroupAgents', count: filteredAgentItems.length },
-    { id: 'room', labelKey: 'surface:agentComposer.mentionGroupRooms', count: filteredRoomItems.length },
     { id: 'file', labelKey: 'surface:agentComposer.mentionGroupFiles', count: filteredFileItems.length },
     { id: 'conversation', labelKey: 'surface:agentComposer.mentionGroupConversations', count: filteredConversationItems.length },
   ]
@@ -602,23 +581,20 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
   type MentionOption =
     | { kind: 'agent'; item: LocalAgentInstallation }
-    | { kind: 'room'; item: AgentRoomReference }
     | { kind: 'file'; item: { id: string; title: string; detail: string } }
     | { kind: 'conversation'; item: MentionConversationItem }
   const mentionOptions: MentionOption[] = [
     ...(showMentionGroup('agent') ? filteredAgentItems.map((item) => ({ kind: 'agent' as const, item })) : []),
-    ...(showMentionGroup('room') ? filteredRoomItems.map((item) => ({ kind: 'room' as const, item })) : []),
     ...(showMentionGroup('file') ? filteredFileItems.map((item) => ({ kind: 'file' as const, item })) : []),
     ...(showMentionGroup('conversation') ? filteredConversationItems.map((item) => ({ kind: 'conversation' as const, item })) : []),
   ]
   const mentionOptionCount = mentionOptions.length
   const chooseMentionOption = (option: MentionOption) => {
     if (option.kind === 'agent') chooseAgent(option.item)
-    else if (option.kind === 'room') chooseRoom(option.item)
     else if (option.kind === 'file') chooseFile(option.item)
     else chooseConversation(option.item)
   }
-  // 弹层打开时懒加载文件与对话记录（Agent/Room 由 props 同步提供）。
+  // 弹层打开时懒加载文件与对话记录（Agent 由 props 同步提供）。
   // 对话记录合并导入的外部会话与本应用自有会话（provider 'everroom'），按最近活跃排序。
   useEffect(() => {
     if (!agentPickerOpen || mentionSourcesLoading) return
@@ -916,30 +892,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 <strong>{item.displayName}</strong>
               </button>
             )) : null}
-            {mentionCategory === 'all' && filteredRoomItems.length ? (
-              <div className="agent-mention-group-label"><FolderOpen aria-hidden="true" />{t('surface:agentComposer.mentionGroupRooms')}</div>
-            ) : null}
-            {showMentionGroup('room') ? filteredRoomItems.map((room) => {
-              const index = mentionOptions.findIndex((option) => option.kind === 'room' && option.item.id === room.id)
-              return (
-                <button
-                  key={`room:${room.id}`}
-                  type="button"
-                  className="agent-mention-option"
-                  role="option"
-                  aria-selected={index === agentIndex}
-                  data-active={String(index === agentIndex)}
-                  data-result-index={index}
-                  onMouseEnter={() => setAgentIndex(index)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => chooseRoom(room)}
-                >
-                  <span className="agent-mention-option-icon"><FolderOpen aria-hidden="true" /></span>
-                  <strong>{room.title}</strong>
-                  {room.kind ? <small>{room.kind}</small> : null}
-                </button>
-              )
-            }) : null}
                           {mentionCategory === 'all' && filteredFileItems.length ? (
               <div className="agent-mention-group-label"><FileText aria-hidden="true" />{t('surface:agentComposer.mentionGroupFiles')}</div>
             ) : null}
@@ -1156,24 +1108,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       ) : null}
       <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
         {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
-        {contextItems.length > 0 ? (
-          <div className="agent-context-citations" aria-label={t('surface:agentComposer.referencedRoomContent')}>
-            {contextItems.map((item) => (
-              <span key={item.id} className="agent-context-citation" title={item.detail}>
-                <Quote aria-hidden="true" />
-                <span>{item.label}</span>
-                <button
-                  type="button"
-                  aria-label={t('surface:agentComposer.removeReference')}
-                  title={t('surface:agentComposer.removeReference')}
-                  onClick={() => onRemoveContext(item.id)}
-                >
-                  <X aria-hidden="true" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
         {queuedSubmissions.length > 0 ? (
           <div className="agent-queued-submissions" aria-label={t('surface:agentComposer.queuedCount', { count: queuedSubmissions.length })}>
             {queuedSubmissions.map((item) => (
@@ -1284,14 +1218,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
             </button>
           ) : null}
-          {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
-          <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
-            {hasSelectedText ? <span>{contextSummary}</span> : null}
-            {hasSelectedText ? (
-              <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
-                <X aria-hidden="true" />
-              </button>
-            ) : null}
+          {/* 占位 flex 撑开发送钮；引用已随 Context Room 移除，这里只剩上下文用量环。 */}
+          <span className="agent-composer-context">
             {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
             {contextUsage?.contextWindow ? (
               <ContextUsageRing
@@ -1319,7 +1247,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Square aria-hidden="true" />
             </button>
           ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
+            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0) || loading}>
               <CornerDownLeft aria-hidden="true" />
             </button>
           )}

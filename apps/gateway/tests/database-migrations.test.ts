@@ -13,118 +13,6 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
-  it("repairs room duplicate tables skipped by an advanced migration cursor", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-room-duplicates-migration-test-"));
-    temporaryDirectories.push(dataDir);
-    const databasePath = join(dataDir, "gateway.sqlite");
-    const migrationsDir = resolve("drizzle");
-    const beforeRestart = createDatabase(databasePath, migrationsDir);
-    beforeRestart.sqlite.exec("DROP TABLE room_merge_items");
-    beforeRestart.sqlite.exec("DROP TABLE room_memory_attributions");
-    beforeRestart.sqlite.exec("DROP TABLE room_duplicate_candidates");
-    beforeRestart.sqlite.exec("DROP TABLE room_merge_operations");
-    beforeRestart.sqlite.close();
-
-    const repaired = createDatabase(databasePath, migrationsDir);
-    const tables = repaired.sqlite.prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-    ).all() as Array<{ name: string }>;
-    const indexes = repaired.sqlite.prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name",
-    ).all() as Array<{ name: string }>;
-    const operationUpdate = repaired.sqlite.prepare(
-      "UPDATE room_merge_operations SET status = 'queued' WHERE status = 'running'",
-    ).run();
-    repaired.sqlite.close();
-
-    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
-      "room_duplicate_candidates",
-      "room_merge_operations",
-      "room_merge_items",
-      "room_memory_attributions",
-    ]));
-    expect(indexes.map(({ name }) => name)).toEqual(expect.arrayContaining([
-      "room_duplicate_candidates_pair_idx",
-      "room_duplicate_candidates_status_idx",
-      "room_duplicate_candidates_room_a_idx",
-      "room_duplicate_candidates_room_b_idx",
-      "room_memory_attributions_memory_idx",
-      "room_memory_attributions_room_idx",
-      "room_merge_items_operation_resource_idx",
-      "room_merge_items_operation_idx",
-      "room_merge_operations_idempotency_idx",
-      "room_merge_operations_rooms_idx",
-      "room_merge_operations_status_idx",
-    ]));
-    expect(operationUpdate.changes).toBe(0);
-  });
-
-  it("repairs pre-release Context Room overview tables without losing projections", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-room-overview-migration-test-"));
-    temporaryDirectories.push(dataDir);
-    const databasePath = join(dataDir, "gateway.sqlite");
-    const migrationsDir = resolve("drizzle");
-    const beforeUpgrade = createDatabase(databasePath, migrationsDir);
-    const projection = JSON.stringify({
-      overview: { text: "Preserved overview" },
-      status: { text: "active" },
-    });
-    beforeUpgrade.sqlite.prepare(
-      "INSERT INTO context_rooms (id, title, data, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run("room-legacy-overview", "Legacy overview", "{}", 0, 1, 1);
-    beforeUpgrade.sqlite.exec("DROP TABLE room_overviews");
-    beforeUpgrade.sqlite.exec(`
-      CREATE TABLE room_overviews (
-        room_id text PRIMARY KEY NOT NULL,
-        revision integer DEFAULT 1 NOT NULL,
-        projection text NOT NULL,
-        generated_at integer NOT NULL,
-        updated_at integer NOT NULL,
-        FOREIGN KEY (room_id) REFERENCES context_rooms(id) ON DELETE cascade
-      )
-    `);
-    beforeUpgrade.sqlite.exec(
-      "CREATE INDEX room_overviews_updated_idx ON room_overviews (updated_at)",
-    );
-    beforeUpgrade.sqlite.prepare(
-      "INSERT INTO room_overviews (room_id, revision, projection, generated_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-    ).run("room-legacy-overview", 3, projection, 10, 11);
-    beforeUpgrade.sqlite.exec("ALTER TABLE room_context_corrections DROP COLUMN proposed_by_run_id");
-    beforeUpgrade.sqlite.close();
-
-    const upgraded = createDatabase(databasePath, migrationsDir);
-    const overviewColumns = upgraded.sqlite.prepare("PRAGMA table_info(room_overviews)")
-      .all() as Array<{ name: string; notnull: number }>;
-    const correctionColumns = upgraded.sqlite.prepare("PRAGMA table_info(room_context_corrections)")
-      .all() as Array<{ name: string }>;
-    const overview = upgraded.sqlite.prepare(
-      "SELECT revision, base_projection, projection, generated_at, updated_at FROM room_overviews WHERE room_id = ?",
-    ).get("room-legacy-overview");
-    const indexes = upgraded.sqlite.prepare("PRAGMA index_list(room_overviews)")
-      .all() as Array<{ name: string }>;
-    upgraded.sqlite.close();
-
-    expect(overviewColumns.find(({ name }) => name === "base_projection")?.notnull).toBe(1);
-    expect(correctionColumns.map(({ name }) => name)).toContain("proposed_by_run_id");
-    expect(overview).toEqual({
-      revision: 3,
-      base_projection: projection,
-      projection,
-      generated_at: 10,
-      updated_at: 11,
-    });
-    expect(indexes.map(({ name }) => name)).toContain("room_overviews_updated_idx");
-
-    const reopened = createDatabase(databasePath, migrationsDir);
-    expect(reopened.sqlite.prepare(
-      "SELECT base_projection, projection FROM room_overviews WHERE room_id = ?",
-    ).get("room-legacy-overview")).toEqual({
-      base_projection: projection,
-      projection,
-    });
-    reopened.sqlite.close();
-  });
-
   it("creates the document outbox polling index", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-outbox-index-test-"));
     temporaryDirectories.push(dataDir);
@@ -134,53 +22,6 @@ describe("database migrations", () => {
     database.sqlite.close();
 
     expect(indexes.map((index) => index.name)).toContain("jobs_type_status_created_idx");
-  });
-
-  it("reconciles the pre-merge Context Room migration branch", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-context-room-branch-migration-test-"));
-    temporaryDirectories.push(dataDir);
-    const databasePath = join(dataDir, "gateway.sqlite");
-    const migrationsDir = resolve("drizzle");
-    const beforeMerge = createDatabase(databasePath, migrationsDir);
-    beforeMerge.sqlite.prepare(
-      "INSERT INTO room_relations (id, room_a_id, room_b_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-    ).run("relation-1", "room-a", "room-b", 1, 1);
-    beforeMerge.sqlite.exec("DROP TABLE clipper_assets");
-    beforeMerge.sqlite.exec("DROP TABLE clipper_captures");
-    beforeMerge.sqlite.exec("DROP TABLE parsed_documents");
-    beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787552314033);
-    const insertLegacyMigration = beforeMerge.sqlite.prepare(
-      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
-    );
-    insertLegacyMigration.run("pre-merge-yjs", 1787580711823);
-    insertLegacyMigration.run("pre-merge-knowledge-scoring", 1787636018104);
-    insertLegacyMigration.run("pre-merge-room-relations", 1787644742114);
-    beforeMerge.sqlite.close();
-
-    const upgraded = createDatabase(databasePath, migrationsDir);
-    const tables = upgraded.sqlite.prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-    ).all() as Array<{ name: string }>;
-    const relation = upgraded.sqlite.prepare(
-      "SELECT id, room_a_id, room_b_id FROM room_relations WHERE id = ?",
-    ).get("relation-1");
-    const journal = JSON.parse(
-      await readFile(join(migrationsDir, "meta", "_journal.json"), "utf8"),
-    ) as { entries: Array<{ when: number; tag: string }> };
-    const mergedEntry = journal.entries.find((entry) => entry.tag === "0030_room_relations_and_scoring");
-    const mergedMarker = upgraded.sqlite.prepare(
-      "SELECT created_at FROM __drizzle_migrations WHERE created_at = ?",
-    ).get(mergedEntry?.when);
-    upgraded.sqlite.close();
-
-    expect(tables.map(({ name }) => name)).toEqual(expect.arrayContaining([
-      "parsed_documents",
-      "clipper_captures",
-      "clipper_assets",
-      "room_relations",
-    ]));
-    expect(relation).toEqual({ id: "relation-1", room_a_id: "room-a", room_b_id: "room-b" });
-    expect(mergedMarker).toEqual({ created_at: mergedEntry?.when });
   });
 
   it("reconciles the pre-merge Yjs migration branch with the canonical schema", async () => {
@@ -203,23 +44,6 @@ describe("database migrations", () => {
 
     beforeMerge.sqlite.exec("DROP TABLE runtime_config_store");
     beforeMerge.sqlite.exec("DROP TABLE agent_schedules");
-    beforeMerge.sqlite.exec("DROP TABLE clipper_artifacts");
-    for (const column of [
-      "visual_status",
-      "visual_kind",
-      "visual_summary",
-      "visual_ocr_text",
-      "visual_key_points",
-      "visual_entities",
-      "visual_relevance",
-      "visual_quality",
-      "visual_content_role",
-      "visual_noise_reason",
-      "visual_model",
-      "visual_prompt_version",
-      "cover_score",
-    ]) beforeMerge.sqlite.exec(`ALTER TABLE clipper_assets DROP COLUMN ${column}`);
-    beforeMerge.sqlite.exec("ALTER TABLE ingest_events DROP COLUMN reinstated_at");
     beforeMerge.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?").run(1787320000000);
     beforeMerge.sqlite.prepare(
       "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
@@ -405,9 +229,13 @@ describe("database migrations", () => {
       "document_block_references",
       "document_operations",
       "pending_agent_intents",
-      "entities",
-      "room_wikis",
+      "parsed_documents",
+      "document_yjs_checkpoints",
     ]));
+    // 0084 的删表迁移在升级路径上同样生效。
+    for (const droppedTable of ["entities", "room_wikis", "clipper_assets", "diary_days", "writing_style_profiles"]) {
+      expect(tables.map(({ name }) => name)).not.toContain(droppedTable);
+    }
   });
 
   it("upgrades databases that applied the legacy reality 0002 migration", async () => {
@@ -456,7 +284,7 @@ describe("database migrations", () => {
       "document_operation_commands",
       "document_operation_events",
       "pending_agent_intents",
-      "reality_events",
+      "document_yjs_checkpoints",
     ]));
     for (const removedTable of [
       "document_patches",
@@ -546,9 +374,10 @@ describe("database migrations", () => {
     expect(upgraded.sqlite.prepare("SELECT * FROM document_blocks").all()).toEqual([]);
     expect(upgraded.sqlite.prepare("SELECT * FROM document_operations").all()).toEqual([]);
     expect(upgraded.sqlite.prepare("SELECT * FROM pending_agent_intents").all()).toEqual([]);
-    expect(upgraded.sqlite.prepare("SELECT id, title FROM context_rooms").all()).toEqual([
-      { id: "room-1", title: "Preserved Room" },
-    ]);
+    // Phase 2i：migration 0085 已删掉全部 Room 表，升级后不应再存在。
+    expect(upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('context_rooms', 'room_doc_links')",
+    ).all()).toEqual([]);
     expect(upgraded.sqlite.prepare("SELECT id, room_id FROM agent_sessions").all()).toEqual([
       { id: "session-1", room_id: "room-1" },
     ]);

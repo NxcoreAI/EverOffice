@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDatabase, type DatabaseClient } from "../src/infrastructure/database/client.js";
-import { contextRooms, roomOverviews } from "../src/infrastructure/database/schema.js";
 import { AgentAccessMcpHost } from "../src/modules/agent-access/mcp-host.js";
 import { AgentAccessService } from "../src/modules/agent-access/service.js";
 import { createAgentAccessTools } from "../src/modules/agent-access/tools.js";
@@ -26,15 +25,6 @@ function setup() {
   const dataDir = mkdtempSync(join(tmpdir(), "agent-access-test-"));
   const client: DatabaseClient = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
 
-  client.db.insert(contextRooms).values([
-    { id: "room-a", title: "Room A", kind: "topic", data: {} },
-    { id: "room-b", title: "Room B", kind: "topic", data: {} },
-  ]).run();
-  client.db.insert(roomOverviews).values([
-    { roomId: "room-a", baseProjection: {}, projection: {}, generatedAt: new Date(), updatedAt: new Date(), revision: 3 },
-    { roomId: "room-b", baseProjection: {}, projection: {}, generatedAt: new Date(), updatedAt: new Date(), revision: 1 },
-  ]).run();
-
   const artifactCalls: ArtifactCall[] = [];
   const importArtifact = async (input: {
     filename: string;
@@ -54,13 +44,13 @@ function setup() {
 
   const service = new AgentAccessService(client.db, { importArtifact });
 
-  // 搜索假件：room-b 过滤时有一条会话命中，其他范围返回空（验证 roomIds 透传）。
+  // 搜索假件：query="讨论" 时返回一条会话命中 + 一条文档命中（Phase 2i 起不再有
+  // Room 命中类型，搜索过滤也不带 roomIds）。
   const deps: AgentAccessToolDeps = {
     db: client.db,
     search: {
-      search: (query, filters, _limit, _offset) => {
-        const allowed = !filters.roomIds || filters.roomIds.includes("room-b");
-        if (!allowed || query !== "讨论") {
+      search: (query, _filters, _limit, _offset) => {
+        if (query !== "讨论") {
           return { items: [], total: 0 };
         }
         return {
@@ -69,18 +59,18 @@ function setup() {
             refId: "m-1",
             title: "旧讨论",
             snippet: "关于上线的讨论",
-            roomIds: ["room-b"],
+            roomIds: [],
             versionLabel: null,
             ingestedAt: "2026-10-01T00:00:00.000Z",
             sessionId: "s-1",
             status: "indexed",
           }, {
-            itemType: "room",
-            refId: "room-b",
-            title: "Room B",
-            snippet: "Room B",
-            roomIds: ["room-b"],
-            versionLabel: "rev1",
+            itemType: "document",
+            refId: "doc-1",
+            title: "文档一",
+            snippet: "文档一的正文",
+            roomIds: [],
+            versionLabel: "v2",
             ingestedAt: "2026-10-01T00:00:00.000Z",
             sessionId: null,
             status: "indexed",
@@ -90,13 +80,12 @@ function setup() {
       },
       status: () => ({ indexed: 1 }),
     },
-    memory: null,
     documents: {
       get: (id) => id === "doc-1"
-        ? { id: "doc-1", roomId: "room-b", title: "文档一", version: 2, deletedAt: null }
+        ? { id: "doc-1", roomId: null, title: "文档一", version: 2, deletedAt: null }
         : null,
       readDocumentForAgent: (id) => ({
-        document: { id, roomId: "room-b", title: "文档一", version: 2 },
+        document: { id, roomId: null, title: "文档一", version: 2 },
         blocks: [],
         markdown: "# 文档一\n正文",
       }),
@@ -110,7 +99,7 @@ function setup() {
     agent: {
       getSnapshot: (id) => (id === "s-1"
         ? {
-            session: { id: "s-1", roomId: "room-b", title: "旧会话" },
+            session: { id: "s-1", roomId: null, title: "旧会话" },
             messages: [{ id: "m-1", role: "user", content: "上线时间定了吗", createdAt: "2026-10-01T00:00:00.000Z" }],
           }
         : null),
@@ -224,36 +213,37 @@ describe("AgentAccessMcpHost 范围与状态语义", () => {
     }
   });
 
-  it("数据行过滤：list_rooms 只见授权 Room；越权 fetch 返回 no_permission", async () => {
+  it("Phase 2i：list_rooms 已删除，文档/会话/搜索都是工作区级、不再按 Room 过滤", async () => {
     const { client, service, makeHost, dataDir } = setup();
     const host = makeHost();
     try {
       const scoped = service.createConnection({
-        name: "A 房间",
+        name: "旧范围连接",
         tool: "claude-code",
         scopes: { roomIds: ["room-a"], capabilities: [...ALL_CAPS], writebackRoomId: "room-a" },
       });
       await rpc(host, scoped.token, "initialize", {});
 
-      const rooms = resultOf(await rpc(host, scoped.token, "tools/call", {
-        name: "everroom_list_rooms",
-        arguments: {},
-      })) as { structuredContent: { status: string; data: { rooms: Array<{ roomId: string; revision: number }> } } };
-      expect(rooms.structuredContent.status).toBe("ok");
-      expect(rooms.structuredContent.data.rooms.map((room) => room.roomId)).toEqual(["room-a"]);
-      expect(rooms.structuredContent.data.rooms[0]!.revision).toBe(3);
+      const names = (resultOf(await rpc(host, scoped.token, "tools/list")) as {
+        tools: Array<{ name: string }>;
+      }).tools.map((tool) => tool.name);
+      expect(names).not.toContain("everroom_list_rooms");
+      expect(names).toContain("everroom_get_status");
 
-      const deniedDoc = resultOf(await rpc(host, scoped.token, "tools/call", {
+      // 旧连接仍带着 roomIds 范围，但工作区级文稿不再受它限制。
+      const doc = resultOf(await rpc(host, scoped.token, "tools/call", {
         name: "everroom_fetch",
         arguments: { uri: "everroom://documents/doc-1" },
-      })) as { structuredContent: { status: string } };
-      expect(deniedDoc.structuredContent.status).toBe("no_permission");
+      })) as { structuredContent: { status: string; data: { documentId: string } } };
+      expect(doc.structuredContent.status).toBe("ok");
+      expect(doc.structuredContent.data.documentId).toBe("doc-1");
 
-      const deniedSearch = resultOf(await rpc(host, scoped.token, "tools/call", {
+      const search = resultOf(await rpc(host, scoped.token, "tools/call", {
         name: "everroom_search",
         arguments: { query: "讨论" },
-      })) as { structuredContent: { status: string } };
-      expect(deniedSearch.structuredContent.status).toBe("empty");
+      })) as { structuredContent: { status: string; data: { hits: Array<{ kind: string }> } } };
+      expect(search.structuredContent.status).toBe("ok");
+      expect(search.structuredContent.data.hits.map((hit) => hit.kind).sort()).toEqual(["conversation", "document"]);
       await host.close();
     } finally {
       client.sqlite.close();
@@ -278,9 +268,9 @@ describe("AgentAccessMcpHost 范围与状态语义", () => {
       })) as { structuredContent: { data: { hits: Array<Record<string, unknown>> } } };
       const hit = search.structuredContent.data.hits.find((item) => item.kind === "conversation");
       expect(hit).toMatchObject({ conversationId: "s-1", messageId: "m-1" });
-      // 搜索命中的 uri 必须能被 everroom_fetch 解析（rooms/documents/files 复数段）。
-      const roomHit = search.structuredContent.data.hits.find((item) => item.kind === "room");
-      expect(roomHit?.uri).toBe("everroom://rooms/room-b");
+      // 搜索命中的 uri 必须能被 everroom_fetch 解析（documents/files 复数段）。
+      const documentHit = search.structuredContent.data.hits.find((item) => item.kind === "document");
+      expect(documentHit?.uri).toBe("everroom://documents/doc-1");
 
       const fresh = resultOf(await rpc(host, full.token, "tools/call", {
         name: "everroom_fetch",

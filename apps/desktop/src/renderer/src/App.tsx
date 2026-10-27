@@ -1,7 +1,5 @@
-import { ArrowRight, BrainCircuit, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AgentSessionLink } from '@nxcore/agent-contract'
-import type { MemoryAtomicItemDto } from '../../shared/memory'
 import { type OfficePreviewTab } from '../../shared/sources'
 
 import { AgentPanel } from '@/components/AgentPanel'
@@ -22,13 +20,10 @@ import { HighRiskImportReview } from '@/components/HighRiskImportReview'
 import { PageCanvas } from '@/components/PageCanvas'
 import { Sidebar } from '@/components/Sidebar'
 import { TopBar } from '@/components/TopBar'
-import { MemoryOnboardingGate } from '@/components/onboarding/MemoryOnboardingGate'
-import { RoomOnboardingGate } from '@/components/onboarding/RoomOnboardingGate'
 import { FolderSettingsOnboarding } from '@/components/onboarding/FolderSettingsOnboarding'
 import { MicrophonePermissionOnboarding } from '@/components/onboarding/MicrophonePermissionOnboarding'
-import { ScreenRecordingPermissionOnboarding } from '@/components/onboarding/ScreenRecordingPermissionOnboarding'
 import { AgentMigrationOnboarding } from '@/components/onboarding/AgentMigrationOnboarding'
-import { OnboardingFlowChrome, type OnboardingFlowStage } from '@/components/onboarding/OnboardingFlowChrome'
+import { OnboardingFlowChrome, type CompletedOnboardingStage, type OnboardingFlowStage } from '@/components/onboarding/OnboardingFlowChrome'
 import { RuntimeConfigGate } from '@/components/onboarding/RuntimeConfigGate'
 import {
   hasExistingOnboardingData,
@@ -38,47 +33,22 @@ import {
   writeFullOnboardingCompleted,
 } from '@/components/onboarding/fullOnboardingState'
 import type { ThemeId } from '@/components/ThemeSwitcher'
-import type { ContextRoomWorkspaceTab } from '@/components/context-room/contextRoomTabs'
-import { useContextRoomState } from '@/components/context-room/ContextRoomStateProvider'
 import { pageLabels, type PageId } from '@/data/navigation'
-import {
-  ROOM_OVERVIEW_CITATION_ADD_EVENT,
-  ROOM_OVERVIEW_CITATION_UPDATE_EVENT,
-  clearRoomOverviewCitation,
-  type RoomOverviewCitation,
-} from '@/components/context-room/roomOverviewCitation'
-import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from '@/components/context-room/ported/components/detail-editor/documentBlockNavigation'
-import { requestRoomOfficeFocus, useEmbeddedOffice } from '@/components/context-room/ported/embeddedOffice'
-import { attachOfficeViewport } from '@/components/context-room/ported/officeViewport'
-import { onDocumentOperationNavigation } from '@/components/context-room/operations/documentOperationNavigation'
+import { logDocumentFocusDiagnostic, onDocumentBlockNavigation } from './components/office-editor/editor/documentBlockNavigation'
+import { attachOfficeViewport } from './components/office-editor/officeViewport'
+import { onDocumentOperationNavigation } from './components/office-editor/operations/documentOperationNavigation'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
-import { workspaceTabSwipeTarget } from '@/workspaceTabSwipe'
 import './App.css'
 import type { AgentNotificationTarget } from '../../shared/notifications'
+import type { OsOpenedDocument } from '../../shared/office'
+import { isEditableOfficeDocument } from '@/lib/officeEditing'
 
 const THEME_STORAGE_KEY = 'nxcore-ce:appearance:v1'
-const TAB_SWIPE_THRESHOLD = 72
 const themeIds = new Set<ThemeId>(['soft', 'mono', 'crimson', 'nxcore'])
 
 function logOnboarding(event: string, details: Record<string, unknown> = {}) {
   console.info(`[onboarding] ${event}`, details)
-}
-
-function logContextRoomTabsDiagnostic(
-  event: string,
-  detail: Record<string, unknown> = {},
-  level: 'info' | 'warn' = 'info',
-): void {
-  try {
-    window.nxcore?.diagnostics?.log({
-      module: 'context-room-tabs',
-      level,
-      event: { ...detail, event, time: new Date().toISOString() },
-    })
-  } catch {
-    // 诊断失败不影响标签同步本身。
-  }
 }
 
 function detectMacDesktop(): boolean {
@@ -119,21 +89,17 @@ function readInitialPage(): PageId {
 
 export function App() {
   const { t } = useLocale()
-  const { state: contextRoomState, backendReady: contextRoomBackendReady } = useContextRoomState()
   const isMacDesktop = detectMacDesktop()
   const [activePage, setActivePage] = useState<PageId>(readInitialPage)
-  const [contextRoomTabs, setContextRoomTabs] = useState<ContextRoomWorkspaceTab[]>([])
-  const [activeContextRoomId, setActiveContextRoomId] = useState<string | null>(null)
   const [officeTabs, setOfficeTabs] = useState<OfficePreviewTab[]>([])
   const [activeOfficeInstanceId, setActiveOfficeInstanceId] = useState<string | null>(null)
   const [agentWidth, setAgentWidth] = useState(readStoredAgentWidth)
   const [agentResizing, setAgentResizing] = useState(false)
   const [agentFocusRequest, setAgentFocusRequest] = useState(0)
-  const [agentRoomCitations, setAgentRoomCitations] = useState<RoomOverviewCitation[]>([])
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
   // displayMessage：给用户看的人话；message 仍是交给 Agent 的完整指令（不渲染成用户气泡）。
-  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string; displayMessage?: string } | null>(null)
+  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; message: string; displayMessage?: string } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [agentPrefillRequest, setAgentPrefillRequest] = useState<{
     key: string
@@ -142,53 +108,30 @@ export function App() {
   } | null>(null)
   const [remoteNotificationTarget, setRemoteNotificationTarget] = useState<AgentNotificationTarget | null>(null)
   const [agentDocumentFocus, setAgentDocumentFocus] = useState<{
-    roomId: string
     documentId: string
     blockId?: string | null
     requestId: number
   } | null>(null)
   const documentFocusRequestIdRef = useRef(0)
-  const roomOfficeFocusRequestIdRef = useRef(0)
-  const embeddedOffice = useEmbeddedOffice()
   const agentNavigationTimerRef = useRef<number | null>(null)
   const workspaceMainRef = useRef<HTMLElement>(null)
-  const tabSwipeRef = useRef({ distance: 0, lastAt: 0, lockedUntil: 0 })
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [agentOpen, setAgentOpen] = useState(() => !window.matchMedia('(max-width: 1200px)').matches)
-  const [contextRoomDetailFocused, setContextRoomDetailFocused] = useState(false)
-  const [contextRoomNavRevealed, setContextRoomNavRevealed] = useState(false)
-  const [contextRoomHomeRequest, setContextRoomHomeRequest] = useState(0)
-  const [suppressRoomOnboarding, setSuppressRoomOnboarding] = useState(false)
   const [fullOnboardingStage, setFullOnboardingStage] = useState<OnboardingFlowStage>('idle')
-  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<'folder' | 'microphone' | 'screen' | 'memory' | 'agents' | 'room'>>(() => new Set())
+  const [completedOnboardingStages, setCompletedOnboardingStages] = useState<Set<CompletedOnboardingStage>>(() => new Set())
   const [folderOnboardingOpen, setFolderOnboardingOpen] = useState(false)
   const [suppressAutomaticOnboarding, setSuppressAutomaticOnboarding] = useState(true)
-  const [memoryReady, setMemoryReady] = useState(false)
-  const [memoryFocusId, setMemoryFocusId] = useState<string | null>(null)
   const [agentFileFocus, setAgentFileFocus] = useState<{ fileId: string; requestId: number } | null>(null)
   const agentFileFocusRequestIdRef = useRef(0)
-  const [generatedMemoryNotice, setGeneratedMemoryNotice] = useState<MemoryAtomicItemDto | null>(null)
-  const manualMemoryOnboardingRef = useRef(false)
   const fullOnboardingCompletedRef = useRef(readFullOnboardingCompleted())
   const fullOnboardingStageRef = useRef<OnboardingFlowStage>('idle')
   const onboardingCheckRequestRef = useRef(0)
-  const openRoomOnboardingRef = useRef<(() => void) | null>(null)
-  const openMemoryOnboardingRef = useRef<(() => void) | null>(null)
   const [theme] = useState<ThemeId>(readStoredTheme)
 
-  const isContextRoomFocused = activePage === 'rooms' && contextRoomDetailFocused
-  const activeWorkspaceRoomId = activePage === 'rooms' ? activeContextRoomId : null
   const activeWorkspaceOfficeId = activePage === 'office-document' ? activeOfficeInstanceId : null
-  const effectiveNavCollapsed = isContextRoomFocused ? !contextRoomNavRevealed : navCollapsed
-  const availableContextRooms = useMemo(() => (
-    contextRoomState.rooms.map(({ id, title, kind }) => ({ id, title, kind }))
-  ), [contextRoomState.rooms])
 
-  // Office 预览实例激活仲裁：顶栏标签页 / Room 内嵌宿主
-  // 同一时刻只激活一个实例，离开对应页面时全部隐藏（标签与实例本体保留）。
-  const focusedOfficeInstanceId = activePage === 'office-document' ? activeOfficeInstanceId
-    : activePage === 'rooms' ? embeddedOffice?.instanceId ?? null
-    : null
+  // Office 预览实例激活仲裁：顶栏标签页；离开预览页时隐藏（标签与实例本体保留）。
+  const focusedOfficeInstanceId = activePage === 'office-document' ? activeOfficeInstanceId : null
 
   useEffect(() => {
     const office = window.nxcore?.office
@@ -215,45 +158,15 @@ export function App() {
       stageRef: fullOnboardingStageRef.current,
       folderOpen: folderOnboardingOpen,
       activePage,
-      suppressRoomOnboarding,
     })
-  }, [activePage, folderOnboardingOpen, fullOnboardingStage, suppressRoomOnboarding])
+  }, [activePage, folderOnboardingOpen, fullOnboardingStage])
 
-  const markOnboardingStageCompleted = useCallback((stage: 'folder' | 'microphone' | 'screen' | 'memory' | 'agents' | 'room') => {
+  const markOnboardingStageCompleted = useCallback((stage: CompletedOnboardingStage) => {
     setCompletedOnboardingStages((current) => {
       if (current.has(stage)) return current
       return new Set([...current, stage])
     })
   }, [])
-
-  useEffect(() => {
-    const addCitation = (event: Event) => {
-      const citation = (event as CustomEvent<RoomOverviewCitation>).detail
-      if (activePage !== 'rooms' || !citation?.text || citation.roomId !== activeContextRoomId) return
-      setAgentRoomCitations((current) => [...current.filter((item) => item.id !== citation.id), citation])
-      setAgentOpen(true)
-      setAgentFocusRequest((request) => request + 1)
-    }
-    window.addEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
-    return () => window.removeEventListener(ROOM_OVERVIEW_CITATION_ADD_EVENT, addCitation as EventListener)
-  }, [activeContextRoomId, activePage])
-
-  useEffect(() => {
-    const updateCitation = (event: Event) => {
-      const citation = (event as CustomEvent<RoomOverviewCitation>).detail
-      if (!citation?.id) return
-      setAgentRoomCitations((current) => current.map((item) => (item.id === citation.id ? citation : item)))
-    }
-    window.addEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, updateCitation as EventListener)
-    return () => window.removeEventListener(ROOM_OVERVIEW_CITATION_UPDATE_EVENT, updateCitation as EventListener)
-  }, [])
-
-  useEffect(() => {
-    if (!agentRoomCitations.length || (activePage === 'rooms'
-      && agentRoomCitations.every((citation) => citation.roomId === activeContextRoomId))) return
-    agentRoomCitations.forEach((citation) => clearRoomOverviewCitation(citation.id))
-    setAgentRoomCitations([])
-  }, [activeContextRoomId, activePage, agentRoomCitations])
 
   const completeAutomaticOnboarding = useCallback(() => {
     writeFullOnboardingCompleted()
@@ -264,7 +177,6 @@ export function App() {
     setFullOnboardingStage('idle')
     setFolderOnboardingOpen(false)
     setSuppressAutomaticOnboarding(true)
-    setSuppressRoomOnboarding(false)
   }, [])
 
   useEffect(() => {
@@ -340,34 +252,8 @@ export function App() {
       window.clearTimeout(agentNavigationTimerRef.current)
       agentNavigationTimerRef.current = null
     }
-    if (page === 'rooms' && activePage === 'rooms' && contextRoomDetailFocused) {
-      setContextRoomHomeRequest((request) => request + 1)
-    }
-    if (page === 'rooms') setActiveContextRoomId(null)
     setActivePage(page)
   }
-
-  const openContextRoomTab = useCallback((room: ContextRoomWorkspaceTab) => {
-    if (manualMemoryOnboardingRef.current) return
-    setContextRoomTabs((current) => (
-      current.some((tab) => tab.id === room.id)
-        ? current.map((tab) => tab.id === room.id ? room : tab)
-        : [...current, room]
-    ))
-    setActivePage('rooms')
-    setActiveContextRoomId(room.id)
-  }, [])
-
-  // 重启后回放历史导航只把 Room 标签页恢复显示，不切换页面、不激活 Room。
-  const restoreContextRoomTab = useCallback((target: AgentNavigationRequest['target']) => {
-    const room = availableContextRooms.find((item) => item.id === target.roomId)
-    if (!room) return
-    setContextRoomTabs((current) => (
-      current.some((tab) => tab.id === room.id)
-        ? current.map((tab) => tab.id === room.id ? room : tab)
-        : [...current, room]
-    ))
-  }, [availableContextRooms])
 
   // 统一搜索面板：⌘K/Ctrl+K 全局开关。
   useEffect(() => {
@@ -382,22 +268,6 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    const open = (event: Event) => {
-      const room = (event as CustomEvent<ContextRoomWorkspaceTab>).detail
-      if (room?.id && room.title) openContextRoomTab(room)
-    }
-    window.addEventListener('nxcore:room:open', open as EventListener)
-    return () => window.removeEventListener('nxcore:room:open', open as EventListener)
-  }, [openContextRoomTab])
-
-  useEffect(() => {
-    if (activePage !== 'settings') {
-      manualMemoryOnboardingRef.current = false
-      setSuppressRoomOnboarding(false)
-    }
-  }, [activePage])
-
-  useEffect(() => {
     const onAccountChanged = (event: Event) => {
       const authenticated = (event as CustomEvent<{ authenticated?: unknown }>).detail?.authenticated === true
       logOnboarding('account-status', { authenticated })
@@ -406,9 +276,6 @@ export function App() {
         fullOnboardingStageRef.current = 'idle'
         setFullOnboardingStage('idle')
         setFolderOnboardingOpen(false)
-        setMemoryReady(false)
-        setSuppressRoomOnboarding(false)
-        manualMemoryOnboardingRef.current = false
         return
       }
     }
@@ -416,13 +283,10 @@ export function App() {
       const requestId = ++onboardingCheckRequestRef.current
       logOnboarding('post-login-check', { completed: fullOnboardingCompletedRef.current })
       setSuppressAutomaticOnboarding(true)
-      setSuppressRoomOnboarding(true)
       if (fullOnboardingCompletedRef.current) return
 
-      const memoryApi = window.nxcore?.memory
-      const roomApi = window.nxcore?.contextRooms
       const sourcesApi = window.nxcore?.sources
-      const apisAvailable = Boolean(memoryApi?.overview && roomApi?.list && sourcesApi?.list)
+      const apisAvailable = Boolean(sourcesApi?.list)
       // Saving the runtime config restarts MemoryCore to pick up the AI env
       // (a few-second window, same as the login restart in MemoryOnboardingGate).
       // A failed probe here is usually transient: retry, and only after the
@@ -431,21 +295,12 @@ export function App() {
       let attempt = 0
       const probe = async (): Promise<void> => {
         attempt += 1
-        const [memoryResult, roomsResult, sourcesResult] = await Promise.allSettled([
-          memoryApi?.overview() ?? Promise.resolve(null),
-          roomApi?.list() ?? Promise.resolve(null),
-          sourcesApi?.list() ?? Promise.resolve(null),
-        ])
+        const [sourcesResult] = await Promise.allSettled([sourcesApi?.list() ?? Promise.resolve(null)])
         if (requestId !== onboardingCheckRequestRef.current) return
 
-        const failed = [memoryResult, roomsResult, sourcesResult].some((result) => result?.status === 'rejected')
-        const memoryOverview = memoryResult?.status === 'fulfilled' ? memoryResult.value : null
-        const roomSnapshot = roomsResult?.status === 'fulfilled' ? roomsResult.value : null
+        const failed = sourcesResult?.status === 'rejected'
         const sources = sourcesResult?.status === 'fulfilled' ? sourcesResult.value : null
         const hasData = hasExistingOnboardingData({
-          memoryOverview,
-          roomCount: roomSnapshot?.rooms.length ?? 0,
-          deletedRoomCount: roomSnapshot?.deletedRooms.length ?? 0,
           sourceCount: Array.isArray(sources) ? sources.length : 0,
         })
         const action = nextOnboardingProbeAction({ failed, apisAvailable, hasData, attempt })
@@ -473,9 +328,7 @@ export function App() {
         fullOnboardingStageRef.current = 'folder'
         setFullOnboardingStage('folder')
         setFolderOnboardingOpen(true)
-        setMemoryReady(false)
         setSuppressAutomaticOnboarding(false)
-        setSuppressRoomOnboarding(false)
         setActivePage('settings')
       }
       await probe()
@@ -496,27 +349,6 @@ export function App() {
     }
   }, [completeAutomaticOnboarding])
 
-  useEffect(() => {
-    if (fullOnboardingStage !== 'room') return
-    setActivePage('settings')
-    let attempts = 0
-    let timer: number | null = null
-    const openWhenReady = () => {
-      const openRoomOnboarding = openRoomOnboardingRef.current
-      if (openRoomOnboarding) {
-        openRoomOnboarding()
-        return
-      }
-      if (attempts >= 10) return
-      attempts += 1
-      timer = window.setTimeout(openWhenReady, 0)
-    }
-    openWhenReady()
-    return () => {
-      if (timer !== null) window.clearTimeout(timer)
-    }
-  }, [fullOnboardingStage])
-
   const switchOnboardingStage = useCallback((stage: OnboardingFlowStage) => {
     logOnboarding('stage-change-request', {
       from: fullOnboardingStageRef.current,
@@ -528,15 +360,6 @@ export function App() {
     setFullOnboardingStage(stage)
     setFolderOnboardingOpen(stage === 'folder' || stage === 'ready')
     setActivePage('settings')
-    if (stage === 'memory') {
-      setSuppressRoomOnboarding(true)
-      openRoomOnboardingRef.current = null
-      openMemoryOnboardingRef.current?.()
-    } else if (stage === 'room') {
-      setSuppressRoomOnboarding(false)
-    } else {
-      setSuppressRoomOnboarding(false)
-    }
   }, [])
 
   useEffect(() => {
@@ -549,57 +372,19 @@ export function App() {
     setFolderOnboardingOpen(true)
   }, [fullOnboardingStage])
 
-  const openDocumentTarget = useCallback((target: {
-    roomId: string
-    documentId: string
-    blockId?: string | null
-  }) => {
-    if (manualMemoryOnboardingRef.current) return
-    const room = availableContextRooms.find((item) => item.id === target.roomId)
-    logDocumentFocusDiagnostic({ at: 'app-request', ...target, hasRoomTab: Boolean(room) })
-    if (room) openContextRoomTab(room)
-    else {
-      setActivePage('rooms')
-      setActiveContextRoomId(target.roomId)
-    }
+  // 文稿定位：Agent 建好/改动文稿后带 documentId 跳文稿库，由 DocsPage 高亮该行。
+  const openDocumentTarget = useCallback((target: { documentId: string; blockId?: string | null }) => {
     setAgentDocumentFocus({
-      roomId: target.roomId,
       documentId: target.documentId,
       blockId: target.blockId ?? null,
       requestId: ++documentFocusRequestIdRef.current,
     })
-  }, [availableContextRooms, openContextRoomTab])
+    navigate('docs')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => onDocumentBlockNavigation(openDocumentTarget), [openDocumentTarget])
   useEffect(() => onDocumentOperationNavigation(openDocumentTarget), [openDocumentTarget])
-
-  // 首页「最近访问」Room 行点击：直达该 Room 内部（详情页），而非停在 Context Room 列表。
-  const openContextRoomById = useCallback((roomId: string) => {
-    if (manualMemoryOnboardingRef.current) return
-    const room = contextRoomState.rooms.find((item) => item.id === roomId)
-    if (room) openContextRoomTab({ id: room.id, title: room.title })
-    else {
-      // 目标 Room 快照缺失：先落到 rooms 页并用 activeRoomId 标记目标，
-      // PortedContextRoom 挂载时会从 knowledge 后端补合并并直进详情（自愈）。
-      setActivePage('rooms')
-      setActiveContextRoomId(roomId)
-    }
-  }, [contextRoomState.rooms, openContextRoomTab])
-
-  const activateContextRoomTab = useCallback((roomId: string) => {
-    setActivePage('rooms')
-    setActiveContextRoomId(roomId)
-  }, [])
-
-  const closeContextRoomTab = useCallback((roomId: string) => {
-    const closingIndex = contextRoomTabs.findIndex((tab) => tab.id === roomId)
-    if (closingIndex < 0) return
-    const nextTabs = contextRoomTabs.filter((tab) => tab.id !== roomId)
-    setContextRoomTabs(nextTabs)
-    if (activeContextRoomId === roomId) {
-      setActiveContextRoomId(nextTabs[closingIndex]?.id ?? nextTabs[closingIndex - 1]?.id ?? null)
-    }
-  }, [activeContextRoomId, contextRoomTabs])
 
   // 文件页打开 Office 预览 → 顶栏新标签（同文件复用标签），焦点切到该预览。
   const openOfficeTab = useCallback((tab: OfficePreviewTab) => {
@@ -611,6 +396,50 @@ export function App() {
     setActiveOfficeInstanceId(tab.id)
     setActivePage('office-document')
   }, [])
+
+  // 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开 Word/Excel/PPT：
+  // 主进程已把文件导入文件库，这里复用文件页的 openOriginal，开出同一个顶栏预览标签。
+  useEffect(() => {
+    const files = window.nxcore?.files
+    if (!files?.onOpenFromOs) return
+    const openFromSystem = (document: OsOpenedDocument) => {
+      const editable = isEditableOfficeDocument(document.originalName)
+      void files.openOriginal(
+        document.fileId,
+        document.originalName,
+        undefined,
+        editable ? { editable: true } : undefined,
+      )
+        .then((result) => {
+          if (result?.openedWith === 'office') {
+            openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })
+            return
+          }
+          if (result?.openedWith === 'external' && result.legacyFallback) {
+            showToast({
+              title: t('surface:files.legacyPreviewFallbackTitle'),
+              message: t('surface:files.legacyPreviewFallbackMessage'),
+            })
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to open the document from the system file manager.', error)
+        })
+    }
+    const takePending = typeof files.takePendingOsOpen === 'function'
+      ? files.takePendingOsOpen.bind(files)
+      : null
+    // 已消费的事件顺手清掉主进程暂存，避免下次页面重载把旧文件再打开一次。
+    const unsubscribe = files.onOpenFromOs((document) => {
+      openFromSystem(document)
+      void takePending?.().catch(() => undefined)
+    })
+    // 冷启动：系统打开事件可能早于本组件挂载，取走主进程暂存的请求（取后清空）。
+    void takePending?.()
+      .then((document) => { if (document) openFromSystem(document) })
+      .catch(() => undefined)
+    return unsubscribe
+  }, [openOfficeTab, t])
 
   const activateOfficeTab = useCallback((instanceId: string) => {
     setActiveOfficeInstanceId(instanceId)
@@ -672,6 +501,19 @@ export function App() {
         window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
         return
       }
+      if (payload.type === 'write-back-failed') {
+        // 库内版本已更新，但写回访达里的原文件失败：必须让用户知道外部程序看不到这次修改。
+        showToast({
+          title: t('surface:files.writeBackFailedTitle'),
+          message: t('surface:files.writeBackFailedMessage', {
+            name: payload.originalName ?? payload.title,
+            error: payload.message ?? '',
+          }),
+          variant: 'error',
+        })
+        window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
+        return
+      }
       if (payload.type === 'open-edit') {
         // 桌面端 Agent 编辑未打开的产物：以可编辑方式打开 + 顶栏出标签（编辑实时可见）。
         const files = window.nxcore?.files
@@ -716,151 +558,37 @@ export function App() {
       } else {
         showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })
       }
-      // Room 资料页/产物库清单监听此 DOM 事件刷新（见 useRoomKnowledgeFiles）。
       window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))
-      if (payload.fileId && payload.originalName && payload.roomId) {
-        const room = availableContextRooms.find((item) => item.id === payload.roomId)
-        if (room) openContextRoomTab(room)
-        else activateContextRoomTab(payload.roomId)
-        requestRoomOfficeFocus({
-          roomId: payload.roomId,
-          fileId: payload.fileId,
-          originalName: payload.originalName,
-          requestId: ++roomOfficeFocusRequestIdRef.current,
+      // 产物库已随 Context Room 移除：生成完成后直接以顶栏预览打开该产物（可编辑）。
+      if (!payload.fileId || !payload.originalName) return
+      const files = window.nxcore?.files
+      if (!files) return
+      void files.openOriginal(payload.fileId, payload.originalName)
+        .then((result) => {
+          if (result?.openedWith === 'office') {
+            openOfficeTab({ id: result.instanceId, title: result.title, kind: result.kind })
+          }
         })
-      }
+        .catch((error) => {
+          console.error('Failed to open the generated Office file.', error)
+        })
     })
-  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab, openOfficeTab, t])
+  }, [openOfficeTab, t])
 
-  // slides「AI 修改」弹层转发（office 桥）：切到元素所属 Room，把组装好的
-  // 修改指令自动发给 Agent（AgentPanel 按 roomId 匹配后消费，自动发送）。
+  // slides「AI 修改」弹层转发（office 桥）：把组装好的修改指令自动发给 Agent
+  //（AgentPanel 消费后自动发送，用户无需再敲一遍）。
   useEffect(() => {
     const office = window.nxcore?.office
     if (!office?.onAgentAsk) return
     return office.onAgentAsk((payload) => {
-      const room = availableContextRooms.find((item) => item.id === payload.roomId)
-      if (room) openContextRoomTab(room)
-      else activateContextRoomTab(payload.roomId)
       setAgentOpen(true)
       setAgentAskRequest({
         key: `agent-ask-${Date.now()}`,
-        roomId: payload.roomId,
         message: payload.message,
         ...(payload.displayMessage ? { displayMessage: payload.displayMessage } : {}),
       })
     })
-  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
-
-  // 产物库「新建 Office」：经 Room 会话派发生成请求（自动展开对应 Room 会话）。
-  useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ roomId?: string; message?: string; displayMessage?: string }>).detail
-      if (!detail?.roomId || !detail.message) return
-      const room = availableContextRooms.find((item) => item.id === detail.roomId)
-      if (room) openContextRoomTab(room)
-      else activateContextRoomTab(detail.roomId)
-      setAgentOpen(true)
-      setAgentAskRequest({
-        key: `artifact-create-${Date.now()}`,
-        roomId: detail.roomId,
-        message: detail.message,
-        ...(detail.displayMessage ? { displayMessage: detail.displayMessage } : {}),
-      })
-    }
-    window.addEventListener('everroom:room-agent-ask', open)
-    return () => window.removeEventListener('everroom:room-agent-ask', open)
-  }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
-
-  const syncContextRoomTabs = useCallback((rooms: ContextRoomWorkspaceTab[]) => {
-    // 全空投影是网关启动/快照刷新窗口的瞬时态，不是真实清空——本地删除 Room
-    // 会把它挪进 deletedRooms（届时投影为空但删除记录在场）。保留现有标签与
-    // 活跃 Room，等非空快照再同步；否则重启后首次进 Room 会被瞬时空态弹回首页。
-    if (rooms.length === 0 && contextRoomState.deletedRooms.length === 0) {
-      logContextRoomTabsDiagnostic('sync.ignored_empty_projection', {
-        deletedRoomCount: contextRoomState.deletedRooms.length,
-      })
-      return
-    }
-    const roomById = new Map(rooms.map((room) => [room.id, room]))
-    setContextRoomTabs((current) => current.flatMap((tab) => {
-      const room = roomById.get(tab.id)
-      return room ? [room] : []
-    }))
-    setActiveContextRoomId((current) => {
-      if (current && !roomById.has(current)) {
-        logContextRoomTabsDiagnostic('sync.active_room_missing', {
-          activeRoomId: current,
-          projectedRoomCount: rooms.length,
-        }, 'warn')
-      }
-      return current && roomById.has(current) ? current : null
-    })
-  }, [contextRoomState.deletedRooms.length])
-
-  const showContextRoomHome = useCallback(() => {
-    setActiveContextRoomId(null)
   }, [])
-
-  const handleContextRoomDetailFocusChange = useCallback((focused: boolean) => {
-    setContextRoomDetailFocused(focused)
-    if (!focused) setContextRoomNavRevealed(false)
-  }, [])
-
-  useEffect(() => {
-    const workspace = workspaceMainRef.current
-    if (!workspace) return
-    let resetTimer: number | null = null
-
-    const roomIds = contextRoomTabs.map((tab) => tab.id)
-    const canNestedElementScroll = (target: EventTarget | null, direction: -1 | 1) => {
-      if (!(target instanceof Element)) return false
-      if (target.closest('input, textarea, select, [contenteditable="true"], canvas, [role="slider"]')) return true
-
-      let element: Element | null = target
-      while (element && element !== workspace) {
-        const style = window.getComputedStyle(element)
-        if ((style.overflowX === 'auto' || style.overflowX === 'scroll') && element.scrollWidth > element.clientWidth + 1) {
-          const maxScrollLeft = element.scrollWidth - element.clientWidth
-          if ((direction > 0 && element.scrollLeft < maxScrollLeft) || (direction < 0 && element.scrollLeft > 0)) {
-            return true
-          }
-        }
-        element = element.parentElement
-      }
-      return false
-    }
-
-    const handleWheel = (event: WheelEvent) => {
-      if (event.ctrlKey || Math.abs(event.deltaX) < 6 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
-      const direction = event.deltaX > 0 ? 1 : -1
-      if (canNestedElementScroll(event.target, direction)) return
-
-      event.preventDefault()
-      const now = performance.now()
-      const swipe = tabSwipeRef.current
-      if (now - swipe.lastAt > 180) swipe.distance = 0
-      swipe.lastAt = now
-      if (now < swipe.lockedUntil) return
-      swipe.distance += event.deltaX
-
-      if (resetTimer !== null) window.clearTimeout(resetTimer)
-      resetTimer = window.setTimeout(() => { swipe.distance = 0 }, 180)
-      if (Math.abs(swipe.distance) < TAB_SWIPE_THRESHOLD) return
-
-      const target = workspaceTabSwipeTarget(roomIds, activeWorkspaceRoomId, direction)
-      swipe.distance = 0
-      swipe.lockedUntil = now + 520
-      if (target === undefined) return
-      if (target === null) showContextRoomHome()
-      else activateContextRoomTab(target)
-    }
-
-    workspace.addEventListener('wheel', handleWheel, { passive: false })
-    return () => {
-      if (resetTimer !== null) window.clearTimeout(resetTimer)
-      workspace.removeEventListener('wheel', handleWheel)
-    }
-  }, [activateContextRoomTab, activeWorkspaceRoomId, contextRoomTabs, showContextRoomHome])
 
   const focusAgent = () => {
     setAgentOpen(true)
@@ -869,7 +597,6 @@ export function App() {
 
   /** 消息区点击 @ 的文件：跳到文件页并聚焦该文件。 */
   const openAgentMentionFile = (fileId: string) => {
-    if (manualMemoryOnboardingRef.current) return
     if (agentNavigationTimerRef.current !== null) {
       window.clearTimeout(agentNavigationTimerRef.current)
       agentNavigationTimerRef.current = null
@@ -879,23 +606,13 @@ export function App() {
   }
 
   // ---- 统一搜索面板动作 ----
-  const searchRooms = availableContextRooms.map((room) => ({ id: room.id, title: room.title }))
-
-  const openSearchRoom = (roomId: string, title: string) => {
-    window.dispatchEvent(new CustomEvent('nxcore:room:open', { detail: { id: roomId, title } }))
-  }
-
   const openSearchSession = (hit: SearchHitDto) => {
     setAgentOpen(true)
     const page = hit.pageId && isAgentPageId(hit.pageId) ? hit.pageId : 'home'
-    if (hit.roomIds[0]) {
-      const room = availableContextRooms.find((item) => item.id === hit.roomIds[0])
-      if (room) openSearchRoom(room.id, room.title)
-    }
     setAgentSessionRouteRequest({
       key: `search:${hit.id}:${Date.now()}`,
       pageId: page,
-      roomId: hit.roomIds[0] ?? null,
+      roomId: null,
       sessionId: hit.sessionId ?? hit.refId,
     })
   }
@@ -928,35 +645,21 @@ export function App() {
     const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180
     agentNavigationTimerRef.current = window.setTimeout(() => {
       agentNavigationTimerRef.current = null
-      if (manualMemoryOnboardingRef.current) return
       const { target } = request
-      if (target.pageId === 'rooms' && target.roomId) {
-        const room = availableContextRooms.find((item) => item.id === target.roomId)
-        if (room) openContextRoomTab(room)
-        else if (target.objectType === 'room') {
-          openContextRoomTab({ id: target.roomId, title: target.title })
-        }
-        else {
-          setActivePage('rooms')
-          setActiveContextRoomId(target.roomId)
-        }
-        setAgentDocumentFocus(target.objectType === 'document' && target.objectId
-          ? {
-              roomId: target.roomId,
-              documentId: target.objectId,
-              blockId: target.blockId ?? null,
-              requestId: ++documentFocusRequestIdRef.current,
-            }
-          : null)
-        return
-      }
-      setAgentDocumentFocus(null)
+      // 文稿定位只对文稿库有意义：其余目标仅切换页面，不留焦在高亮上。
+      setAgentDocumentFocus(target.pageId === 'docs' && target.objectType === 'document' && target.objectId
+        ? {
+            documentId: target.objectId,
+            blockId: target.blockId ?? null,
+            requestId: ++documentFocusRequestIdRef.current,
+          }
+        : null)
       navigate(target.pageId)
     }, delay)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }
 
   const openAgentSessionLink = (link: AgentSessionLink, destination: 'source' | 'target') => {
-    if (manualMemoryOnboardingRef.current) return
     const route = resolveAgentSessionLinkRoute(link, destination)
     if (!route) return
     if (agentNavigationTimerRef.current !== null) {
@@ -965,23 +668,13 @@ export function App() {
     }
     setAgentNavigationRequest(null)
     setAgentSessionRouteRequest(route)
-    setAgentDocumentFocus(route.pageId === 'rooms' && route.roomId && route.documentId
+    setAgentDocumentFocus(route.pageId === 'docs' && route.documentId
       ? {
-          roomId: route.roomId,
           documentId: route.documentId,
           blockId: route.blockId ?? null,
           requestId: ++documentFocusRequestIdRef.current,
         }
       : null)
-    if (route.pageId === 'rooms' && route.roomId) {
-      const room = availableContextRooms.find((item) => item.id === route.roomId)
-      if (room) openContextRoomTab(room)
-      else {
-        setActivePage('rooms')
-        setActiveContextRoomId(route.roomId)
-      }
-      return
-    }
     navigate(route.pageId)
   }
 
@@ -995,18 +688,12 @@ export function App() {
       setAgentOpen(true)
       setAgentSessionRouteRequest({
         key: `notification:${target.notificationId}`,
-        pageId: target.roomId ? 'rooms' : 'home',
-        roomId: target.roomId,
+        pageId: 'home',
+        roomId: null,
         sessionId: target.sessionId,
         runId: target.runId,
       })
-      if (target.roomId) {
-        setActivePage('rooms')
-        setActiveContextRoomId(target.roomId)
-      } else {
-        setActivePage('home')
-        setActiveContextRoomId(null)
-      }
+      setActivePage('home')
     }).catch(() => setRemoteNotificationTarget(target))
   }), [])
 
@@ -1015,72 +702,22 @@ export function App() {
     // 连通测试通过才进入后续 onboarding 与应用。
     <RuntimeConfigGate>
     <OnboardingFlowChrome stage={fullOnboardingStage} completedStages={completedOnboardingStages} onStageChange={switchOnboardingStage}>
-    <MemoryOnboardingGate activeStage={fullOnboardingStage} suppressOnboarding={suppressAutomaticOnboarding} onMemoryGenerated={setGeneratedMemoryNotice} onFinished={() => {
-      logOnboarding('memory-finished', {
-        stage: fullOnboardingStageRef.current,
-        destination: 'room',
-      })
-      setMemoryReady(true)
-      markOnboardingStageCompleted('memory')
-      if (fullOnboardingStageRef.current !== 'memory') return
-      manualMemoryOnboardingRef.current = false
-      fullOnboardingStageRef.current = 'agents'
-      setFullOnboardingStage('agents')
-      setFolderOnboardingOpen(false)
-      setSuppressRoomOnboarding(false)
-      setActivePage('settings')
-    }} onExistingData={completeAutomaticOnboarding} onNavigateStage={switchOnboardingStage}>
-      {({ openMemoryOnboarding }) => {
-      openMemoryOnboardingRef.current = openMemoryOnboarding
-      return (
-      <RoomOnboardingGate
-        activeStage={fullOnboardingStage}
-        suppressOnboarding={suppressRoomOnboarding || suppressAutomaticOnboarding}
-        onExistingData={completeAutomaticOnboarding}
-        onNavigateStage={switchOnboardingStage}
-        memoryReady={memoryReady}
-        onFinished={() => {
-          logOnboarding('room-finished', {
-            stage: fullOnboardingStageRef.current,
-            destination: 'ready',
-          })
-          // 'room' = manual full-onboarding restart from Settings; 'idle' =
-          // natural first run, where the gates open themselves and the stage
-          // machine is never advanced. Both paths must reach folder consent,
-          // including the existing-room path so permissions can be confirmed.
-          if (fullOnboardingStageRef.current !== 'room' && fullOnboardingStageRef.current !== 'idle') return
-          markOnboardingStageCompleted('room')
-          fullOnboardingStageRef.current = 'ready'
-          setFullOnboardingStage('ready')
-          setFolderOnboardingOpen(true)
-        }}
-      >
-      {({ openRoomOnboarding }) => {
-        openRoomOnboardingRef.current = openRoomOnboarding
-        return (
-      <>
       <div
       className="app-shell"
       data-agent-open={String(agentOpen)}
       data-agent-resizing={String(agentResizing)}
-      data-context-room-focused={String(isContextRoomFocused)}
       data-mac-desktop={String(isMacDesktop)}
-      data-nav-collapsed={String(effectiveNavCollapsed)}
+      data-nav-collapsed={String(navCollapsed)}
       style={{ '--agent-width': `${String(agentWidth)}px` } as CSSProperties}
     >
       <TopBar
-        contextRoomTabs={contextRoomTabs}
-        activeContextRoomId={activeWorkspaceRoomId}
         officeTabs={officeTabs}
         activeOfficeId={activeWorkspaceOfficeId}
         agentOpen={agentOpen}
         onActivateWorkbench={() => {
-          if (activePage === 'rooms' && activeContextRoomId) showContextRoomHome()
           // 预览无「主页」可回：点工作区标签时退回文件页（预览入口），标签保留。
           if (activePage === 'office-document') setActivePage('files')
         }}
-        onActivateContextRoom={activateContextRoomTab}
-        onCloseContextRoom={closeContextRoomTab}
         onActivateOfficeTab={activateOfficeTab}
         onCloseOfficeTab={closeOfficeTab}
         onToggleAgent={() => setAgentOpen((open) => !open)}
@@ -1090,19 +727,10 @@ export function App() {
       <main ref={workspaceMainRef} className="workspace-main">
         <PageCanvas
           page={activePage}
-          activeContextRoomId={activeContextRoomId}
           agentDocumentFocus={agentDocumentFocus}
-          memoryFocusId={memoryFocusId}
           agentFileFocus={agentFileFocus}
-          contextRoomHomeRequest={contextRoomHomeRequest}
-          onContextRoomDetailFocusChange={handleContextRoomDetailFocusChange}
-          onContextRoomOpenTab={openContextRoomTab}
-          onContextRoomRoomsChange={syncContextRoomTabs}
-          onContextRoomShowHome={showContextRoomHome}
           onNavigate={navigate}
           onFocusAgent={focusAgent}
-          onOpenDocument={openDocumentTarget}
-          onOpenRoom={openContextRoomById}
           onOpenOfficePreview={openOfficeTab}
           onStartFullOnboarding={() => {
             logOnboarding('manual-full-onboarding-start', { destination: 'folder' })
@@ -1110,18 +738,11 @@ export function App() {
               window.clearTimeout(agentNavigationTimerRef.current)
               agentNavigationTimerRef.current = null
             }
-            manualMemoryOnboardingRef.current = true
             fullOnboardingCompletedRef.current = false
             setCompletedOnboardingStages(new Set())
             setSuppressAutomaticOnboarding(false)
-            setMemoryReady(false)
             fullOnboardingStageRef.current = 'folder'
-            // Memory onboarding temporarily unmounts the nested Room gate.
-            // Do not call the opener captured from that old instance later.
-            openRoomOnboardingRef.current = null
             setFullOnboardingStage('folder')
-            setSuppressRoomOnboarding(false)
-            setActiveContextRoomId(null)
             setAgentNavigationRequest(null)
             setAgentSessionRouteRequest(null)
             setAgentDocumentFocus(null)
@@ -1147,9 +768,6 @@ export function App() {
         <AgentPanel
           pageId={activePage}
           pageLabel={t(pageLabels[activePage])}
-          roomId={activePage === 'rooms' ? activeContextRoomId : null}
-          rooms={availableContextRooms}
-          roomBackendReady={contextRoomBackendReady}
           navigationRequest={agentNavigationRequest}
           sessionRouteRequest={agentSessionRouteRequest}
           askRequest={agentAskRequest}
@@ -1158,30 +776,18 @@ export function App() {
           onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}
           onNavigate={navigateFromAgent}
           onNavigatePage={navigate}
-          onRestoreRoomTab={restoreContextRoomTab}
           onNavigationConsumed={(key) => setAgentNavigationRequest((current) => current?.key === key ? null : current)}
           onOpenSessionLink={openAgentSessionLink}
-          onOpenDocument={openDocumentTarget}
           onSessionRouteConsumed={(key) => setAgentSessionRouteRequest((current) => current?.key === key ? null : current)}
           onOpenMentionFile={openAgentMentionFile}
           focusRequest={agentFocusRequest}
-          roomCitations={agentRoomCitations}
-          onRemoveRoomCitation={(citationId) => {
-            clearRoomOverviewCitation(citationId)
-            setAgentRoomCitations((current) => current.filter((citation) => citation.id !== citationId))
-          }}
-          onClearRoomCitations={() => {
-            agentRoomCitations.forEach((citation) => clearRoomOverviewCitation(citation.id))
-            setAgentRoomCitations([])
-          }}
         />
       ) : null}
       <SearchPalette
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
-        rooms={searchRooms}
         onOpenFile={(fileId) => { openAgentMentionFile(fileId) }}
-        onOpenRoom={openSearchRoom}
+        onOpenDocument={(documentId) => { openDocumentTarget({ documentId }) }}
         onOpenSession={openSearchSession}
         onAttach={attachSearchHit}
         onDispatch={dispatchSearchHit}
@@ -1192,35 +798,9 @@ export function App() {
       {remoteNotificationTarget ? (
         <RemoteAgentNotificationView target={remoteNotificationTarget} onClose={() => setRemoteNotificationTarget(null)} />
       ) : null}
-      {generatedMemoryNotice ? (
-        <section className="memory-generated-dialog" role="dialog" aria-modal="true" aria-labelledby="memory-generated-dialog-title">
-          <div className="memory-generated-dialog-mark" aria-hidden="true"><BrainCircuit /></div>
-          <button
-            type="button"
-            className="memory-generated-dialog-close"
-            title={t('memory:onboarding.dismissNotification')}
-            aria-label={t('memory:onboarding.dismissNotification')}
-            onClick={() => setGeneratedMemoryNotice(null)}
-          ><X aria-hidden="true" /></button>
-          <span className="memory-generated-dialog-eyebrow">{t('memory:onboarding.memorySetup')}</span>
-          <h2 id="memory-generated-dialog-title">{t('memory:onboarding.backgroundMemoryReadyTitle')}</h2>
-          <p>{t('memory:onboarding.backgroundMemoryReadyBody')}</p>
-          <blockquote>{generatedMemoryNotice.content}</blockquote>
-          <button
-            type="button"
-            className="memory-generated-dialog-action"
-            onClick={() => {
-              setMemoryFocusId(generatedMemoryNotice.id)
-              setGeneratedMemoryNotice(null)
-              navigate('memory')
-            }}
-          >{t('memory:onboarding.viewMemory')}<ArrowRight aria-hidden="true" /></button>
-        </section>
-      ) : null}
       </div>
       <FolderSettingsOnboarding
         open={folderOnboardingOpen}
-        memoryReady={memoryReady}
         showReady={fullOnboardingStage === 'ready'}
         onNavigateStage={switchOnboardingStage}
         onClose={() => {
@@ -1237,7 +817,6 @@ export function App() {
             markOnboardingStageCompleted('folder')
             fullOnboardingStageRef.current = 'microphone'
             setFullOnboardingStage('microphone')
-            setSuppressRoomOnboarding(true)
           } else {
             markOnboardingStageCompleted('folder')
             writeFullOnboardingCompleted()
@@ -1247,8 +826,6 @@ export function App() {
             fullOnboardingStageRef.current = 'idle'
             setFullOnboardingStage('idle')
             setSuppressAutomaticOnboarding(true)
-            manualMemoryOnboardingRef.current = false
-            setSuppressRoomOnboarding(false)
             setActivePage('home')
           }
         }}
@@ -1260,23 +837,8 @@ export function App() {
             logOnboarding('microphone-finished', { stage: fullOnboardingStageRef.current })
             markOnboardingStageCompleted('microphone')
             if (fullOnboardingStageRef.current !== 'microphone') return
-            fullOnboardingStageRef.current = 'screen'
-            setFullOnboardingStage('screen')
-            setSuppressRoomOnboarding(true)
-          }}
-        />
-      ) : null}
-      {fullOnboardingStage === 'screen' ? (
-        <ScreenRecordingPermissionOnboarding
-          onNavigateStage={switchOnboardingStage}
-          onFinished={() => {
-            logOnboarding('screen-finished', { stage: fullOnboardingStageRef.current })
-            markOnboardingStageCompleted('screen')
-            if (fullOnboardingStageRef.current !== 'screen') return
-            fullOnboardingStageRef.current = 'memory'
-            setFullOnboardingStage('memory')
-            setSuppressRoomOnboarding(true)
-            openMemoryOnboardingRef.current?.()
+            fullOnboardingStageRef.current = 'agents'
+            setFullOnboardingStage('agents')
           }}
         />
       ) : null}
@@ -1287,18 +849,12 @@ export function App() {
             logOnboarding('agents-finished', { stage: fullOnboardingStageRef.current })
             markOnboardingStageCompleted('agents')
             if (fullOnboardingStageRef.current !== 'agents') return
-            fullOnboardingStageRef.current = 'room'
-            setFullOnboardingStage('room')
-            setSuppressRoomOnboarding(false)
+            fullOnboardingStageRef.current = 'ready'
+            setFullOnboardingStage('ready')
+            setFolderOnboardingOpen(true)
           }}
         />
       ) : null}
-      </>
-      )
-      }}
-      </RoomOnboardingGate>
-      )}}
-    </MemoryOnboardingGate>
     </OnboardingFlowChrome>
     </RuntimeConfigGate>
   )

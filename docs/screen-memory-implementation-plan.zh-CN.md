@@ -1,5 +1,7 @@
 # 屏幕记忆（PRD 6.9）实施拆解
 
+> **已废弃（Phase 2/3 已移除）**：本地屏幕记忆（PRD 6.9）已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 日期：2026-10-12
 前置文档：docs/screen-memory-prd-deviation.zh-CN.md（PRD 偏差说明，待产品确认）
 状态：P0–P6 代码全部落地（2026-10-12），单测 42 项全绿；待真机回归（另一会话占用 dev 环境，浏览器/UI 实弹与断网四项验收清单待跑）

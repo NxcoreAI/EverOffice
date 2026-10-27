@@ -20,7 +20,6 @@ import { useAccount } from '@/state/AccountContext'
 import {
   buildManualEntryPayload,
   configTestErrorMessage,
-  embeddingFieldsFromSnapshot,
   emptyAiFields,
   isRuntimeConfigReady,
   manualConfigFieldError,
@@ -34,12 +33,11 @@ import './RuntimeConfigGate.css'
  * 启动 runtime config gate：打开应用先检查 AI 运行时配置是否就绪；
  * 未配置时提供「登录 SaaS」与「手动配置」两条路，保存后必须通过
  * gateway 连通测试（POST /v1/runtime-config/test）才放行进入应用。
- * 手动配置含 LLM（必填）与 embedding（可选，填了才测 /embeddings）两个 tab。
+ * 手动配置只有 LLM（必填）一段；已删子系统的历史槽位不再出现在 gate。
  * 已登录用户撞上 SaaS 权威额度判定（402/403）不挡门：降级放行进应用，
  * AI 调用在应用内报已本地化的 402 提示，设置页可兑换。
  */
 type GateMode = 'checking' | 'app' | 'login' | 'manual' | 'validating' | 'unavailable' | 'authNetwork'
-type ManualTab = 'llm' | 'embedding'
 
 /** 闪屏最短展示时长：决策再快也不闪现即逝。 */
 const STARTUP_SPLASH_MIN_MS = 900
@@ -47,12 +45,9 @@ const STARTUP_SPLASH_MIN_MS = 900
 /** 登录态未落定/已认证 + 配置未就绪的宽限重查次数（2s 间隔，~30s 上限）。 */
 const RELAY_GRACE_RETRIES = 15
 
-/** 测试结果 → 用户可读错误；embedding 失败带专属前缀区分两 tab。 */
+/** 测试结果 → 用户可读错误。 */
 function gateTestError(result: RuntimeConfigTestResult | undefined, t: (key: string) => string): string | null {
   if (result?.valid !== true) return configTestErrorMessage(result?.error, t)
-  if (result.embedding && result.embedding.valid !== true) {
-    return `${t('surface:configGate.embeddingTestLabel')}${configTestErrorMessage(result.embedding.error, t)}`
-  }
   return null
 }
 
@@ -63,8 +58,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<GateMode>('checking')
   const [snapshot, setSnapshot] = useState<RuntimeConfigSnapshot | null>(null)
   const [fields, setFields] = useState<ManualAiConfigFields>(emptyAiFields())
-  const [embedding, setEmbedding] = useState<ManualAiConfigFields>(emptyAiFields())
-  const [manualTab, setManualTab] = useState<ManualTab>('llm')
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [testError, setTestError] = useState<string | null>(null)
   const [oidcPending, setOidcPending] = useState<'apple' | 'google' | null>(null)
@@ -126,7 +119,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
       const next = await runtimeConfig.get()
       setSnapshot(next)
       setFields(primaryFieldsFromSnapshot(next))
-      setEmbedding(embeddingFieldsFromSnapshot(next))
       const accountNow = accountRef.current
       if (isRuntimeConfigReady(next)) {
         // 不直接进 app：由下方 effect 等登录态落定后决定 app/login。
@@ -270,7 +262,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   const enterApp = () => setMode('app')
 
-  /** 连通测试通过才放行（primary 必须有效；embedding 配置了才要求有效）。失败留在来源页（login/manual），不弹回选择页。 */
+  /** 连通测试通过才放行（primary 必须有效）。失败留在来源页（login/manual），不弹回选择页。 */
   const validateAndEnter = async (next: RuntimeConfigSnapshot, from: 'login' | 'manual' = 'manual'): Promise<boolean> => {
     setMode('validating')
     window.dispatchEvent(new CustomEvent('everroom-runtime-config-status', { detail: 'testing' }))
@@ -391,7 +383,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
   const saveManual = async () => {
     const runtimeConfig = window.nxcore?.runtimeConfig
     if (!runtimeConfig) return
-    const error = manualConfigFieldError(fields, embedding, t)
+    const error = manualConfigFieldError(fields, t)
     if (error) {
       setFieldError(error)
       return
@@ -399,7 +391,7 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
     setFieldError(null)
     setTestError(null)
     try {
-      const next = await runtimeConfig.saveUser(buildManualEntryPayload(snapshot, { primary: fields, embedding }))
+      const next = await runtimeConfig.saveUser(buildManualEntryPayload(snapshot, { primary: fields }))
       await validateAndEnter(next, 'manual')
     } catch (saveError) {
       setTestError(saveError instanceof Error ? saveError.message : t('surface:configGate.testFailedGeneric'))
@@ -417,11 +409,6 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
 
   const updateField = (key: keyof ManualAiConfigFields, value: string) => {
     setFields((current) => ({ ...current, [key]: value }))
-    setFieldError(null)
-  }
-
-  const updateEmbeddingField = (key: keyof ManualAiConfigFields, value: string) => {
-    setEmbedding((current) => ({ ...current, [key]: value }))
     setFieldError(null)
   }
 
@@ -567,68 +554,22 @@ export function RuntimeConfigGate({ children }: { children: ReactNode }) {
               <h1>{t('surface:configGate.manualHeading')}</h1>
               <p>{t('surface:configGate.manualBody')}</p>
 
-              <div className="runtime-config-gate-tabs" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={manualTab === 'llm'}
-                  data-active={manualTab === 'llm'}
-                  onClick={() => setManualTab('llm')}
-                >
-                  {t('surface:configGate.tabLlm')}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={manualTab === 'embedding'}
-                  data-active={manualTab === 'embedding'}
-                  onClick={() => setManualTab('embedding')}
-                >
-                  {t('surface:configGate.tabEmbedding')}
-                  <span className="runtime-config-gate-tab-badge">{t('surface:configGate.embeddingOptional')}</span>
-                </button>
-              </div>
-
-              {manualTab === 'llm' ? (
-                <>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldProvider')}</span>
-                    <input value={fields.provider} onChange={(event) => updateField('provider', event.target.value)} />
-                  </label>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldModel')}</span>
-                    <input value={fields.model} placeholder="gpt-4o-mini / glm-4-flash / …" onChange={(event) => updateField('model', event.target.value)} />
-                  </label>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldBaseUrl')}</span>
-                    <input value={fields.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateField('baseUrl', event.target.value)} />
-                  </label>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldApiKey')}</span>
-                    <input type="password" value={fields.apiKey} placeholder="sk-…" onChange={(event) => updateField('apiKey', event.target.value)} />
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldProvider')}</span>
-                    <input value={embedding.provider} onChange={(event) => updateEmbeddingField('provider', event.target.value)} />
-                  </label>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldModel')}</span>
-                    <input value={embedding.model} placeholder="text-embedding-3-small / text-embedding-v4 / …" onChange={(event) => updateEmbeddingField('model', event.target.value)} />
-                  </label>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldBaseUrl')}</span>
-                    <input value={embedding.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateEmbeddingField('baseUrl', event.target.value)} />
-                  </label>
-                  <label className="runtime-config-gate-field">
-                    <span>{t('surface:configGate.fieldApiKey')}</span>
-                    <input type="password" value={embedding.apiKey} placeholder="sk-…" onChange={(event) => updateEmbeddingField('apiKey', event.target.value)} />
-                  </label>
-                  <p className="runtime-config-gate-note">{t('surface:configGate.embeddingHint')}</p>
-                </>
-              )}
+              <label className="runtime-config-gate-field">
+                <span>{t('surface:configGate.fieldProvider')}</span>
+                <input value={fields.provider} onChange={(event) => updateField('provider', event.target.value)} />
+              </label>
+              <label className="runtime-config-gate-field">
+                <span>{t('surface:configGate.fieldModel')}</span>
+                <input value={fields.model} placeholder="gpt-4o-mini / glm-4-flash / …" onChange={(event) => updateField('model', event.target.value)} />
+              </label>
+              <label className="runtime-config-gate-field">
+                <span>{t('surface:configGate.fieldBaseUrl')}</span>
+                <input value={fields.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateField('baseUrl', event.target.value)} />
+              </label>
+              <label className="runtime-config-gate-field">
+                <span>{t('surface:configGate.fieldApiKey')}</span>
+                <input type="password" value={fields.apiKey} placeholder="sk-…" onChange={(event) => updateField('apiKey', event.target.value)} />
+              </label>
 
               <div className="runtime-config-gate-validation" aria-live="polite">{fieldError ?? ' '}</div>
               {testError ? <p className="runtime-config-gate-error" role="alert"><PlugZap aria-hidden="true" />{testError}</p> : null}

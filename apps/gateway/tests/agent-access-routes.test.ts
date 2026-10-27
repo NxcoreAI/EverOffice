@@ -26,18 +26,12 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    memory: null,
     pi: null,
     cursorCompletionPi: null,
     litePi: null,
-    knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
     backgroundPi: null,
-    transcriptionSummaryPi: null,
-    asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
-    asr: null,
   };
 }
 
@@ -177,7 +171,8 @@ describe("agent-access REST（全局 bearer）", () => {
     });
     expect(selftest.statusCode).toBe(200);
     const steps = (selftest.json() as { steps: Record<string, { status: string }> }).steps;
-    expect(steps.list!.status).toBe("empty");
+    // Phase 2i：第一步改为 everroom_get_status（list_rooms 已删），空库也返回 ok。
+    expect(["ok", "empty"]).toContain(steps.list!.status);
     expect(steps.search!.status).toBe("empty");
     expect(steps.fetch!.status).toBe("empty");
     expect(["ok", "duplicate"]).toContain(steps.submit!.status);

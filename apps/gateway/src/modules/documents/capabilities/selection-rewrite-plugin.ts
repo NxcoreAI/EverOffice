@@ -28,7 +28,6 @@ export function selectionRewritePlugin(backend: CapabilityBackend): DocumentCapa
       "preview_replace",
       "selection-rewrite",
       true,
-      true,
     ),
     promptGuidelines: ["局部选区重写只返回替换文本，用户接受并持久化后才能记录为文档改动。"],
     tools: [],
@@ -36,9 +35,6 @@ export function selectionRewritePlugin(backend: CapabilityBackend): DocumentCapa
       const documentId = request.context.documentId;
       const document = documentId ? backend.get(documentId) : null;
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (document.roomId !== request.context.roomId) {
-        throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
-      }
       if (document.deletedAt) {
         throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
       }
@@ -79,7 +75,9 @@ export function selectionRewritePlugin(backend: CapabilityBackend): DocumentCapa
         const resolved = resolve({
           invocationId,
           documentId: document.id,
-          roomId: document.roomId,
+          // Phase 2i：文稿一律工作区级；授权复核用本次运行的 Room 上下文，
+          // 与派发 invocation 时写入 taskInput.roomId 的口径一致。
+          roomId: request.context.roomId,
           ...(userEditedReplacementText !== undefined ? { userEditedReplacementText } : {}),
         });
         if (!resolved) throw invocationUnauthorized();
@@ -111,7 +109,7 @@ export function selectionRewritePlugin(backend: CapabilityBackend): DocumentCapa
           capabilityVersion: 1,
           interactionMode: "preview_replace",
           presenterKey: "selection-rewrite",
-          roomId: document.roomId,
+          roomId: request.context.roomId,
           documentId: document.id,
           documentTitle: document.title,
           sessionId: request.context.sessionId,

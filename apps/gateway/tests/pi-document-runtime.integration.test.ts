@@ -158,19 +158,19 @@ describe('Pi document tool integration', () => {
         const operationId = findOperationId(body)
         switch (requestStep++) {
           case 0:
-            sendToolCall(response, 'call-begin-a', 'context_room_write_begin', {
+            sendToolCall(response, 'call-begin-a', 'document_write_begin', {
               mode: 'create', title: 'Room A 文档', format: 'markdown',
             })
             return
           case 1:
             if (!operationId) throw new Error('begin result did not reach the model')
-            sendToolCall(response, 'call-append-a', 'context_room_write_append', {
+            sendToolCall(response, 'call-append-a', 'document_write_append', {
               operationId, sequence: 1, text: '# Room A 文档\n',
             })
             return
           case 2:
             if (!operationId) throw new Error('append result did not reach the model')
-            sendToolCall(response, 'call-commit-a', 'context_room_write_commit', {
+            sendToolCall(response, 'call-commit-a', 'document_write_commit', {
               operationId, finalSequence: 1,
             })
             return
@@ -178,13 +178,13 @@ describe('Pi document tool integration', () => {
             sendText(response, 'Room A 文档已创建。')
             return
           case 4:
-            sendToolCall(response, 'call-begin-b', 'context_room_write_begin', {
+            sendToolCall(response, 'call-begin-b', 'document_write_begin', {
               mode: 'create', title: 'Room B 临时文档', format: 'markdown',
             })
             return
           case 5:
             if (!operationId) throw new Error('second begin result did not reach the model')
-            sendToolCall(response, 'call-abort-b', 'context_room_write_abort', {
+            sendToolCall(response, 'call-abort-b', 'document_write_abort', {
               operationId, reason: 'integration-test',
             })
             return
@@ -254,12 +254,12 @@ describe('Pi document tool integration', () => {
 
     expect(firstEvents.filter((event) => event.type === 'tool.completed').map((event) =>
       (event.payload as { name?: string }).name)).toEqual([
-      'context_room_write_begin',
-      'context_room_write_append',
-      'context_room_write_commit',
+      'document_write_begin',
+      'document_write_append',
+      'document_write_commit',
     ])
     expect(firstEvents.at(-1)?.type).toBe('run.completed')
-    expect(service.list('room-a')).toEqual([
+    expect(service.list()).toEqual([
       expect.objectContaining({ title: 'Room A 文档', status: 'active', version: 1 }),
     ])
 
@@ -273,10 +273,13 @@ describe('Pi document tool integration', () => {
     const secondEvents = await collect(secondRun.events)
     expect(secondEvents.filter((event) => event.type === 'tool.completed').map((event) =>
       (event.payload as { name?: string }).name)).toEqual([
-      'context_room_write_begin',
-      'context_room_write_abort',
+      'document_write_begin',
+      'document_write_abort',
     ])
-    expect(service.list('room-b')).toEqual([])
+    // Phase 2i：工作区级文稿库不分区，run-b 中止后只剩 run-a 提交的那一篇。
+    expect(service.list()).toEqual([
+      expect.objectContaining({ title: 'Room A 文档', status: 'active', version: 1 }),
+    ])
 
     const persistedOperations = db.select().from(documentOperations)
       .orderBy(asc(documentOperations.createdAt)).all()
@@ -337,7 +340,7 @@ describe('Pi document tool integration', () => {
         switch (requestStep++) {
           case 0:
             // Reproduce the production failure: the model starts the patch before reading.
-            sendToolCall(response, 'call-edit-begin-without-read', 'context_room_patch_begin', {
+            sendToolCall(response, 'call-edit-begin-without-read', 'document_patch_begin', {
               documentId: document.id,
               baseVersion: document.version,
               kind: 'edit',
@@ -345,12 +348,12 @@ describe('Pi document tool integration', () => {
             })
             return
           case 1:
-            sendToolCall(response, 'call-edit-read-after-error', 'context_room_document_read', {
+            sendToolCall(response, 'call-edit-read-after-error', 'document_read', {
               documentId: document.id,
             })
             return
           case 2:
-            sendToolCall(response, 'call-edit-begin', 'context_room_patch_begin', {
+            sendToolCall(response, 'call-edit-begin', 'document_patch_begin', {
               documentId: document.id,
               baseVersion: document.version,
               kind: 'edit',
@@ -359,7 +362,7 @@ describe('Pi document tool integration', () => {
             return
           case 3:
             if (!operationId) throw new Error('patch begin result did not reach the model')
-            sendToolCall(response, 'call-edit-hunk-with-full-document', 'context_room_patch_hunk', {
+            sendToolCall(response, 'call-edit-hunk-with-full-document', 'document_patch_hunk', {
               sequence: 1,
               operation: 'replace',
               target: { blockId: firstBlockId },
@@ -368,7 +371,7 @@ describe('Pi document tool integration', () => {
             return
           case 4:
             if (!operationId) throw new Error('patch hunk result did not reach the model')
-            sendToolCall(response, 'call-edit-commit', 'context_room_patch_commit', {
+            sendToolCall(response, 'call-edit-commit', 'document_patch_commit', {
               operationId: '725555bb-8699-47fd-adb4-1f72a91562bc',
               finalSequence: 1,
             })
@@ -431,23 +434,23 @@ describe('Pi document tool integration', () => {
     const events = await collect(run.events)
     expect(events.at(-1)?.type).toBe('run.completed')
     const failedBegin = events.find((event) => event.type === 'tool.failed'
-      && (event.payload as { name?: string }).name === 'context_room_patch_begin')
+      && (event.payload as { name?: string }).name === 'document_patch_begin')
     expect(failedBegin).toBeDefined()
     expect(JSON.stringify(failedBegin?.payload)).toContain('DOCUMENT_READ_REQUIRED')
-    expect(JSON.stringify(failedBegin?.payload)).toContain('context_room_document_read')
+    expect(JSON.stringify(failedBegin?.payload)).toContain('document_read')
     expect(events.filter((event) => event.type === 'tool.completed').map((event) =>
       (event.payload as { name?: string }).name)).toEqual([
-      'context_room_document_read',
-      'context_room_patch_begin',
-      'context_room_patch_hunk',
-      'context_room_patch_commit',
+      'document_read',
+      'document_patch_begin',
+      'document_patch_hunk',
+      'document_patch_commit',
     ])
     const hunkEvent = events.find((event) => event.type === 'tool.completed'
-      && (event.payload as { name?: string }).name === 'context_room_patch_hunk')
+      && (event.payload as { name?: string }).name === 'document_patch_hunk')
     expect(JSON.stringify(hunkEvent?.payload)).toContain('"fragmentReduced":true')
     expect(JSON.stringify(hunkEvent?.payload)).toContain('"operationIdCorrected":true')
     const commitEvent = events.find((event) => event.type === 'tool.completed'
-      && (event.payload as { name?: string }).name === 'context_room_patch_commit')
+      && (event.payload as { name?: string }).name === 'document_patch_commit')
     expect(JSON.stringify(commitEvent?.payload)).toContain('"documentChanged":false')
     expect(JSON.stringify(commitEvent?.payload)).toContain('"operationIdCorrected":true')
     expect(db.select().from(documentOperations)
@@ -470,14 +473,14 @@ describe('Pi document tool integration', () => {
         }
         const body = await readJson(request)
         if (requestStep++ % 2 === 0) {
-          sendToolCall(response, 'call-cancel-begin', 'context_room_write_begin', {
+          sendToolCall(response, 'call-cancel-begin', 'document_write_begin', {
             mode: 'create', title: '等待 ACK 的文档', format: 'markdown',
           })
           return
         }
         const operationId = findOperationId(body)
         if (!operationId) throw new Error('cancel begin result did not reach the model')
-        sendToolCall(response, 'call-cancel-append', 'context_room_write_append', {
+        sendToolCall(response, 'call-cancel-append', 'document_write_append', {
           operationId, sequence: 1, text: '尚未确认的正文',
         })
       })().catch((error: unknown) => {
@@ -556,7 +559,7 @@ describe('Pi document tool integration', () => {
     })
     const eventsPromise = collect(run.events)
     await firstAppend
-    expect(service.list('room-cancel')).toEqual([
+    expect(service.list()).toEqual([
       expect.objectContaining({
         title: '等待 ACK 的文档',
         status: 'draft',
@@ -569,7 +572,7 @@ describe('Pi document tool integration', () => {
     const events = await eventsPromise
 
     expect(events.at(-1)?.type).toBe('run.cancelled')
-    expect(service.list('room-cancel')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-cancel')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
@@ -592,7 +595,7 @@ describe('Pi document tool integration', () => {
     const disposeEvents = await disposeEventsPromise
 
     expect(disposeEvents.at(-1)?.type).toBe('run.cancelled')
-    expect(service.list('room-cancel')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-dispose')).get()).toMatchObject({
       agentSessionId: 'session-cancel',
@@ -606,7 +609,7 @@ describe('Pi document tool integration', () => {
     const endpoint = createServer((_request, response) => {
       switch (requestStep++) {
         case 0:
-          sendToolCall(response, 'call-failed-begin', 'context_room_write_begin', {
+          sendToolCall(response, 'call-failed-begin', 'document_write_begin', {
             mode: 'create', title: '模型失败草稿', format: 'markdown',
           })
           return
@@ -615,7 +618,7 @@ describe('Pi document tool integration', () => {
           response.end(JSON.stringify({ error: { message: 'model unavailable' } }))
           return
         case 2:
-          sendToolCall(response, 'call-forgotten-begin', 'context_room_write_begin', {
+          sendToolCall(response, 'call-forgotten-begin', 'document_write_begin', {
             mode: 'create', title: '忘记提交草稿', format: 'markdown',
           })
           return
@@ -680,7 +683,7 @@ describe('Pi document tool integration', () => {
     })
     const failedEvents = await collect(failedRun.events)
     expect(failedEvents.at(-1)?.type).toBe('run.failed')
-    expect(service.list('room-terminal')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-failed')).get()).toMatchObject({
       agentSessionId: 'session-terminal',
@@ -698,7 +701,7 @@ describe('Pi document tool integration', () => {
     })
     const completedEvents = await collect(completedRun.events)
     expect(completedEvents.at(-1)?.type).toBe('run.completed')
-    expect(service.list('room-terminal')).toEqual([])
+    expect(service.list()).toEqual([])
     expect(db.select().from(documentOperations)
       .where(eq(documentOperations.runId, 'run-uncommitted')).get()).toMatchObject({
       agentSessionId: 'session-terminal',

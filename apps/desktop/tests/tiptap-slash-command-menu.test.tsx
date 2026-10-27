@@ -2,7 +2,7 @@ import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { TiptapSlashCommandMenu } from '../src/renderer/src/components/context-room/ported/components/detail-editor/TiptapSlashCommandMenu'
+import { TiptapSlashCommandMenu } from '@/components/office-editor/editor/TiptapSlashCommandMenu'
 
 function createEditor(query: string, coords = { left: 16, top: 16, bottom: 32 }) {
   const listeners = new Map<string, Set<() => void>>()

@@ -1,16 +1,10 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
-import type { MoveRoomDocumentInput } from "@nxcore/agent-contract";
 import { Type } from "@sinclair/typebox";
 import { agentDocumentMarkdown } from "./agent-markdown.js";
 import { documentBodyContent } from "./content-model.js";
 import { DocumentServiceError, type DocumentService } from "./service.js";
 import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
-import type { TaskFolderService } from "./task-folders.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
-const MoveRoomBody = Type.Object({
-  fromRoomId: Type.String({ minLength: 1, maxLength: 128 }),
-  roomId: Type.String({ minLength: 1, maxLength: 128 }),
-});
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
 const BlockReference = Type.Object({
   roomId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -20,40 +14,32 @@ function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
 }
 
+/**
+ * 划词改写的派发器（由 create-server 注入 `doc-writer` 的 rewrite task）：
+ * documents 模块不依赖 subagents，只约定「拿任务入参、立即返回 invocationId」。
+ */
+export type SelectionRewriteDispatch = (taskInput: Record<string, unknown>) => Promise<string>;
+
 export function documentRoutes(
   service: DocumentService,
   summaryRuntime?: () => import("@nxcore/agent-runtime").AgentRuntime | null,
   indexBackfillReadTrigger?: DocumentIndexBackfillReadTrigger | null,
-  taskFolders?: TaskFolderService | null,
+  dispatchSelectionRewrite?: SelectionRewriteDispatch | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
-    if (taskFolders) {
-      app.get(
-        "/v1/documents/folders",
-        {
-          schema: {
-            tags: ["documents"],
-            querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
-          },
-        },
-        async (request) => taskFolders.list(request.query.roomId),
-      );
-    }
-
+    // 工作区级文稿库（Phase 2i 起不再有 Room 分区，roomId 查询参数已删除）。
     app.get(
       "/v1/documents",
       {
         schema: {
           tags: ["documents"],
           querystring: Type.Object({
-            roomId: Type.String({ minLength: 1, maxLength: 128 }),
             trashed: Type.Optional(Type.Union([Type.Literal("true"), Type.Literal("false")])),
             origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
           }),
         },
       },
       async (request) => service.list(
-        request.query.roomId,
         request.query.trashed === "true",
         request.query.origin,
       ),
@@ -300,65 +286,12 @@ export function documentRoutes(
       {
         schema: {
           tags: ["documents"],
-          querystring: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 128 }) }),
+          // 清空整个工作区回收站（Phase 2i 起 Room 过滤维度已删除）。
         },
       },
-      async (request, reply) => {
-        await service.emptyTrash(request.query.roomId);
+      async (_request, reply) => {
+        await service.emptyTrash();
         return reply.code(204).send();
-      },
-    );
-
-    // 产物移动到其它 Room：归属切换 + 两房清单事件 + 知识侧索引/记忆投影同步。
-    app.post(
-      "/v1/documents/:id/move",
-      {
-        schema: {
-          tags: ["documents"],
-          params: IdParams,
-          body: MoveRoomBody,
-        },
-      },
-      async (request, reply) => {
-        try {
-          return await service.moveToRoom(request.params.id, request.body as MoveRoomDocumentInput);
-        } catch (error) {
-          if (error instanceof DocumentServiceError) {
-            return reply.code(error.statusCode).send(errorPayload(error));
-          }
-          throw error;
-        }
-      },
-    );
-
-    // 多选批量移动：同源房的一批文档迁入同一目标 Room。
-    app.post(
-      "/v1/documents/move",
-      {
-        schema: {
-          tags: ["documents"],
-          body: Type.Object({
-            documentIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
-              minItems: 1,
-              maxItems: 100,
-            }),
-            fromRoomId: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.String({ minLength: 1, maxLength: 128 }),
-          }),
-        },
-      },
-      async (request, reply) => {
-        try {
-          return await service.moveManyToRoom(request.body.documentIds, {
-            fromRoomId: request.body.fromRoomId,
-            roomId: request.body.roomId,
-          });
-        } catch (error) {
-          if (error instanceof DocumentServiceError) {
-            return reply.code(error.statusCode).send(errorPayload(error));
-          }
-          throw error;
-        }
       },
     );
 
@@ -369,14 +302,70 @@ export function documentRoutes(
           tags: ["documents"],
           body: Type.Object({
             id: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.String({ minLength: 1, maxLength: 128 }),
+            // 省略 = 工作区级文稿（不归属任何 Room，P0-2）。
+            roomId: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
             title: Type.String({ minLength: 1, maxLength: 120 }),
             contentJson: JsonDocument,
             origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
           }),
         },
       },
-      async (request, reply) => reply.code(201).send(await service.import(request.body)),
+      async (request, reply) =>
+        reply.code(201).send(await service.import({ ...request.body, roomId: request.body.roomId ?? null })),
+    );
+
+    // 划词改写：编辑器选中文本 → 派发 doc-writer 的 rewrite task，立即返回 invocationId，
+    // 渲染层再轮询 GET /v1/subagent-invocations/:id 取替换文本（同步流由客户端轮询模拟）。
+    // Phase 2i-2：原 POST /v1/context-rooms/selection-rewrite 随 context-rooms 模块删除，
+    // 路径迁到 documents；roomId 不再出现在入参里（文稿一律工作区级）。
+    app.post(
+      "/v1/documents/selection-rewrite",
+      {
+        schema: {
+          tags: ["documents"],
+          body: Type.Object({
+            documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            documentName: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            selectedText: Type.String({ minLength: 1, maxLength: 20_000 }),
+            instruction: Type.Optional(Type.String({ maxLength: 2_000 })),
+            contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
+            contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
+            blockType: Type.Optional(Type.String({ maxLength: 64 })),
+            responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+          }, { additionalProperties: false }),
+        },
+      },
+      async (request, reply) => {
+        if (!dispatchSelectionRewrite) {
+          return reply.code(503).send({ error: "doc_writer_not_configured" });
+        }
+        const body = request.body;
+        if (!body.selectedText.trim()) {
+          return reply.code(400).send({ error: "selection_required" });
+        }
+        // 框架无排队（方案 §5.1）：并发限额是可诊断的硬错误，直接冒 500 会在桌面端
+        // 变成笼统的 internal gateway error，这里显式透出错误码。
+        let invocationId: string;
+        try {
+          invocationId = await dispatchSelectionRewrite({
+            selectedText: body.selectedText,
+            ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
+            ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
+            ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
+            ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
+            ...(body.documentId ? { documentId: body.documentId } : {}),
+            ...(body.documentName ? { documentName: body.documentName } : {}),
+            ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          request.log.warn({ err: message }, "selection rewrite dispatch rejected");
+          const retryable = message === "subagent_concurrency_limit"
+            || message === "subagent_global_concurrency_limit";
+          return reply.code(retryable ? 503 : 500).send({ error: message });
+        }
+        return { invocationId };
+      },
     );
 
     app.put(
@@ -451,6 +440,9 @@ export function documentRoutes(
       },
     );
 
+    // 文档事件 WS：**工作区文档频道**（不是 Room 资源，路径里的 `rooms` 段是冻结的
+    // 历史命名，改 URL 会断开桌面的旧订阅）。桌面 document-gateway-bridge 以
+    // WORKSPACE_DOCUMENT_CHANNEL 作为 `:id` 订阅，Phase 2i 起它就是工作区频道本身。
     app.get(
       "/v1/documents/rooms/:id/stream",
       { websocket: true, schema: { tags: ["documents"], params: IdParams } },

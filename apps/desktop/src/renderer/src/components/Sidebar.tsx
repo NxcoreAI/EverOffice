@@ -5,7 +5,6 @@ import { navigationSections, type PageId } from '@/data/navigation'
 import { useAccount } from '@/state/AccountContext'
 import type { GatewayState, GatewayStatus } from '../../../shared/sources'
 import { useLocale } from '@/i18n/LocaleContext'
-import { MemoryPipelineStatus } from './MemoryPipelineStatus'
 import { ProductBrand } from './ui/ProductBrand'
 
 const INITIAL_GATEWAY_STATUS: GatewayStatus = {
@@ -171,7 +170,6 @@ export function Sidebar({
         ))}
       </nav>
 
-      <MemoryPipelineStatus onNavigate={onNavigate} />
       {/* Gateway 正常运行时保持安静，只在启动/异常/停止时提示。 */}
       {gatewayStatus.state !== 'ready' || runtimeConfigStatus ? (
       <div

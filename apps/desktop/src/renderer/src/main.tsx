@@ -4,10 +4,8 @@ import ReactDOM from 'react-dom/client'
 
 import { App } from '@/App'
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary'
-import { ContextRoomStateProvider } from '@/components/context-room/ContextRoomStateProvider'
-import { RoomDocumentsProvider } from '@/components/context-room/RoomDocumentsProvider'
-import { useRoomDocumentsState } from '@/components/context-room/RoomDocumentsProvider'
-import { desktopOperationBridge, DocumentOperationProvider } from '@/components/context-room/operations'
+import { WorkspaceDocumentsProvider, useWorkspaceDocuments } from '@/components/documents/WorkspaceDocumentsProvider'
+import { desktopOperationBridge, DocumentOperationProvider } from './components/office-editor/operations/index'
 import { AccountProvider } from '@/state/AccountContext'
 import { ActiveDocumentProvider } from '@/state/ActiveDocumentContext'
 import { LocaleProvider } from '@/i18n/LocaleContext'
@@ -17,7 +15,7 @@ import '@/styles.css'
 Sentry.init({ beforeBreadcrumb: () => null })
 
 function DocumentOperationRoot() {
-  const { upsertDocument } = useRoomDocumentsState()
+  const { upsertDocument } = useWorkspaceDocuments()
   const operationBridge = React.useMemo(() => desktopOperationBridge(), [])
   return (
     <DocumentOperationProvider operationBridge={operationBridge} onDocumentApplied={upsertDocument}>
@@ -33,11 +31,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <GlobalErrorBoundary>
     <LocaleProvider>
       <AccountProvider>
-        <ContextRoomStateProvider>
-          <RoomDocumentsProvider>
-            <DocumentOperationRoot />
-          </RoomDocumentsProvider>
-        </ContextRoomStateProvider>
+        <WorkspaceDocumentsProvider>
+          <DocumentOperationRoot />
+        </WorkspaceDocumentsProvider>
       </AccountProvider>
     </LocaleProvider>
     </GlobalErrorBoundary>

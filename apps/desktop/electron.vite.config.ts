@@ -62,7 +62,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          'permission-card': resolve('src/renderer/permission-card.html'),
         },
       },
     },
@@ -79,10 +78,6 @@ export default defineConfig({
       alias: {
         '@': resolve('src/renderer/src'),
       },
-    },
-    // 进 room 时才加载的图组件依赖，不预打包会触发 vite 运行时重打包并整页刷新
-    optimizeDeps: {
-      include: ['d3-force'],
     },
     plugins: [react(), ...sentryPlugins()],
   },

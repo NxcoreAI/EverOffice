@@ -136,7 +136,7 @@ describe("createSubagentPiTools document_draft", () => {
       .map((tool) => tool.name)).not.toContain("document_draft");
   });
 
-  it("draft-create：组装 instruction/material/writingStyle 并返回 title 与摘要（M3/V2：正文不回传）", async () => {
+  it("draft-create：组装 instruction/material 并返回 title 与摘要（M3/V2：正文不回传）", async () => {
     const orchestrator = orchestratorReturning({
       result: {
         text: "",
@@ -149,7 +149,6 @@ describe("createSubagentPiTools document_draft", () => {
       },
     });
     const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
-      writingStyleProvider: { getGenerationPromptSection: () => "<writing_style>\n短句收尾。\n</writing_style>" },
     });
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
     const result = await tool.execute(baseRun as never, {
@@ -170,7 +169,8 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input.task).toBe("draft-create");
     expect(input.instruction).toBe("起草接口设计文档");
     expect(input.material).toBe("素材摘录");
-    expect(input.writingStyle).toContain("短句收尾");
+    // 写作风格注入随写作风格提炼退役（Phase 2d）：不再向 doc-writer 附 writingStyle。
+    expect(input.writingStyle).toBeUndefined();
 
     const payload = JSON.parse((result as { content: string }).content);
     expect(payload).toMatchObject({
@@ -228,36 +228,6 @@ describe("createSubagentPiTools document_draft", () => {
     expect(input.roomId).toBe("room-2");
   });
 
-  it("Room 透传：显式 roomId 不在开跑快照但实时注册表命中时放行（同 run 新建 Room）", async () => {
-    const orchestrator = orchestratorReturning({});
-    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
-      roomExists: (roomId) => roomId === "room-fresh",
-    });
-    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
-    const availableRooms = [{ id: "room-1", title: "Room 1" }];
-    await tool.execute(
-      { ...baseRun, roomId: undefined, availableRooms } as never,
-      { task: "draft-create", instruction: "起草文档", roomId: "room-fresh" } as never,
-      undefined,
-    );
-    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
-    expect(input.roomId).toBe("room-fresh");
-  });
-
-  it("Room 透传：快照与实时注册表都不命中时仍拒绝（防伪造 roomId）", async () => {
-    const orchestrator = orchestratorReturning({});
-    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, {
-      roomExists: (roomId) => roomId === "room-fresh",
-    });
-    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
-    const availableRooms = [{ id: "room-1", title: "Room 1" }];
-    await expect(tool.execute(
-      { ...baseRun, roomId: undefined, availableRooms } as never,
-      { task: "draft-create", instruction: "起草文档", roomId: "room-ghost" } as never,
-      undefined,
-    )).rejects.toThrow("ROOM_SELECTION_REQUIRED");
-  });
-
   it("draft-create：contentMarkdown 单串返回分块计数（字节精确性由 resolver 测试覆盖）", async () => {
     const body = "## 第一节\n\n内容甲。\n\n## 第二节\n\n内容乙。";
     const orchestrator = orchestratorReturning({
@@ -293,7 +263,6 @@ describe("createSubagentPiTools document_draft", () => {
         issued.push({ context, documentId, version, blockIds });
         return { readReceipt: "receipt-1", expiresAt: "2026-09-02T00:00:00.000Z" };
       },
-      writingStyleProvider: { getGenerationPromptSection: () => null },
     });
     const tool = tools.find((candidate) => candidate.name === "document_draft")!;
     const result = await tool.execute(baseRun as never, {
@@ -702,22 +671,4 @@ describe("createSubagentPiTools document_draft", () => {
     )).toEqual([]);
   });
 
-  it("memoryIndex 由 gateway 从 Room 权威数据注入", async () => {
-    const orchestrator = orchestratorReturning({
-      result: { text: "", structuredOutput: { kind: "draft-create", title: "T", appendChunks: ["正文"], digest: { summary: "s" } } },
-    });
-    const resolveRoomMemoryItems = vi.fn(() => [
-      { id: "room-1-memory-1", content: "偏好静默更新".repeat(60), type: "偏好" },
-      { id: "room-1-memory-2", content: "每周五发周报", type: "指令" },
-    ]);
-    const tools = createSubagentPiTools(registryWith(["doc-writer"]), orchestrator, { resolveRoomMemoryItems });
-    const tool = tools.find((candidate) => candidate.name === "document_draft")!;
-    await tool.execute(baseRun as never, { task: "draft-create", instruction: "起草" } as never, undefined);
-    expect(resolveRoomMemoryItems).toHaveBeenCalledWith("room-1");
-    const input = (orchestrator.dispatch.mock.calls[0]![0] as { input: Record<string, unknown> }).input;
-    expect(input.memoryIndex).toEqual([
-      { memoryId: "room-1-memory-1", contentPreview: "偏好静默更新".repeat(60).slice(0, 200), type: "偏好" },
-      { memoryId: "room-1-memory-2", contentPreview: "每周五发周报", type: "指令" },
-    ]);
-  });
 });

@@ -12,10 +12,10 @@ import {
   DocumentOperationProvider,
   type DocumentOperationContextValue,
   useDocumentOperations,
-} from '../src/renderer/src/components/context-room/operations/DocumentOperationProvider'
-import { useDocumentEditorOperations } from '../src/renderer/src/components/context-room/operations/useDocumentEditorOperations'
-import { DocumentContinuationActions } from '../src/renderer/src/components/context-room/operations/DocumentContinuationExtension'
-import type { OperationBridge } from '../src/renderer/src/components/context-room/operations/types'
+} from '@/components/office-editor/operations/DocumentOperationProvider'
+import { useDocumentEditorOperations } from '@/components/office-editor/operations/useDocumentEditorOperations'
+import { DocumentContinuationActions } from '@/components/office-editor/operations/DocumentContinuationExtension'
+import type { OperationBridge } from '@/components/office-editor/operations/types'
 
 function deferred<T>() {
   let resolve!: (value: T) => void

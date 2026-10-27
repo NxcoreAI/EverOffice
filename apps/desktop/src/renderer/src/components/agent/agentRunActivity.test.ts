@@ -256,16 +256,16 @@ describe('Agent run activity', () => {
     const events = [
       event(1, 'run.started'),
       event(2, 'tool.started', {
-        toolCallId: 'read-1', name: 'context_room_document_read', args: { title: '后端技术文档' },
+        toolCallId: 'read-1', name: 'document_read', args: { title: '后端技术文档' },
       }),
       event(3, 'tool.completed', {
-        toolCallId: 'read-1', name: 'context_room_document_read', result: { title: '后端技术文档' },
+        toolCallId: 'read-1', name: 'document_read', result: { title: '后端技术文档' },
       }),
       event(4, 'tool.started', {
-        toolCallId: 'patch-1', name: 'context_room_patch_begin', args: { title: '后端技术文档' },
+        toolCallId: 'patch-1', name: 'document_patch_begin', args: { title: '后端技术文档' },
       }),
       event(5, 'tool.completed', {
-        toolCallId: 'patch-1', name: 'context_room_patch_begin', result: { summary: '已准备续写内容' },
+        toolCallId: 'patch-1', name: 'document_patch_begin', result: { summary: '已准备续写内容' },
       }),
       event(6, 'message.delta', { delta: '文档续写已经准备完成。' }),
       event(7, 'message.completed', { content: '文档续写已经准备完成。' }),
@@ -287,24 +287,24 @@ describe('Agent run activity', () => {
     const tools = [
       event(1, 'tool.completed', {
         toolCallId: 'read-1',
-        name: 'context_room_document_read',
+        name: 'document_read',
         result: { structuredContent: { title: '后端技术文档', version: 3, blockCount: 8 } },
       }),
       event(2, 'tool.completed', {
         toolCallId: 'begin-1',
-        name: 'context_room_patch_begin',
+        name: 'document_patch_begin',
         args: { summary: '补充部署与排障说明' },
         result: { structuredContent: { state: 'running' } },
       }),
       event(3, 'tool.completed', {
         toolCallId: 'hunk-1',
-        name: 'context_room_patch_hunk',
+        name: 'document_patch_hunk',
         args: { sequence: 1, operation: 'replace', markdown: '新的部署说明' },
         result: { structuredContent: { acceptedSequence: 1 } },
       }),
       event(4, 'tool.completed', {
         toolCallId: 'commit-1',
-        name: 'context_room_patch_commit',
+        name: 'document_patch_commit',
         result: { structuredContent: { message: '修改建议已准备好，需要用户审阅后才会应用。' } },
       }),
     ]
@@ -322,24 +322,24 @@ describe('Agent run activity', () => {
     const activity = reduceAgentRunActivity([
       event(1, 'message.delta', { delta: '开始创建文档：个人知识管理指南。' }),
       event(2, 'tool.started', {
-        toolCallId: 'begin-1', name: 'context_room_write_begin', args: { title: '个人知识管理指南' },
+        toolCallId: 'begin-1', name: 'document_write_begin', args: { title: '个人知识管理指南' },
       }),
       event(3, 'tool.completed', {
-        toolCallId: 'begin-1', name: 'context_room_write_begin', result: { title: '个人知识管理指南' },
+        toolCallId: 'begin-1', name: 'document_write_begin', result: { title: '个人知识管理指南' },
       }),
       event(4, 'message.delta', { delta: '接下来写入文档内容。' }),
       event(5, 'tool.started', {
-        toolCallId: 'append-1', name: 'context_room_write_append', args: { title: '个人知识管理指南' },
+        toolCallId: 'append-1', name: 'document_write_append', args: { title: '个人知识管理指南' },
       }),
       event(6, 'tool.completed', {
-        toolCallId: 'append-1', name: 'context_room_write_append', result: { title: '个人知识管理指南' },
+        toolCallId: 'append-1', name: 'document_write_append', result: { title: '个人知识管理指南' },
       }),
       event(7, 'message.delta', { delta: '正文包含信息收集、组织与复盘三个部分。接下来提交新文档。' }),
       event(8, 'tool.started', {
-        toolCallId: 'commit-1', name: 'context_room_write_commit', args: { title: '个人知识管理指南' },
+        toolCallId: 'commit-1', name: 'document_write_commit', args: { title: '个人知识管理指南' },
       }),
       event(9, 'tool.completed', {
-        toolCallId: 'commit-1', name: 'context_room_write_commit', result: { title: '个人知识管理指南' },
+        toolCallId: 'commit-1', name: 'document_write_commit', result: { title: '个人知识管理指南' },
       }),
     ])
 
@@ -356,17 +356,17 @@ describe('Agent run activity', () => {
     const document = '数据库技术文档介绍数据模型、索引设计、事务隔离、查询优化和备份恢复。'.repeat(18)
     const activity = reduceAgentRunActivity([
       event(1, 'tool.started', {
-        toolCallId: 'append-1', name: 'context_room_write_append', args: { text: document },
+        toolCallId: 'append-1', name: 'document_write_append', args: { text: document },
       }),
       event(2, 'tool.completed', {
-        toolCallId: 'append-1', name: 'context_room_write_append', result: { acceptedSequence: 1 },
+        toolCallId: 'append-1', name: 'document_write_append', result: { acceptedSequence: 1 },
       }),
       event(3, 'tool.started', {
-        toolCallId: 'commit-1', name: 'context_room_write_commit', args: { finalSequence: 1 },
+        toolCallId: 'commit-1', name: 'document_write_commit', args: { finalSequence: 1 },
       }),
       event(4, 'tool.completed', {
         toolCallId: 'commit-1',
-        name: 'context_room_write_commit',
+        name: 'document_write_commit',
         result: { details: { navigation: { title: '数据库技术指南' } } },
       }),
       event(5, 'message.delta', { delta: document }),
@@ -382,17 +382,17 @@ describe('Agent run activity', () => {
     const summary = '文档已完成，涵盖数据模型、索引设计和事务隔离，并补充了查询优化与备份建议。'
     const activity = reduceAgentRunActivity([
       event(1, 'tool.started', {
-        toolCallId: 'append-1', name: 'context_room_write_append', args: { text: '数据库正文。'.repeat(80) },
+        toolCallId: 'append-1', name: 'document_write_append', args: { text: '数据库正文。'.repeat(80) },
       }),
       event(2, 'tool.completed', {
-        toolCallId: 'append-1', name: 'context_room_write_append', result: { acceptedSequence: 1 },
+        toolCallId: 'append-1', name: 'document_write_append', result: { acceptedSequence: 1 },
       }),
       event(3, 'tool.started', {
-        toolCallId: 'commit-1', name: 'context_room_write_commit', args: { finalSequence: 1 },
+        toolCallId: 'commit-1', name: 'document_write_commit', args: { finalSequence: 1 },
       }),
       event(4, 'tool.completed', {
         toolCallId: 'commit-1',
-        name: 'context_room_write_commit',
+        name: 'document_write_commit',
         result: { details: { navigation: { title: '数据库技术指南' } } },
       }),
       event(5, 'message.delta', { delta: summary }),
@@ -734,7 +734,7 @@ describe('subagent invocation tool flow', () => {
       invocationEvent(3, 'tool.completed', { toolCallId: 'call-1', name: 'wiki_search', result: {} }),
       invocationEvent(2, 'tool.started', { toolCallId: 'call-1' }),
       invocationEvent(1, 'tool.requested', { toolCallId: 'call-1', name: 'wiki_search', args: {} }),
-      invocationEvent(4, 'tool.failed', { toolCallId: 'call-2', name: 'context_room_write_commit', message: '写入冲突' }),
+      invocationEvent(4, 'tool.failed', { toolCallId: 'call-2', name: 'document_write_commit', message: '写入冲突' }),
     ])
     expect(tools.map((tool) => tool.id)).toEqual(['call-1', 'call-2'])
     expect(tools[0]!.status).toBe('completed')

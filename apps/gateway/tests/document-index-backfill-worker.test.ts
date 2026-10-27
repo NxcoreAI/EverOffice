@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import {
-  contextRooms,
-  documents as documentsTable,
-} from "../src/infrastructure/database/schema.js";
+import { documents as documentsTable } from "../src/infrastructure/database/schema.js";
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
 import { DocumentService } from "../src/modules/documents/service.js";
 import { DocumentServiceError } from "../src/modules/documents/errors.js";
@@ -19,7 +16,7 @@ import {
 } from "../src/modules/documents/index-backfill/worker.js";
 import { DOCUMENT_INDEX_BACKFILL_JOB_TYPE, enqueueDocumentIndexBackfill } from "../src/modules/documents/index-backfill/jobs.js";
 import { jobs } from "../src/infrastructure/database/schema.js";
-import type { TiptapJsonContent } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL, type TiptapJsonContent } from "@nxcore/agent-contract";
 
 const SOURCE_PARAGRAPH = "PyTorch 是一种基于 Torch 的开源深度学习框架，由 Meta AI 维护，"
   + "支持动态计算图、自动求导机制与张量系统，采用 Python 优先的设计哲学，"
@@ -67,11 +64,6 @@ async function createHarness(options: {
   closables.push(() => database.sqlite.close());
   const broker = new DocumentEventBroker();
   const documents = new DocumentService(database.db, broker);
-  database.db.insert(contextRooms).values({
-    id: "room-1",
-    title: "测试房间",
-    data: {},
-  }).run();
 
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const worker = new DocumentIndexBackfillWorker(
@@ -160,7 +152,8 @@ describe("document index backfill worker", () => {
     expect(marks).toHaveLength(1);
     expect(marks[0]).toMatchObject({
       kind: "document",
-      targetRoomId: "room-1",
+      // Phase 2i：文稿归属统一归一到工作区频道。
+      targetRoomId: WORKSPACE_DOCUMENT_CHANNEL,
       targetDocumentId: source.id,
       fallbackTitle: "文档 doc-source",
     });
@@ -279,7 +272,6 @@ describe("document index backfill worker", () => {
     // 读取触发重新入队：删除 running 行、插入同 id 的全新 pending 行。
     enqueueDocumentIndexBackfill(database.db, {
       documentId: target.id,
-      roomId: "room-1",
       version: documents.get(target.id)!.version,
     }, new Date());
 
@@ -326,7 +318,7 @@ describe("document index backfill worker", () => {
     let conflictsLeft = 1;
     const flaky: DocumentIndexBackfillDocuments = {
       get: (id) => documents.get(id),
-      list: (roomId) => documents.list(roomId),
+      list: () => documents.list(),
       listBlocks: (id) => documents.listBlocks(id),
       save: async (id, input) => {
         if (conflictsLeft > 0) {
@@ -350,8 +342,8 @@ describe("document index backfill worker", () => {
 
   it("逐字复述记忆项的段落由确定性匹配挂记忆索引", async () => {
     const { documents, worker, logger } = await createHarness({
-      listMemoryItems: (roomId) => roomId === "room-1"
-        ? [{ id: "room-1-memory-1", content: MEMORY_CONTENT, type: "事实" }]
+      listMemoryItems: (roomId) => roomId === WORKSPACE_DOCUMENT_CHANNEL
+        ? [{ id: "workspace-memory-1", content: MEMORY_CONTENT, type: "事实" }]
         : [],
     });
     // 无来源文档，仅记忆候选；目标段落整句复述记忆内容。
@@ -365,10 +357,10 @@ describe("document index backfill worker", () => {
     expect(marks).toHaveLength(1);
     expect(marks[0]).toMatchObject({
       kind: "memory",
-      targetRoomId: "room-1",
+      targetRoomId: WORKSPACE_DOCUMENT_CHANNEL,
       targetDocumentId: "",
       targetBlockId: "",
-      targetMemoryId: "room-1-memory-1",
+      targetMemoryId: "workspace-memory-1",
       fallbackTitle: "事实",
     });
     expect(targetDocument.version).toBe(target.version + 1);

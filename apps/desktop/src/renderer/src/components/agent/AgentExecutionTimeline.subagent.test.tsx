@@ -106,7 +106,7 @@ describe('AgentExecutionTimeline subagent tool flow', () => {
     listRunSubagentInvocations = vi.fn()
     listSubagentInvocationEvents = vi.fn()
     vi.stubGlobal('window', {
-      nxcore: { contextRooms: { listRunSubagentInvocations, listSubagentInvocationEvents } },
+      nxcore: { subagents: { listRunSubagentInvocations, listSubagentInvocationEvents } },
       setInterval,
       clearInterval,
       setTimeout,

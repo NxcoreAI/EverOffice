@@ -15,7 +15,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import { AgentEventBroker } from '../src/modules/agent/event-broker.js'
 import { AgentService } from '../src/modules/agent/service.js'
-import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
 import { documentMcpRoutes } from '../src/modules/documents/mcp-routes.js'
@@ -59,14 +58,6 @@ describe('trusted document MCP sessions', () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-trusted-mcp-'))
     temporaryDirectories.push(dataDir)
     const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
-    const rooms = new ContextRoomService(database.db)
-    rooms.saveSnapshot({
-      rooms: [
-        { id: 'room-a', title: '产品规划', data: {} },
-        { id: 'room-b', title: '其他 Room', data: {} },
-      ],
-      deletedRooms: [],
-    })
     const runtime = new HoldingRuntime()
     const documents = new DocumentService(database.db, new DocumentEventBroker())
     const agent = new AgentService(
@@ -74,14 +65,14 @@ describe('trusted document MCP sessions', () => {
       runtime,
       new AgentEventBroker(),
       undefined,
-      rooms,
+      undefined,
       documents,
     )
     const session = agent.createSession({ pageLabel: 'Context Room', roomId: 'room-a' })
     const run = await agent.startRun(session.id, {
       prompt: '读取当前 Room 文档',
       idempotencyKey: 'trusted-mcp-run',
-      context: { selectedRoomId: 'room-a' },
+      context: { selectedRoomId: 'room-a', rooms: [{ id: 'room-a', title: '产品规划' }] },
     })
 
     expect(() => agent.createTrustedMcpSession(session.id, run.id, 'room-b'))
@@ -105,7 +96,7 @@ describe('trusted document MCP sessions', () => {
     expect(trusted.sessionId).not.toContain(session.id)
     expect(trusted.sessionId).not.toContain(run.id)
 
-    const host = new DocumentMcpHost(documents, rooms)
+    const host = new DocumentMcpHost(documents)
     const app = Fastify()
     await app.register(documentMcpRoutes(host))
     const initialize = {

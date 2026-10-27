@@ -6,7 +6,7 @@ import { Type, type TSchema } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
-import { formatRoomContextDigest, type RoomContextDigest } from "../context-rooms/room-context-digest.js";
+import { roomScopeId } from "../documents/room-scope.js";
 import {
   DOC_WRITER_AGENT_ID,
   DOC_WRITER_TASK_LABELS,
@@ -615,8 +615,8 @@ interface MaterialSourceEntry {
  * 匹配不上就不注入——宁缺毋滥，避免误挂。
  */
 export function inferMaterialSourcesFromReads(
-  reads: { documentsReadByRun(runId: string): Array<{ roomId: string; documentId: string; version: number }> },
-  readDocument: (documentId: string, roomId: string) => {
+  reads: { documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> },
+  readDocument: (documentId: string) => {
     document: { title: string };
     blocks: Array<{ blockId: string; depth: number; textPreview: string }>;
   } | null,
@@ -628,10 +628,13 @@ export function inferMaterialSourcesFromReads(
   if (!runId || normalizedMaterial.length < 20) return [];
   const entries: MaterialSourceEntry[] = [];
   for (const read of reads.documentsReadByRun(runId)) {
+    // 工作区级文稿没有归属 Room：块索引 URI（everroom://room/{roomId}/...）无法表达，
+    // 暂不参与素材来源推断（Phase 2 随 Room 删除一并去掉 roomId 维度）。
+    if (!read.roomId) continue;
     if (roomId && read.roomId !== roomId) continue;
     let snapshot;
     try {
-      snapshot = readDocument(read.documentId, read.roomId);
+      snapshot = readDocument(read.documentId);
     } catch {
       continue;
     }
@@ -750,14 +753,8 @@ export function createSubagentPiTools(
   orchestrator: SubagentOrchestrator,
   options: {
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
-    /** Room 材料共享投影（方案 §4.2 B2）：room_analysis 网关侧组装 content 的数据源。 */
-    resolveRoomContext?: (roomId: string) => Promise<RoomContextDigest | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
-    resolveDocumentForDraft?: (documentId: string, roomId: string) => DocumentDraftSnapshot;
-    /** 实时房间存在性查询：run.availableRooms 是开跑快照，校验显式 roomId 时兜底。 */
-    roomExists?: (roomId: string) => boolean;
-    /** 块索引标记（blockIndexMark）：Room 内记忆项权威数据，gateway 注入 memoryIndex。 */
-    resolveRoomMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
+    resolveDocumentForDraft?: (documentId: string) => DocumentDraftSnapshot;
     /**
      * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档、
      * 却没传 materialSources 时，从本 run 的 document_read 台账推断来源块。
@@ -776,19 +773,6 @@ export function createSubagentPiTools(
     ) => { readReceipt: string; expiresAt: string };
     /** dispatch 期"agent 修改中"软租约：占用文档（编辑器只读、保存被拒），patch_begin 接管前清除。 */
     setDocumentModificationLease?: (documentId: string, value: string | null) => void;
-    /** 写作风格生成段（§7 迁移）：对 doc-writer 全部 task 无条件附加，provider 自查开关。 */
-    writingStyleProvider?: { getGenerationPromptSection(): string | null };
-    /** room_correction_draft 的组装数据源：读权威总览投影的 claims。 */
-    resolveRoomCorrectionContext?: (roomId: string) => {
-      claims: Array<{
-        claimId: string;
-        section: "overview" | "status" | "next_steps" | "timeline" | "entities";
-        text: string;
-        origin: string;
-        corrected: boolean;
-        evidence: Array<{ sourceKind: string; sourceId: string; sourceTitle: string | null }>;
-      }>;
-    } | null;
     /** PPT 逐页进度上报器：slides_draft generate 布进度，set_page 落页后广播快照（无决策无挂起）。 */
     slidesProgress?: SlidesProgressTracker | null;
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
@@ -952,68 +936,6 @@ export function createSubagentPiTools(
         "分析提供的材料并提炼可核验结论",
       ),
     });
-
-    // 分析任务合并（方案 §4.2 B2）：Room 材料由网关侧组装成 content 投喂
-    // content-analyst（context-room 的 material-analysis 任务已废弃），
-    // 对主 Agent 的工具名、描述、参数与返回结构保持不变。
-    tools.push({
-      name: "room_analysis",
-      label: "Analyze room materials",
-      description: "调度 Context Room Agent 分析指定 Room 的已收录资料，返回事实、风险、矛盾、信息缺口和下一步建议。用户询问某个 Room 的整体情况或资料结论时使用。",
-      parameters: Type.Object({
-        roomId: Type.String({ minLength: 1, maxLength: 128 }),
-        focus: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
-        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
-      }, { additionalProperties: false }),
-      execute: async (run, params, signal) => {
-        const roomId = String(params.roomId ?? "").trim();
-        if (!options.resolveRoomContext) throw new Error("room_analysis_room_context_unavailable");
-        const digest = await options.resolveRoomContext(roomId);
-        if (!digest) throw new Error("context_room_not_found");
-        // content-analyst 为纯投喂制（input：content/question/sourceLabel/context），
-        // focus 作为问题、responseLanguage 折入问题作答语言要求。
-        const focus = typeof params.focus === "string" ? params.focus.trim() : "";
-        const responseLanguage = typeof params.responseLanguage === "string"
-          ? params.responseLanguage.trim()
-          : "";
-        const question = [
-          focus || "分析该 Room 的资料并提炼可核验结论",
-          ...(responseLanguage ? [`请用 ${responseLanguage} 回答`] : []),
-        ].join("；");
-        const input = {
-          content: formatRoomContextDigest(digest),
-          question,
-          sourceLabel: digest.room.title,
-        };
-        const task = "分析指定 Context Room 的资料并提炼可核验结论";
-        const invocation = await dispatchWithConcurrencyRetry(() => orchestrator.dispatch({
-          agentId: "content-analyst",
-          task,
-          input,
-          idempotencyKey: dispatchKey(run.runId, "content-analyst", task, input),
-          source: "primary_agent",
-          parentSessionId: run.sessionId,
-          parentRunId: run.runId,
-          ...(signal ? { signal } : {}),
-        }));
-        const structured = invocation.result?.structuredOutput !== null
-          && typeof invocation.result?.structuredOutput === "object"
-          && !Array.isArray(invocation.result.structuredOutput)
-          ? invocation.result.structuredOutput as Record<string, unknown>
-          : extractJsonObject(invocation.result?.text ?? "");
-        return {
-          content: JSON.stringify({
-            invocationId: invocation.id,
-            agentId: invocation.agentDefinitionId,
-            status: invocation.status,
-            ...(structured ? { analysis: structured } : {}),
-            result: invocation.result,
-            error: invocation.errorMessage,
-          }),
-          details: invocation,
-        };
-      },
-    });
   }
   const documentParser = registry.get("multimodal-document-parser");
   if (documentParser) {
@@ -1096,9 +1018,8 @@ export function createSubagentPiTools(
         + "materialSources（draft-create / draft-edit 可选）：引用了 Room 文档块的素材来源列表（roomId/documentId/blockId 取自 document_read 的 blocks），"
         + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
         + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
-        + "Room 记忆来源（memoryIndex）由网关按房间自动注入，主 Agent 不经手记忆 id、不传参。"
         + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
-        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，文档来源与记忆来源两类标记均按规则补挂，其余正文保持原样。"
+        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，其余正文保持原样。"
         + "禁止在 instruction 中手写 everroom:// 链接或 blockId（截短的 id 会被网关拒绝）；"
         + "来源块一律经 materialSources 传递，id 完整照抄 document_read 的 blocks，doc-writer 自会生成标记语法。"
         + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",
@@ -1139,13 +1060,11 @@ export function createSubagentPiTools(
           throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
         }
         const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
-        // 子 run 将按该 roomId 绑定文档工具（orchestrator 透传），显式传入的房间必须是真实存在的 Room。
-        // availableRooms 是开跑快照：同一 run 内 context_room_create 新建的房间不在其中，
-        // 须以实时注册表兜底，否则"新建 Room 后立即起草文档"会被误拒。
+        // 子 run 将按该 roomId 绑定文档工具（orchestrator 透传）；显式传入的房间若在开跑快照里，
+        // 必须是快照中真实存在的 Room。
         if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)
-          && !options.roomExists?.(explicitRoomId)) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
         }
 
         let snapshot: DocumentDraftSnapshot | null = null;
@@ -1155,7 +1074,7 @@ export function createSubagentPiTools(
           if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
           if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
           try {
-            snapshot = options.resolveDocumentForDraft(documentId, roomId);
+            snapshot = options.resolveDocumentForDraft(documentId);
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             const code = (error as { code?: string } | null)?.code;
@@ -1203,17 +1122,7 @@ export function createSubagentPiTools(
             ...(item.textPreview ? { textPreview: item.textPreview.slice(0, 400) } : {}),
           }]),
         ].slice(0, 50);
-        // memoryIndex 由 gateway 从 Room 权威数据注入，主 Agent 不经手记忆 id。
-        const memoryIndex = roomId && options.resolveRoomMemoryItems
-          && options.resolveRoomMemoryItems(roomId).length > 0
-          ? options.resolveRoomMemoryItems(roomId).slice(0, 50).map((item) => ({
-            memoryId: item.id,
-            contentPreview: item.content.slice(0, 200),
-            ...(item.type ? { type: item.type.slice(0, 32) } : {}),
-          }))
-          : [];
 
-        const writingStyle = options.writingStyleProvider?.getGenerationPromptSection() ?? null;
         const roomTitle = roomId ? run.availableRooms?.find((room) => room.id === roomId) : undefined;
         const topLevelBlocks = snapshot
           ? snapshot.blocks.filter((block) => block.depth === 0)
@@ -1253,11 +1162,10 @@ export function createSubagentPiTools(
           task,
           instruction,
           // Room 透传：orchestrator 用它绑定子 run 的文档工具（pi-tools input.roomId），
-          // doc-writer 素材自取的 context_room_document_read 依赖该绑定，缺失即 409。
+          // doc-writer 素材自取的 document_read 依赖该绑定，缺失即 409。
           ...(roomId ? { roomId } : {}),
           ...(material ? { material } : {}),
           ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
-          ...(memoryIndex.length ? { memoryIndex } : {}),
           ...(roomTitle?.title?.trim() ? { roomTitle: roomTitle.title.trim().slice(0, 120) } : {}),
           ...(snapshot
             ? {
@@ -1294,7 +1202,6 @@ export function createSubagentPiTools(
             : {}),
           ...(responseLanguage ? { responseLanguage } : {}),
           ...(previousDraft ? { previousInvocationId, previousDraft } : {}),
-          ...(writingStyle ? { writingStyle } : {}),
         };
         if (task === "rewrite" && typeof input.selectedText !== "string") {
           throw new Error("document_draft_selected_text_required");
@@ -1390,7 +1297,7 @@ export function createSubagentPiTools(
           let fresh: DocumentDraftSnapshot | null = null;
           try {
             fresh = options.resolveDocumentForDraft
-              ? options.resolveDocumentForDraft(snapshot.document.id, roomId)
+              ? options.resolveDocumentForDraft(snapshot.document.id)
               : null;
           } catch {
             fresh = null;
@@ -1411,7 +1318,7 @@ export function createSubagentPiTools(
           }
           if (options.issueDraftReadReceipt) {
             const receipt = options.issueDraftReadReceipt(
-              { agentSessionId: run.sessionId, runId: run.runId, roomId: snapshot.document.roomId },
+              { agentSessionId: run.sessionId, runId: run.runId, roomId: roomScopeId(snapshot.document.roomId) },
               snapshot.document.id,
               snapshot.document.version,
               fresh.blocks.filter((block) => block.depth === 0).map((block) => block.blockId),
@@ -1564,13 +1471,12 @@ export function createSubagentPiTools(
           : "";
         const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || styleSessionRoomId || "";
         if (!roomId) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
         }
-        // 显式传入的房间必须真实存在（availableRooms 是开跑快照，实时注册表兜底）。
+        // 显式传入的房间必须存在于开跑快照。
         if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)
-          && !options.roomExists?.(explicitRoomId)) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms or call context_room_list");
+          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
+          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
         }
 
         // ── style / style_select：无模版风格阶段（纵览候选 → 提取定参 → 风格卡）。 ──
@@ -2317,7 +2223,7 @@ export function createSubagentPiTools(
             ])];
             return { ...tailResult, content: JSON.stringify(tailPayload) };
           }
-          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId, roomId) ?? null;
+          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId) ?? null;
           if (!draftSnapshot) {
             return {
               content: JSON.stringify({
@@ -3011,142 +2917,6 @@ export function createSubagentPiTools(
       return result;
     };
     tools.push(slidesDraftTool);
-  }
-  const roomCorrector = registry.get("room-corrector");
-  if (roomCorrector) {
-    const correctionTaskLabels = {
-      "citation-correction": "计算总览引用纠正",
-      "general-correction": "计算总览修改提案",
-    } as const;
-    tools.push({
-      name: "room_correction_draft",
-      label: "Draft room overview correction",
-      description: "调度 room-corrector 子 Agent 计算 Room 总览的纠正："
-        + "citation-correction（用户从总览选区附带评论发起的引用纠正）传入 instruction（用户评论）与 selectedText（选区原文），"
-        + "返回逐 claim 的 edits——逐字转发给 context_room_correction_apply_citation 同轮原子应用；"
-        + "general-correction（用户对总览的明确修改请求，如“更新建议下一步”“把简介改成……”）传入 instruction，"
-        + "返回单条 proposal 字段——逐字转发给 context_room_correction_propose，用户明确请求的修改同轮立即 apply。"
-        + "claims 快照由网关组装，无需先调用 context_room_context_get；返回的 edits/proposal 不得改写、增删或摊平字段。",
-      parameters: Type.Object({
-        task: Type.Union([
-          Type.Literal("citation-correction"),
-          Type.Literal("general-correction"),
-        ]),
-        instruction: Type.String({ minLength: 1, maxLength: 4_000 }),
-        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
-      }, { additionalProperties: false }),
-      execute: async (run, params, signal) => {
-        const task = String(params.task ?? "");
-        const label = correctionTaskLabels[task as keyof typeof correctionTaskLabels];
-        if (!label) throw new Error("room_correction_draft_task_invalid");
-        const instruction = String(params.instruction ?? "").trim();
-        const selectedText = typeof params.selectedText === "string" && params.selectedText.trim()
-          ? params.selectedText
-          : null;
-        if (task === "citation-correction" && !selectedText) {
-          throw new Error("room_correction_draft_selected_text_required");
-        }
-        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
-          throw new Error("ROOM_SELECTION_MISMATCH: The correction target differs from the Room already bound to this run");
-        }
-        const roomId = explicitRoomId || run.roomId;
-        if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
-        if (!options.resolveRoomCorrectionContext) throw new Error("room_correction_draft_context_unavailable");
-        const context = options.resolveRoomCorrectionContext(roomId);
-        if (!context) throw new Error("context_room_not_found");
-        const input = {
-          task,
-          instruction,
-          roomId,
-          ...(selectedText ? { selectedText } : {}),
-          claims: context.claims.slice(0, 400).map((claim) => ({
-            claimId: claim.claimId,
-            section: claim.section,
-            text: claim.text.slice(0, 1_000),
-            origin: claim.origin,
-            corrected: claim.corrected,
-            evidence: claim.evidence.slice(0, 3),
-          })),
-          ...(typeof run.responseLanguage === "string" && run.responseLanguage.trim()
-            ? { responseLanguage: run.responseLanguage.trim() }
-            : {}),
-        };
-        let invocation;
-        try {
-          invocation = await orchestrator.dispatch({
-            agentId: "room-corrector",
-            task: label,
-            input,
-            idempotencyKey: dispatchKey(run.runId, "room-corrector", label, input),
-            source: "primary_agent",
-            parentSessionId: run.sessionId,
-            parentRunId: run.runId,
-            ...(signal ? { signal } : {}),
-          });
-        } catch (error) {
-          const errorCode = error instanceof Error ? error.message : String(error);
-          const retryable = errorCode === "subagent_concurrency_limit"
-            || errorCode === "subagent_global_concurrency_limit";
-          return {
-            content: JSON.stringify({
-              status: "failed",
-              errorCode,
-              retryable,
-              message: retryable
-                ? "room-corrector 调度被并发限额拒绝；如实告知用户可稍后重试。"
-                : "room-corrector 调度失败；如实告知用户。",
-            }),
-            details: { errorCode },
-          };
-        }
-        if (invocation.status !== "completed") {
-          return {
-            content: JSON.stringify({
-              invocationId: invocation.id,
-              status: invocation.status,
-              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
-              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
-              message: `room-corrector 未完成（${invocation.status}）；如实告知用户。`,
-            }),
-            details: invocation,
-          };
-        }
-        const structured = invocation.result?.structuredOutput !== null
-          && typeof invocation.result?.structuredOutput === "object"
-          && !Array.isArray(invocation.result.structuredOutput)
-          ? invocation.result.structuredOutput as Record<string, unknown>
-          : extractJsonObject(invocation.result?.text ?? "");
-        if (!structured || typeof structured.kind !== "string" || structured.kind !== task) {
-          return {
-            content: JSON.stringify({
-              invocationId: invocation.id,
-              status: "completed",
-              errorCode: "room_corrector_result_invalid",
-              retryable: true,
-              message: "room-corrector 未提交匹配任务的结构化结果；可调整 instruction 后重试。",
-            }),
-            details: invocation,
-          };
-        }
-        return {
-          content: JSON.stringify({
-            invocationId: invocation.id,
-            agentId: invocation.agentDefinitionId,
-            status: "completed",
-            kind: task,
-            roomId,
-            ...(Array.isArray(structured.edits) ? { edits: structured.edits } : {}),
-            ...(structured.proposal && typeof structured.proposal === "object" && !Array.isArray(structured.proposal)
-              ? { proposal: structured.proposal }
-              : {}),
-            summary: typeof structured.summary === "string" ? structured.summary : null,
-          }),
-          details: invocation,
-        };
-      },
-    });
   }
   return tools;
 }

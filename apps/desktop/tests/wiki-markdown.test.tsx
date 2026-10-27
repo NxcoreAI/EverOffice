@@ -1,7 +1,7 @@
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { MarkdownBody, stripFrontmatter } from '../src/renderer/src/components/context-room/ported/components/detail-panels/MarkdownBody'
+import { MarkdownBody, stripFrontmatter } from '@/components/office-editor/MarkdownBody'
 
 describe('Wiki Markdown', () => {
   let renderer: TestRenderer.ReactTestRenderer | null = null

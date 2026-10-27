@@ -136,10 +136,3 @@ export function isAgentAccessCapability(value: unknown): value is AgentAccessCap
 export function isAgentAccessToolTarget(value: unknown): value is AgentAccessToolTarget {
   return typeof value === "string" && (AGENT_ACCESS_TOOL_TARGETS as readonly string[]).includes(value);
 }
-
-/** Room 范围判定（scopes.roomIds 为 "all" 时全放行）。 */
-export function roomInScope(scopes: AgentAccessScopes, roomId: string | null | undefined): boolean {
-  if (scopes.roomIds === "all") return true;
-  if (!roomId) return false;
-  return scopes.roomIds.includes(roomId);
-}

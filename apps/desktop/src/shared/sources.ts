@@ -23,21 +23,8 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
-  ContextRoomSnapshot,
-  ContextRoomSnapshotItem,
-  CreateContextRoomInput,
-  CreateContextRoomResult,
-  RoomDuplicateCandidate,
-  RoomDuplicateCandidateStatus,
-  RoomDuplicateCheckInput,
-  RoomDuplicateCheckResult,
-  RoomAppliedEntitiesResult,
-  RoomOverviewProjection,
   MovedRoomDocument,
   MoveRoomDocumentsResult,
-  RoomMergeOperation,
-  RoomMergePreview,
-  RoomMail,
   SubagentInvocation,
   CreateAgentSessionInput,
   CreateAgentSessionLinkInput,
@@ -61,7 +48,6 @@ import type {
   ResolveDocumentBlockReferencesInput,
   ResolveDocumentBlockReferencesResult,
   SaveRoomDocumentInput,
-  SaveContextRoomSnapshotInput,
   StartAgentRunInput,
   SubmitPendingAgentIntentInput,
   StartDocumentOperationInput,
@@ -83,9 +69,8 @@ import type {
   AgentPermissionMode,
   AgentPermissionModeState,
 } from '@nxcore/agent-contract'
-import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -101,18 +86,7 @@ export interface LocalAgentAdapterCheck {
   adapter: LocalAgentAcpAdapterInfo
 }
 import type { MigrationApi } from './migrations'
-import type { BrowserExtensionClipperCapture, BrowserExtensionClipperListInput, BrowserExtensionClipperListResult } from './browser-extension'
-import type {
-  CreateRealityEventInput,
-  FinishRealityCaptureInput,
-  MarkRealityEventInput,
-  RealityEvent,
-  RealityInsights,
-  RealityTag,
-  RealityEventStatus,
-  RealitySocketFrame,
-  UpdateRealityTranscriptInput,
-} from '@nxcore/reality-contract'
+import type { RealityInsights } from '@nxcore/reality-contract'
 import type {
   ConnectorAuthorizationAttempt,
   ConnectorConnection,
@@ -131,35 +105,6 @@ export type {
   ConnectorProviderSummary,
   ConnectorProvidersResponse,
 } from '@nxcore/connector-contract'
-import type {
-  EmergenceProjectionResultDto,
-  EmergenceRequest,
-  RouteMindmapActionInput,
-  RouteMindmapStatusDto,
-  KnowledgeAttachInput,
-  KnowledgeAttachResult,
-  KnowledgeDecisionDto,
-  KnowledgeEntityDetailDto,
-  KnowledgeEntityDto,
-  KnowledgeEntityStatus,
-  KnowledgeFileDto,
-  KnowledgeFileUploadResult,
-  KnowledgeRuleDto,
-  KnowledgeRoomContextDto,
-  KnowledgeRoomGraphDto,
-  KnowledgeRoomDto,
-  KnowledgeRoomProposalDto,
-  KnowledgeRoomRelationDto,
-  KnowledgeRoomRelationVisibility,
-  KnowledgePreferencesDto,
-  KnowledgeRouteStatusDto,
-  CreateKnowledgeRoomRelationInput,
-  UpdateKnowledgeRoomRelationInput,
-  KnowledgeUnmatchedItemDto,
-  KnowledgeWikiDto,
-  KnowledgeWikiGraphDto,
-  KnowledgeWikiPagesResultDto,
-} from './knowledge'
 import type {
   OpenConnectorCommandEvent,
   OpenConnectorCommandResult,
@@ -451,36 +396,6 @@ export interface AccountKeyringStatus {
   verificationCode: string | null
 }
 
-export interface PrivateTranscriptionRecord {
-  recordId: string
-  revision: number
-  createdAt: string
-  updatedAt: string
-  transcript: string
-  segments: AsrSegment[]
-  metadata?: Record<string, unknown>
-}
-
-export interface PrivateTranscriptionSyncResult {
-  status: AccountKeyringStatus
-  cursor: number
-  synced: number
-  removed: number
-  records: PrivateTranscriptionRecord[]
-}
-
-export interface PrivateTranscriptionSyncCompletedEvent {
-  completedAt: string
-}
-export interface SyncedPrivateAudioAsset {
-  id: string
-  recordingId: string
-  eventId?: string
-  sequence?: number
-  mimeType: string
-  status: string
-}
-
 export type CloudOidcProvider = 'apple' | 'google'
 
 /**
@@ -495,148 +410,6 @@ export interface DesktopRequestError {
   message: string
   title?: string
   severity?: 'error' | 'notice'
-  action?: 'open-microphone-settings' | 'open-system-audio-settings'
-  actionLabel?: string
-}
-
-export type WindowScreenshotResult =
-  | {
-      ok: true
-      filePath: string
-      fileName: string
-      width: number
-      height: number
-      bytes: number
-      capturedAt: string
-      perceptualHash?: string
-    }
-  | {
-      ok: false
-      code: 'window-unavailable' | 'permission-denied' | 'capture-failed' | 'save-failed'
-      message: string
-    }
-
-
-export interface ScreenMemorySettingsDto {
-  enabled: boolean
-  paused: boolean
-  scopeMode: 'all' | 'allowlist'
-  allowedApps: string[]
-  excludedApps: string[]
-}
-
-export interface ScreenMemorySchedulerStatusDto {
-  running: boolean
-  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
-  helperAvailable: boolean
-  paused: boolean
-  enabled: boolean
-  currentBundleId: string | null
-  currentAppName: string | null
-  openIntervalSince: string | null
-  currentKeyframes: number
-  heartbeatMs: number
-  lastBeatAt: string | null
-  lastError: string | null
-}
-
-export interface ScreenMemoryStatusDto extends ScreenMemorySchedulerStatusDto {
-  directory: string
-  deviceReady: ScreenMemoryDeviceReadinessDto
-}
-
-export interface ScreenMemoryKeyframeDto {
-  id: string
-  capturedAt: string
-  imagePath: string
-  imageBytes: number
-  perceptualHash: string | null
-  width: number | null
-  height: number | null
-  lineCount: number
-  elapsedMs: number | null
-}
-
-export interface ScreenMemoryIntervalDto {
-  id: string
-  bundleId: string
-  appName: string
-  windowTitle: string | null
-  title: string
-  startedAt: string
-  endedAt: string
-  endReason: string
-  keyframeCount: number
-  textLines: string[]
-  summaryStatus: 'pending' | 'processing' | 'ready' | 'waiting' | 'failed'
-  summary: string | null
-  summaryKeyPoints: string[]
-  userEdited: boolean
-  keyframes?: ScreenMemoryKeyframeDto[]
-}
-
-export interface ScreenMemorySearchQuery {
-  q: string
-  bundleId?: string
-  from?: string
-  to?: string
-  limit?: number
-}
-
-export interface ScreenMemoryListQuery {
-  from?: string
-  to?: string
-  bundleId?: string
-  summaryStatus?: string
-  limit?: number
-  offset?: number
-}
-
-export interface ScreenMemoryStatsDto {
-  intervals: number
-  keyframes: number
-  pendingSummaries: number
-  summariesToday: number
-  dailySummaryCap: number
-  dispatchAllowed: boolean
-}
-
-export interface ScreenMemoryStorageDto {
-  imagesBytes: number
-}
-
-export interface ScreenMemoryDeviceReadinessDto {
-  archOk: boolean
-  memoryOk: boolean
-  diskOk: boolean
-}
-
-export interface ScreenMemoryBackfillSummaryDto {
-  processed: number
-  intervals: number
-  keyframes: number
-}
-
-export interface ScreenMemoryFrontmostDto {
-  bundleId: string | null
-  appName: string | null
-  pid: number | null
-  windowTitle: string | null
-}
-
-export interface WindowScreenshotStatus {
-  enabled: boolean
-  intervalMs: number
-  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
-  lastResult: WindowScreenshotResult | null
-}
-
-export interface PerceptionSettings {
-  captureEnabled: boolean
-  captureIntervalSeconds: number
-  onlineVlmEnabled: boolean
-  configVersion: number
-  updatedAt: string
 }
 
 export interface RuntimeConfigSnapshot {
@@ -684,63 +457,6 @@ export interface RuntimeConfigTestResult {
   }
 }
 
-export type PerceptionNodeKind = 'audio' | 'screenshot' | 'photo' | 'document' | 'file'
-export type VisualPerceptionStatus = 'disabled' | 'pending' | 'processing' | 'ready' | 'failed'
-
-export interface PerceptionNode {
-  id: string
-  kind: PerceptionNodeKind
-  startAt: string
-  endAt: string
-  title: string
-  summary: string
-  status: string
-  eventType: string | null
-  tags: string[]
-  keyPoints: string[]
-  insightTags: RealityTag[]
-  confidence: number | null
-  model: string | null
-  error: string | null
-  sampleCount: number
-  mediaFileId: string | null
-}
-
-export interface VisualObservation {
-  id: string
-  nodeId: string
-  fileId: string
-  kind: 'screenshot' | 'photo'
-  capturedAt: string
-  perceptualHash: string | null
-  width: number | null
-  height: number | null
-  createdAt: string
-}
-
-export interface PerceptionNodeDetail extends PerceptionNode {
-  observations?: VisualObservation[]
-}
-
-export interface PerceptionNodeQuery {
-  from?: string
-  to?: string
-  kind?: PerceptionNodeKind
-  status?: string
-}
-
-export interface DiarySettings {
-  ownerId: string
-  enabled: boolean
-  localTime: string
-  timezone: string
-  enabledFrom: string | null
-  nextRunAt: string | null
-  configVersion: number
-  createdAt: string
-  updatedAt: string
-}
-
 export interface AgentScheduledTask {
   id: string
   agentId: string
@@ -757,68 +473,6 @@ export interface AgentScheduledTask {
   lastStatus: 'pending' | 'running' | 'completed' | 'failed' | null
   lastError: string | null
   configVersion: number
-}
-
-export type DiaryRunStatus = 'pending' | 'running' | 'completed' | 'failed'
-
-export interface DiaryRun {
-  id: string
-  date: string
-  trigger: 'scheduled' | 'catch_up' | 'manual' | 'refresh'
-  status: DiaryRunStatus
-  attempt: number
-  error: string | null
-  versionId: string | null
-  createdAt: string
-  startedAt: string | null
-  finishedAt: string | null
-}
-
-export interface DiaryContent {
-  headline: string
-  summary: string
-  reflection: string
-  range: { start: string; end: string }
-  events: Array<{
-    time: string
-    endTime?: string
-    title: string
-    summary: string
-    sourceRefs: string[]
-    tags?: string[]
-  }>
-  closing: string
-}
-
-export interface DiaryDayDetails {
-  day: {
-    date: string
-    status: 'pending' | 'generating' | 'ready' | 'stale' | 'failed'
-    eventCount: number
-    lastError: string | null
-  }
-  currentVersion: {
-    id: string
-    date: string
-    version: number
-    content: DiaryContent
-    agentModel: string | null
-    createdAt: string
-  } | null
-  sources: Array<{
-    sourceId: string
-    sourceKind: string
-    occurredAt: string
-    endedAt: string | null
-    timeBasis: string
-    evidenceSummary: string
-    assetFileId: string | null
-    assetKind: 'document' | 'screenshot' | 'photo' | 'audio' | 'other' | null
-    mime: string | null
-    documentId?: string | null
-    roomId?: string | null
-    realityEventId?: string | null
-  }>
 }
 
 export interface ExportDocumentPdfInput {
@@ -908,9 +562,9 @@ export function isArtifactImportFileName(fileName: string): boolean {
   return (ARTIFACT_IMPORT_EXTENSIONS as readonly string[]).includes(extension)
 }
 
-/** Context Room 子 Agent（划词改写）dispatch 入参，见 gateway /v1/context-rooms/selection-rewrite。 */
-export interface RoomAgentSelectionRewriteInput {
-  roomId?: string
+/** doc-writer 子 Agent（划词改写）dispatch 入参，见 gateway POST /v1/documents/selection-rewrite。 */
+export interface SubagentSelectionRewriteInput {
+  documentId?: string
   documentName?: string
   selectedText: string
   instruction?: string
@@ -918,32 +572,6 @@ export interface RoomAgentSelectionRewriteInput {
   contextAfter?: string
   blockType?: string
   responseLanguage?: string
-}
-
-/** Room 本地日程/待办（agent/用户创建，非第三方数据）的对外形状。 */
-export interface RoomLocalAction {
-  id: string
-  roomId: string
-  kind: 'task' | 'schedule'
-  title: string
-  notes: string | null
-  status: string | null
-  priority: string | null
-  dueAt: string | null
-  startedAt: string | null
-  endAt: string | null
-  allDay: boolean
-  location: string | null
-  completedAt: string | null
-  createdBy: 'agent' | 'user'
-  createdAt: string
-  updatedAt: string
-}
-
-/** 本地日程/待办写操作的返回：新行 + 重建后的总览投影（面板据此刷新）。 */
-export interface RoomLocalActionResult {
-  action: RoomLocalAction
-  overview: RoomOverviewProjection
 }
 
 /** Agent 审批表态：bash 命令审批三态。 */
@@ -1005,16 +633,6 @@ export interface NxcoreDesktopApi {
     status(): Promise<GatewayStatus>
   }
   migrations: MigrationApi
-  browserExtension: {
-    status(): Promise<BrowserExtensionStatus>
-    install(): Promise<BrowserExtensionStatus>
-    openDirectory(): Promise<void>
-    openBrowserPage(): Promise<void>
-    createPairing(): Promise<BrowserExtensionStatus>
-    revoke(): Promise<BrowserExtensionStatus>
-    onStatus(listener: (status: BrowserExtensionStatus) => void): () => void
-    onMessage(listener: (message: BrowserExtensionMessage) => void): () => void
-  }
   runtimeConfig: {
     get(): Promise<RuntimeConfigSnapshot>
     saveUser(input: unknown): Promise<RuntimeConfigSnapshot>
@@ -1072,8 +690,6 @@ export interface NxcoreDesktopApi {
     /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
      *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
     importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
-    /** 目标 Room 已导入检查：返回这批远端文档中已在该 Room 落 primary 的 remoteDocumentId。 */
-    importExistingInRoom(provider: ExternalDocumentProvider, roomId: string, remoteDocumentIds: string[]): Promise<{ existingRemoteIds: string[] }>
     importBatch(input: {
       provider: ExternalDocumentProvider
       connectionName?: string
@@ -1098,7 +714,7 @@ export interface NxcoreDesktopApi {
     }>
     importRun(runId: string): Promise<DocumentImportRunView>
     cancelImportRun(runId: string): Promise<DocumentImportRunView>
-    importHistory(roomId: string, documentId: string): Promise<{
+    importHistory(documentId: string): Promise<{
       entries: DocumentImportHistoryEntry[]
       commentDiff: DocumentImportCommentDiffSummary | null
       comments: ExternalDocumentCommentView[]
@@ -1115,7 +731,7 @@ export interface NxcoreDesktopApi {
     searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
       items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
     }>
-    checkExternalUpdate(roomId: string, documentId: string): Promise<{
+    checkExternalUpdate(documentId: string): Promise<{
       run: DocumentImportRunView
       roomImportId: string | null
       relation: 'primary' | 'candidate'
@@ -1147,51 +763,6 @@ export interface NxcoreDesktopApi {
     deletePolicy(id: string): Promise<void>
     listUsage(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallUsage>>
     listAudits(query?: import('./external-calls').ExternalCallQuery): Promise<import('./external-calls').ExternalCallPage<import('./external-calls').ExternalCallAudit>>
-  }
-  screenCapture: {
-    captureCurrentWindow(): Promise<WindowScreenshotResult>
-    start(intervalMs: number): Promise<WindowScreenshotStatus>
-    updateInterval(intervalMs: number): Promise<WindowScreenshotStatus>
-    stop(): Promise<WindowScreenshotStatus>
-    status(): Promise<WindowScreenshotStatus>
-    appInfo(): Promise<{ appPath: string; appName: string; iconDataUrl: string; devMode: boolean } | null>
-    openPermissionSettings(): Promise<void>
-    startAppDrag(): void
-    relaunchApp(): Promise<void>
-    perceptionSettings(): Promise<PerceptionSettings>
-    updateOnlineVlm(enabled: boolean, configVersion: number): Promise<PerceptionSettings>
-    listPerceptionNodes(query?: PerceptionNodeQuery): Promise<{ items: PerceptionNode[] }>
-    getPerceptionNode(id: string): Promise<PerceptionNodeDetail>
-    retryPerceptionNode(id: string): Promise<{ accepted: boolean }>
-    deletePerceptionNode(id: string, deleteAssets?: boolean): Promise<{
-      deleted: boolean
-      deletedAssets: string[]
-      retainedAssets: string[]
-    }>
-  }
-  screenMemory: {
-    status(): Promise<ScreenMemoryStatusDto>
-    settings(): Promise<ScreenMemorySettingsDto>
-    updateSettings(patch: Partial<ScreenMemorySettingsDto>): Promise<ScreenMemorySettingsDto>
-    search(query: ScreenMemorySearchQuery): Promise<{ items: ScreenMemoryIntervalDto[] }>
-    listIntervals(query?: ScreenMemoryListQuery): Promise<{ total: number; items: ScreenMemoryIntervalDto[] }>
-    getInterval(id: string): Promise<ScreenMemoryIntervalDto>
-    stats(): Promise<ScreenMemoryStatsDto>
-    correctInterval(input: { id: string; title?: string; textLines?: string[] }): Promise<ScreenMemoryIntervalDto>
-    storage(): Promise<ScreenMemoryStorageDto>
-    frontmost(): Promise<ScreenMemoryFrontmostDto>
-    registerMaterial(intervalId: string): Promise<{ ref: string }>
-    backfillEstimate(input: { from: string; to: string }): Promise<{ count: number }>
-    backfillRun(input: { from: string; to: string; maxItems: number }): Promise<ScreenMemoryBackfillSummaryDto>
-  }
-  diary: {
-    settings(): Promise<DiarySettings>
-    updateSettings(input: Partial<Pick<DiarySettings, 'enabled' | 'localTime' | 'timezone'>> & { configVersion: number }): Promise<DiarySettings>
-    generate(date: string): Promise<{ runId: string }>
-    run(id: string): Promise<DiaryRun | null>
-    activeRun(): Promise<DiaryRun | null>
-    days(start: string, end: string): Promise<DiaryDayDetails['day'][]>
-    day(date: string): Promise<DiaryDayDetails | null>
   }
   writingStyle: {
     profile(): Promise<import('./writing-style').WritingStyleProfileDto>
@@ -1235,34 +806,12 @@ export interface NxcoreDesktopApi {
   slides: {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }
-  contextRooms: {
-    list(): Promise<ContextRoomSnapshot>
-    create(input: CreateContextRoomInput): Promise<CreateContextRoomResult>
-    syncSnapshot(input: SaveContextRoomSnapshotInput): Promise<ContextRoomSnapshot>
-    checkDuplicates(input: RoomDuplicateCheckInput): Promise<RoomDuplicateCheckResult>
-    listDuplicateCandidates(status?: RoomDuplicateCandidateStatus): Promise<{ items: RoomDuplicateCandidate[] }>
-    updateDuplicateCandidate(id: string, status: 'related' | 'distinct'): Promise<RoomDuplicateCandidate>
-    previewMerge(sourceAId: string, sourceBId: string): Promise<RoomMergePreview>
-    startMerge(input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }): Promise<RoomMergeOperation>
-    suggestMergeNames(input: { sourceAId: string; sourceBId: string; responseLanguage?: string }): Promise<{ names: string[] }>
-    checkRoomDuplicates(roomId: string): Promise<{ newCandidates: number }>
-    getMergeOperation(id: string): Promise<RoomMergeOperation>
-    retryMerge(id: string): Promise<RoomMergeOperation>
-    cancelMerge(id: string): Promise<RoomMergeOperation>
-    dispatchSelectionRewrite(input: RoomAgentSelectionRewriteInput): Promise<{ invocationId: string }>
+  subagents: {
+    dispatchSelectionRewrite(input: SubagentSelectionRewriteInput): Promise<{ invocationId: string }>
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
     listSubagentInvocationEvents(invocationId: string, afterSeq?: number): Promise<import('@nxcore/agent-contract').SubagentInvocationEvent[]>
-    refreshBrief(roomId: string): Promise<ContextRoomSnapshotItem>
-    /** 记忆条目晋升（待确认→已确认）：MemoryCore 蒸馏后 worker 回填归属。 */
-    promoteMemoryItem(roomId: string, itemId: string): Promise<{ promotionSessionId: string | null }>
-    overview(roomId: string): Promise<RoomOverviewProjection>
-    refreshOverview(roomId: string): Promise<RoomOverviewProjection>
-    listMails(roomId: string): Promise<{ items: RoomMail[] }>
-    readMail(roomId: string, sourceId: string): Promise<import('@nxcore/agent-contract').RoomMailDetail>
-    roomEntities(roomId: string): Promise<RoomAppliedEntitiesResult>
-    completeLocalAction(roomId: string, actionId: string, completed?: boolean): Promise<RoomLocalActionResult>
   }
   account: {
     status(options?: { quiet?: boolean }): Promise<CloudAccountStatus>
@@ -1300,94 +849,19 @@ export interface NxcoreDesktopApi {
     cloudMessages(deviceId: string, sessionId: string, before?: string): Promise<CloudAgentMessagePage>
     onOpenTarget(listener: (target: AgentNotificationTarget) => void): () => void
   }
-  asr: {
-    requestMicrophoneAccess(): Promise<boolean>
+  permissions: {
+    /** OS 麦克风授权状态（本地 TCC 查询，不经网关）。 */
     getMicrophoneAccessStatus(): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>
+    /** 弹出系统麦克风授权请求（本地 TCC，不经网关）。 */
+    requestMicrophoneAccess(): Promise<boolean>
+    /** 打开系统「麦克风」隐私设置页。 */
     openMicrophoneSettings(): Promise<void>
-    openSystemAudioSettings(): Promise<void>
-    beginRecording(mimeType: string): Promise<{ id: string }>
-    appendRecording(id: string, chunk: Uint8Array): Promise<void>
-    uploadRecordingSegment(id: string, index: number, chunk: Uint8Array, durationMs: number, meta: { mimeType: string; languageHints?: string[] }): Promise<void>
-    onSegmentTranscription(listener: (event: { recordingId: string; index: number; result: AsrResult }) => void): () => void
-    finishRecording(id: string): Promise<{ filePath: string }>
-    cancelRecording(id: string): Promise<void>
-    createJob(input: CreateAsrJobInput): Promise<AsrJob>
-    getJob(id: string): Promise<AsrJob>
-    renameSpeaker(jobId: string, speakerId: string, name: string | null): Promise<AsrJob>
-  }
-  privateAudio: {
-    list(cursor?: number): Promise<{ assets: SyncedPrivateAudioAsset[]; nextCursor: number }>
-    download(assetId: string, outputPath: string): Promise<string>
-    read(assetId: string): Promise<{ bytes: Uint8Array; mimeType: string }>
-  }
-  transcriptions: {
-    syncPrivate(options?: { quiet?: boolean }): Promise<PrivateTranscriptionSyncResult>
-    onSyncCompleted(listener: (event: PrivateTranscriptionSyncCompletedEvent) => void): () => void
-    listPrivate(): Promise<PrivateTranscriptionRecord[]>
-    listTags(): Promise<RealityTag[]>
-    replaceSummaryTags(summaryRecordId: string, tags: RealityTag[]): Promise<void>
-    renameTag(tagId: string, label: string): Promise<void>
-    mergeTag(targetTagId: string, sourceTagId: string): Promise<void>
   }
   search: {
     invoke(request: SearchRequestDto): Promise<SearchPageDto>
     status(): Promise<SearchScopeDto>
     prioritize(itemType: SearchItemType, refId: string): Promise<{ ok: boolean }>
     messageContext(messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto>
-  }
-  memory: {
-    overview(): Promise<MemoryOverviewDto>
-    startOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResultDto>
-    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
-    onboardingFinished(): void
-    listAtomic(options: MemoryAtomicListOptions): Promise<MemoryAtomicPageDto>
-    /** Room 归属记忆列表（room_memory_attributions 快照直读）。 */
-    listRoomMemories(roomId: string): Promise<MemoryRoomMemoriesPageDto>
-    searchAtomic(query: string, limit?: number): Promise<{ items: MemoryAtomicItemDto[] }>
-    updateAtomic(id: string, content: string, background?: string): Promise<{ id: string; version: number; updatedAt: string }>
-    deleteAtomic(ids: string[]): Promise<{ deletedCount: number }>
-    /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）。 */
-    setAtomicRoom(
-      id: string,
-      roomId: string | null,
-      snapshot?: { content: string; type: string; memoryUpdatedAt: string },
-    ): Promise<{ memoryId: string; roomId: string | null }>
-    listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }>
-    readScenario(path: string): Promise<MemoryScenarioContentDto>
-    readCore(): Promise<MemoryCoreDto>
-    writeCore(content: string): Promise<{ version: number; updatedAt: string }>
-    listConversations(options: MemoryConversationListOptions): Promise<MemoryConversationPageDto>
-    searchConversations(query: string, limit?: number, sessionId?: string): Promise<{ messages: MemoryConversationMessageDto[] }>
-    deleteConversations(target: { sessionIds?: string[]; messageIds?: string[] }): Promise<{ deletedCount: number }>
-    /** md 文档导入（gateway 资产化 + MemoryCore 登记，title 必填）。 */
-    importMarkdown(input: { title: string; markdown: string; filename?: string }): Promise<MemoryImportMarkdownResultDto>
-    /** 系统文件选择框（仅 .md，≤2MB）→ 文本（取消返回空数组；失败项带 error）。 */
-    pickMarkdownFiles(): Promise<Array<{ filename: string; markdown: string } | { filename: string; error: string }>>
-    /** 导入文档登记清单（每身份键最新版本）。 */
-    listDocuments(limit?: number, offset?: number): Promise<{ documents: MemoryDocumentDto[]; total: number }>
-    /** 文档详情：登记行 + 分块（含正文与行区间）+ 派生 L1。 */
-    getDocument(id: string): Promise<MemoryDocumentDetailDto>
-    deleteDocument(id: string): Promise<{ documentId: string; deleted: boolean }>
-    /** 原子记忆一站式溯源（文档锚点/会话原话）。 */
-    atomicProvenance(id: string): Promise<MemoryAtomicProvenanceDto>
-    captureDocumentRewrite(input: MemoryDocumentRewriteInput): Promise<{ captured: boolean }>
-  }
-  reality: {
-    listEvents(filters?: { status?: RealityEventStatus; search?: string }): Promise<RealityEvent[]>
-    getEvent(id: string): Promise<RealityEvent>
-    createEvent(input: CreateRealityEventInput): Promise<RealityEvent>
-    finishCapture(id: string, input: FinishRealityCaptureInput): Promise<RealityEvent>
-    updateTranscript(id: string, input: UpdateRealityTranscriptInput): Promise<RealityEvent>
-    addMarker(id: string, input: MarkRealityEventInput): Promise<RealityEvent>
-    setImportant(id: string, important: boolean): Promise<RealityEvent>
-    confirm(id: string): Promise<RealityEvent>
-    discard(id: string): Promise<void>
-    fail(id: string, error: string): Promise<RealityEvent>
-    readAudio(id: string): Promise<Uint8Array>
-    exportTranscript(input: { fileName: string; content: string }): Promise<{ canceled: boolean; filePath?: string }>
-    subscribe(): Promise<void>
-    unsubscribe(): Promise<void>
-    onEvent(listener: (frame: RealitySocketFrame) => void): () => void
   }
   agent: {
     discoverLocalAgents(): Promise<LocalAgentInstallation[]>
@@ -1480,7 +954,7 @@ export interface NxcoreDesktopApi {
       status?: DocumentOperationStatus
     }): Promise<DocumentOperationSummary[]>
     startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
-    getOperation(operationId: string, context?: { roomId: string; sessionId: string; runId: string }): Promise<DocumentOperation>
+    getOperation(operationId: string, context?: { roomId: string | null; sessionId: string; runId: string }): Promise<DocumentOperation>
     executeOperationCommand(
       operationId: string,
       input: DocumentOperationCommandInput,
@@ -1520,89 +994,14 @@ export interface NxcoreDesktopApi {
     disconnect(id: string, deleteLocalData: boolean): Promise<void>
   }
   obsidian: ObsidianVaultApi
-  knowledge: {
-    listRooms(origin?: 'user' | 'auto'): Promise<{ items: KnowledgeRoomDto[] }>
-    getRoomContext(roomId: string): Promise<KnowledgeRoomContextDto>
-    upsertRoom(input: { id: string; title: string; kind?: string }): Promise<KnowledgeRoomDto>
-    deleteRoom(roomId: string): Promise<void>
-    getRoomGraph(visibility?: KnowledgeRoomRelationVisibility): Promise<KnowledgeRoomGraphDto>
-    getRoomRelations(roomId: string, visibility?: KnowledgeRoomRelationVisibility): Promise<KnowledgeRoomGraphDto>
-    getRoomRelationEvidence(relationId: string, offset?: number, limit?: number): Promise<{
-      items: import('./knowledge').KnowledgeRoomRelationReasonDto[]
-      total: number
-    }>
-    createRoomRelation(input: CreateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
-    updateRoomRelation(relationId: string, input: UpdateKnowledgeRoomRelationInput): Promise<KnowledgeRoomRelationDto>
-    removeManualRoomRelation(relationId: string): Promise<{ relation: KnowledgeRoomRelationDto | null }>
-    listWikiPages(roomId: string): Promise<KnowledgeWikiPagesResultDto>
-    /** 手动重试构建失败的 Room wiki（重新触发 ingest，进度照旧轮询）。 */
-    retryWikiBuild(roomId: string): Promise<{ ok: boolean }>
-    readWikiPage(roomId: string, ref: string): Promise<{ ref: string; markdown: string }>
-    /** 全部 Room 的 wiki 映射（Wiki 应用清单）。 */
-    listWikis(): Promise<{ items: KnowledgeWikiDto[] }>
-    /** Room wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
-    getWikiGraph(roomId: string): Promise<KnowledgeWikiGraphDto>
-    /** Room 的上传文件清单（含路由状态徽标数据）。 */
-    listRoomFiles(roomId: string): Promise<{ items: KnowledgeFileDto[] }>
-    /** 文件解析产物 markdown（预览）。 */
-    readFileMarkdown(fileId: string): Promise<{ markdown: string }>
-    /** 在系统文件管理器中定位文件本体。 */
-    revealFile(fileId: string): Promise<void>
-    /** 使用操作系统默认查看器打开文件本体。 */
-    openFile(fileId: string): Promise<void>
-    /** 候选实体列表（ready = 首页推荐池；挂载下拉用 weak）。 */
-    listEntities(status: KnowledgeEntityStatus): Promise<{ items: KnowledgeEntityDto[] }>
-    getEntity(entityId: string): Promise<KnowledgeEntityDetailDto>
-    /** 用户确认创建（推荐态实体走完整晋升流程）。 */
-    promoteEntity(entityId: string, options?: { forceNew?: boolean }): Promise<{ queued: boolean; jobId: string }>
-    promoteEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchPromoteResultDto[] }>
-    suppressEntity(entityId: string): Promise<{ ok: boolean }>
-    suppressEntities(entityIds: string[]): Promise<{ items: import('./knowledge').KnowledgeBatchSuppressResultDto[] }>
-    restoreSuppressedEntity(entityId: string): Promise<{ ok: boolean }>
-    /** 手动合并：from 并入 target。 */
-    mergeEntity(fromId: string, targetId: string): Promise<{ ok: boolean }>
-    listUnmatched(): Promise<{ items: KnowledgeUnmatchedItemDto[] }>
-    /** 批量重路由未识别资料（不传 ids = 全部）：重走完整路由瀑布。 */
-    retryUnmatched(decisionIds?: string[]): Promise<{ requeued: number }>
-    /** 忽略未识别资料：显式移出待挂载列表。 */
-    ignoreUnmatched(decisionIds: string[]): Promise<{ ignored: number }>
-    /** 归集规则清单（挂载即学习 + 手动创建）。 */
-    listRules(): Promise<{ items: KnowledgeRuleDto[] }>
-    /** 删除归集规则（撤销学习结果）。 */
-    deleteRule(ruleId: string): Promise<void>
-    /** 未识别资料手动挂实体（role=manual）；挂到 Room 时可带回学习规则。 */
-    attachDoc(sourceKind: string, sourceId: string, input: KnowledgeAttachInput): Promise<KnowledgeAttachResult>
-    listRecentDecisions(limit?: number): Promise<{ items: KnowledgeDecisionDto[] }>
-    /** 按 sourceId 查最新路由决策（任意状态）：推荐会话轮询解析进度（驱动阶段推进）。 */
-    routeStatus(sourceIds: string[]): Promise<{ items: KnowledgeRouteStatusDto[] }>
-    /** on-demand Room 推荐（创建入口「智能推荐」页签）：描述 + 已导入文件 → 推荐卡。 */
-    proposeRooms(input: { description: string; fileEntryIds: string[] }): Promise<{ items: KnowledgeRoomProposalDto[] }>
-    /** 知识涌现投影（思路板块）：聚焦/漫步共用一个端点。 */
-    emergence(roomId: string, request: EmergenceRequest): Promise<EmergenceProjectionResultDto>
-    /** 写作路线导图状态：expanding/writing 由渲染端轮询。 */
-    getRouteMindmap(roomId: string, query: { documentId: string; requestVersion: number }): Promise<RouteMindmapStatusDto>
-    /** 五动作合一：start/expand/back/skip/finalize。 */
-    routeMindmapAction(roomId: string, input: RouteMindmapActionInput): Promise<RouteMindmapStatusDto>
-    revertDecision(decisionId: string): Promise<{ ok: boolean }>
-    /** M3 知识整理偏好：统计/洞察/用户接管/开关。 */
-    getPreferences(): Promise<KnowledgePreferencesDto>
-    updatePreferenceContent(content: string): Promise<KnowledgePreferencesDto>
-    updatePreferenceSettings(input: { learningEnabled?: boolean; injectionEnabled?: boolean }): Promise<KnowledgePreferencesDto>
-    refreshPreferences(): Promise<KnowledgePreferencesDto>
-  }
   files: {
     list(limit?: number, offset?: number): Promise<{ items: FileCatalogDto[]; total: number }>
     catalogEntry(fileId: string): Promise<FileCatalogDto>
-    listClipCaptures(input?: BrowserExtensionClipperListInput): Promise<BrowserExtensionClipperListResult>
-    setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture>
-    getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture>
     get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }>
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
-    getClipCapture(fileId: string): Promise<BrowserExtensionClipperCapture>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
-    pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }>
     /** 删除：级联 knowledge cleanup + memory 文档 + 对象库 GC。 */
     delete(fileId: string): Promise<{
       deleted: boolean
@@ -1616,7 +1015,7 @@ export interface NxcoreDesktopApi {
     exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
-     * options.editable：Room 产物 docx 的编辑预览（保存回填版本链）；缺省只读。 */
+     * options.editable：可直接编辑（保存回填同一 fileEntryId 的新版本）；缺省只读。 */
     openOriginal(
       fileId: string,
       originalName?: string,
@@ -1624,7 +1023,8 @@ export interface NxcoreDesktopApi {
       options?: { editable?: boolean; roomId?: string },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
-      | { openedWith: 'external' }
+      /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
+      | { openedWith: 'external'; legacyFallback?: boolean }
     >
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string }): Promise<FileImportOutcome[]>
@@ -1641,6 +1041,10 @@ export interface NxcoreDesktopApi {
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
+    /** 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开 Word/Excel/PPT 后的打开请求。 */
+    onOpenFromOs(listener: (document: OsOpenedDocument) => void): () => void
+    /** 冷启动竞态兜底：取走尚未被渲染层消费的系统打开请求（取后清空）。 */
+    takePendingOsOpen(): Promise<OsOpenedDocument | null>
   }
   thesisFormat: {
     /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
@@ -1661,48 +1065,7 @@ export interface NxcoreDesktopApi {
     reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
     onCardChanged(listener: () => void): () => void
   }
-  ingest: {
-    /** 统一进入台账（导入记录）。策略不在此面：defaults 在代码，覆盖走部署期配置文件。 */
-    listEvents(query: {
-      limit?: number
-      offset?: number
-      sourceKind?: string
-      sourceId?: string
-    }): Promise<{ items: IngestEventDto[]; total: number }>
-    /** 过滤规则文档（记忆页「过滤规则」入口）：偏好段 + 洞察段。 */
-    getFilterRules(): Promise<IngestFilterRulesDto>
-    /** 只重写用户偏好段（洞察段由系统维护）。 */
-    updateFilterPreference(content: string): Promise<IngestFilterRulesDto>
-    /** 误杀恢复：filtered 事件重新放行扇出（FilesPage「恢复」按钮）。 */
-    reinstateEvent(eventId: string): Promise<IngestEventDto>
-    /** 事件归一化产物全文（台账详情查看）。 */
-    getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
-    /** 记忆引擎暂停闸读取（记忆页顶部「继续/暂停」）。 */
-    getPause(): Promise<{ paused: boolean; updatedAt: string | null }>
-    /** 切换暂停闸：暂停期间新内容只进台账不扇出（重启保持）。 */
-    setPause(paused: boolean): Promise<{ paused: boolean; updatedAt: string }>
-  }
 }
-import type {
-  MemoryAtomicItemDto,
-  MemoryAtomicListOptions,
-  MemoryAtomicPageDto,
-  MemoryAtomicProvenanceDto,
-  MemoryConversationListOptions,
-  MemoryConversationMessageDto,
-  MemoryConversationPageDto,
-  MemoryCoreDto,
-  MemoryDocumentDetailDto,
-  MemoryDocumentDto,
-  MemoryImportMarkdownResultDto,
-  MemoryDocumentRewriteInput,
-  MemoryOnboardingInput,
-  MemoryOnboardingResultDto,
-  MemoryOverviewDto,
-  MemoryRoomMemoriesPageDto,
-  MemoryScenarioContentDto,
-  MemoryScenarioEntryDto,
-} from './memory'
 import type { SearchItemType, SearchMessageContextDto, SearchPageDto, SearchRequestDto, SearchScopeDto } from './search'
 import type {
   FileCatalogDto,
@@ -1711,20 +1074,6 @@ import type {
   FileImportProgressEvent,
   HighRiskImportResolution,
   HighRiskImportReview,
-  IngestEventDto,
-  IngestFilterRulesDto,
   IngestPipelines,
 } from './ingest'
 import type { McpServersSnapshot } from './mcp'
-export type {
-  CreateRealityEventInput,
-  FinishRealityCaptureInput,
-  MarkRealityEventInput,
-  RealityEvent,
-  RealityEventType,
-  RealityInsights,
-  RealityTag,
-  RealityEventStatus,
-  RealitySocketFrame,
-  UpdateRealityTranscriptInput,
-} from '@nxcore/reality-contract'

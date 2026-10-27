@@ -7,7 +7,7 @@
  * 照常出，只是少了微调。
  */
 
-import type { VlmPromptAnalyzer } from "../perception/vlm-client.js";
+import type { VlmPromptAnalyzer } from "../vision/vlm-client.js";
 import type { StyleColorCluster, StyleParams } from "./types.js";
 import {
   assignPaletteRoles,

@@ -4,11 +4,9 @@ import { dirname } from "node:path";
 await mkdir("dist/drizzle", { recursive: true });
 await cp("drizzle", "dist/drizzle", { recursive: true, force: true });
 await cp("package.json", "dist/package.json", { force: true });
-// 策略·工程默认层（打包后 bundle 在 dist/，逐级上溯从这里找到它）
-await cp("ingest-policy-defaults.json", "dist/ingest-policy-defaults.json", { force: true });
+// 运行时配置·工程默认层（打包后 bundle 在 dist/，逐级上溯从这里找到它）。
+// ingest 策略与过滤规则默认层随 modules/ingest 一起下线，不再随包分发。
 await cp("runtime-config.default.json", "dist/runtime-config.default.json", { force: true });
-// 过滤规则·工程默认层（同理，rules.ts 逐级上溯定位）
-await cp("filter-rules-defaults.md", "dist/filter-rules-defaults.md", { force: true });
 // Agent definitions are versioned application assets and ship with the Gateway.
 await cp("../../agents", "dist/agents", { recursive: true, force: true });
 

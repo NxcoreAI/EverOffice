@@ -13,18 +13,24 @@ function errorPayload(error: unknown): { status: number; body: Record<string, un
   };
 }
 
-/** 连接器页批量导入（异步批：创建即返回，轮询进度；与单文档导入路由分文件，降低装配冲突面）。 */
+/** 连接器页批量导入（异步批：创建即返回，轮询进度；与单文档导入路由分文件，降低装配冲突面）。
+ *
+ * Phase 2i-3：批量导入只剩「导入工作区文档库」一种行为。`mode` 的两个历史取值
+ * `'room'`/`'auto'` 语义相同（DTO 形状冻结，见 `DocumentImportBatchMode`）；batch
+ * body 里的 `roomId` 只为兼容旧版桌面构建保留（Room 已删除，服务端忽略）。
+ *
+ * Phase 2i-4：「是否已导入」预检改名为 `existing-in-workspace`，判定口径本来就是
+ * 工作区文稿（`importedInWorkspace`），body 里不再接受房间维度入参。 */
 export function documentImportBatchRoutes(
   service: DocumentBatchImportService,
-  imports?: { existingInRoom(provider: "feishu" | "notion", roomId: string, remoteDocumentIds: string[]): string[] },
+  imports?: { importedInWorkspace(provider: "feishu" | "notion", remoteDocumentIds: string[]): string[] },
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
-    app.post("/v1/document-import/existing-in-room", {
+    app.post("/v1/document-import/existing-in-workspace", {
       schema: {
         tags: ["document-import"],
         body: Type.Object({
           provider: providerSchema,
-          roomId: Type.String(idText),
           remoteDocumentIds: Type.Array(Type.String(idText), { minItems: 1, maxItems: 50 }),
         }, { additionalProperties: false }),
       },
@@ -33,9 +39,8 @@ export function documentImportBatchRoutes(
         if (!imports) throw new BatchImportServiceError("NOT_FOUND", "导入服务不可用", 404);
         return {
           provider: request.body.provider,
-          existingRemoteIds: imports.existingInRoom(
+          existingRemoteIds: imports.importedInWorkspace(
             request.body.provider,
-            request.body.roomId,
             request.body.remoteDocumentIds,
           ),
         };
@@ -52,7 +57,9 @@ export function documentImportBatchRoutes(
           provider: providerSchema,
           connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           remoteDocumentIds: Type.Array(Type.String(idText), { minItems: 1, maxItems: 50 }),
+          // 兼容旧版桌面构建：'room' 与 'auto' 语义相同——一律导入工作区文档库。
           mode: Type.Union([Type.Literal("room"), Type.Literal("auto")]),
+          // 兼容字段：Room 维度已删，显式目标不再有意义，服务端忽略。
           roomId: Type.Optional(Type.String(idText)),
           forceNew: Type.Optional(Type.Boolean()),
         }, { additionalProperties: false }),
@@ -64,7 +71,6 @@ export function documentImportBatchRoutes(
           ...(request.body.connectionName ? { connectionName: request.body.connectionName } : {}),
           remoteDocumentIds: request.body.remoteDocumentIds,
           mode: request.body.mode,
-          ...(request.body.roomId ? { roomId: request.body.roomId } : {}),
           ...(request.body.forceNew !== undefined ? { forceNew: request.body.forceNew } : {}),
         });
       } catch (error) {

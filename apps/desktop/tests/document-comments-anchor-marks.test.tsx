@@ -14,9 +14,9 @@ import {
   commentAnchorPluginKey,
   resolveCommentRanges,
   setCommentAnchorRanges,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/commentAnchorDecorations'
-import { StableBlockIds } from '../src/renderer/src/components/context-room/ported/components/detail-editor/StableBlockIds'
-import { ImportedCommentsPanel } from '../src/renderer/src/components/context-room/ported/components/detail-editor/ImportedCommentsPanel'
+} from '@/components/office-editor/editor/commentAnchorDecorations'
+import { StableBlockIds } from '@/components/office-editor/editor/StableBlockIds'
+import { ImportedCommentsPanel } from '@/components/office-editor/editor/ImportedCommentsPanel'
 
 const listMock = vi.fn()
 const importHistoryMock = vi.fn()

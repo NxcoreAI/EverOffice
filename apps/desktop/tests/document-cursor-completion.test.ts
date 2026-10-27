@@ -9,8 +9,8 @@ import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent')>(),
+vi.mock('../src/renderer/src/components/office-editor/editor/documentCursorCompletionAgent', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/renderer/src/components/office-editor/editor/documentCursorCompletionAgent')>(),
   streamDocumentCursorCompletion: vi.fn().mockResolvedValue({ text: '补全结果', replaceCharacters: 0 }),
 }))
 
@@ -39,14 +39,14 @@ import {
   DocumentCursorCompletionExtension,
   showDocumentCursorCompletion,
   useDocumentCursorCompletion,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentCursorCompletion'
+} from '@/components/office-editor/editor/DocumentCursorCompletion'
 import {
   clearDocumentCursorCompletionDiagnostics,
   documentCursorCompletionSnippet,
   readDocumentCursorCompletionDiagnostics,
   recordDocumentCursorCompletionDiagnostic,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/DocumentCursorCompletionDiagnostics'
-import { DocumentCursorCompletionError, streamDocumentCursorCompletion } from '../src/renderer/src/components/context-room/ported/components/detail-editor/documentCursorCompletionAgent'
+} from '@/components/office-editor/editor/DocumentCursorCompletionDiagnostics'
+import { DocumentCursorCompletionError, streamDocumentCursorCompletion } from '@/components/office-editor/editor/documentCursorCompletionAgent'
 
 const editors: Editor[] = []
 

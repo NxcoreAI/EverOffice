@@ -8,7 +8,8 @@ interface DocumentReadReceipt {
   token: string;
   sessionId: string;
   runId: string;
-  roomId: string;
+  /** 工作区级文稿为 null（P0-2d）。 */
+  roomId: string | null;
   documentId: string;
   version: number;
   blockIds: ReadonlySet<string>;
@@ -30,9 +31,6 @@ export class DocumentReadAuthority {
     version: number,
     blockIds: Iterable<string>,
   ): { readReceipt: string; expiresAt: string } {
-    if (!context.roomId) {
-      throw new DocumentServiceError("ROOM_SELECTION_REQUIRED", "Select a Context Room first", 409);
-    }
     this.assertReadable(documentId);
     this.prune();
     const token = randomUUID();
@@ -73,7 +71,7 @@ export class DocumentReadAuthority {
           documentId,
           currentVersion: version,
           retryable: true,
-          nextAction: "context_room_document_read",
+          nextAction: "document_read",
         },
       );
     }
@@ -102,7 +100,7 @@ export class DocumentReadAuthority {
           documentId,
           currentVersion: version,
           retryable: true,
-          nextAction: "context_room_document_read",
+          nextAction: "document_read",
         },
       );
     }
@@ -110,9 +108,9 @@ export class DocumentReadAuthority {
   }
 
   /** 本 run 读过的文档（按 documentId 去重，保留最新版本）——供 document_draft 兜底推断素材来源。 */
-  documentsReadByRun(runId: string): Array<{ roomId: string; documentId: string; version: number }> {
+  documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> {
     this.prune();
-    const seen = new Map<string, { roomId: string; documentId: string; version: number }>();
+    const seen = new Map<string, { roomId: string | null; documentId: string; version: number }>();
     for (const receipt of this.receipts.values()) {
       if (receipt.runId !== runId) continue;
       const existing = seen.get(receipt.documentId);
@@ -139,7 +137,7 @@ export class DocumentReadAuthority {
         currentVersion: receipt.version,
         invalidBlockIds,
         retryable: true,
-        nextAction: "context_room_document_read",
+        nextAction: "document_read",
       },
     );
   }

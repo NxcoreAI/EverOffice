@@ -79,6 +79,22 @@ export interface CommitImportResult {
   document: RoomDocument;
 }
 
+export interface CommitWorkspaceImportInput {
+  runId: string;
+  /** true：跳过来源去重——同来源已有工作区文稿时仍新建一篇（用户明确选"创建新的"）。 */
+  forceNewDocument?: boolean;
+}
+
+export interface CommitWorkspaceImportResult {
+  run: DocumentImportRunView;
+  documentId: string;
+  document: RoomDocument;
+  /** true=本次新建工作区文稿；false=在已有的同来源文稿上追加版本。 */
+  created: boolean;
+  /** 同来源重导且正文哈希未变：不落新版本，调用方据此标记「远端无更新」。 */
+  noChange: boolean;
+}
+
 /** 图片魔数嗅探：返回真实格式（远端 content-type 声明不可信）。 */
 function sniffImageMime(bytes: Uint8Array): string | null {
   if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
@@ -571,12 +587,13 @@ export class DocumentImportService {
   }
 
   /**
-   * 目标 Room 已导入检查（批量导入前 UI 提示用）：返回这批远端文档中
-   * 已在该 Room 落过 primary 文档的 remoteDocumentId 集合。
+   * 工作区「已导入」预检（`/v1/document-import/existing-in-workspace` 路由）：
+   * 返回这批远端文档中已作为工作区文稿落过的 remoteDocumentId 集合。判定只看
+   * 导入任务是否已落到工作区文稿（`document_import_runs.targetDocumentId`），
+   * 不再有任何 Room 维度入参。
    */
-  existingInRoom(
+  importedInWorkspace(
     provider: ExternalDocumentProvider,
-    roomId: string,
     remoteDocumentIds: string[],
   ): string[] {
     if (remoteDocumentIds.length === 0) return [];
@@ -592,11 +609,10 @@ export class DocumentImportService {
     if (sources.length === 0) return [];
     const byRemote = new Map(sources.map((source) => [source.id, source.remoteDocumentId]));
     const landedSourceIds = this.db.select({ sourceId: documentImportRuns.sourceId })
-      .from(documentRoomImports)
-      .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
+      .from(documentImportRuns)
       .where(and(
-        eq(documentRoomImports.roomId, roomId),
-        eq(documentRoomImports.relation, "primary"),
+        eq(documentImportRuns.status, "succeeded"),
+        isNotNull(documentImportRuns.targetDocumentId),
         inArray(documentImportRuns.sourceId, sources.map((source) => source.id)),
       )).all()
       .map((row) => row.sourceId)
@@ -635,10 +651,10 @@ export class DocumentImportService {
     };
   }
 
-  /** imported 标记回填：已落 Room、或批次成功导入/孵化（auto 模式无目标 Room
-   *  时全部孵化，不产生落 Room 记录）时置 true。落地集合按 provider 一次
-   *  join 查询取回（不做对列举 ids 的 inArray——全量上限放开后上万条会超
-   *  SQLite 变量上限）。 */
+  /** imported 标记回填：已落库（单篇导入的 room-import 记录）或批次成功导入
+   *  （批量导入只落工作区文稿、不写 room-import 记录，只在批次 items 里留痕）
+   *  时置 true。落地集合按 provider 一次 join 查询取回（不做对列举 ids 的
+   *  inArray——全量上限放开后上万条会超 SQLite 变量上限）。 */
   private markImported(
     provider: ExternalDocumentProvider,
     items: ExternalDocumentListItem[],
@@ -662,8 +678,9 @@ export class DocumentImportService {
     return items;
   }
 
-  /** 批次成功（imported/incubated）的远端文档 id 集合：auto 孵化路径不落 Room、
-   *  只在批次 items 里留痕，"已导入"口径须把它计入。 */
+  /** 批次成功（imported/incubated；incubated 是已删归房链路的遗留终态，旧批行
+   *  仍在库里）的远端文档 id 集合：批量导入只写工作区文稿、不落 room-import
+   *  记录，"已导入"口径须把批次 items 计入。 */
   private batchImportedRemoteIds(provider: ExternalDocumentProvider): Set<string> {
     const rows = this.db.select({ items: documentImportBatches.itemsJson })
       .from(documentImportBatches)
@@ -681,40 +698,6 @@ export class DocumentImportService {
       }
     }
     return ids;
-  }
-
-  /**
-   * 批量导入 auto 模式的全文读取器：从已完成的 preview run 拿回完整 markdown
-   * （preview DTO 只有 4000 字符摘录）。供孵化投喂使用，不进 REST 面。
-   */
-  async getRunMarkdown(runId: string): Promise<{
-    provider: ExternalDocumentProvider;
-    remoteDocumentId: string;
-    title: string;
-    bodyMarkdown: string;
-    sourceUrl: string | null;
-  }> {
-    const run = this.db.select().from(documentImportRuns)
-      .where(eq(documentImportRuns.id, runId)).get();
-    if (!run) {
-      throw new ImportServiceError("IMPORT_RUN_NOT_FOUND", `导入记录不存在：${runId}`, 404);
-    }
-    if (!run.snapshotId) {
-      throw new ImportServiceError("IMPORT_RUN_NOT_SNAPSHOTTED", `导入记录尚未完成读取：${runId}`, 409);
-    }
-    const snapshot = this.db.select().from(documentImportSnapshots)
-      .where(eq(documentImportSnapshots.id, run.snapshotId)).get();
-    if (!snapshot) {
-      throw new ImportServiceError("IMPORT_SNAPSHOT_NOT_FOUND", `导入快照不存在：${run.snapshotId}`, 404);
-    }
-    const artifact = await this.loadArtifact(snapshot.artifactRef);
-    return {
-      provider: artifact.provider,
-      remoteDocumentId: artifact.remoteDocumentId,
-      title: artifact.title,
-      bodyMarkdown: artifact.bodyMarkdown,
-      sourceUrl: artifact.sourceUrl,
-    };
   }
 
   async preview(
@@ -1011,13 +994,111 @@ export class DocumentImportService {
   }
 
   /**
-   * "检查外部更新"：对已挂接外部来源的 Room 文档重新读取远端并生成候选版本。
-   * 与"应用此版本"（applyCandidate）是两个独立动作。
+   * 工作区文稿导入提交：批量导入（连接器页勾选 → 导入）的唯一落地路径。
+   *
+   * Room 维度已删，导入产物一律是工作区文稿（`origin=import`、`roomId=null`）。
+   * 来源去重按正文哈希：同来源上一次成功导入的文稿仍在工作区时，哈希未变则不
+   * 落新版本（`noChange`，批量项记 skipped），变了则在该文稿上追加新版本——
+   * 工作区文稿本身就是可编辑正本，不再产生 Room 时代的"候选文稿"中间态
+   * （候选/应用那条链路仍服务于单篇导入的 `/v1/documents/:documentId/*` 路由，
+   * 走 commitToRoom）。
+   * `forceNewDocument=true` 跳过去重，同来源一律新建。
    */
-  async checkExternalUpdate(roomId: string, documentId: string): Promise<CommitImportResult> {
+  async commitToWorkspace(input: CommitWorkspaceImportInput): Promise<CommitWorkspaceImportResult> {
+    const run = this.db.select().from(documentImportRuns).where(eq(documentImportRuns.id, input.runId)).get();
+    if (!run) throw new ImportServiceError("NOT_FOUND", "导入任务不存在", 404);
+    if (run.status !== "preview") {
+      throw new ImportServiceError("IMPORT_RUN_NOT_PREVIEWABLE", `导入任务状态为 ${run.status}，不能提交`, 409);
+    }
+    const snapshot = run.snapshotId
+      ? this.db.select().from(documentImportSnapshots).where(eq(documentImportSnapshots.id, run.snapshotId)).get()
+      : null;
+    if (!snapshot) throw new ImportServiceError("SNAPSHOT_MISSING", "导入快照缺失", 409);
+    const artifact = await this.loadArtifact(snapshot.artifactRef);
+    const contentJson = parseImportedMarkdown(artifact.bodyMarkdown) as RoomDocument["contentJson"];
+
+    const previous = input.forceNewDocument ? null : this.workspaceImportTargetOf(run.sourceId);
+
+    // 无变化守卫：正文哈希与上次已落库快照相同 → 不落新版本（防空转）。
+    if (previous && previous.contentHash === snapshot.contentHash) {
+      const current = this.documents.get(previous.documentId);
+      if (current) {
+        this.db.update(documentImportRuns).set({
+          status: "committing",
+          targetRoomId: null,
+          targetDocumentId: current.id,
+          updatedAt: new Date(),
+        }).where(eq(documentImportRuns.id, run.id)).run();
+        this.finishRun(run.id, "succeeded");
+        return { run: this.getRun(run.id), documentId: current.id, document: current, created: false, noChange: true };
+      }
+    }
+
+    const previousDocument = previous ? this.documents.get(previous.documentId) : null;
+    const document = previousDocument
+      ? await this.documents.save(previousDocument.id, {
+        baseVersion: previousDocument.version,
+        title: artifact.title,
+        contentJson,
+      })
+      : await this.documents.import({
+        id: `imp-${randomUUID()}`,
+        roomId: null,
+        title: artifact.title,
+        contentJson,
+        origin: "import",
+      });
+
+    this.db.update(documentImportRuns).set({
+      status: "committing",
+      targetRoomId: null,
+      targetDocumentId: document.id,
+      updatedAt: new Date(),
+    }).where(eq(documentImportRuns.id, run.id)).run();
+    this.finishRun(run.id, "succeeded");
+
+    return { run: this.getRun(run.id), documentId: document.id, document, created: previousDocument === null, noChange: false };
+  }
+
+  /** 同来源上一次成功导入的工作区文稿及其快照哈希（已删除/已回收的跳过）。 */
+  private workspaceImportTargetOf(sourceId: string | null): { documentId: string; contentHash: string | null } | null {
+    if (!sourceId) return null;
+    const rows = this.db.select({
+      documentId: documentImportRuns.targetDocumentId,
+      snapshotId: documentImportRuns.snapshotId,
+    }).from(documentImportRuns)
+      .where(and(
+        eq(documentImportRuns.sourceId, sourceId),
+        eq(documentImportRuns.status, "succeeded"),
+      ))
+      .orderBy(desc(documentImportRuns.updatedAt))
+      .all();
+    for (const row of rows) {
+      if (!row.documentId) continue;
+      const document = this.documents.get(row.documentId);
+      if (!document || document.deletedAt) continue;
+      const landedSnapshot = row.snapshotId
+        ? this.db.select({ contentHash: documentImportSnapshots.contentHash })
+          .from(documentImportSnapshots)
+          .where(eq(documentImportSnapshots.id, row.snapshotId))
+          .get()
+        : null;
+      return { documentId: document.id, contentHash: landedSnapshot?.contentHash ?? null };
+    }
+    return null;
+  }
+
+  /**
+   * "检查外部更新"：对已挂接外部来源的工作区文档重新读取远端并生成候选版本。
+   * 与"应用此版本"（applyCandidate）是两个独立动作。
+   *
+   * 归属按文档（`/v1/documents/:documentId/check-external-update`），Room 维度已删；
+   * 新写入的关联行沿用该文档已有导入关联的 scope id，不伪造 Room。
+   */
+  async checkExternalUpdate(documentId: string): Promise<CommitImportResult> {
     const rows = this.db.select()
       .from(documentRoomImports)
-      .where(and(eq(documentRoomImports.roomId, roomId), eq(documentRoomImports.documentId, documentId)))
+      .where(eq(documentRoomImports.documentId, documentId))
       .orderBy(desc(documentRoomImports.createdAt))
       .all();
     if (rows.length === 0) {
@@ -1035,7 +1116,7 @@ export class DocumentImportService {
     const preview = await this.preview(source.provider, source.remoteDocumentId);
     return this.commitToRoom({
       runId: preview.runId,
-      roomId,
+      roomId: latest.roomId,
       targetDocumentId: documentId,
     });
   }
@@ -1055,9 +1136,6 @@ export class DocumentImportService {
     const artifact = await this.loadArtifact(snapshot.artifactRef);
     const target = this.documents.get(row.documentId);
     if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
-    if (target.roomId !== row.roomId) {
-      throw new ImportServiceError("ROOM_MISMATCH", "目标文档属于其他 Room", 409);
-    }
     if (target.deletedAt) {
       throw new ImportServiceError("DOCUMENT_TRASHED", "目标文档已在回收站，先恢复再应用", 409);
     }
@@ -1080,7 +1158,9 @@ export class DocumentImportService {
     return { document: saved, version: saved.version };
   }
 
-  async importHistory(roomId: string, documentId: string): Promise<{
+  /** 文档的外部导入历史（按 documentId 归属；`/v1/documents/:documentId/import-history`）。
+   *  快照/候选/评论都挂在这条文档上，Room 维度已删，不再按房过滤。 */
+  async importHistory(documentId: string): Promise<{
     entries: DocumentImportHistoryEntry[];
     commentDiff: DocumentImportCommentDiffSummary | null;
     comments: ExternalDocumentCommentView[];
@@ -1095,7 +1175,7 @@ export class DocumentImportService {
       .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
       .innerJoin(documentImportSnapshots, eq(documentRoomImports.snapshotId, documentImportSnapshots.id))
       .innerJoin(documentImportSources, eq(documentImportRuns.sourceId, documentImportSources.id))
-      .where(and(eq(documentRoomImports.roomId, roomId), eq(documentRoomImports.documentId, documentId)))
+      .where(eq(documentRoomImports.documentId, documentId))
       .orderBy(desc(documentRoomImports.createdAt))
       .all();
     const entries: DocumentImportHistoryEntry[] = rows.map(({ roomImport, snapshot, source }) => ({

@@ -130,8 +130,7 @@ describe("ai relay session routes", () => {
           models: {
             primary: "saas-main-x",
             lite: "saas-lite-z",
-            embedding: "saas-embed-t",
-            embeddingDimensions: 1024,
+            webSearch: "saas-search-u",
           },
         },
       });
@@ -144,8 +143,7 @@ describe("ai relay session routes", () => {
         models: {
           primary: "saas-main-x",
           lite: "saas-lite-z",
-          embedding: "saas-embed-t",
-          embeddingDimensions: 1024,
+          webSearch: "saas-search-u",
         },
       });
 
@@ -355,16 +353,6 @@ describe("runtime config relay slot rewrite", () => {
       expect(slotOf(slot).model).toBeTruthy();
       expect(slotOf(slot).provider).toBeTruthy();
     }
-    const embedding = (slotOf("knowledge").embedding as Record<string, unknown>);
-    expect(embedding).toMatchObject({
-      model: "text-embedding-v4",
-      baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
-      apiKey: "gw-self-token-51",
-    });
-    // asr 与 memory/knowledge 服务地址不重写：内置占位原样保留。
-    expect(slotOf("asr")).toMatchObject({ baseUrl: "", apiKey: "" });
-    expect(slotOf("memory")).toMatchObject({ baseUrl: "", apiKey: "" });
-    expect(slotOf("knowledge").baseUrl).toBe("");
   });
 
   it("only rewrites slots that declare a model, even when a baseUrl is present", async () => {
@@ -433,8 +421,6 @@ describe("runtime config relay plan models", () => {
     cursorCompletion: "saas-complete-w",
     vlm: "saas-vlm-v",
     webSearch: "saas-search-u",
-    embedding: "saas-embed-t",
-    embeddingDimensions: 1024,
   };
 
   it("overrides slot models with SaaS-issued plan models, building lite from primary", async () => {
@@ -457,8 +443,6 @@ describe("runtime config relay plan models", () => {
       baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
       apiKey: "gw-self-token-51",
     });
-    const embedding = (slotOf("knowledge").embedding as Record<string, unknown>);
-    expect(embedding).toMatchObject({ model: "saas-embed-t", dimensions: 1024 });
   });
 
   it("keeps built-in defaults for scenarios SaaS did not issue", async () => {
@@ -470,9 +454,6 @@ describe("runtime config relay plan models", () => {
     expect(snapshot.config.vlm?.model).toBe("qwen3-vl-flash");
     // 未下发 lite：保持内置未配置态，lite 档不可用。
     expect(snapshot.config.lite).toBeUndefined();
-    const embedding = snapshot.config.knowledge?.embedding as Record<string, unknown> | undefined;
-    expect(embedding?.model).toBe("text-embedding-v4");
-    expect(embedding?.dimensions).toBeUndefined();
   });
 
   it("user-owned slots keep their own model while unset slots fall back to official", async () => {

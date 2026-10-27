@@ -5,7 +5,6 @@ import type { SearchService } from "./service.js";
 const ItemType = Type.Union([
   Type.Literal("file"),
   Type.Literal("message"),
-  Type.Literal("room"),
   Type.Literal("document"),
   Type.Literal("export"),
 ]);
@@ -35,8 +34,7 @@ const ScopeDto = Type.Object({
 
 const SearchBody = Type.Object({
   query: Type.String({ maxLength: 2048, default: "" }),
-  types: Type.Optional(Type.Array(ItemType, { maxItems: 5 })),
-  roomIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 200 }), { maxItems: 20 })),
+  types: Type.Optional(Type.Array(ItemType, { maxItems: 4 })),
   timeBasis: Type.Optional(Type.Union([Type.Literal("occurred"), Type.Literal("ingested")])),
   from: Type.Optional(Type.Integer({ minimum: 0 })),
   to: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -69,7 +67,6 @@ export function searchRoutes(service: SearchService): FastifyPluginAsyncTypebox 
           body.query,
           {
             types: body.types,
-            roomIds: body.roomIds,
             timeBasis: body.timeBasis,
             ...(body.timeBasis && body.from !== undefined && body.to !== undefined
               ? { from: body.from, to: body.to }

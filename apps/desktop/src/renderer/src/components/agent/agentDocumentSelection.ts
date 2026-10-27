@@ -2,7 +2,8 @@ import type { AgentActiveDocumentContext, RoomDocument } from '@nxcore/agent-con
 
 export interface AgentDocumentSelectionItem {
   documentId: string
-  roomId: string
+  /** null = 工作区级文稿（无 Room 归属）。 */
+  roomId: string | null
   title: string
   version?: number
   status?: string
@@ -123,7 +124,7 @@ export function findPendingAgentDocumentSelection(
   dismissedToolIds: ReadonlySet<string>,
 ): PendingAgentDocumentSelection | null {
   const candidates = tools
-    .filter((tool) => tool.name === 'context_room_document_list' && tool.status === 'completed')
+    .filter((tool) => tool.name === 'document_list' && tool.status === 'completed')
     .flatMap((tool) => {
       if (!selectionParseCache.has(tool)) {
         selectionParseCache.set(tool, parseAgentDocumentSelectionResult(tool.result))
@@ -167,6 +168,7 @@ export function buildAgentDocumentSelectionRunRequest(
   return {
     prompt: originalPrompt.trim(),
     activeDocument: {
+      // 工作区级文稿的 activeDocument.roomId 为 null。
       roomId: document.roomId,
       documentId: document.id,
       title: document.title,

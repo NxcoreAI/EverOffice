@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest'
 import {
   AppliedSequenceTracker,
   operationStreamChunksToApply,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/markdownStream'
+} from '@/components/office-editor/editor/markdownStream'
 import {
   operationStreamBaselineKind,
   operationStreamNeedsPresentation,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/operationStreamState'
+} from '@/components/office-editor/editor/operationStreamState'
 
 function document(overrides: Partial<RoomDocument> = {}): RoomDocument {
   return {

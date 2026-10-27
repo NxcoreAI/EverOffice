@@ -12,9 +12,6 @@ import type {
   DocumentVersionSnapshot,
   DocumentDiffResult,
   ImportRoomDocumentInput,
-  MoveRoomDocumentInput,
-  MoveRoomDocumentsResult,
-  MovedRoomDocument,
   ResolveDocumentBlockReferencesInput,
   RoomDocument,
   SaveRoomDocumentInput,
@@ -28,7 +25,6 @@ import {
   documentVersions,
   documents,
   jobs,
-  roomDocumentLinks,
 } from "../../infrastructure/database/schema.js";
 import {
   documentBodyContent,
@@ -38,6 +34,7 @@ import {
 } from "./content-model.js";
 import { DocumentEventBroker } from "./event-broker.js";
 import { DocumentServiceError } from "./errors.js";
+import { roomScopeId } from "./room-scope.js";
 import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE } from "./integration-outbox.js";
 import {
   DocumentCommitService,
@@ -45,7 +42,6 @@ import {
   DocumentLifecycleService,
   DocumentQueryService,
   DocumentRepository,
-  DocumentRoomMoveService,
   YjsHistoryService,
   type AtomicDocumentCreateInput,
   type AtomicDocumentCommitInput,
@@ -98,7 +94,8 @@ export type DocumentCommittedHandler = (document: CommittedAgentDocument) => voi
 
 export interface AppliedAgentDocumentRewrite {
   sessionId: string;
-  roomId: string;
+  /** 工作区级改写为 null。 */
+  roomId: string | null;
   runId: string;
   operationId: string;
   documentId: string;
@@ -240,7 +237,6 @@ export class DocumentService {
   private readonly commitService: DocumentCommitService;
   private readonly queryService: DocumentQueryService;
   private readonly lifecycleService: DocumentLifecycleService;
-  private readonly moveService: DocumentRoomMoveService;
   private readonly yjsHistory: YjsHistoryService;
 
   /**
@@ -258,14 +254,6 @@ export class DocumentService {
    */
   resolveDocWriterDraft: DocWriterDraftResolver | null = null;
 
-  /**
-   * Room 产物移动完成后的知识侧同步钩子（create-server 装配注入）：
-   * 迁移 room_source_memberships / room_entity_mentions / room_entity_facts /
-   * route_decisions 投影，重排搜索索引并触发两房概览再生成。
-   * documents 模块不直接依赖 knowledge。
-   */
-  onDocumentMoved: ((moved: MovedRoomDocument) => void) | null = null;
-
   constructor(
     private readonly db: GatewayDatabase,
     readonly broker: DocumentEventBroker,
@@ -275,30 +263,24 @@ export class DocumentService {
     private readonly onAfterCommitError?: DocumentAfterCommitErrorHandler,
   ) {
     this.repository = new DocumentRepository(db);
-    this.contentEngine = new DocumentContentEngine({
-      findDocumentRoom: (documentId) => this.repository.get(documentId)?.roomId ?? null,
-    });
+    this.contentEngine = new DocumentContentEngine();
     this.yjsHistory = new YjsHistoryService();
     this.commitService = new DocumentCommitService(db, this.repository, this.contentEngine, {}, this.yjsHistory);
     this.queryService = new DocumentQueryService(db, this.repository, this.contentEngine);
-    this.moveService = new DocumentRoomMoveService(db);
     this.lifecycleService = new DocumentLifecycleService(db, this.repository, {
       trashed: (document) => this.publish(
-        document.roomId,
         document.id,
         null,
         "document.changed",
         { document },
       ),
       restored: (document) => this.publish(
-        document.roomId,
         document.id,
         null,
         "document.changed",
         { document },
       ),
       deleted: (document) => this.publish(
-        document.roomId,
         document.id,
         null,
         "document.deleted",
@@ -308,50 +290,9 @@ export class DocumentService {
     this.normalizeStoredDocuments();
   }
 
-  list(roomId: string, trashed = false, origin?: "native" | "import"): RoomDocument[] {
-    return this.queryService.list(roomId, trashed, origin);
-  }
-
-  /**
-   * 单个产物移动到其它 Room：改属归属链接后，向源房广播 document.moved
-   * （清单摘除）与向目标房广播 document.changed（清单新增），再交知识侧
-   * 钩子同步索引与记忆投影。
-   */
-  moveToRoom(documentId: string, input: MoveRoomDocumentInput): Promise<MovedRoomDocument> {
-    return this.queue.enqueue(() => {
-      const moved = this.moveService.move(documentId, input.fromRoomId, input.roomId);
-      this.publishMoved(moved);
-      return moved;
-    });
-  }
-
-  /** 批量移动（同源房多选 → 同一目标房）：逐条发事件，失败整体回滚到调用方提示。 */
-  moveManyToRoom(
-    documentIds: string[],
-    input: MoveRoomDocumentInput,
-  ): Promise<MoveRoomDocumentsResult> {
-    return this.queue.enqueue(() => {
-      const items = this.moveService.moveMany(documentIds, input.fromRoomId, input.roomId);
-      for (const moved of items) this.publishMoved(moved);
-      return { items };
-    });
-  }
-
-  private publishMoved(moved: MovedRoomDocument): void {
-    this.publish(moved.fromRoomId, moved.documentId, null, "document.moved", {
-      documentId: moved.documentId,
-      fromRoomId: moved.fromRoomId,
-      toRoomId: moved.toRoomId,
-      title: moved.title,
-    });
-    this.publish(moved.toRoomId, moved.documentId, null, "document.changed", {
-      document: moved.document,
-    });
-    try {
-      this.onDocumentMoved?.(moved);
-    } catch {
-      // 知识侧同步失败不回滚移动（清单归属已正确），索引在下次重排时自愈。
-    }
+  /** 列出工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。 */
+  list(trashed = false, origin?: "native" | "import"): RoomDocument[] {
+    return this.queryService.list(trashed, origin);
   }
 
   get(documentId: string): RoomDocument | null {
@@ -781,7 +722,7 @@ export class DocumentService {
         ...(coordination ? { mutate: (tx, _normalized, now) => coordination.mutate(tx, now) } : {}),
       });
       this.completeVersionAdvance(coordination, documentId, restored.version);
-      this.publish(restored.roomId, documentId, null, "document.changed", { document: restored });
+      this.publish(documentId, null, "document.changed", { document: restored });
       return restored;
     });
   }
@@ -798,9 +739,6 @@ export class DocumentService {
     if (!document) throw new DocumentServiceError("NOT_FOUND", "Active document not found", 404);
     if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Active document is in trash", 409);
     if (document.activeTransactionId) throw new DocumentServiceError("DOCUMENT_BUSY", "Active document is busy", 409);
-    if (document.roomId !== context.roomId || (roomId && document.roomId !== roomId)) {
-      throw new DocumentServiceError("ROOM_MISMATCH", "Active document belongs to another Room", 409);
-    }
     if (document.version !== context.version) {
       throw new DocumentServiceError("DOCUMENT_CONFLICT", "Active document version has changed", 409, {
         currentVersion: document.version,
@@ -826,7 +764,7 @@ export class DocumentService {
     }
     return {
       ...context,
-      roomId: document.roomId,
+      roomId: null,
       documentId: document.id,
       title: document.title,
       version: document.version,
@@ -834,16 +772,13 @@ export class DocumentService {
     };
   }
 
-  readDocumentForAgent(documentId: string, roomId: string): {
+  readDocumentForAgent(documentId: string): {
     document: RoomDocument;
     blocks: DocumentBlockSummary[];
     markdown: string;
   } {
     const document = this.get(documentId);
     if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-    if (document.roomId !== roomId) {
-      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
-    }
     if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
     const blocks = this.listBlocks(documentId);
     let markdown: string;
@@ -859,12 +794,7 @@ export class DocumentService {
     assertContentJson(input.contentJson);
     return this.queue.enqueue(() => {
       const existing = this.get(input.id);
-      if (existing) {
-        if (existing.roomId !== input.roomId) {
-          throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
-        }
-        return existing;
-      }
+      if (existing) return existing;
       const title = input.title.trim().slice(0, 120);
       const content = normalizePersistedDocumentBody(input.contentJson, title).content;
       const imported = this.commitService.create({
@@ -875,17 +805,17 @@ export class DocumentService {
         version: 1,
         origin: input.origin ?? "import",
       });
-      this.publish(input.roomId, input.id, null, "document.changed", { document: imported });
+      this.publish(input.id, null, "document.changed", { document: imported });
       return imported;
     });
   }
 
   syncExternalMarkdown(input: {
     documentId: string;
-    roomId: string;
+    roomId: string | null;
     title: string;
     markdown: string;
-    /** 任务产物（workplan.md 等）标 native：出现在 Room 文档列表且可编辑。 */
+    /** 产出的文稿默认标 native：出现在工作区文档列表且可编辑。 */
     origin?: "native" | "import";
   }): Promise<RoomDocument> {
     const title = input.title.trim().slice(0, 120);
@@ -900,9 +830,6 @@ export class DocumentService {
         contentJson,
         origin: input.origin ?? "import",
       });
-    }
-    if (existing.roomId !== input.roomId) {
-      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
     }
     return this.save(input.documentId, {
       baseVersion: existing.version,
@@ -929,7 +856,7 @@ export class DocumentService {
       }
       const nextVersion = current.version + 1;
       const content = normalizePersistedDocumentBody(input.contentJson, title).content;
-      const normalized = this.contentEngine.normalizeDocument(content, documentId, current.roomId, nextVersion);
+      const normalized = this.contentEngine.normalizeDocument(content, documentId, nextVersion);
       const contentChanged = JSON.stringify(current.contentJson) !== JSON.stringify(normalized.content);
       const titleChanged = current.title !== title;
       if (!contentChanged && !titleChanged) return current;
@@ -953,7 +880,7 @@ export class DocumentService {
         ...(coordination ? { mutate: (tx, _normalized, now) => coordination.mutate(tx, now) } : {}),
       });
       this.completeVersionAdvance(coordination, documentId, updated.version);
-      this.publish(updated.roomId, documentId, null, "document.changed", { document: updated });
+      this.publish(documentId, null, "document.changed", { document: updated });
       return updated;
     });
   }
@@ -992,7 +919,7 @@ export class DocumentService {
 
   prepareAgentDocumentDraft(input: {
     documentId: string;
-    roomId: string;
+    roomId: string | null;
     title: string;
     markdown: string;
   }): AtomicDocumentCreateInput {
@@ -1039,7 +966,7 @@ export class DocumentService {
       if (document.activeTransactionId) return; // 真实租约或并发标记在场，让位
       this.db.update(documents).set({ activeTransactionId: value }).where(eq(documents.id, documentId)).run();
     }
-    this.publish(document.roomId, documentId, null, "document.changed", { document: this.get(documentId) });
+    this.publish(documentId, null, "document.changed", { document: this.get(documentId) });
   }
 
   /** 启动清扫：崩溃残留的软租约（不属于任何 building Operation 的标记）。 */
@@ -1053,7 +980,7 @@ export class DocumentService {
   prepareAgentDocumentFinalize(input: {
     operationId: string;
     documentId: string;
-    roomId: string;
+    roomId: string | null;
     title: string;
     markdown: string;
     sessionId: string;
@@ -1061,7 +988,6 @@ export class DocumentService {
   }): PreparedAgentDocumentCommit {
     const draft = this.get(input.documentId);
     if (!draft
-      || draft.roomId !== input.roomId
       || draft.status !== "draft"
       || draft.version !== 0
       || draft.activeTransactionId !== input.operationId) {
@@ -1086,7 +1012,9 @@ export class DocumentService {
         if (!document) return;
         this.onDocumentCommitted?.({
           sessionId: input.sessionId,
-          roomId: input.roomId,
+          // 下游 handler（知识/记忆投影）以非空 scope 为分区键；这两个模块随 Phase 2 删除，
+          // 统一落到工作区频道。
+          roomId: roomScopeId(null),
           runId: input.runId,
           documentId: input.documentId,
           title: document.title,
@@ -1118,9 +1046,10 @@ export class DocumentService {
     });
   }
 
-  emptyTrash(roomId: string): Promise<void> {
+  /** 清空工作区回收站（Room 过滤维度已随 Phase 2i 删除）。 */
+  emptyTrash(): Promise<void> {
     return this.queue.enqueue(() => {
-      this.lifecycleService.emptyTrash(roomId);
+      this.lifecycleService.emptyTrash();
     });
   }
 
@@ -1130,9 +1059,8 @@ export class DocumentService {
   }
 
   private normalizeStoredDocuments(): void {
-    const rows = this.db.select({ document: documents, roomId: roomDocumentLinks.roomId })
+    const rows = this.db.select({ document: documents })
       .from(documents)
-      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .orderBy(asc(documents.createdAt)).all();
     for (const row of rows) {
       try {
@@ -1144,7 +1072,6 @@ export class DocumentService {
           const normalized = this.contentEngine.normalizeStoredDocument(
             body.content,
             row.document.id,
-            row.roomId,
             row.document.contentSchemaVersion,
             row.document.version,
           );
@@ -1176,13 +1103,12 @@ export class DocumentService {
   }
 
   private publish(
-    roomId: string,
     documentId: string,
     operationId: string | null,
     type: DocumentEvent["type"],
     payload: unknown,
   ): void {
-    this.broker.publish(this.createEvent(roomId, documentId, operationId, type, payload));
+    this.broker.publish(this.createEvent(documentId, operationId, type, payload));
   }
 
   private completeVersionAdvance(
@@ -1199,8 +1125,8 @@ export class DocumentService {
     }
   }
 
+  /** Phase 2i：文档事件只有工作区频道，roomId 恒为 null（WS 频道见 event-broker）。 */
   private createEvent(
-    roomId: string,
     documentId: string,
     operationId: string | null,
     type: DocumentEvent["type"],
@@ -1208,7 +1134,7 @@ export class DocumentService {
   ): DocumentEvent {
     return {
       id: randomUUID(),
-      roomId,
+      roomId: null,
       documentId,
       operationId,
       type,

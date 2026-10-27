@@ -7,7 +7,7 @@ import { useEffect } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { MarkdownPreview } from '../../../../../shared/sources'
-import { parseMarkdownDocument } from '../../context-room/ported/components/detail-editor/markdownImport'
+import { parseMarkdownDocument } from '@/components/office-editor/editor/markdownImport'
 import { formatDate } from './sourceFormatters'
 
 const extensions = [

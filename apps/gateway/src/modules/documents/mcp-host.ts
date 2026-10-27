@@ -158,7 +158,6 @@ export class DocumentMcpHost {
     lastInputSignature?: string;
     identicalFailureCount: number;
   }>();
-  private readonly roomsRegistry: DocumentRoomRegistry | undefined;
   readonly capabilities: DocumentCapabilityRegistry;
 
   constructor(
@@ -168,17 +167,7 @@ export class DocumentMcpHost {
     private readonly operations?: DocumentOperationService,
     private readonly onDiagnostic?: (diagnostic: DocumentToolDiagnostic) => void,
   ) {
-    this.roomsRegistry = rooms;
     this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry(documents, rooms, operations);
-  }
-
-  /**
-   * 实时房间存在性查询。run 的 availableRooms 是开跑快照，同一 run 内
-   * context_room_create 新建的房间不在其中；校验显式 roomId 时须以本方法兜底。
-   */
-  roomExists(roomId: string): boolean {
-    if (!roomId.trim()) return false;
-    return this.roomsRegistry?.listReferences().some((room) => room.id === roomId) ?? false;
   }
 
   listTools(): readonly DocumentMcpToolDefinition[] {
@@ -345,7 +334,7 @@ export class DocumentMcpHost {
       context: structuredClone(context),
     };
     const server = new Server(
-      { name: "everroom-context-room", version: "2.0.0" },
+      { name: "everroom-office", version: "2.0.0" },
       { capabilities: { tools: {} }, instructions: this.instructions() },
     );
     holder.server = server;
@@ -418,7 +407,7 @@ export class DocumentMcpHost {
         && previous.lastFailureCode === failureCode
         ? previous.identicalFailureCount + 1
         : 1;
-      if (name === "context_room_patch_hunk"
+      if (name === "document_patch_hunk"
         && failureCode
         && NON_PROGRESS_PATCH_ERRORS.has(failureCode)
         && identicalFailureCount >= 2) {

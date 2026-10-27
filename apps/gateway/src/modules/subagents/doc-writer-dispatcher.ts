@@ -26,22 +26,15 @@ export interface DocWriterDispatcher {
 }
 
 export class DocWriterAgentDispatcher implements DocWriterDispatcher {
-  constructor(
-    private readonly orchestrator: SubagentOrchestrator,
-    /** 写作风格注入段：对 rewrite task 无条件附加（doc-writer 全部 task 都是写作任务，
-     *  无信号门），provider 自查生成开关，关闭返回 null 不附字段。 */
-    private readonly writingStyleProvider: { getGenerationPromptSection(): string | null } | null = null,
-  ) {}
+  constructor(private readonly orchestrator: SubagentOrchestrator) {}
 
   async dispatchDetached(input: DocWriterDispatchInput): Promise<string> {
-    const writingStyle = this.writingStyleProvider?.getGenerationPromptSection() ?? null;
     return this.orchestrator.startDetached({
       agentId: DOC_WRITER_AGENT_ID,
       task: DOC_WRITER_TASK_LABELS[input.task],
       input: {
         task: input.task,
         ...input.taskInput,
-        ...(writingStyle ? { writingStyle } : {}),
       },
       idempotencyKey: input.idempotencyKey ?? `doc-writer:${randomUUID()}`,
       source: "internal_workflow",
@@ -59,7 +52,7 @@ export class DocWriterAgentDispatcher implements DocWriterDispatcher {
  */
 export function isSelectionRewriteInvocationAuthorized(
   invocation: SubagentInvocation | null | undefined,
-  options: { capabilityId: string; roomId: string; now?: Date },
+  options: { capabilityId: string; roomId: string | null; now?: Date },
 ): boolean {
   if (!invocation || options.capabilityId !== "document.selection-rewrite") return false;
   if (invocation.agentDefinitionId !== DOC_WRITER_AGENT_ID) return false;

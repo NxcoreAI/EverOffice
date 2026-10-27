@@ -2,7 +2,6 @@ import '@sentry/electron/preload'
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
   AgentAccessCreateInput,
   AgentAccessExampleQueryDto,
@@ -14,19 +13,6 @@ import type {
   AgentConnectionDto,
 } from '../shared/agent-access'
 import type {
-  CreateContextRoomInput,
-  RoomDuplicateCheckInput,
-  RoomDuplicateCandidateStatus,
-  SaveContextRoomSnapshotInput,
-} from '@nxcore/agent-contract'
-import type {
-  MemoryAtomicListOptions,
-  MemoryConversationListOptions,
-  MemoryDocumentRewriteInput,
-  MemoryOnboardingInput,
-  MemoryRoomMemoriesPageDto,
-} from '../shared/memory'
-import type {
   SearchItemType,
   SearchMessageContextDto,
   SearchPageDto,
@@ -35,10 +21,9 @@ import type {
 } from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
-import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -306,24 +291,6 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('migrations:progress', handle)
     },
   },
-  browserExtension: {
-    status: () => invokeQuietly<BrowserExtensionStatus>('browser-extension:status'),
-    install: () => invoke<BrowserExtensionStatus>('browser-extension:install'),
-    openDirectory: () => invoke('browser-extension:open-directory'),
-    openBrowserPage: () => invoke('browser-extension:open-browser-page'),
-    createPairing: () => invoke<BrowserExtensionStatus>('browser-extension:create-pairing'),
-    revoke: () => invoke<BrowserExtensionStatus>('browser-extension:revoke'),
-    onStatus: (listener: (status: BrowserExtensionStatus) => void) => {
-      const handleStatus = (_event: Electron.IpcRendererEvent, status: BrowserExtensionStatus) => listener(status)
-      ipcRenderer.on('browser-extension:status', handleStatus)
-      return () => ipcRenderer.removeListener('browser-extension:status', handleStatus)
-    },
-    onMessage: (listener: (message: BrowserExtensionMessage) => void) => {
-      const handleMessage = (_event: Electron.IpcRendererEvent, message: BrowserExtensionMessage) => listener(message)
-      ipcRenderer.on('browser-extension:message', handleMessage)
-      return () => ipcRenderer.removeListener('browser-extension:message', handleMessage)
-    },
-  },
   nangoConnector: {
     runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
@@ -383,7 +350,6 @@ const api: NxcoreDesktopApi = {
   externalDocuments: {
     importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
     importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
-    importExistingInRoom: (provider, roomId, remoteDocumentIds) => invoke('external-documents:import-existing-in-room', provider, roomId, remoteDocumentIds),
     importBatch: (input) => invoke('external-documents:import-batch', input),
     importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
     activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
@@ -392,8 +358,8 @@ const api: NxcoreDesktopApi = {
     importCommit: (input) => invoke('external-documents:import-commit', input),
     importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
     cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
-    importHistory: (roomId, documentId) => invokeQuietly('external-documents:import-history', roomId, documentId),
-    checkExternalUpdate: (roomId, documentId) => invoke('external-documents:check-external-update', roomId, documentId),
+    importHistory: (documentId) => invokeQuietly('external-documents:import-history', documentId),
+    checkExternalUpdate: (documentId) => invoke('external-documents:check-external-update', documentId),
     applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
     createExport: (input) => invoke('external-documents:create-export', input),
     getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
@@ -415,47 +381,6 @@ const api: NxcoreDesktopApi = {
     deletePolicy: (id) => invoke('external-calls:policies:delete', id),
     listUsage: (query) => invokeQuietly('external-calls:usage:list', query),
     listAudits: (query) => invokeQuietly('external-calls:audits:list', query),
-  },
-  screenCapture: {
-    captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
-    start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),
-    updateInterval: (intervalMs: number) => invoke('screen-capture:update-interval', intervalMs),
-    stop: () => invoke('screen-capture:stop'),
-    status: () => invoke('screen-capture:status'),
-    appInfo: () => invoke('screen-capture:app-info'),
-    openPermissionSettings: () => invoke('screen-capture:open-permission-settings'),
-    startAppDrag: () => ipcRenderer.send('screen-capture:start-app-drag'),
-    relaunchApp: () => invoke('screen-capture:relaunch-app'),
-    perceptionSettings: () => invoke('perception:settings'),
-    updateOnlineVlm: (enabled, configVersion) => invoke('perception:update-online-vlm', enabled, configVersion),
-    listPerceptionNodes: (query) => invokeQuietly('perception:nodes', query),
-    getPerceptionNode: (id) => invokeQuietly('perception:node', id),
-    retryPerceptionNode: (id) => invoke('perception:retry', id),
-    deletePerceptionNode: (id, deleteAssets) => invoke('perception:delete', id, deleteAssets),
-  },
-  screenMemory: {
-    status: () => invoke('screen-memory:status'),
-    settings: () => invoke('screen-memory:settings'),
-    updateSettings: (patch) => invoke('screen-memory:update-settings', patch),
-    search: (query) => invokeQuietly('screen-memory:search', query),
-    listIntervals: (query) => invokeQuietly('screen-memory:intervals', query),
-    getInterval: (id) => invokeQuietly('screen-memory:interval', id),
-    stats: () => invokeQuietly('screen-memory:stats'),
-    correctInterval: (input) => invoke('screen-memory:correct', input),
-    storage: () => invokeQuietly('screen-memory:storage'),
-    frontmost: () => invoke('screen-memory:frontmost'),
-    registerMaterial: (intervalId) => invoke('screen-memory:register-material', intervalId),
-    backfillEstimate: (input) => invoke('screen-memory:backfill-estimate', input),
-    backfillRun: (input) => invoke('screen-memory:backfill-run', input),
-  },
-  diary: {
-    settings: () => invoke('diary:settings'),
-    updateSettings: (input) => invoke('diary:update-settings', input),
-    generate: (date) => invoke('diary:generate', date),
-    run: (id) => invoke('diary:run', id),
-    activeRun: () => invokeQuietly('diary:active-run'),
-    days: (start, end) => invoke('diary:days', start, end),
-    day: (date) => invoke('diary:day', date),
   },
   writingStyle: {
     profile: () => invoke('writing-style:get'),
@@ -513,46 +438,17 @@ const api: NxcoreDesktopApi = {
     pageImagesStatus: (documentId: string) =>
       invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
   },
-  contextRooms: {
-    list: () => invokeQuietly('context-rooms:list'),
-    create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
-    syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
-      invokeQuietly('context-rooms:sync-snapshot', input),
-    checkDuplicates: (input: RoomDuplicateCheckInput) => invokeQuietly('context-rooms:check-duplicates', input),
-    listDuplicateCandidates: (status?: RoomDuplicateCandidateStatus) =>
-      invokeQuietly('context-rooms:list-duplicate-candidates', status),
-    updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
-      invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
-    previewMerge: (sourceAId: string, sourceBId: string) =>
-      invokeQuietly('context-rooms:preview-merge', sourceAId, sourceBId),
-    startMerge: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
-      invokeQuietly('context-rooms:start-merge', input),
-    suggestMergeNames: (input: { sourceAId: string; sourceBId: string; responseLanguage?: string }) =>
-      invokeQuietly('context-rooms:suggest-merge-names', input),
-    checkRoomDuplicates: (roomId: string) => invokeQuietly('context-rooms:check-room-duplicates', roomId),
-    getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
-    retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
-    cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
-    dispatchSelectionRewrite: (input: RoomAgentSelectionRewriteInput) =>
-      invokeQuietly('context-rooms:dispatch-selection-rewrite', input),
+  subagents: {
+    dispatchSelectionRewrite: (input: SubagentSelectionRewriteInput) =>
+      invokeQuietly('subagents:dispatch-selection-rewrite', input),
     getSubagentInvocation: (invocationId: string) =>
-      invokeQuietly('context-rooms:get-subagent-invocation', invocationId),
+      invokeQuietly('subagents:get-invocation', invocationId),
     cancelSubagentInvocation: (invocationId: string) =>
-      invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
+      invokeQuietly('subagents:cancel-invocation', invocationId),
     listRunSubagentInvocations: (rootRunId: string) =>
-      invokeQuietly('context-rooms:list-run-subagent-invocations', rootRunId),
+      invokeQuietly('subagents:list-run-invocations', rootRunId),
     listSubagentInvocationEvents: (invocationId: string, afterSeq = 0) =>
-      invokeQuietly('context-rooms:list-subagent-invocation-events', invocationId, afterSeq),
-    refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
-    promoteMemoryItem: (roomId: string, itemId: string) =>
-      invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),
-    overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
-    refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
-    listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
-    readMail: (roomId: string, sourceId: string) => invokeQuietly('context-rooms:read-mail', roomId, sourceId),
-    roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
-    completeLocalAction: (roomId: string, actionId: string, completed?: boolean) =>
-      invokeQuietly('context-rooms:complete-local-action', roomId, actionId, completed),
+      invokeQuietly('subagents:list-invocation-events', invocationId, afterSeq),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
@@ -619,50 +515,13 @@ const api: NxcoreDesktopApi = {
     selectSource: (source: 'user' | 'default') => invoke('runtime-config:select-source', source),
     test: () => invoke('runtime-config:test'),
   },
-  asr: {
-    requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
-    getMicrophoneAccessStatus: () => invoke('asr:get-microphone-access-status'),
-    openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
-    openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
-    beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),
-    appendRecording: (id, chunk) => invoke('asr:append-recording', id, chunk),
-    uploadRecordingSegment: (id, index, chunk, durationMs, meta) => invoke('asr:upload-recording-segment', id, index, chunk, durationMs, meta),
-    onSegmentTranscription: (listener) => {
-      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
-        if (!value || typeof value !== 'object') return
-        const candidate = value as { recordingId?: unknown; index?: unknown; result?: unknown }
-        if (typeof candidate.recordingId !== 'string' || typeof candidate.index !== 'number' || !candidate.result) return
-        listener(candidate as { recordingId: string; index: number; result: AsrResult })
-      }
-      ipcRenderer.on('asr:segment-transcribed', handle)
-      return () => ipcRenderer.removeListener('asr:segment-transcribed', handle)
-    },
-    finishRecording: (id) => invoke('asr:finish-recording', id),
-    cancelRecording: (id) => invoke('asr:cancel-recording', id),
-    createJob: (input) => invoke('asr:create-job', input),
-    getJob: (id) => invoke('asr:get-job', id),
-    renameSpeaker: (jobId, speakerId, name) => invoke('asr:rename-speaker', jobId, speakerId, name),
-  },
-  privateAudio: {
-    list: (cursor?: number) => invoke('private-audio:list', cursor ?? 0),
-    download: (assetId: string, outputPath: string) => invoke('private-audio:download', assetId, outputPath),
-    read: (assetId: string) => invoke('private-audio:read', assetId),
-  },
-  transcriptions: {
-    syncPrivate: (options) => options?.quiet ? invokeQuietly('transcription:sync-private') : invoke('transcription:sync-private'),
-    onSyncCompleted: (listener) => {
-      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
-        if (!value || typeof value !== 'object' || typeof (value as { completedAt?: unknown }).completedAt !== 'string') return
-        listener(value as { completedAt: string })
-      }
-      ipcRenderer.on('transcription:sync-completed', handle)
-      return () => ipcRenderer.removeListener('transcription:sync-completed', handle)
-    },
-    listPrivate: () => invoke('transcription:list-private'),
-    listTags: () => invoke('transcription:list-tags'),
-    replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),
-    renameTag: (tagId, label) => invoke('transcription:rename-tag', tagId, label),
-    mergeTag: (targetTagId, sourceTagId) => invoke('transcription:merge-tag', targetTagId, sourceTagId),
+  permissions: {
+    /** OS 麦克风授权状态（本地 TCC 查询，不经网关）。属本地系统能力而非网关调用。 */
+    getMicrophoneAccessStatus: () => invoke('permissions:microphone-access-status'),
+    /** 弹出系统麦克风授权请求（本地 TCC，不经网关）。 */
+    requestMicrophoneAccess: () => invoke('permissions:request-microphone-access'),
+    /** 打开系统「麦克风」隐私设置页。 */
+    openMicrophoneSettings: () => invoke('permissions:open-microphone-settings'),
   },
   search: {
     invoke: (request: SearchRequestDto): Promise<SearchPageDto> => invoke('search:invoke', request),
@@ -671,70 +530,6 @@ const api: NxcoreDesktopApi = {
       invoke('search:prioritize', itemType, refId),
     messageContext: (messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto> =>
       invoke('search:message-context', messageId, before, after),
-  },
-  memory: {
-    overview: () => invoke('memory:overview'),
-    startOnboarding: (input: MemoryOnboardingInput) => invoke('memory:onboarding:start', input),
-    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
-    onboardingFinished: () => { ipcRenderer.send('memory:onboarding-finished') },
-    listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
-    listRoomMemories: (roomId: string): Promise<MemoryRoomMemoriesPageDto> =>
-      invoke('memory:list-room-memories', roomId),
-    searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
-    updateAtomic: (id: string, content: string, background?: string) =>
-      invoke('memory:update-atomic', id, content, background),
-    deleteAtomic: (ids: string[]) => invoke('memory:delete-atomic', ids),
-    /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）；snapshot 为绑定时的记忆快照。 */
-    setAtomicRoom: (
-      id: string,
-      roomId: string | null,
-      snapshot?: { content: string; type: string; memoryUpdatedAt: string },
-    ) => invoke('memory:set-atomic-room', id, roomId, snapshot),
-    listScenarios: (pathPrefix?: string) => invoke('memory:list-scenarios', pathPrefix),
-    readScenario: (path: string) => invoke('memory:read-scenario', path),
-    readCore: () => invoke('memory:read-core'),
-    writeCore: (content: string) => invoke('memory:write-core', content),
-    listConversations: (options: MemoryConversationListOptions) =>
-      invoke('memory:list-conversations', options),
-    searchConversations: (query: string, limit?: number, sessionId?: string) =>
-      invoke('memory:search-conversations', query, limit, sessionId),
-    deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
-      invoke('memory:delete-conversations', target),
-    importMarkdown: (input: { title: string; markdown: string; filename?: string }) =>
-      invoke('memory:import-markdown', input),
-    pickMarkdownFiles: () => invoke('memory:pick-markdown-files'),
-    listDocuments: (limit?: number, offset?: number) =>
-      invoke('memory:documents:list', limit, offset),
-    getDocument: (id: string) => invoke('memory:documents:get', id),
-    deleteDocument: (id: string) => invoke('memory:documents:delete', id),
-    atomicProvenance: (id: string) => invoke('memory:atomic-provenance', id),
-    captureDocumentRewrite: (input: MemoryDocumentRewriteInput) =>
-      invoke('memory:capture-document-rewrite', input),
-  },
-  reality: {
-    // 列表由 RealityPage 常驻轮询（每 15s，且页面隐藏时也在跑）：走静默通道，
-    // 失败由页面内联展示，不得触发全局错误弹窗（issue #181）。
-    listEvents: (filters) => invokeQuietly('reality:list-events', filters),
-    getEvent: (id) => invoke('reality:get-event', id),
-    createEvent: (input) => invoke('reality:create-event', input),
-    finishCapture: (id, input) => invoke('reality:finish-capture', id, input),
-    updateTranscript: (id, input) => invoke('reality:update-transcript', id, input),
-    addMarker: (id, input) => invoke('reality:add-marker', id, input),
-    setImportant: (id, important) => invoke('reality:set-important', id, important),
-    confirm: (id) => invoke('reality:confirm', id),
-    discard: (id) => invoke('reality:discard', id),
-    fail: (id, error) => invoke('reality:fail', id, error),
-    readAudio: (id) => invoke('reality:read-audio', id),
-    exportTranscript: (input) => invoke('reality:export-transcript', input),
-    subscribe: () => invoke('reality:subscribe'),
-    unsubscribe: () => invoke('reality:unsubscribe'),
-    onEvent: (listener) => {
-      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
-        listener(frame)
-      }
-      ipcRenderer.on('reality:event', handleEvent)
-      return () => ipcRenderer.removeListener('reality:event', handleEvent)
-    },
   },
   agent: {
     discoverLocalAgents: () => invokeQuietly('agent:discover-local-agents'),
@@ -796,8 +591,9 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    list: (roomId) => invoke('documents:list', roomId),
-    listTrash: (roomId) => invoke('documents:list-trash', roomId),
+    // roomId 传 null/undefined = 整个工作区的文稿（P0-2）
+    list: (roomId?: string | null) => invoke('documents:list', roomId),
+    listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
@@ -828,10 +624,10 @@ const api: NxcoreDesktopApi = {
     moveMany: (documentIds, fromRoomId, roomId) => invoke('documents:move-many', documentIds, fromRoomId, roomId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
-    emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
+    emptyTrash: (roomId?: string | null) => invoke('documents:empty-trash', roomId),
     exportPdf: (input) => invoke('documents:export-pdf', input),
-    subscribe: (roomId) => invoke('documents:subscribe', roomId),
-    unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
+    subscribe: (roomId?: string | null) => invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId?: string | null) => invoke('documents:unsubscribe', roomId),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
@@ -909,77 +705,14 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('obsidian:discovery-changed', handleChanged)
     },
   },
-  knowledge: {
-    listRooms: (origin) => invoke('knowledge:rooms:list', origin),
-    getRoomContext: (roomId) => invoke('knowledge:rooms:context', roomId),
-    upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
-    deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
-    getRoomGraph: (visibility) => invoke('knowledge:room-graph:get', visibility),
-    getRoomRelations: (roomId, visibility) => invoke('knowledge:room-relations:list', roomId, visibility),
-    getRoomRelationEvidence: (relationId, offset, limit) =>
-      invoke('knowledge:room-relations:evidence', relationId, offset, limit),
-    createRoomRelation: (input) => invoke('knowledge:room-relations:create', input),
-    updateRoomRelation: (relationId, input) => invoke('knowledge:room-relations:update', relationId, input),
-    removeManualRoomRelation: (relationId) => invoke('knowledge:room-relations:remove-manual', relationId),
-    listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
-    retryWikiBuild: (roomId) => invoke('knowledge:wiki:rebuild', roomId),
-    readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
-    listWikis: () => invoke('knowledge:wikis:list'),
-    getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
-  listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
-    getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
-  promoteEntity: (entityId: string, options?: { forceNew?: boolean }) => invoke('knowledge:entities:promote', entityId, options),
-    promoteEntities: (entityIds: string[]) => invoke('knowledge:entities:promote-batch', entityIds),
-    suppressEntity: (entityId: string) => invoke('knowledge:entities:suppress', entityId),
-    suppressEntities: (entityIds: string[]) => invoke('knowledge:entities:suppress-batch', entityIds),
-    restoreSuppressedEntity: (entityId: string) => invoke('knowledge:entities:restore', entityId),
-    mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
-    listUnmatched: () => invoke('knowledge:unmatched:list'),
-    retryUnmatched: (decisionIds?: string[]) => invoke('knowledge:unmatched:retry', decisionIds),
-    ignoreUnmatched: (decisionIds: string[]) => invoke('knowledge:unmatched:ignore', decisionIds),
-    listRules: (): Promise<{ items: import('../shared/knowledge').KnowledgeRuleDto[] }> =>
-      invoke('knowledge:rules:list'),
-    deleteRule: (ruleId: string) => invoke('knowledge:rules:delete', ruleId),
-    attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
-      invoke('knowledge:docs:attach', sourceKind, sourceId, input),
-    listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
-    routeStatus: (sourceIds) => invoke('knowledge:route:status', sourceIds),
-    proposeRooms: (input: { description: string; fileEntryIds: string[] }) =>
-      invoke('knowledge:rooms:propose', input),
-    emergence: (roomId: string, request: import('../shared/knowledge').EmergenceRequest) =>
-      invoke('knowledge:rooms:emergence', roomId, request),
-    getRouteMindmap: (roomId: string, query: { documentId: string; requestVersion: number }) =>
-      invoke('knowledge:rooms:route-mindmap', roomId, query),
-    routeMindmapAction: (roomId: string, input: import('../shared/knowledge').RouteMindmapActionInput) =>
-      invoke('knowledge:rooms:route-mindmap-action', roomId, input),
-    revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
-    getPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:get'),
-    updatePreferenceContent: (content: string): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:user-content', content),
-    updatePreferenceSettings: (input: { learningEnabled?: boolean; injectionEnabled?: boolean }): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:settings', input),
-    refreshPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:refresh'),
-    listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
-    readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
-    revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
-    openFile: (fileId: string) => invoke('knowledge:files:open', fileId),
-  },
   files: {
     list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
     catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
-    listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
-    setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
-    getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
     get: (fileId: string) => invoke('files:get', fileId),
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),
     readDataUrl: (fileId: string) => invokeQuietly('files:read-data-url', fileId),
-    getClipCapture: (fileId: string) => invoke('files:clipper-capture:get', fileId),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
-    pinClusterTitle: (clusterId: string, sharedTitle: string) =>
-      invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
     exportReveal: (fileId: string, originalName: string) =>
@@ -1023,6 +756,13 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
       return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
     },
+    // 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开文档：主进程导入后交回渲染层开预览。
+    onOpenFromOs: (listener: (document: OsOpenedDocument) => void) => {
+      const handleOpen = (_event: Electron.IpcRendererEvent, document: OsOpenedDocument) => listener(document)
+      ipcRenderer.on('files:open-from-os', handleOpen)
+      return () => ipcRenderer.removeListener('files:open-from-os', handleOpen)
+    },
+    takePendingOsOpen: () => invoke('files:take-pending-os-open'),
   },
   thesisFormat: {
     listCards: (roomId: string): Promise<Array<{
@@ -1045,21 +785,6 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('thesis-format:card-changed', handler)
       return () => ipcRenderer.removeListener('thesis-format:card-changed', handler)
     },
-  },
-  ingest: {
-    listEvents: (query: {
-      limit?: number
-      offset?: number
-      sourceKind?: string
-      sourceId?: string
-    }) => invoke('ingest:events:list', query),
-    getFilterRules: () => invoke('ingest:filter-rules:get'),
-    updateFilterPreference: (content: string) =>
-      invoke('ingest:filter-rules:update-preference', content),
-    reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
-    getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
-    getPause: () => invoke('ingest:pause:get'),
-    setPause: (paused: boolean) => invoke('ingest:pause:set', paused),
   },
 }
 

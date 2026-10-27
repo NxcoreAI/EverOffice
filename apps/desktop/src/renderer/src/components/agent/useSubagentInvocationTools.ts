@@ -32,7 +32,7 @@ export function useSubagentInvocationTools(
   }, [invocationId])
 
   useEffect(() => {
-    const api = window.nxcore?.contextRooms
+    const api = window.nxcore?.subagents
     if (!api?.listSubagentInvocationEvents || !invocationId || !enabled) return undefined
     let cancelled = false
     const load = async () => {

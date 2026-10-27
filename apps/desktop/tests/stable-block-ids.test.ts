@@ -11,7 +11,7 @@ import {
   ensureStableBlockIds,
   StableBlockIds,
   stripStableBlockIdsFromPaste,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/StableBlockIds'
+} from '@/components/office-editor/editor/StableBlockIds'
 
 const editors: Editor[] = []
 

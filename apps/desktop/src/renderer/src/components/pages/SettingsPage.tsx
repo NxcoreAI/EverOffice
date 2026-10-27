@@ -1,17 +1,12 @@
 import {
   Activity,
-  AudioLines,
   Brain,
-  Camera,
   CalendarClock,
-  Check,
   Cloud,
   LoaderCircle,
   Languages,
   LogOut,
   Laptop,
-  Mic,
-  MonitorSpeaker,
   Plug,
   RefreshCw,
   ShieldCheck,
@@ -26,8 +21,6 @@ import QRCode from 'qrcode'
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
 import { UpdateSection } from '@/components/settings/UpdateSection'
-import { ScreenRecordingPermissionCard } from '@/components/settings/ScreenRecordingPermissionCard'
-import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
   saveDocumentCursorCompletionSettings,
@@ -41,8 +34,7 @@ import {
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
-import { ScreenMemorySettingsSection } from '../settings/ScreenMemorySettingsSection'
-import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
@@ -62,14 +54,12 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
   { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Sparkles },
-  { id: 'settings-reality', label: 'surface:settings.realityPerception', icon: AudioLines },
-  { id: 'settings-capture', label: 'surface:settings.windowScreenshots', icon: Camera },
   { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
-type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'admission' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'admission' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -107,43 +97,19 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): string {
-  if (!value) return t('surface:settings.notSyncedYet')
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return t('surface:settings.syncTimeUnknown')
-  return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
-}
-
 export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
   const { locale, preference, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [pending, setPending] = useState<PendingAction>(null)
-  const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
   const [cursorCompletionSettings, setCursorCompletionSettings] =
     useState<DocumentCursorCompletionSettings>(loadDocumentCursorCompletionSettings)
   const [conversationSuggestionSettings, setConversationSuggestionSettings] =
     useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
-  const [syncedCount, setSyncedCount] = useState<number | null>(null)
-  const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => {
-    try {
-      return window.localStorage.getItem('everroom:last-private-sync-at')
-    } catch {
-      return null
-    }
-  })
   const [devices, setDevices] = useState<CloudDevice[]>([])
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
   const [pairingError, setPairingError] = useState<string | null>(null)
-  const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
-  const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
-  const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
-  const [screenCaptureError, setScreenCaptureError] = useState<string | null>(null)
-  const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
-  const [perceptionBusy, setPerceptionBusy] = useState(false)
-  const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
   const [activeSetting, setActiveSetting] = useState<string>(SETTINGS_NAV[0].id)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
@@ -201,18 +167,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   }, [account?.authenticated, account?.user?.id])
 
   useEffect(() => {
-    const removeListener = window.nxcore?.transcriptions.onSyncCompleted(({ completedAt }) => {
-      setLastSyncAt(completedAt)
-      try {
-        window.localStorage.setItem('everroom:last-private-sync-at', completedAt)
-      } catch {
-        // Storage may be unavailable in a restricted renderer context.
-      }
-    })
-    return () => removeListener?.()
-  }, [])
-
-  useEffect(() => {
     if (!pairing || !window.nxcore) return
     let cancelled = false
     const poll = async () => {
@@ -262,28 +216,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     } catch (error) {
       setPairingError(error instanceof Error ? error.message : t('surface:settings.failedToApproveTheDevice'))
     } finally { setPending(null) }
-  }
-
-  useEffect(() => {
-    if (!window.nxcore) return
-    void Promise.all([
-      window.nxcore.screenCapture.status(),
-      window.nxcore.screenCapture.perceptionSettings(),
-    ])
-      .then(([status, settings]) => {
-        setScreenCaptureStatus(status)
-        setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
-        setPerceptionSettings(settings)
-      })
-      .catch(() => undefined)
-  }, [])
-
-  const updateRealitySettings = (patch: Partial<RealitySettings>) => {
-    setRealitySettings((current) => {
-      const next = { ...current, ...patch }
-      saveRealitySettings(next)
-      return next
-    })
   }
 
   const updateCursorCompletionSettings = (patch: Partial<DocumentCursorCompletionSettings>) => {
@@ -387,79 +319,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
-    }
-  }
-
-  const syncPrivate = async () => {
-    if (!window.nxcore) return
-    setPending('sync')
-    try {
-      const [result, audio] = await Promise.all([
-        window.nxcore.transcriptions.syncPrivate(),
-        window.nxcore.privateAudio.list(0),
-      ])
-      setKeyring(result.status)
-      setSyncedCount(result.synced)
-      setSyncedAudioCount(audio.assets.filter((asset) => asset.status === 'uploaded').length)
-      const syncedAt = new Date().toISOString()
-      setLastSyncAt(syncedAt)
-      try {
-        window.localStorage.setItem('everroom:last-private-sync-at', syncedAt)
-      } catch {
-        // Storage may be unavailable in a restricted renderer context.
-      }
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const updateScreenCapture = async (enabled: boolean) => {
-    if (!window.nxcore) return
-    setScreenCaptureBusy(true)
-    try {
-      const status = enabled
-        ? await window.nxcore.screenCapture.start(screenCaptureInterval * 60_000)
-        : await window.nxcore.screenCapture.stop()
-      setScreenCaptureStatus(status)
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setScreenCaptureBusy(false)
-    }
-  }
-
-  const updateOnlineVlm = async (enabled: boolean) => {
-    if (!window.nxcore || !perceptionSettings) return
-    setPerceptionBusy(true)
-    try {
-      const settings = await window.nxcore.screenCapture.updateOnlineVlm(enabled, perceptionSettings.configVersion)
-      setPerceptionSettings(settings)
-    } catch {
-      // The preload request interceptor reports configuration and provider errors globally.
-    } finally {
-      setPerceptionBusy(false)
-    }
-  }
-
-  const captureWindowNow = async () => {
-    if (!window.nxcore) return
-    setScreenCaptureBusy(true)
-    try {
-      const result = await window.nxcore.screenCapture.captureCurrentWindow()
-      if (result.ok) {
-        setLastScreenshotPath(result.filePath)
-        setScreenCaptureError(null)
-      } else {
-        setScreenCaptureError(result.message)
-      }
-      const status = await window.nxcore.screenCapture.status()
-      setScreenCaptureStatus(status)
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setScreenCaptureBusy(false)
     }
   }
 
@@ -729,30 +588,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                 </div>
               ) : <small className="cloud-device-empty">{t('surface:settings.noConnectedDevicesFound')}</small>}
             </div>
-
-            <div className="cloud-keyring" aria-label={t('surface:settings.cloudSync')}>
-              <div className="cloud-keyring-main">
-                <div className="cloud-keyring-heading">
-                  <span><ShieldCheck aria-hidden="true" /></span>
-                  <div>
-                    <strong>{t('surface:settings.cloudSync')}</strong>
-                  </div>
-                </div>
-                {syncedCount !== null ? <small className="cloud-keyring-result">{t('surface:settings.syncedCountTranscriptsAndFoundAudiocountAudioClips', { count: syncedCount, audioCount: syncedAudioCount ?? 0 })}</small> : null}
-              </div>
-              <div className="cloud-keyring-actions">
-                <button
-                  className="secondary-button cloud-keyring-sync"
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void syncPrivate()}
-                >
-                  {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                  {t('surface:settings.syncDeviceData')}
-                </button>
-                <small className="cloud-keyring-last-sync">{formatSyncTime(lastSyncAt, locale, t)}</small>
-              </div>
-            </div>
           </div>
         ) : (
           <div className="cloud-login-content">
@@ -900,133 +735,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
         <UsageAndBudgetSettingsSection />
       </div>
-
-      <section id="settings-reality" className="reality-settings-section settings-anchor-section" aria-labelledby="reality-settings-title">
-        <header>
-          <span><AudioLines aria-hidden="true" /></span>
-          <div>
-            <h2 id="reality-settings-title">{t('surface:settings.realityPerception')}</h2>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.transcriptionService')}</strong></div>
-          <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionService')}>
-            {([['auto', 'surface:settings.automatic'], ['cloud', 'surface:settings.saas'], ['local', 'surface:settings.local']] as const).map(([value, label]) => (
-              <button key={value} type="button" data-active={String(realitySettings.mode === value)} disabled={value === 'cloud' && !account?.authenticated} onClick={() => updateRealitySettings({ mode: value })}>{t(label)}</button>
-            ))}
-          </div>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.recordingSource')}</strong></div>
-          <div className="segmented-control reality-source-setting" aria-label={t('surface:settings.realityPerceptionRecordingSource')}>
-            <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />{t('surface:settings.microphone')}</button>
-            <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />{t('surface:settings.computerAudio')}</button>
-          </div>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.transcriptionLanguages')}</strong></div>
-          {/* 多选：用带勾选框的独立芯片表达，不用分段控件（那是单选语义）。 */}
-          <div className="language-toggles" role="group" aria-label={t('surface:settings.realityPerceptionTranscriptionLanguages')}>
-            {([['zh', 'surface:settings.chinese'], ['en', 'surface:settings.english']] as const).map(([value, label]) => {
-              const active = realitySettings.languages.includes(value)
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  role="checkbox"
-                  aria-checked={active}
-                  className="language-toggle"
-                  data-active={String(active)}
-                  onClick={() => updateRealitySettings({
-                    languages: active && realitySettings.languages.length > 1
-                      ? realitySettings.languages.filter((item) => item !== value)
-                      : active
-                        ? realitySettings.languages
-                        : [...realitySettings.languages, value],
-                  })}
-                >
-                  <span className="language-toggle-box" aria-hidden="true">
-                    {active ? <Check aria-hidden="true" /> : null}
-                  </span>
-                  {t(label)}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      </section>
-
-      <ScreenMemorySettingsSection />
-
-      <section id="settings-capture" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-capture-settings-title">
-        <header>
-          <span><Camera aria-hidden="true" /></span>
-          <div>
-            <h2 id="screen-capture-settings-title">{t('surface:settings.windowScreenshots')}</h2>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.automaticScreenshots')}</strong></div>
-          <button
-            className="settings-toggle"
-            type="button"
-            role="switch"
-            aria-checked={Boolean(screenCaptureStatus?.enabled)}
-            disabled={screenCaptureBusy || screenCaptureStatus === null}
-            data-active={String(Boolean(screenCaptureStatus?.enabled))}
-            onClick={() => void updateScreenCapture(!screenCaptureStatus?.enabled)}
-          >
-            <span aria-hidden="true" />
-            {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
-          </button>
-        </div>
-        <ScreenRecordingPermissionCard permission={screenCaptureStatus?.permission} />
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.visualUnderstanding')}</strong></div>
-          <button
-            className="settings-toggle"
-            type="button"
-            role="switch"
-            aria-label={t('surface:settings.visualUnderstanding')}
-            aria-checked={Boolean(perceptionSettings?.onlineVlmEnabled)}
-            disabled={perceptionBusy || perceptionSettings === null}
-            data-active={String(Boolean(perceptionSettings?.onlineVlmEnabled))}
-            onClick={() => void updateOnlineVlm(!perceptionSettings?.onlineVlmEnabled)}
-          >
-            <span aria-hidden="true" />
-            {t(perceptionSettings?.onlineVlmEnabled ? 'surface:settings.on' : 'surface:settings.off')}
-          </button>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.screenshotInterval')}</strong></div>
-          <select
-            value={screenCaptureInterval}
-            disabled={screenCaptureBusy || screenCaptureStatus === null}
-            onChange={(event) => {
-              const minutes = Number(event.target.value)
-              setScreenCaptureInterval(minutes)
-              if (window.nxcore) {
-                void window.nxcore.screenCapture.updateInterval(minutes * 60_000)
-                  .then(setScreenCaptureStatus)
-                  .catch(() => undefined)
-              }
-            }}
-          >
-            {[1, 5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{t('surface:settings.minutesMinutes', { minutes })}</option>)}
-          </select>
-        </div>
-        <div className="reality-setting-row">
-          <div>
-            <strong>{t('surface:settings.captureNow')}</strong>
-            {lastScreenshotPath ? <small>{lastScreenshotPath}</small> : null}
-            {screenCaptureError ? <small className="screen-capture-error">{screenCaptureError}</small> : null}
-          </div>
-          <button className="secondary-button" type="button" disabled={screenCaptureBusy} onClick={() => void captureWindowNow()}>
-            {screenCaptureBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Camera aria-hidden="true" />}
-            {t('surface:settings.captureCurrentWindow')}
-          </button>
-        </div>
-      </section>
 
         </main>
       </div>

@@ -5,7 +5,6 @@ import type { RuntimeConfigSnapshot } from '../../../../shared/sources'
 import {
   buildManualEntryPayload,
   configTestErrorMessage,
-  embeddingFieldsFromSnapshot,
   isRuntimeConfigReady,
   manualConfigFieldError,
   primaryFieldsFromSnapshot,
@@ -31,13 +30,6 @@ const primary = (model: string, baseUrl: string, apiKey: string): ManualAiConfig
   model,
   baseUrl,
   apiKey,
-})
-
-const emptyEmbedding = (): ManualAiConfigFields => ({
-  provider: 'openai-compatible',
-  model: '',
-  baseUrl: '',
-  apiKey: '',
 })
 
 describe('runtime config gate state', () => {
@@ -77,14 +69,13 @@ describe('runtime config gate state', () => {
         baseUrl: 'https://api.example.com/v1',
         apiKey: 'sk-new',
       },
-      embedding: emptyEmbedding(),
     }) as {
       schemaVersion: number
       asr: unknown
       primary: Record<string, string>
-      knowledge: Record<string, unknown> | undefined
     }
     expect(next.schemaVersion).toBe(1)
+    // 未管理的键原样保留（已删槽位由 gateway 保存时剥离，渲染层不碰）。
     expect(next.asr).toEqual({ provider: 'aliyun' })
     expect(next.primary).toEqual({
       provider: 'openai-compatible',
@@ -92,60 +83,6 @@ describe('runtime config gate state', () => {
       baseUrl: 'https://api.example.com/v1',
       apiKey: 'sk-new',
     })
-    // embedding 留空 = 回落官方：payload 不带 knowledge.embedding。
-    expect(next.knowledge).toBeUndefined()
-  })
-
-  it('seeds embedding fields from the saved user knowledge.embedding, keeping masked secrets blank', () => {
-    const current = snapshot({
-      knowledge: {
-        enabled: 'true',
-        embedding: { provider: 'qwen', model: 'text-embedding-v4', baseUrl: 'https://api.example.com/v1', apiKey: '********' },
-      },
-    })
-    expect(embeddingFieldsFromSnapshot(current)).toEqual({
-      provider: 'qwen',
-      model: 'text-embedding-v4',
-      baseUrl: 'https://api.example.com/v1',
-      apiKey: '',
-    })
-  })
-
-  it('builds a user payload with embedding merged into an existing knowledge section', () => {
-    const current = snapshot({
-      knowledge: { enabled: 'true', serviceId: 'everroom', embedding: { provider: 'old', model: 'old-vec', baseUrl: 'old', apiKey: 'old-key' } },
-    })
-    const next = buildManualEntryPayload(current, {
-      primary: primary('new', 'https://api.example.com/v1', 'sk-new'),
-      embedding: {
-        provider: 'qwen',
-        model: 'text-embedding-v4',
-        baseUrl: 'https://dashscope.example.com/v1',
-        apiKey: 'sk-embed',
-      },
-    }) as { knowledge: Record<string, unknown> }
-    // knowledge 其余键保留,embedding 整体替换。
-    expect(next.knowledge).toEqual({
-      enabled: 'true',
-      serviceId: 'everroom',
-      embedding: {
-        provider: 'qwen',
-        model: 'text-embedding-v4',
-        baseUrl: 'https://dashscope.example.com/v1',
-        apiKey: 'sk-embed',
-      },
-    })
-  })
-
-  it('clearing embedding falls back to official (key removed from payload)', () => {
-    const current = snapshot({
-      knowledge: { embedding: { provider: 'qwen', model: 'v4', baseUrl: 'https://old', apiKey: 'old-key' } },
-    })
-    const next = buildManualEntryPayload(current, {
-      primary: primary('m', 'https://api.example.com/v1', 'sk'),
-      embedding: emptyEmbedding(),
-    }) as { knowledge?: { embedding?: Record<string, string> } }
-    expect(next.knowledge?.embedding).toBeUndefined()
   })
 
   it('maps connection test failures to readable messages', () => {
@@ -160,25 +97,13 @@ describe('runtime config gate state', () => {
     expect(configTestErrorMessage(undefined, t)).toBe('surface:configGate.testFailedGeneric')
   })
 
-  it('validates primary fields as before and allows an entirely empty embedding', () => {
+  it('requires the primary model, base URL and API key', () => {
     const t = (key: string) => key
-    expect(manualConfigFieldError(primary('', 'https://api.example.com/v1', 'sk'), emptyEmbedding(), t))
+    expect(manualConfigFieldError(primary('', 'https://api.example.com/v1', 'sk'), t))
       .toBe('surface:configGate.fieldRequired')
-    expect(manualConfigFieldError(primary('m', 'https://api.example.com/v1', 'sk'), emptyEmbedding(), t)).toBeNull()
-  })
-
-  it('rejects a partially filled embedding', () => {
-    const t = (key: string) => key
-    expect(manualConfigFieldError(
-      primary('m', 'https://api.example.com/v1', 'sk'),
-      { ...emptyEmbedding(), model: 'text-embedding-v4' },
-      t,
-    )).toBe('surface:configGate.embeddingIncomplete')
-    expect(manualConfigFieldError(
-      primary('m', 'https://api.example.com/v1', 'sk'),
-      { provider: 'qwen', model: 'text-embedding-v4', baseUrl: 'https://api.example.com/v1', apiKey: 'sk-embed' },
-      t,
-    )).toBeNull()
+    expect(manualConfigFieldError(primary('m', 'https://api.example.com/v1', ''), t))
+      .toBe('surface:configGate.fieldRequired')
+    expect(manualConfigFieldError(primary('m', 'https://api.example.com/v1', 'sk'), t)).toBeNull()
   })
 })
 

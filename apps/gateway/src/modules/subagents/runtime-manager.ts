@@ -322,7 +322,7 @@ export class SubagentRuntimeManager {
   }
 
   private buildPiConfig(base: PiRuntimeConfig, revision: LoadedSubagentRevision): PiRuntimeConfig {
-    const { memory: _memory, knowledge: _knowledge, mcp: _mcp, ...model } = base;
+    const { mcp: _mcp, ...model } = base;
     const overrides = revision.policy.model;
     const contextWindow = overrides?.contextWindow ?? model.contextWindow;
     // 子 Agent 上下文预算（2026-10 实测：planner 单条 room_context_get 171KB、

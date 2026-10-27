@@ -115,6 +115,6 @@
 - 打开预览立刻看到 N 页骨架，而不是"1 页慢慢长出来"——占位页显式写着"待填充"，落成后整页替换。
 - 某页失败只留它自己的占位页，**不连累后页**（旧追加语义会把这页的内容顶掉，导致整册少一页、页码 05 缺失——见 `docs/slides-nexwing-reference-gap.zh-CN.md` §101）。
 - 部分失败重试：槽位稳定，重试只补未落定的页（`failedPages`），已落页不重排。
-- 旧的 agent 驱动工具链（`context_room_slides_create` / `set_page`，1 页骨架 + 追加）没有改动，仍是另一条路径。
+- 旧的 agent 驱动工具链（`slides_create` / `set_page`，1 页骨架 + 追加）没有改动，仍是另一条路径。
 
 验收：`apps/gateway` `tsc --noEmit` 通过；`tests/slides-layout-tail.test.ts` 18 例全绿（新增"后页先就绪就先落"用例）；`tests/subagent-tools.test.ts` 50 例、desktop `SlidesProgressCard.test.tsx` 28 例全绿。

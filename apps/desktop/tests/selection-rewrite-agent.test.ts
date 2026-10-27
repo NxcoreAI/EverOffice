@@ -5,12 +5,12 @@ import {
   sanitizeSelectionRewriteOutput,
   streamSelectionRewrite,
   type SelectionRewriteAgentApi,
-} from '../src/renderer/src/components/context-room/ported/components/detail-editor/selectionRewriteAgent'
+} from '@/components/office-editor/editor/selectionRewriteAgent'
 
 function invocation(overrides: Partial<SubagentInvocation>): SubagentInvocation {
   return {
     id: 'invocation-1',
-    agentDefinitionId: 'context-room',
+    agentDefinitionId: 'doc-writer',
     agentRevisionId: 'revision-1',
     source: 'internal_workflow',
     parentSessionId: null,
@@ -61,7 +61,7 @@ describe('selection rewrite Agent dispatch', () => {
     const received: string[] = []
 
     const result = await streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',
@@ -76,7 +76,7 @@ describe('selection rewrite Agent dispatch', () => {
     expect(result).toEqual({ replacementText: '改写后的内容', invocationId: 'invocation-1' })
     expect(received).toEqual(['改写后的内容'])
     expect(api.dispatchSelectionRewrite).toHaveBeenCalledWith(expect.objectContaining({
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',
@@ -103,7 +103,7 @@ describe('selection rewrite Agent dispatch', () => {
     }
 
     const result = await streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',
@@ -124,7 +124,7 @@ describe('selection rewrite Agent dispatch', () => {
     }
 
     await expect(streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '代码',
       selectedText: 'if (ok) {\n  return value\n}',
       instruction: '优化',
@@ -157,7 +157,7 @@ describe('selection rewrite Agent dispatch', () => {
     }
 
     await expect(streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',
@@ -184,7 +184,7 @@ describe('selection rewrite Agent dispatch', () => {
     }
 
     await expect(streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',
@@ -207,7 +207,7 @@ describe('selection rewrite Agent dispatch', () => {
     }
 
     await expect(streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',
@@ -230,7 +230,7 @@ describe('selection rewrite Agent dispatch', () => {
     }
 
     await expect(streamSelectionRewrite(api, {
-      roomId: 'room-1',
+      documentId: 'doc-1',
       documentName: '计划',
       selectedText: '原文',
       instruction: '重写',

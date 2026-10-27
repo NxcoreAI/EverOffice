@@ -9,7 +9,7 @@ import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabil
 
 /**
  * 文档审阅评论（AI 审阅）：无状态 mutation 插件，向主 agent 暴露
- * context_room_document_comment_add。锚定约束在服务端强校验——
+ * document_comment_add。锚定约束在服务端强校验——
  * quotedText 必须是正文纯文本的逐字摘录（面板锚定只做空白归一化，
  * Markdown 标记永远匹配不上），blockId 必须存在；校验失败返回可重试
  * 错误引导 agent 重新读取文档摘录。
@@ -37,9 +37,9 @@ export function commentPlugin(
   publishDocumentEvent?: (event: DocumentEvent) => void,
 ): DocumentCapabilityPlugin {
   const commentAdd: DocumentCapabilityTool = {
-    name: "context_room_document_comment_add",
+    name: "document_comment_add",
     title: "添加文档审阅评论",
-    description: "对当前 Room 文档添加一条审阅评论。必须先在当前 run 调用 context_room_document_read 读取全文；"
+    description: "对当前文档添加一条审阅评论。必须先在当前 run 调用 document_read 读取全文；"
       + "每条评论聚焦一处具体问题：body 用一两句话说明问题与改进建议；"
       + "quotedText 必须从正文逐字摘录一段纯文本原文（不带 Markdown 标记，建议 20-80 字）用于正文锚定；"
       + "能确定所在块时同时传 blockId（照抄 document_read 返回的 blocks）。一次审阅最多添加 5 条评论。",
@@ -57,11 +57,9 @@ export function commentPlugin(
     },
     annotations: annotations(false),
     execute: (args, context) => {
-      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
       const documentId = stringArg(args, "documentId");
       const document = backend.get(documentId);
       if (!document) throw new DocumentServiceError("NOT_FOUND", "Document not found", 404);
-      if (document.roomId !== context.roomId) throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
       if (document.deletedAt) throw new DocumentServiceError("DOCUMENT_TRASHED", "Document is in trash", 409);
 
       const blockId = typeof args.blockId === "string" && args.blockId.trim() ? args.blockId.trim() : null;
@@ -70,7 +68,7 @@ export function commentPlugin(
       if (blockId && !findBlockPath(document.contentJson, blockId)) {
         throw new DocumentServiceError("BLOCK_NOT_FOUND", "blockId 不在当前文档中，请重新读取文档获取有效块 id", 409, {
           retryable: true,
-          nextAction: "context_room_document_read",
+          nextAction: "document_read",
         });
       }
       // 锚定校验：面板按去空白纯文本匹配 quotedText；带 Markdown 标记或改写的引用必然落"未定位评论"。
@@ -80,7 +78,7 @@ export function commentPlugin(
           throw new DocumentServiceError("COMMENT_QUOTE_NOT_FOUND",
             "quotedText 必须从正文逐字摘录纯文本（不要带 Markdown 标记、不要改写），且必须出现在当前文档中", 409, {
               retryable: true,
-              nextAction: "context_room_document_read",
+              nextAction: "document_read",
             });
         }
       }
@@ -136,15 +134,15 @@ export function commentPlugin(
   };
 
   return {
-    manifest: manifest("document.comment", "mutation", null, null, true, true),
+    manifest: manifest("document.comment", "mutation", null, null, true),
     promptGuidelines: [
-      "用户要求审阅、评审、给文档提意见或找问题时：先调用 context_room_document_read 读取当前权威版本，"
+      "用户要求审阅、评审、给文档提意见或找问题时：先调用 document_read 读取当前权威版本，"
       + "再挑出 3-5 处最有价值的具体改进点（结构缺口、论证漏洞、缺少反例或数据支撑、事实性风险、表达歧义），"
-      + "对每一处调用 context_room_document_comment_add 添加一条评论。"
+      + "对每一处调用 document_comment_add 添加一条评论。"
       + "quotedText 必须从正文逐字摘录纯文本原文（不带 Markdown 标记）用于锚定，能确定块时同时传 blockId；"
       + "body 简明指出问题并给出可执行的改进建议，每条评论只讲一处。"
-      + "审阅要结合已召回的 Room 记忆与用户背景：优先贴合用户目标、偏好与项目语境的建议，"
-      + "发现正文与记忆中的新事实或决定冲突时作为重点问题指出。"
+      + "审阅要结合文档上下文与用户背景：优先贴合用户目标、偏好与项目语境的建议，"
+      + "发现正文内部相互矛盾的新事实或决定时作为重点问题指出。"
       + "单次审阅不超过 5 条，优先质量而非数量。全部添加完成后，在回复中用简短列表汇总审阅结论，不要把评论内容重复粘贴到回复正文。",
     ],
     tools: [commentAdd],

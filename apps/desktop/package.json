@@ -5,8 +5,8 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/prepare-vision-ocr.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
-    "build": "node scripts/prepare-vision-ocr.mjs && node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
+    "build": "node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
@@ -14,16 +14,9 @@
     "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
     "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
     "prepare:ntn": "node scripts/prepare-ntn.mjs",
-    "prepare:acp-adapters": "node scripts/prepare-acp-adapters.mjs",
-    "prepare:vision-ocr": "node scripts/prepare-vision-ocr.mjs",
-    "debug:agents": "vite --config vite.agent-debug.config.mts"
+    "prepare:acp-adapters": "node scripts/prepare-acp-adapters.mjs"
   },
   "dependencies": {
-    "@antv/g6": "4.8.24",
-    "@codemirror/commands": "^6.11.0",
-    "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/state": "^6.7.1",
-    "@codemirror/view": "^6.43.9",
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/connector-contract": "workspace:*",
     "@nxcore/connectors-module": "workspace:*",
@@ -35,8 +28,6 @@
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-popover": "^1.1.23",
     "@sentry/electron": "^7.16.0",
-    "@tencentdb-agent-memory/knowledge-service": "https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#91c967a&path:MemoryKnowledge",
-    "@tencentdb-agent-memory/memory-tencentdb-v2": "https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e&path:MemoryCore",
     "@tiptap/extension-document": "^3.30.1",
     "@tiptap/extension-drag-handle-react": "^3.30.1",
     "@tiptap/extension-image": "^3.30.1",
@@ -52,20 +43,13 @@
     "@tiptap/starter-kit": "^3.30.1",
     "axios": "^1.19.0",
     "better-sqlite3": "^13.0.3",
-    "d3-force": "^3.0.0",
     "docx": "^9.7.1",
-    "echarts": "^6.0.0",
     "electron-updater": "^6.8.9",
-    "gsap": "3.15.0",
     "i18next": "^26.3.6",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
-    "mermaid": "^11.12.0",
     "npm": "^11.19.1",
     "ntn": "0.23.1",
-    "pixi-viewport": "5.0.2",
-    "pixi.js": "7.4.3",
-    "prosemirror-changeset": "^2.4.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -82,7 +66,6 @@
     "@oomol-lab/open-connector": "git+https://github.com/NxcoreAI/open-connector.git#806663488c6e8df92755d473cd866a1d80f2222f",
     "@sentry/vite-plugin": "5.4.0",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/d3-force": "^3.0.10",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
@@ -111,10 +94,7 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/@esbuild/**/*",
-      "node_modules/sqlite-vec-darwin-arm64/**/*",
-      "node_modules/sqlite-vec-darwin-x64/**/*",
-      "node_modules/sqlite-vec-windows-x64/**/*"
+      "node_modules/@esbuild/**/*"
     ],
     "directories": {
       "output": "../../release"
@@ -126,9 +106,7 @@
       "!**/{test,spec}.*",
       "!**/*.{test,spec}.*",
       "!**/*.{map,ts,tsx,mts,cts}",
-      "!node_modules/npm/**",
-      "node_modules/@tencentdb-agent-memory/memory-tencentdb-v2/src/**/*",
-      "node_modules/@tencentdb-agent-memory/knowledge-service/src/**/*"
+      "!node_modules/npm/**"
     ],
     "extraResources": [
       {
@@ -227,13 +205,6 @@
           "!**/*.{map,ts,tsx,mts,cts}",
           "!**/*.{test,spec}.*"
         ]
-      },
-      {
-        "from": "build/vision-ocr",
-        "to": "vision-ocr",
-        "filter": [
-          "**/*"
-        ]
       }
     ],
     "mac": {
@@ -251,7 +222,48 @@
         "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
         "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
         "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
-        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app."
+        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Word Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "docx",
+              "doc"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.wordprocessingml.document",
+              "com.microsoft.word.doc"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Excel Workbook",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "xlsx",
+              "xls"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.spreadsheetml.sheet",
+              "com.microsoft.excel.xls"
+            ]
+          },
+          {
+            "CFBundleTypeName": "PowerPoint Presentation",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "pptx",
+              "ppt"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.presentationml.presentation",
+              "com.microsoft.powerpoint.ppt"
+            ]
+          }
+        ]
       },
       "target": [
         "dmg",
@@ -291,6 +303,36 @@
             "LICENSE",
             "prebuilds/win32-x64.node"
           ]
+        }
+      ],
+      "fileAssociations": [
+        {
+          "ext": [
+            "docx",
+            "doc"
+          ],
+          "name": "Word Document",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "xlsx",
+            "xls",
+            "xlsm"
+          ],
+          "name": "Excel Workbook",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "pptx",
+            "ppt"
+          ],
+          "name": "PowerPoint Presentation",
+          "role": "Editor",
+          "rank": "Alternate"
         }
       ]
     },
