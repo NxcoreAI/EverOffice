@@ -66,7 +66,8 @@ export class ThesisFormatGatewayBridge {
     const response = await this.request(
       `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/${upload ? 'parse-upload' : 'parse'}`,
       init,
-      10 * 60_000,
+      // 必须大于网关侧代理超时（thesis-formatter 15 分钟）：客户端先断就等于白跑。
+      20 * 60_000,
     )
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { error?: string }
@@ -91,7 +92,8 @@ export class ThesisFormatGatewayBridge {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileEntryId, cardId }),
       },
-      10 * 60_000,
+      // 与 parse 同理：装订代理超时 15 分钟，客户端留足余量。
+      20 * 60_000,
     )
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { error?: string }
