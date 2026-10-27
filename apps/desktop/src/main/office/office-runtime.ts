@@ -84,6 +84,8 @@ export interface ThesisBindingSpecPayload {
   appendixBlocks: { start: number; end: number } | null
   acknowledgementParagraphs: string[]
   achievements: string[]
+  /** v2 未归类内容区间：渲染为正文末尾独立小节并高亮标记（不丢内容）。 */
+  unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>
 }
 export interface GenOfficeSheetsRuntime {
   configureSheetsRuntime(config: { preloadPath: string; rendererFile: string; sidecarPath: string }): void

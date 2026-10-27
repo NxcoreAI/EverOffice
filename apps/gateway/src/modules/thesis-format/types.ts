@@ -249,6 +249,8 @@ export interface ThesisBindingSpec {
   appendixBlocks: { start: number; end: number } | null;
   /** 致谢段落；空数组 = 源文档无致谢（仅排标题页）。 */
   acknowledgementParagraphs: string[];
+  /** v2 未归类内容区间（渲染为正文末尾独立小节并高亮标记，不丢内容）。 */
+  unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>;
   /** 攻读学位期间研究成果；空数组 = 无。 */
   achievements: string[];
 }

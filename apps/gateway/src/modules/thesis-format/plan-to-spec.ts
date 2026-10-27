@@ -143,7 +143,13 @@ export function planToBindingSpec(input: {
     }
   }
 
-  // 未匹配块（R5）：目前渲染器无法标记，先记进 notes，M4b 落到「未归类内容」章节
+  // 未匹配块（R5）：渲染成正文末尾的「未归类内容」小节（红色高亮 + 说明），
+  // 绝不丢弃；同时记进 notes 供 UI 报告。
+  const unmatchedBlocks: NonNullable<ThesisBindingSpec["unmatchedBlocks"]> = plan.unmatched.map((entry) => ({
+    start: entry.blockRange[0],
+    end: entry.blockRange[1],
+    label: entry.note,
+  }));
   for (const entry of plan.unmatched) {
     notes.push(`未匹配块 [${entry.blockRange[0]},${entry.blockRange[1]})：${entry.note}`);
   }
@@ -163,6 +169,7 @@ export function planToBindingSpec(input: {
     acknowledgementParagraphs,
     // 研究成果（P-05「研究成果」）当前无自动来源：保持为空而不是编造
     achievements: [],
+    ...(unmatchedBlocks.length > 0 ? { unmatchedBlocks } : {}),
   };
   return { spec, notes };
 }

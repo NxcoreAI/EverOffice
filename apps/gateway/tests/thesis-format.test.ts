@@ -748,6 +748,15 @@ describe("M4a 映射 → 装订规格（planToBindingSpec）", () => {
     expect(spec.acknowledgementParagraphs).toEqual(["感谢导师"]);
   });
 
+  it("未匹配块进 spec.unmatchedBlocks（渲染器据此出高亮小节）", () => {
+    const content = richContent();
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务"]), content });
+    const { spec } = planToBindingSpec({ plan, content, titleHint: "论文" });
+    expect(spec.unmatchedBlocks?.length).toBeGreaterThan(0);
+    expect(spec.unmatchedBlocks![0]).toMatchObject({ start: 0, end: 1 });
+    expect(spec.unmatchedBlocks![0]!.label).toContain("首个章节之前");
+  });
+
   it("未匹配块进报告（当前渲染器不能标记，但不静默）", () => {
     const content = richContent();
     const plan = buildMappingPlan({ template: templateProfile(["一、项目任务"]), content });
