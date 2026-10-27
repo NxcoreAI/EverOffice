@@ -8,11 +8,12 @@ import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts
 import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
 import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import { buildContentProfile, flattenChapters, type ContentProfile, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
-import { buildMappingPlan } from "../src/modules/thesis-format/mapping-plan.js";
+import { buildMappingPlan, sanitizeMappingDecisions } from "../src/modules/thesis-format/mapping-plan.js";
 import { planToBindingSpec } from "../src/modules/thesis-format/plan-to-spec.js";
 import type { TemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const logger = { info: () => undefined, warn: () => undefined };
@@ -735,8 +736,9 @@ describe("M4a 映射 → 装订规格（planToBindingSpec）", () => {
     for (let index = 1; index < ranges.length; index += 1) {
       expect(ranges[index]![0]!).toBeGreaterThanOrEqual(ranges[index - 1]![1]!);
     }
+    // v2：标题送干净文本（编号由渲染器按模板方案重算），避免"1.1 1.1 政策背景"重号
     expect(spec.chapters.map((chapter) => `${chapter.level}:${chapter.headingText}`)).toEqual([
-      "1:一、业务场景分析", "2:1.1 政策背景", "2:1.2 痛点", "1:二、需求梳理",
+      "1:业务场景分析", "2:政策背景", "2:痛点", "1:需求梳理",
     ]);
   });
 
@@ -762,5 +764,59 @@ describe("M4a 映射 → 装订规格（planToBindingSpec）", () => {
     const plan = buildMappingPlan({ template: templateProfile(["一、项目任务"]), content });
     const { notes } = planToBindingSpec({ plan, content, titleHint: "论文" });
     expect(notes.some((note) => note.includes("未匹配块"))).toBe(true);
+  });
+});
+
+describe("代理裁决接线（adjudicate_mapping）", () => {
+  const pending = [
+    { chapterTraceId: "b0", chapterText: "需求梳理", candidates: [{ slotId: "slot-2", score: 0.47 }] },
+  ];
+  const slots = [{ id: "slot-1" }, { id: "slot-2" }];
+
+  it("只接受问过的章节与真实存在的槽位 id", () => {
+    const decisions = sanitizeMappingDecisions([
+      { chapterTraceId: "b0", slotId: "slot-2", reason: "同属需求分析" },
+    ], pending, slots);
+    expect(decisions).toEqual([{ chapterTraceId: "b0", slotId: "slot-2", reason: "同属需求分析" }]);
+  });
+
+  it("模型编造的章节 id / 槽位 id 一律丢弃或降级为 null", () => {
+    const decisions = sanitizeMappingDecisions([
+      { chapterTraceId: "b99", slotId: "slot-2" },      // 没问过这个章节
+      { chapterTraceId: "b0", slotId: "slot-999" },      // 槽位不存在 → null
+    ], pending, slots);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ chapterTraceId: "b0", slotId: null });
+  });
+
+  it("重复章节只取第一条；非数组输入返回空", () => {
+    expect(sanitizeMappingDecisions([
+      { chapterTraceId: "b0", slotId: "slot-1" },
+      { chapterTraceId: "b0", slotId: "slot-2" },
+    ], pending, slots)).toHaveLength(1);
+    expect(sanitizeMappingDecisions(null, pending, slots)).toEqual([]);
+    expect(sanitizeMappingDecisions("nope", pending, slots)).toEqual([]);
+  });
+
+  it("reason 截断到 120 字", () => {
+    const [decision] = sanitizeMappingDecisions([
+      { chapterTraceId: "b0", slotId: "slot-1", reason: "x".repeat(500) },
+    ], pending, slots);
+    expect(decision!.reason!.length).toBe(120);
+  });
+
+  it("代理 schema 声明了 adjudicate_mapping 任务与决策字段", () => {
+    const input = JSON.parse(readFileSync(resolve(__dirname, "../../../agents/thesis-formatter/schemas/input.schema.json"), "utf8")) as {
+      properties: { task: { enum: string[] }; mappingSlots?: unknown; mappingCandidates?: unknown };
+    };
+    const output = JSON.parse(readFileSync(resolve(__dirname, "../../../agents/thesis-formatter/schemas/output.schema.json"), "utf8")) as {
+      properties: { task: { enum: string[] }; decisions?: { items: { properties: { slotId: { type: string[] } } } } };
+    };
+    expect(input.properties.task.enum).toContain("adjudicate_mapping");
+    expect(output.properties.task.enum).toContain("adjudicate_mapping");
+    expect(input.properties.mappingSlots).toBeDefined();
+    expect(input.properties.mappingCandidates).toBeDefined();
+    // slotId 允许 null（对不上就追加，不硬塞）
+    expect(output.properties.decisions!.items.properties.slotId.type).toEqual(["string", "null"]);
   });
 });

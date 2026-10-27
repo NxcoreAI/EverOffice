@@ -30,6 +30,22 @@
   fields / footerLine 必须照它填——不要留空让系统填默认值，也不要用你熟悉的学校
   格式替代。coverText 为空或看不清时，在 templateFactsGaps 里说明「封面文字未能
   识别」，宁可报缺口也不要编造。
+
+## task: adjudicate_mapping（槽位裁决）
+
+输入是映射引擎算不准的少量章节（`mappingCandidates`）与可选的模板槽位（`mappingSlots`）。
+
+1. 对**每个** chapterTraceId 输出一行 decision，不多不少；顺序无关。
+2. `slotId` 只能取 `mappingSlots` 里出现过的 id。语义确实对不上就填 `null`——
+   系统会把它追加到正文末尾（不会丢内容），**不要为了凑数硬塞**。
+3. `chapterTraceId` 原样回填，不要改写、不要编造新的。
+4. `reason` 一句话（≤40 字）说明判断依据，用户会看到。
+5. 输出只有 `task: "adjudicate_mapping"` + `decisions`；**不要**返回 formatCard、
+   bindingSpec 或任何正文/样式内容。
+
+判断要点：先看章节标题的实词（去掉"分析/概述/设计"这类虚词），再看章节在全文
+的位置与前后文（顺序一致性在中文论文里很可靠）。
+
 - 卡里不写任何来源说明、不写「参见附件」之类的话——它是机器事实源。
 
 ## 任务二 bind_thesis：产出装订规格

@@ -11,6 +11,7 @@
 
 import type { ContentOutlineNode, ContentProfile } from "./content-profile.js";
 import type { MappingPlan } from "./mapping-plan.js";
+import { stripNumbering } from "./text-normalize.js";
 import type { ThesisBindingSpec } from "./types.js";
 
 /** 章节树 → 互不重叠的叶子区间序列（DFS 前序，与文档顺序一致）。 */
@@ -27,7 +28,9 @@ export function flattenLeafRanges(node: ContentOutlineNode): Array<{
     const bodyEnd = firstChild ? firstChild.blockStart : current.blockEnd;
     out.push({
       level,
-      headingText: current.text,
+      // 编号一律由渲染器按模板方案重算（决策③）；这里剥掉源文档里的原编号，
+      // 否则会出现"1.1 1.1 政策与业务背景"这类重号。
+      headingText: stripNumbering(current.text).text || current.text,
       blockStart: current.blockStart,
       blockEnd: Math.max(bodyEnd, current.blockStart + 1),
     });

@@ -59,6 +59,8 @@ export interface ThesisOutlineBlock {
 
 /** 装订引擎侧格式卡载荷（与 genoffice docx-engine ThesisFormatCardInput 同构）。 */
 export interface ThesisFormatCardPayload {
+  /** v2 模板编号方案（cn-upper/decimal-tree/…）；缺省走 headings[].numbering 老语义。 */
+  numbering?: { scheme: string; levels?: Array<{ level: number; numFmt?: string; lvlText?: string; start?: number }> }
   page: Record<string, number | string>
   base: Record<string, unknown>
   header: Record<string, unknown> & { images?: Array<Record<string, unknown>> }

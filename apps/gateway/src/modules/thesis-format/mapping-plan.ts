@@ -351,3 +351,35 @@ function nearestSlotBefore(assignments: SlotAssignment[], blockIndex: number): s
   }
   return best?.slotId ?? null;
 }
+/**
+ * 裁决结果消毒：只接受引擎真的问过的章节，槽位 id 必须真实存在。
+ *
+ * 模型可能编造 traceId 或槽位 id（"看起来像"的字符串），这里一律丢弃——
+ * 编造的归属比没有归属更危险（会把内容塞进错误的槽位且无人察觉）。
+ */
+export function sanitizeMappingDecisions(
+  raw: unknown,
+  pending: MappingPlan["pendingForSemantic"],
+  slots: Array<{ id: string }>,
+): SemanticDecision[] {
+  if (!Array.isArray(raw)) return [];
+  const askedChapters = new Set(pending.map((entry) => entry.chapterTraceId));
+  const knownSlots = new Set(slots.map((slot) => slot.id));
+  const out: SemanticDecision[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as { chapterTraceId?: unknown; slotId?: unknown; reason?: unknown };
+    const chapterTraceId = typeof record.chapterTraceId === "string" ? record.chapterTraceId : "";
+    if (!askedChapters.has(chapterTraceId) || seen.has(chapterTraceId)) continue;
+    seen.add(chapterTraceId);
+    out.push({
+      chapterTraceId,
+      slotId: typeof record.slotId === "string" && knownSlots.has(record.slotId) ? record.slotId : null,
+      ...(typeof record.reason === "string" && record.reason.trim()
+        ? { reason: record.reason.trim().slice(0, 120) }
+        : {}),
+    });
+  }
+  return out;
+}

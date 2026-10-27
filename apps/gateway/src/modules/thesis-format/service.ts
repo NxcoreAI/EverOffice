@@ -16,7 +16,7 @@ import { buildTemplateFacts, normalizeMembersToDocx, unpackTemplateInput } from 
 import { validateThesisFormatCard } from "./validate.js";
 import { buildTemplateProfile } from "./template-profile.js";
 import { buildContentProfile } from "./content-profile.js";
-import { buildMappingPlan } from "./mapping-plan.js";
+import { buildMappingPlan, sanitizeMappingDecisions, type SemanticDecision } from "./mapping-plan.js";
 import { planToBindingSpec } from "./plan-to-spec.js";
 import type { ThesisBindingSpec, ThesisFormatCard, ThesisHfImage, ThesisTemplateFacts } from "./types.js";
 
@@ -143,7 +143,7 @@ export class ThesisFormatService {
     if (described.outline.length === 0) throw new Error("thesis_source_outline_empty");
 
     const titleHint = entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300);
-    const v2 = this.mapWithProfile(card, described.outline, titleHint);
+    const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint);
     let spec: ThesisBindingSpec;
     let report: Record<string, unknown> | undefined;
     if (v2) {
@@ -162,9 +162,14 @@ export class ThesisFormatService {
       spec = this.validateBindingSpec(structured?.bindingSpec, described.blockCount);
     }
 
+    // 渲染卡片：带上 v2 模板编号方案（渲染器据此重算标题编号）；老卡片没有剖面，
+    // 渲染器自动回落 headings[].numbering 的老语义。
+    const renderCard = card.profile
+      ? { ...card, numbering: card.profile.fixed.numbering }
+      : card;
     const built = await bridge.reformatThesisDocx({
       docxBase64: bytes.toString("base64"),
-      formatCard: card,
+      formatCard: renderCard,
       bindingSpec: spec,
       roomId,
       sourceFileName: entry.originalName,
@@ -175,14 +180,49 @@ export class ThesisFormatService {
   }
 
   /**
+   * 低置信章节的代理裁决（方案 §6.9）。
+   *
+   * 只把「引擎算不准的那几行」发给模型：槽位清单 + 待定章节（含候选槽位 id），
+   * 模型返回 {chapterTraceId, slotId|null, reason}。模型**不产出正文/样式**。
+   *
+   * 失败一律回落确定性结果（顺序对齐 + 追加），不阻断排版——裁决是锦上添花，
+   * 不是必经路径。
+   */
+  private async adjudicateMapping(
+    roomId: string,
+    profile: { slots: Array<{ id: string; title: string }> },
+    plan: ReturnType<typeof buildMappingPlan>,
+  ): Promise<SemanticDecision[]> {
+    void roomId;
+    const pending = plan.pendingForSemantic.slice(0, 20);
+    if (pending.length === 0) return [];
+    try {
+      const structured = await this.dispatchAgent(`裁决论文章节归属（${pending.length} 个待定）`, {
+        task: "adjudicate_mapping" as const,
+        mappingSlots: profile.slots.map((slot) => ({ id: slot.id, title: slot.title })),
+        mappingCandidates: pending.map((entry) => ({
+          chapterTraceId: entry.chapterTraceId,
+          chapterText: entry.chapterText,
+          candidateSlotIds: entry.candidates.map((candidate) => candidate.slotId),
+        })),
+      });
+      return sanitizeMappingDecisions(structured?.decisions, pending, profile.slots);
+    } catch (error) {
+      console.warn("[thesis] 归属裁决失败，回落顺序对齐：", error instanceof Error ? error.message : String(error));
+      return [];
+    }
+  }
+
+  /**
    * v2 映射：卡片带模板剖面时，用「内容剖面 → 映射计划 → 装订规格」确定性产出，
    * 不再派代理猜区间。返回 null = 老卡片，调用方回落原路径。
    */
-  private mapWithProfile(
+  private async mapWithProfile(
+    roomId: string,
     card: ThesisFormatCard,
     outline: Array<{ index: number; kind: string; level?: number; text: string }>,
     titleHint: string,
-  ): { spec: ThesisBindingSpec; report: Record<string, unknown> } | null {
+  ): Promise<{ spec: ThesisBindingSpec; report: Record<string, unknown> } | null> {
     const profile = card.profile;
     if (!profile || profile.slots.length === 0) return null;
     const knownKinds = new Set(["heading", "paragraph", "table", "image", "list"]);
@@ -193,7 +233,11 @@ export class ThesisFormatService {
       text: block.text,
     }));
     const content = buildContentProfile(blocks);
-    const plan = buildMappingPlan({ template: profile, content });
+    let plan = buildMappingPlan({ template: profile, content });
+    // 低置信区间派一次代理裁决；失败/为空都回落确定性结果（不阻断排版）
+    const decisions = await this.adjudicateMapping(roomId, profile, plan);
+    const adjudicated = decisions.length > 0 ? buildMappingPlan({ template: profile, content, semantic: decisions }) : plan;
+    if (decisions.length > 0) plan = adjudicated;
     const { spec, notes } = planToBindingSpec({ plan, content, titleHint });
     return {
       spec,
@@ -210,11 +254,13 @@ export class ThesisFormatService {
           notes: entry.notes,
         })),
         unmatched: plan.unmatched,
-        // 0.40–0.62 区间的归属靠顺序推断，UI 提醒用户核对（不派代理，保持确定性）
+        // 0.40–0.62 区间：优先由代理裁决（adjudicated=true），裁决不到的仍靠顺序推断，
+        // UI 据此提醒用户核对。
         needsReview: plan.pendingForSemantic.map((entry) => ({
           chapterText: entry.chapterText,
           candidates: entry.candidates.map((candidate) => candidate.slotId),
         })),
+        adjudicated: decisions.length, 
         gaps: [...profile.gaps, ...content.gaps],
         notes,
       },
