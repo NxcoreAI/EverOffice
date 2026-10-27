@@ -516,8 +516,9 @@ export class FilesService {
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
   }
 
-  listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
-    const rows = this.db.select({
+  /** 目录查询的公共投影：listCatalog（分页）与 catalogEntry（按 id 直查）共用。 */
+  private catalogQuery() {
+    return this.db.select({
       entry: fileEntries,
       version: fileVersions,
       blob: fileBlobs,
@@ -529,10 +530,19 @@ export class FilesService {
       .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
       .leftJoin(fileClusterMemberships, eq(fileEntries.id, fileClusterMemberships.fileEntryId))
       .leftJoin(fileClusters, eq(fileClusterMemberships.clusterId, fileClusters.id))
-      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
-      .where(isNull(fileEntries.deletedAt))
-      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
-    const items = rows.map(({ entry, version, blob, cluster, classification }) => ({
+      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId));
+  }
+
+  /** 行 → CatalogFileDto（两个入口必须完全同构，否则按 id 直查的字段会与列表不一致）。 */
+  private toCatalogFileDto(row: {
+    entry: typeof fileEntries.$inferSelect;
+    version: typeof fileVersions.$inferSelect | null;
+    blob: typeof fileBlobs.$inferSelect | null;
+    cluster: typeof fileClusters.$inferSelect | null;
+    classification: typeof fileClassifications.$inferSelect | null;
+  }): CatalogFileDto {
+    const { entry, version, blob, cluster, classification } = row;
+    return ({
       id: entry.id,
       originalName: entry.originalName,
       displayName: entry.displayName,
@@ -552,7 +562,14 @@ export class FilesService {
       currentVersionId: version?.id ?? null,
       parsed: Boolean(version?.parsedId),
       updatedAt: entry.updatedAt.toISOString(),
-    } satisfies CatalogFileDto));
+    } satisfies CatalogFileDto);
+  }
+
+  listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
+    const rows = this.catalogQuery()
+      .where(isNull(fileEntries.deletedAt))
+      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const items = rows.map((row) => this.toCatalogFileDto(row));
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
       .where(isNull(fileEntries.deletedAt)).all().length;
     return { items, total };
@@ -569,8 +586,19 @@ export class FilesService {
   }
 
   /** 单个 catalog 条目（@ 文件引用取当前版本 id 用）。 */
+  /**
+   * 按 id 取单个目录条目。
+   *
+   * 历史实现是 `listCatalog(200, 0).items.find(...)`——只扫「最近更新的 200 条」。
+   * 库大到 1460 个文件后，任何排名 200 之后的文档都查不到：论文排版（reformat /
+   * 资料区设为模版）会立刻以 thesis_source_file_not_found 失败，用户看到的就是
+   * 「点了排版没反应、不生成任何文件」（2026-10-27 实测：目标文档排名 211）。
+   */
   catalogEntry(fileEntryId: string): CatalogFileDto | null {
-    return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
+    const row = this.catalogQuery()
+      .where(and(eq(fileEntries.id, fileEntryId), isNull(fileEntries.deletedAt)))
+      .get();
+    return row ? this.toCatalogFileDto(row) : null;
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {
