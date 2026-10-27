@@ -44,6 +44,8 @@ export interface DispatchSubagentInput {
 interface ActiveInvocation {
   runtime: AgentRuntime;
   promise: Promise<SubagentInvocation>;
+  /** 占用的是哪个 revision 的 runtime（调用结束要归还，供热重载延迟回收）。 */
+  revisionId: string;
 }
 
 class InvocationTimeoutError extends Error {}
@@ -212,7 +214,9 @@ export class SubagentOrchestrator {
       return await completion;
     } finally {
       input.signal?.removeEventListener("abort", cancelFromParent);
+      const entry = this.active.get(invocationId);
       this.active.delete(invocationId);
+      if (entry) this.runtimeManager.release(entry.revisionId);
     }
   }
 
@@ -231,7 +235,11 @@ export class SubagentOrchestrator {
     if (input.signal?.aborted) cancelFromParent();
     void completion.finally(() => {
       input.signal?.removeEventListener("abort", cancelFromParent);
+      const entry = this.active.get(invocationId);
       this.active.delete(invocationId);
+      // 归还 runtime 占用：runtime config 热重载期间被「延迟回收」的 runtime
+      // 在这里才真正 dispose（在跑的调用不受重载影响）。
+      if (entry) this.runtimeManager.release(entry.revisionId);
     }).catch(() => undefined);
     return invocationId;
   }
@@ -296,7 +304,7 @@ export class SubagentOrchestrator {
       input.input ?? null,
     );
     const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments);
-    this.active.set(invocationId, { runtime, promise });
+    this.active.set(invocationId, { runtime, promise, revisionId: definition.revision.id });
     return { invocationId, completion: promise, joined: false };
   }
 
