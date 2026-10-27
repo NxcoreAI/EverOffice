@@ -14,7 +14,7 @@ import type { OfficeBridgeClient } from "../documents/capabilities/office-bridge
 import { ThesisFormatCardStore } from "./card-store.js";
 import { buildTemplateFacts, normalizeMembersToDocx, unpackTemplateInput } from "./normalize.js";
 import { validateThesisFormatCard } from "./validate.js";
-import type { ThesisBindingSpec, ThesisFormatCard, ThesisTemplateFacts } from "./types.js";
+import type { ThesisBindingSpec, ThesisFormatCard, ThesisHfImage, ThesisTemplateFacts } from "./types.js";
 
 const THESIS_FORMATTER_AGENT_ID = "thesis-formatter";
 
@@ -85,7 +85,8 @@ export class ThesisFormatService {
     const input = {
       task: "parse_template" as const,
       sourceName: name.slice(0, 300),
-      facts,
+      // 图片字节不进模型（网关确定性写入卡片）：一份校徽 base64 就有 4 万 token。
+      facts: factsForAgent(facts),
     };
     const structured = await this.dispatchAgent(task, input);
     const rawCard = structured?.formatCard;
@@ -204,6 +205,38 @@ export class ThesisFormatService {
       achievements: strArray(src.achievements).map((a) => a.slice(0, 600)),
     };
   }
+}
+
+/**
+ * 送给解析代理的模版事实：**剥掉图片字节**，只留尺寸/版位等元信息。
+ *
+ * 一份校徽 png 122KB ≈ 4 万 token：塞进输入既挤占窗口（把输出预算挤到截断），
+ * 又诱导模型把 base64 抄进卡里。图片字节本来由网关确定性写入格式卡，代理只需
+ * 知道「这里有张多大的图、放在哪」。
+ */
+export function factsForAgent(facts: ThesisTemplateFacts): unknown {
+  const strip = (images: ThesisHfImage[] | undefined) => (images ?? []).map((image) => ({
+    hasBytes: true,
+    ...(image.widthPx !== undefined ? { widthPx: image.widthPx } : {}),
+    ...(image.heightPx !== undefined ? { heightPx: image.heightPx } : {}),
+    ...(image.floating !== undefined ? { floating: image.floating } : {}),
+    ...(image.behind !== undefined ? { behind: image.behind } : {}),
+    ...(image.posH !== undefined ? { posH: image.posH } : {}),
+    ...(image.posV !== undefined ? { posV: image.posV } : {}),
+    ...(image.posHRel !== undefined ? { posHRel: image.posHRel } : {}),
+    ...(image.posVRel !== undefined ? { posVRel: image.posVRel } : {}),
+    ...(image.posXPx !== undefined ? { posXPx: image.posXPx } : {}),
+    ...(image.posYPx !== undefined ? { posYPx: image.posYPx } : {}),
+  }));
+  return {
+    ooxml: (facts.ooxml ?? []).map((member) => ({
+      ...member,
+      headers: (member.headers ?? []).map((header) => ({ ...header, images: strip(header.images) })),
+      footers: (member.footers ?? []).map((footer) => ({ ...footer, images: strip(footer.images) })),
+      coverImages: strip(member.coverImages),
+    })),
+    documentsText: facts.documentsText ?? [],
+  };
 }
 
 /** validate 对 cover.degreeLine 的兜底值：卡里等于它时视为「代理没给」，可被封面文本改写。 */

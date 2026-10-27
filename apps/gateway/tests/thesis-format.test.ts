@@ -5,7 +5,7 @@ import { SubagentRegistry } from "../src/modules/subagents/registry.js";
 import { ThesisFormatCardStore } from "../src/modules/thesis-format/card-store.js";
 import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.js";
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
-import { mergeTemplateImages } from "../src/modules/thesis-format/service.js";
+import { factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -286,5 +286,30 @@ describe("封面文字兜底（coverText）", () => {
     const merged = mergeTemplateImages(base, factsWithCover([]));
     expect(merged.cover.schoolName).toBe("");
     expect(merged.cover.yearLine).toBe("");
+  });
+});
+
+describe("factsForAgent 剥离图片字节", () => {
+  it("代理输入里没有任何 data:URL，但保留尺寸与版位元信息", () => {
+    const facts = {
+      ooxml: [{
+        name: "模版.docx",
+        styles: [],
+        sections: [],
+        headers: [{ file: "header1.xml", text: "", images: [{ dataUrl: `data:image/png;base64,${LOGO_PNG_BASE64}`, widthPx: 40, heightPx: 40 }] }],
+        footers: [],
+        coverImages: [{ dataUrl: `data:image/png;base64,${LOGO_PNG_BASE64}`, widthPx: 626, heightPx: 89, posH: "center" as const }],
+        coverText: ["通信工程学院"],
+      }],
+      documentsText: [{ name: "模版.docx", text: "正文" }],
+    };
+    const forAgent = factsForAgent(facts) as { ooxml: Array<Record<string, unknown>> };
+    const serialized = JSON.stringify(forAgent);
+    expect(serialized).not.toContain("data:image");
+    expect(serialized).not.toContain(LOGO_PNG_BASE64);
+    const member = forAgent.ooxml[0]!;
+    expect((member.coverImages as Array<Record<string, unknown>>)[0]).toMatchObject({ hasBytes: true, widthPx: 626, posH: "center" });
+    expect(member.coverText).toEqual(["通信工程学院"]);
+    expect(member.styles).toEqual([]);
   });
 });
