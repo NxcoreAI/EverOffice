@@ -251,6 +251,8 @@ export interface ThesisBindingSpec {
   acknowledgementParagraphs: string[];
   /** v2 未归类内容区间（渲染为正文末尾独立小节并高亮标记，不丢内容）。 */
   unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>;
+  /** 融合模式：正文段落保留源文档格式（不套模板正文样式），结构/编号仍按模版。 */
+  preserveSourceFormat?: boolean;
   /** 攻读学位期间研究成果；空数组 = 无。 */
   achievements: string[];
 }
@@ -261,4 +263,23 @@ export interface ThesisSourceOutlineBlock {
   kind: "heading" | "paragraph" | "table" | "image" | "list";
   level?: number;
   text: string;
+}
+
+/**
+ * 工作台规则面板下发的一次排版选项。
+ * 全部可缺省——缺省即严格模式 + 保留全部固定元素（与既有行为一致）。
+ */
+export interface ThesisReformatOptions {
+  /** strict = 完全套模版样式（默认）；blend = 正文保留原文档格式，只套模版的页面/页眉页脚/标题编号。 */
+  mode?: "strict" | "blend";
+  /** 是否回填模版 Logo（封面校徽 + 页眉图）。 */
+  keepLogo?: boolean;
+  /** 是否沿用模版的页眉页脚（false = 输出不带页眉页脚）。 */
+  keepHeaderFooter?: boolean;
+  /** 标题层级映射：源文档角色 → 模板标题级别（1–4）。 */
+  headingMapping?: {
+    chapter?: 1 | 2 | 3 | 4;
+    section?: 1 | 2 | 3 | 4;
+    subsection?: 1 | 2 | 3 | 4;
+  };
 }

@@ -231,6 +231,8 @@ export async function generateThesisDocx(
     sourceBytes: Buffer
     formatCard: ThesisFormatCardPayload
     bindingSpec: ThesisBindingSpecPayload
+    /** false = 不回填模版 Logo（规则面板勾选项）。 */
+    keepLogo?: boolean
   },
   onPhase?: (phase: DocxGenerationPhase) => void,
 ): Promise<GeneratedDocx> {
@@ -244,7 +246,8 @@ export async function generateThesisDocx(
   )
   // 模版页眉的校徽 logo 回填：装订是「重排版」，页眉部件由引擎新生成，
   // 模版页眉图片不会自动带入——这里从格式卡的 header.images 原样写回。
-  const headerImages = input.formatCard.header?.images
+  const keepLogo = input.keepLogo !== false
+  const headerImages = keepLogo ? input.formatCard.header?.images : undefined
   if (Array.isArray(headerImages) && headerImages.length > 0) {
     try {
       bytes = await backfillThesisHeaderLogos(bytes, headerImages)
@@ -254,7 +257,7 @@ export async function generateThesisDocx(
     }
   }
   // 模版封面上的校徽/校名标识：装订重建封面不会带入，这里补到正文最前。
-  const coverLogo = (input.formatCard.cover as { logo?: Record<string, unknown> } | undefined)?.logo
+  const coverLogo = keepLogo ? (input.formatCard.cover as { logo?: Record<string, unknown> } | undefined)?.logo : undefined
   if (coverLogo) {
     try {
       bytes = await backfillThesisCoverLogo(bytes, coverLogo)

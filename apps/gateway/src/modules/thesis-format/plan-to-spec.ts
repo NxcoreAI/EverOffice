@@ -15,7 +15,10 @@ import { stripNumbering } from "./text-normalize.js";
 import type { ThesisBindingSpec } from "./types.js";
 
 /** 章节树 → 互不重叠的叶子区间序列（DFS 前序，与文档顺序一致）。 */
-export function flattenLeafRanges(node: ContentOutlineNode): Array<{
+export function flattenLeafRanges(
+  node: ContentOutlineNode,
+  headingMapping?: { chapter?: 1 | 2 | 3 | 4; section?: 1 | 2 | 3 | 4; subsection?: 1 | 2 | 3 | 4 },
+): Array<{
   level: 1 | 2 | 3 | 4;
   headingText: string;
   blockStart: number;
@@ -35,10 +38,21 @@ export function flattenLeafRanges(node: ContentOutlineNode): Array<{
       blockEnd: Math.max(bodyEnd, current.blockStart + 1),
     });
     for (const child of current.children) {
-      walk(child, Math.min(level + 1, 4) as 1 | 2 | 3 | 4);
+      const childDefault = Math.min(level + 1, 4) as 1 | 2 | 3 | 4;
+      walk(child, mapped(child.role, childDefault));
     }
   };
-  walk(node, node.role === "chapter" ? 1 : node.role === "section" ? 2 : 3);
+  // 自定义标题映射（规则面板）：按角色覆盖默认层级，未映射的角色保持默认
+  const mapped = (role: ContentOutlineNode["role"], fallback: 1 | 2 | 3 | 4): 1 | 2 | 3 | 4 => {
+    if (!headingMapping) return fallback;
+    const override = role === "chapter" ? headingMapping.chapter
+      : role === "section" ? headingMapping.section
+      : role === "subsection" ? headingMapping.subsection
+      : undefined;
+    return override ?? fallback;
+  };
+  const rootLevel = mapped(node.role, node.role === "chapter" ? 1 : node.role === "section" ? 2 : 3);
+  walk(node, rootLevel);
   return out;
 }
 
@@ -85,8 +99,12 @@ export function planToBindingSpec(input: {
   content: ContentProfile;
   /** 缺省论文题目（通常取源文件名）。 */
   titleHint: string;
+  /** 标题层级映射（规则面板）。 */
+  headingMapping?: { chapter?: 1 | 2 | 3 | 4; section?: 1 | 2 | 3 | 4; subsection?: 1 | 2 | 3 | 4 };
+  /** 融合模式：正文保留源文档格式。 */
+  preserveSourceFormat?: boolean;
 }): { spec: ThesisBindingSpec; notes: string[] } {
-  const { plan, content, titleHint } = input;
+  const { plan, content, titleHint, headingMapping, preserveSourceFormat } = input;
   const notes: string[] = [];
   const nodes = new Map<string, ContentOutlineNode>();
   const walk = (list: ContentOutlineNode[]): void => {
@@ -141,7 +159,7 @@ export function planToBindingSpec(input: {
       case "toc":
         break; // 模板固定部件，内容侧不参与
       default:
-        if (node) chapters.push(...flattenLeafRanges(node));
+        if (node) chapters.push(...flattenLeafRanges(node, headingMapping));
         break;
     }
   }
@@ -173,6 +191,7 @@ export function planToBindingSpec(input: {
     // 研究成果（P-05「研究成果」）当前无自动来源：保持为空而不是编造
     achievements: [],
     ...(unmatchedBlocks.length > 0 ? { unmatchedBlocks } : {}),
+    ...(preserveSourceFormat ? { preserveSourceFormat: true } : {}),
   };
   return { spec, notes };
 }

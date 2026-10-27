@@ -16,9 +16,22 @@ const ParseBody = Type.Object({
   fileEntryId: Type.String({ minLength: 1, maxLength: 200 }),
 }, { additionalProperties: false });
 
+const ReformatOptions = Type.Object({
+  mode: Type.Optional(Type.Union([Type.Literal("strict"), Type.Literal("blend")])),
+  keepLogo: Type.Optional(Type.Boolean()),
+  keepHeaderFooter: Type.Optional(Type.Boolean()),
+  headingMapping: Type.Optional(Type.Object({
+    chapter: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
+    section: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
+    subsection: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
+  }, { additionalProperties: false })),
+}, { additionalProperties: false });
+
 const ReformatBody = Type.Object({
   fileEntryId: Type.String({ minLength: 1, maxLength: 200 }),
   cardId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  /** 工作台规则面板：模式/固定元素/标题层级映射（全部可缺省）。 */
+  options: Type.Optional(ReformatOptions),
 }, { additionalProperties: false });
 
 const CardDto = Type.Object({
@@ -134,6 +147,7 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
           request.params.roomId,
           request.body.fileEntryId,
           request.body.cardId,
+          request.body.options as Parameters<typeof service.reformat>[3],
         );
         return reply.send(result);
       } catch (error) {

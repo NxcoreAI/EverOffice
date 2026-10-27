@@ -18,7 +18,7 @@ import { buildTemplateProfile } from "./template-profile.js";
 import { buildContentProfile } from "./content-profile.js";
 import { buildMappingPlan, sanitizeMappingDecisions, type SemanticDecision } from "./mapping-plan.js";
 import { planToBindingSpec } from "./plan-to-spec.js";
-import type { ThesisBindingSpec, ThesisFormatCard, ThesisHfImage, ThesisTemplateFacts } from "./types.js";
+import type { ThesisBindingSpec, ThesisFormatCard, ThesisHfImage, ThesisReformatOptions, ThesisTemplateFacts } from "./types.js";
 
 const THESIS_FORMATTER_AGENT_ID = "thesis-formatter";
 
@@ -126,7 +126,12 @@ export class ThesisFormatService {
     return { sourceName: name, card, factGaps };
   }
 
-  async reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<ThesisReformatResult> {
+  async reformat(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: ThesisReformatOptions,
+  ): Promise<ThesisReformatResult> {
     const row = cardId ? this.store.byId(roomId, cardId) : this.store.latest(roomId);
     if (!row) throw new Error("thesis_format_card_not_found");
     const card = row.card;
@@ -143,7 +148,7 @@ export class ThesisFormatService {
     if (described.outline.length === 0) throw new Error("thesis_source_outline_empty");
 
     const titleHint = entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300);
-    const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint);
+    const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint, options);
     let spec: ThesisBindingSpec;
     let report: Record<string, unknown> | undefined;
     if (v2) {
@@ -164,9 +169,17 @@ export class ThesisFormatService {
 
     // 渲染卡片：带上 v2 模板编号方案（渲染器据此重算标题编号）；老卡片没有剖面，
     // 渲染器自动回落 headings[].numbering 的老语义。
-    const renderCard = card.profile
+    const withNumbering = card.profile
       ? { ...card, numbering: card.profile.fixed.numbering }
       : card;
+    // 规则面板：关掉页眉页脚即在卡片层面禁用（渲染器据此不生成页眉页脚部件）
+    const renderCard = options?.keepHeaderFooter === false
+      ? {
+          ...withNumbering,
+          header: { ...withNumbering.header, enabled: false },
+          footer: { ...withNumbering.footer, enabled: false },
+        }
+      : withNumbering;
     const built = await bridge.reformatThesisDocx({
       docxBase64: bytes.toString("base64"),
       formatCard: renderCard,
@@ -174,7 +187,8 @@ export class ThesisFormatService {
       roomId,
       sourceFileName: entry.originalName,
       sourceFileEntryId: fileEntryId,
-      idempotencyKey: `thesis-reformat:${fileEntryId}:${row.id}:${card.cardMeta.parsedAt}`,
+      keepLogo: options?.keepLogo !== false,
+      idempotencyKey: `thesis-reformat:${fileEntryId}:${row.id}:${card.cardMeta.parsedAt}:${optionsFingerprint(options)}`,
     });
     return { fileEntryId: built.fileEntryId, originalName: built.originalName, ...(report ? { report } : {}) };
   }
@@ -222,6 +236,7 @@ export class ThesisFormatService {
     card: ThesisFormatCard,
     outline: Array<{ index: number; kind: string; level?: number; text: string }>,
     titleHint: string,
+    options?: ThesisReformatOptions,
   ): Promise<{ spec: ThesisBindingSpec; report: Record<string, unknown> } | null> {
     const profile = card.profile;
     if (!profile || profile.slots.length === 0) return null;
@@ -238,7 +253,13 @@ export class ThesisFormatService {
     const decisions = await this.adjudicateMapping(roomId, profile, plan);
     const adjudicated = decisions.length > 0 ? buildMappingPlan({ template: profile, content, semantic: decisions }) : plan;
     if (decisions.length > 0) plan = adjudicated;
-    const { spec, notes } = planToBindingSpec({ plan, content, titleHint });
+    const { spec, notes } = planToBindingSpec({
+      plan,
+      content,
+      titleHint,
+      ...(options?.headingMapping ? { headingMapping: options.headingMapping } : {}),
+      preserveSourceFormat: options?.mode === "blend",
+    });
     return {
       spec,
       report: {
@@ -397,6 +418,19 @@ export function cardForAgent(card: ThesisFormatCard): unknown {
     header: { ...card.header, images: (card.header.images ?? []).map(imageMeta) },
     cover: { ...card.cover, ...(card.cover.logo ? { logo: imageMeta(card.cover.logo) } : {}) },
   };
+}
+
+/** 排版选项指纹：进幂等键，不同选项产出不同文件而不是复用旧的。 */
+function optionsFingerprint(options?: ThesisReformatOptions): string {
+  if (!options) return "default";
+  return [
+    options.mode ?? "strict",
+    options.keepLogo === false ? "nologo" : "logo",
+    options.keepHeaderFooter === false ? "nohf" : "hf",
+    options.headingMapping
+      ? Object.entries(options.headingMapping).map(([role, level]) => `${role}${level}`).join("-")
+      : "nomap",
+  ].join("_");
 }
 
 /** validate 对 cover.degreeLine 的兜底值：卡里等于它时视为「代理没给」，可被封面文本改写。 */

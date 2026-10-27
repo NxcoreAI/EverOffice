@@ -82,7 +82,15 @@ describe('智能排版工作台 · 功能要点', () => {
     expect(studio).toContain('重新排版')
   })
 
-  it('规则面板不放假开关：后端未支持的项显式说明', () => {
-    expect(studio).toContain('融合模式与逐项开关待后端接入后生效')
+  it('规则面板接后端：模式/固定元素/标题映射全部下发', () => {
+    expect(studio).toContain('headingMapping: headingMap')
+    expect(studio).toContain('keepLogo')
+    expect(studio).toContain('keepHeaderFooter')
+    expect(studio).toContain("mode,")
+    // 标题层级映射三档选择器
+    expect(studio).toContain('ts-select-row')
+    expect(studio).toContain('模板一级标题')
+    // 不再声称"待后端接入"
+    expect(studio).not.toContain('待后端接入后生效')
   })
 })

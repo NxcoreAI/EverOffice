@@ -119,13 +119,23 @@ export class ThesisFormatGatewayBridge {
   }
 
   /** 一键装订：产物为新文件（xxx-排版版.docx），完成后 office:agent-file 广播。 */
-  async reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<ThesisReformatOutcomeDto> {
+  async reformat(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: {
+      mode?: 'strict' | 'blend'
+      keepLogo?: boolean
+      keepHeaderFooter?: boolean
+      headingMapping?: { chapter?: number; section?: number; subsection?: number }
+    },
+  ): Promise<ThesisReformatOutcomeDto> {
     const response = await this.request(
       `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/reformat`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileEntryId, cardId }),
+        body: JSON.stringify({ fileEntryId, cardId, ...(options ? { options } : {}) }),
       },
       // 与 parse 同理：装订代理超时 15 分钟，客户端留足余量。
       20 * 60_000,

@@ -102,7 +102,17 @@ export interface OfficeThesisPanelBridge {
     cardId: string,
     options?: { keepCard?: boolean },
   ): Promise<{ fileDeleted: boolean; hadFile: boolean; cardKept: boolean }>
-  reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ originalName: string; report?: Record<string, unknown> }>
+  reformat(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: {
+      mode?: 'strict' | 'blend'
+      keepLogo?: boolean
+      keepHeaderFooter?: boolean
+      headingMapping?: { chapter?: number; section?: number; subsection?: number }
+    },
+  ): Promise<{ originalName: string; report?: Record<string, unknown> }>
 }
 
 /** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */

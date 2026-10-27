@@ -1666,7 +1666,18 @@ export interface NxcoreDesktopApi {
     deleteTemplate(roomId: string, cardId: string): Promise<{ fileDeleted: boolean; hadFile: boolean }>
     /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。
      *  report 为 v2 槽位映射报告（守恒核对/规则/未匹配块/待复核章节）。 */
-    reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{
+    reformat(
+      roomId: string,
+      fileEntryId: string,
+      cardId?: string,
+      /** 工作台规则面板：严格/融合、Logo 与页眉页脚保留、标题层级映射。 */
+      options?: {
+        mode?: 'strict' | 'blend'
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ): Promise<{
       fileEntryId: string
       originalName: string
       report?: Record<string, unknown>

@@ -2895,8 +2895,13 @@ function registerThesisFormatHandlers(
     cardChanged()
     return { fileDeleted, hadFile: Boolean(card?.sourceFileEntryId) }
   })
-  handle(THESIS_FORMAT_CHANNELS.reformat, (_event, roomId: string, fileEntryId: string, cardId?: string) =>
-    bridge.reformat(roomId, fileEntryId, cardId))
+  handle(THESIS_FORMAT_CHANNELS.reformat, (
+    _event,
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: Parameters<typeof bridge.reformat>[3],
+  ) => bridge.reformat(roomId, fileEntryId, cardId, options))
 }
 
 function registerFilesHandlers(
@@ -4522,7 +4527,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           (fileEntryId) => filesGatewayBridge.delete(fileEntryId),
           options?.keepCard === true,
         ),
-      reformat: (roomId, fileEntryId, cardId) => thesisFormatBridge.reformat(roomId, fileEntryId, cardId),
+      reformat: (roomId, fileEntryId, cardId, options) =>
+        thesisFormatBridge.reformat(roomId, fileEntryId, cardId, options),
     })
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)

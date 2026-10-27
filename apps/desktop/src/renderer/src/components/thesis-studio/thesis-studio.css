@@ -783,3 +783,33 @@
   padding-top: 6px;
   border-top: 1px solid var(--ts-border);
 }
+
+/* 标题层级映射行：左标签右下拉 */
+.ts-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.ts-select-row:hover {
+  background: var(--ts-surface-2);
+}
+
+.ts-select-row select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--ts-border);
+  border-radius: 7px;
+  background: var(--ts-surface);
+  color: var(--ts-text);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.ts-fieldset:disabled .ts-select-row {
+  opacity: 0.55;
+}

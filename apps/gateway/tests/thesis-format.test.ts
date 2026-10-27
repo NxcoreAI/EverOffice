@@ -820,3 +820,47 @@ describe("代理裁决接线（adjudicate_mapping）", () => {
     expect(output.properties.decisions!.items.properties.slotId.type).toEqual(["string", "null"]);
   });
 });
+
+describe("排版选项（第二期规则面板）", () => {
+  const content = () => buildContentProfile([
+    { index: 0, kind: "heading", level: 1, text: "一、业务场景分析" },
+    { index: 1, kind: "heading", level: 2, text: "1.1 政策背景" },
+    { index: 2, kind: "paragraph", text: "正文" },
+  ]);
+  const template = () => buildTemplateProfile({
+    facts: {
+      styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
+      outline: [{ index: 0, level: 1, text: "一、项目任务", inCoverRegion: false }],
+      numbering: { scheme: "cn-upper", levels: [] },
+    },
+    card: validateThesisFormatCard({}, "模版.docx"),
+    sourceName: "模版.docx",
+  });
+
+  it("融合模式在装订规格上标记 preserveSourceFormat", () => {
+    const plan = buildMappingPlan({ template: template(), content: content() });
+    const strict = planToBindingSpec({ plan, content: content(), titleHint: "论文" });
+    expect(strict.spec.preserveSourceFormat).toBeUndefined();
+    const blend = planToBindingSpec({ plan, content: content(), titleHint: "论文", preserveSourceFormat: true });
+    expect(blend.spec.preserveSourceFormat).toBe(true);
+  });
+
+  it("标题层级映射改变输出层级（章→二级标题）", () => {
+    const plan = buildMappingPlan({ template: template(), content: content() });
+    const mapped = planToBindingSpec({
+      plan,
+      content: content(),
+      titleHint: "论文",
+      headingMapping: { chapter: 2, section: 3 },
+    });
+    // 章原本 level 1，映射后变 2；节原本 2 → 3
+    expect(mapped.spec.chapters[0]!.level).toBe(2);
+    expect(mapped.spec.chapters[1]!.level).toBe(3);
+  });
+
+  it("未给映射时保持默认层级（章1/节2）", () => {
+    const plan = buildMappingPlan({ template: template(), content: content() });
+    const plain = planToBindingSpec({ plan, content: content(), titleHint: "论文" });
+    expect(plain.spec.chapters.map((chapter) => chapter.level)).toEqual([1, 2]);
+  });
+});

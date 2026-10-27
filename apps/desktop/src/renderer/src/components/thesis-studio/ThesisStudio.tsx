@@ -90,6 +90,11 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
   const [mode, setMode] = useState<'strict' | 'blend'>('strict')
   const [keepLogo, setKeepLogo] = useState(true)
   const [keepHeaderFooter, setKeepHeaderFooter] = useState(true)
+  const [headingMap, setHeadingMap] = useState<{ chapter: 1 | 2 | 3 | 4; section: 1 | 2 | 3 | 4; subsection: 1 | 2 | 3 | 4 }>({
+    chapter: 1,
+    section: 2,
+    subsection: 3,
+  })
   const dragDepth = useRef(0)
 
   const busy = phase !== 'idle' && phase !== 'done'
@@ -209,7 +214,12 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
     try {
       // 映射与渲染由网关一次完成：先停在中段，拿到结果再补完
       const tick = window.setTimeout(() => setPhase('rendering'), 1500)
-      const outcome = await api.reformat(roomId, selectedDoc.id, selectedCard.id)
+      const outcome = await api.reformat(roomId, selectedDoc.id, selectedCard.id, {
+        mode,
+        keepLogo,
+        keepHeaderFooter,
+        headingMapping: headingMap,
+      })
       window.clearTimeout(tick)
       setResult(outcome)
       setPhase('done')
@@ -220,7 +230,7 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
       setError(describeThesisError(err instanceof Error ? err.message : String(err)))
       setPhase('idle')
     }
-  }, [loadDocs, roomId, selectedCard, selectedDoc])
+  }, [headingMap, keepHeaderFooter, keepLogo, loadDocs, mode, roomId, selectedCard, selectedDoc])
 
   const downloadWord = useCallback(async () => {
     if (!result) return
@@ -458,8 +468,30 @@ export function ThesisStudio({ roomId, onClose }: { roomId: string; onClose: () 
             </label>
           </fieldset>
 
+          <fieldset className="ts-fieldset" disabled={busy}>
+            <legend>标题层级映射</legend>
+            {([
+              ['chapter', '章（一级）'],
+              ['section', '节（二级）'],
+              ['subsection', '小节（三级）'],
+            ] as const).map(([role, label]) => (
+              <label className="ts-select-row" key={role}>
+                <span>{label}</span>
+                <select
+                  value={headingMap[role]}
+                  onChange={(event) => setHeadingMap((prev) => ({ ...prev, [role]: Number(event.target.value) as 1 | 2 | 3 | 4 }))}
+                >
+                  <option value={1}>模板一级标题</option>
+                  <option value={2}>模板二级标题</option>
+                  <option value={3}>模板三级标题</option>
+                  <option value={4}>模板四级标题</option>
+                </select>
+              </label>
+            ))}
+          </fieldset>
+
           <div className="ts-note">
-            以上选项当前由模版剖面自动决定（严格模式 + 保留全部固定元素）；融合模式与逐项开关待后端接入后生效。
+            严格模式完全按模版重建正文；融合模式保留原文档正文格式，只套模版的页面、页眉页脚与标题编号。
           </div>
 
           <div className="ts-col-head"><h2>进度</h2></div>

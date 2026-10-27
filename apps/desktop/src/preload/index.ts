@@ -1046,8 +1046,17 @@ const api: NxcoreDesktopApi = {
     /** 彻底删除模版：模版文件 + 格式卡（先删文件含 Room 成员引用级联，再删卡）。 */
     deleteTemplate: (roomId: string, cardId: string) =>
       invoke('thesis-format:template:delete', roomId, cardId),
-    reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
-      invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
+    reformat: (
+      roomId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        mode?: 'strict' | 'blend'
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ) => invoke('thesis-format:reformat', roomId, fileEntryId, cardId, options),
     removeCard: (roomId: string, cardId: string) =>
       invoke('thesis-format:cards:remove', roomId, cardId),
     onCardChanged: (listener: () => void) => {

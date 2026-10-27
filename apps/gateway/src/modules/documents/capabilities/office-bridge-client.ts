@@ -254,6 +254,8 @@ export class OfficeBridgeClient {
     sourceFileName: string;
     sourceFileEntryId: string;
     idempotencyKey: string;
+    /** false = 不回填模版 Logo（规则面板勾选项）。 */
+    keepLogo?: boolean;
   }): Promise<OfficeGenerateResult> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-reformat`, {
       method: "POST",
