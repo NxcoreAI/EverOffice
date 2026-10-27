@@ -16241,3 +16241,78 @@ button.eg-walk.is-next:hover {
   width: 15px;
   height: 15px;
 }
+
+/* ---- 产物区「排版工具」对话框：模版选择 + 长任务阶段提示 ---- */
+
+.context-room-dialog-content.context-room-thesis-dialog-shell {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 16px;
+  box-shadow:
+    0 16px 40px rgba(17, 24, 39, 0.14),
+    0 4px 12px rgba(17, 24, 39, 0.05);
+}
+
+.context-room-thesis-dlg-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 0;
+}
+
+.context-room-thesis-dlg-cards-title {
+  margin: 0 0 2px;
+  color: var(--cr-tertiary);
+  font-size: 11px;
+}
+
+.context-room-thesis-dlg-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-room-thesis-dlg-option[data-selected] {
+  border-color: color-mix(in srgb, var(--cr-accent, #3b6ea5) 40%, transparent);
+  background: color-mix(in srgb, var(--cr-accent, #3b6ea5) 6%, transparent);
+}
+
+.context-room-thesis-dlg-option span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 长任务进度：解析/装订各 1–5 分钟，必须让用户看到「在跑」。 */
+.context-room-thesis-dlg-phase {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--cr-secondary, #4b5563);
+  font-size: 12px;
+}
+
+.context-room-thesis-dlg-gaps {
+  margin: 0;
+  color: #b97909;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.context-room-action-confirm footer .context-room-thesis-dlg-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-room-action-confirm footer .context-room-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

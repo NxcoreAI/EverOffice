@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, Ellipsis, FileText, FileSpreadsheet, FileUp, FolderInput, FolderOpen, ListChecks, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2 } from 'lucide-react';
+import { Check, Ellipsis, FileText, FileSpreadsheet, FileUp, FolderInput, FolderOpen, ListChecks, Presentation, FileText as WordIcon, LoaderCircle, Package, Plus, Trash2, Wand2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale } from '../../../../../i18n/LocaleContext';
 import { formatRelative } from '@/components/pages/sources/sourceKinds';
@@ -21,6 +21,7 @@ import { buildLinkGraphData } from '../linkGraphModel';
 import { PanelEmptyState } from './PanelEmptyState';
 import { FilterSelect, ReferenceDialog } from '../shared';
 import { MoveDocumentToRoomDialog } from '../MoveDocumentToRoomDialog';
+import { ThesisReformatDialog } from './ThesisReformatDialog';
 
 type ArtifactFilter = 'all' | 'clouddoc' | 'office';
 type CreateType = 'doc' | 'word' | 'ppt' | 'xlsx';
@@ -90,6 +91,8 @@ export function ArtifactLibraryPane({
   >(null);
   const [deletingArtifact, setDeletingArtifact] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // 排版工具：菜单里选中一份 Word 产物后打开模版对话框（null = 关闭）。
+  const [thesisTarget, setThesisTarget] = useState<{ fileId: string; name: string } | null>(null);
   // 移动目标：空数组 = 弹层关闭；单个/批量共用同一目标选择器。
   const [moveTargets, setMoveTargets] = useState<Array<{ id: string; title: string; roomId: string }>>([]);
   // 多选整理：开启后云文档行进入勾选态，工具条提供批量「移动到其他 Room」。
@@ -538,6 +541,14 @@ export function ArtifactLibraryPane({
           </footer>
         </div>
       </ReferenceDialog>
+      <ThesisReformatDialog
+        open={thesisTarget !== null}
+        roomId={room.id}
+        target={thesisTarget}
+        onOpenChange={(next) => {
+          if (!next) setThesisTarget(null);
+        }}
+      />
       <div className="context-room-artifact-list">
         {visibleArtifacts.map(({ key, resource }) => {
           const office = resource.kind === 'knowledge-file' ? resource : null;
@@ -645,6 +656,15 @@ export function ArtifactLibraryPane({
                           >
                             <FolderOpen aria-hidden="true" />
                             {t('contextRoom:artifactLibrary.revealInFolder')}
+                          </DropdownMenu.Item>
+                        ) : null}
+                        {office && /\.docx$/i.test(office.originalName) ? (
+                          // 只有 Word 产物能被装订排版（其它类型后端会拒），按 docx 放行。
+                          <DropdownMenu.Item
+                            onSelect={() => setThesisTarget({ fileId: office.fileId, name: resource.name })}
+                          >
+                            <Wand2 aria-hidden="true" />
+                            {t('contextRoom:artifactLibrary.thesisTool')}
                           </DropdownMenu.Item>
                         ) : null}
                         <DropdownMenu.Separator className="context-room-document-actions-separator" />

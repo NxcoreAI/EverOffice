@@ -2821,13 +2821,19 @@ async function hashFileBytes(path: string): Promise<string> {
 }
 
 /** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
-async function pickThesisTemplateFromDisk(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> {
+async function pickThesisTemplateFromDisk(
+  roomId: string,
+  options?: { wordOnly?: boolean },
+): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> {
   const thesisBridgeForPick = thesisFormatBridgeRef
   if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
   const picked = await dialog.showOpenDialog({
-    title: '选择论文格式模版',
+    title: options?.wordOnly ? '选择论文模版（Word）' : '选择论文格式模版',
     properties: ['openFile'],
-    filters: [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
+    // 产物区「排版工具」只收 Word：管理员模版也多是 .docx，给更窄的选择面降低误选。
+    filters: options?.wordOnly
+      ? [{ name: 'Word 文档', extensions: ['docx'] }]
+      : [{ name: '论文格式模版', extensions: ['zip', 'docx', 'doc', 'dotx', 'pdf'] }],
   })
   const filePath = picked.filePaths[0]
   if (!filePath) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
@@ -2847,8 +2853,8 @@ function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registr
     cardChanged()
     return meta
   })
-  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string) => {
-    const meta = await pickThesisTemplateFromDisk(roomId)
+  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string, options?: { wordOnly?: boolean }) => {
+    const meta = await pickThesisTemplateFromDisk(roomId, options)
     if (!meta.canceled) cardChanged()
     return meta
   })

@@ -1038,8 +1038,8 @@ const api: NxcoreDesktopApi = {
     }>> => invoke('thesis-format:cards:list', roomId),
     setFromLibrary: (roomId: string, fileEntryId: string) =>
       invoke('thesis-format:parse:library', roomId, fileEntryId),
-    pickAndSet: (roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
-      invoke('thesis-format:parse:pick', roomId),
+    pickAndSet: (roomId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
+      invoke('thesis-format:parse:pick', roomId, options),
     reformat: (roomId: string, fileEntryId: string, cardId?: string) =>
       invoke('thesis-format:reformat', roomId, fileEntryId, cardId),
     removeCard: (roomId: string, cardId: string) =>
