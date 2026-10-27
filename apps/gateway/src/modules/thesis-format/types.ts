@@ -172,6 +172,8 @@ export interface ThesisFixedTexts {
 }
 
 export interface ThesisFormatCard {
+  /** v2 模板剖面（槽位骨架 + 固定元素 + 样式锁）。缺省 = 老卡片，走区间映射。 */
+  profile?: import("./template-profile.js").TemplateProfile;
   page: ThesisPageSetup;
   /** 正文基础样式（Normal）。 */
   base: { font: ThesisFontSpec; paragraph: ThesisParagraphSpec };
@@ -204,6 +206,10 @@ export interface ThesisTemplateFacts {
     coverImages?: ThesisHfImage[];
     /** 封面区文本行（段落序）：代理据此填封面字段。 */
     coverText?: string[];
+    /** 模板正文大纲（章节骨架）。 */
+    outline?: import("./ooxml-facts.js").OoxmlOutlineEntry[];
+    /** 编号方案。 */
+    numbering?: import("./ooxml-facts.js").OoxmlNumberingFact;
   }>;
   /** 规范条文/样例全文（文件名 → 文本）。 */
   documentsText: Array<{ name: string; text: string }>;

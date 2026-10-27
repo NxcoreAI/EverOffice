@@ -72,10 +72,10 @@ export interface TemplateProfile {
   sourceName: string;
   fixed: {
     page: ThesisFormatCard["page"];
+    /** 固定图片的**元信息**（角色 + 尺寸 + 版位）。字节留在格式卡
+     *  （header.images / cover.logo），避免同一张 logo 在卡片里存两份。 */
     logos: Array<{
       role: "cover" | "header" | "footer" | "watermark";
-      dataUrl: string;
-      sha256Hint?: string;
       widthPx?: number;
       heightPx?: number;
       floating?: boolean;
@@ -209,7 +209,6 @@ function collectLogos(facts: OoxmlFacts, card: ThesisFormatCard): TemplateProfil
   const push = (role: TemplateProfile["fixed"]["logos"][number]["role"], image: ThesisHfImage): void => {
     logos.push({
       role,
-      dataUrl: image.dataUrl,
       ...(image.widthPx !== undefined ? { widthPx: image.widthPx } : {}),
       ...(image.heightPx !== undefined ? { heightPx: image.heightPx } : {}),
       ...(image.floating !== undefined ? { floating: image.floating } : {}),
@@ -221,7 +220,7 @@ function collectLogos(facts: OoxmlFacts, card: ThesisFormatCard): TemplateProfil
   for (const footer of facts.footers ?? []) for (const image of footer.images ?? []) push("footer", image);
   for (const image of facts.coverImages ?? []) {
     // 已从卡里拿过封面图就不再重复（同字节）
-    if (!logos.some((logo) => logo.role === "cover" && logo.dataUrl === image.dataUrl)) push("cover", image);
+    if (!logos.some((logo) => logo.role === "cover" && logo.widthPx === image.widthPx && logo.heightPx === image.heightPx)) push("cover", image);
   }
   return logos;
 }

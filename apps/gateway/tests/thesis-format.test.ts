@@ -9,6 +9,7 @@ import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules
 import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import { buildContentProfile, flattenChapters, type ContentProfile, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
 import { buildMappingPlan } from "../src/modules/thesis-format/mapping-plan.js";
+import { planToBindingSpec } from "../src/modules/thesis-format/plan-to-spec.js";
 import type { TemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -695,5 +696,62 @@ describe("MappingPlan 低置信区间与代理裁决钩子", () => {
     });
     // 顺序对齐已经先占了槽位（容量 many），内容依然完整
     expect(plan.conservation.matched).toBe(plan.conservation.total);
+  });
+});
+
+describe("M4a 映射 → 装订规格（planToBindingSpec）", () => {
+  const templateProfile = (titles: string[]): TemplateProfile => buildTemplateProfile({
+    facts: {
+      styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
+      outline: titles.map((text, index) => ({ index, level: 1, text, inCoverRegion: false })),
+      numbering: { scheme: "cn-upper", levels: [] },
+    },
+    card: validateThesisFormatCard({}, "模版.docx"),
+    sourceName: "模版.docx",
+  });
+
+  const richContent = (): ContentProfile => buildContentProfile([
+    { index: 0, kind: "paragraph", text: "前置说明" },
+    { index: 1, kind: "heading", level: 1, text: "一、业务场景分析" },
+    { index: 2, kind: "heading", level: 2, text: "1.1 政策背景" },
+    { index: 3, kind: "paragraph", text: "背景正文" },
+    { index: 4, kind: "heading", level: 2, text: "1.2 痛点" },
+    { index: 5, kind: "paragraph", text: "痛点正文" },
+    { index: 6, kind: "heading", level: 1, text: "二、需求梳理" },
+    { index: 7, kind: "paragraph", text: "需求正文" },
+    { index: 8, kind: "heading", level: 1, text: "参考文献" },
+    { index: 9, kind: "paragraph", text: "[1] 张三. 论文排版[J]. 2024." },
+    { index: 10, kind: "heading", level: 1, text: "致谢" },
+    { index: 11, kind: "paragraph", text: "感谢导师" },
+  ]);
+
+  it("章节区间互不重叠、按文档序，覆盖各叶子段落", () => {
+    const content = richContent();
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务", "二、项目需求分析", "参考资料", "致谢"]), content });
+    const { spec } = planToBindingSpec({ plan, content, titleHint: "开题与需求、系统设计报告" });
+    expect(spec.title).toBe("开题与需求、系统设计报告");
+    const ranges = spec.chapters.map((chapter) => [chapter.blockStart, chapter.blockEnd]);
+    // 严格递增且不重叠
+    for (let index = 1; index < ranges.length; index += 1) {
+      expect(ranges[index]![0]!).toBeGreaterThanOrEqual(ranges[index - 1]![1]!);
+    }
+    expect(spec.chapters.map((chapter) => `${chapter.level}:${chapter.headingText}`)).toEqual([
+      "1:一、业务场景分析", "2:1.1 政策背景", "2:1.2 痛点", "1:二、需求梳理",
+    ]);
+  });
+
+  it("参考文献/致谢按槽位抽取文本，不进正文章节", () => {
+    const content = richContent();
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务", "二、项目需求分析", "参考资料", "致谢"]), content });
+    const { spec } = planToBindingSpec({ plan, content, titleHint: "论文" });
+    expect(spec.references).toEqual(["[1] 张三. 论文排版[J]. 2024."]);
+    expect(spec.acknowledgementParagraphs).toEqual(["感谢导师"]);
+  });
+
+  it("未匹配块进报告（当前渲染器不能标记，但不静默）", () => {
+    const content = richContent();
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务"]), content });
+    const { notes } = planToBindingSpec({ plan, content, titleHint: "论文" });
+    expect(notes.some((note) => note.includes("未匹配块"))).toBe(true);
   });
 });

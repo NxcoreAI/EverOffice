@@ -14,6 +14,10 @@ import type { OfficeBridgeClient } from "../documents/capabilities/office-bridge
 import { ThesisFormatCardStore } from "./card-store.js";
 import { buildTemplateFacts, normalizeMembersToDocx, unpackTemplateInput } from "./normalize.js";
 import { validateThesisFormatCard } from "./validate.js";
+import { buildTemplateProfile } from "./template-profile.js";
+import { buildContentProfile } from "./content-profile.js";
+import { buildMappingPlan } from "./mapping-plan.js";
+import { planToBindingSpec } from "./plan-to-spec.js";
 import type { ThesisBindingSpec, ThesisFormatCard, ThesisHfImage, ThesisTemplateFacts } from "./types.js";
 
 const THESIS_FORMATTER_AGENT_ID = "thesis-formatter";
@@ -30,6 +34,8 @@ export interface ThesisParseResult {
 export interface ThesisReformatResult {
   fileEntryId: string;
   originalName: string;
+  /** v2 映射报告（守恒核对、规则、未匹配块、待复核章节）；老卡片路径没有。 */
+  report?: Record<string, unknown>;
 }
 
 export class ThesisFormatService {
@@ -94,6 +100,25 @@ export class ThesisFormatService {
     // 图片字节一律由网关从模版事实确定性写入卡片，**不经过解析代理**：
     // 让模型回显 base64 既烧输出预算（一份 logo 动辄上万 token），又容易抄错。
     const card = mergeTemplateImages(validateThesisFormatCard(rawCard, name), facts);
+    // v2 模板剖面：取承载版式的 docx 成员（第一个有正文大纲的），挂到卡片上供
+    // reformat 用。剖面里不含图片字节（卡片已有），只有角色与尺寸。
+    const layoutMember = (facts.ooxml ?? []).find((member) => (member.outline ?? []).length > 0) ?? facts.ooxml?.[0];
+    if (layoutMember) {
+      card.profile = buildTemplateProfile({
+        facts: {
+          styles: layoutMember.styles ?? [],
+          sections: (layoutMember.sections ?? []) as never,
+          headers: (layoutMember.headers ?? []) as never,
+          footers: (layoutMember.footers ?? []) as never,
+          coverImages: (layoutMember.coverImages ?? []) as never,
+          coverText: layoutMember.coverText ?? [],
+          outline: layoutMember.outline ?? [],
+          numbering: layoutMember.numbering ?? { scheme: "none", levels: [] },
+        },
+        card,
+        sourceName: name,
+      } satisfies Parameters<typeof buildTemplateProfile>[0]);
+    }
     const rawGaps = structured?.templateFactsGaps;
     const factGaps = Array.isArray(rawGaps)
       ? rawGaps.filter((g): g is string => typeof g === "string" && g.trim().length > 0).slice(0, 20)
@@ -117,15 +142,25 @@ export class ThesisFormatService {
     const described = await bridge.describeThesisDocx({ docxBase64: bytes.toString("base64") });
     if (described.outline.length === 0) throw new Error("thesis_source_outline_empty");
 
-    const task = `映射论文块大纲到装订规格（${entry.originalName}）`;
-    const input = {
-      task: "bind_thesis" as const,
-      formatCard: cardForAgent(card),
-      sourceOutline: described.outline,
-      titleHint: entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300),
-    };
-    const structured = await this.dispatchAgent(task, input);
-    const spec = this.validateBindingSpec(structured?.bindingSpec, described.blockCount);
+    const titleHint = entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300);
+    const v2 = this.mapWithProfile(card, described.outline, titleHint);
+    let spec: ThesisBindingSpec;
+    let report: Record<string, unknown> | undefined;
+    if (v2) {
+      // v2：模板剖面 + 规则映射（确定性），不再让代理编区间
+      spec = v2.spec;
+      report = v2.report;
+    } else {
+      const task = `映射论文块大纲到装订规格（${entry.originalName}）`;
+      const input = {
+        task: "bind_thesis" as const,
+        formatCard: cardForAgent(card),
+        sourceOutline: described.outline,
+        titleHint,
+      };
+      const structured = await this.dispatchAgent(task, input);
+      spec = this.validateBindingSpec(structured?.bindingSpec, described.blockCount);
+    }
 
     const built = await bridge.reformatThesisDocx({
       docxBase64: bytes.toString("base64"),
@@ -136,7 +171,54 @@ export class ThesisFormatService {
       sourceFileEntryId: fileEntryId,
       idempotencyKey: `thesis-reformat:${fileEntryId}:${row.id}:${card.cardMeta.parsedAt}`,
     });
-    return { fileEntryId: built.fileEntryId, originalName: built.originalName };
+    return { fileEntryId: built.fileEntryId, originalName: built.originalName, ...(report ? { report } : {}) };
+  }
+
+  /**
+   * v2 映射：卡片带模板剖面时，用「内容剖面 → 映射计划 → 装订规格」确定性产出，
+   * 不再派代理猜区间。返回 null = 老卡片，调用方回落原路径。
+   */
+  private mapWithProfile(
+    card: ThesisFormatCard,
+    outline: Array<{ index: number; kind: string; level?: number; text: string }>,
+    titleHint: string,
+  ): { spec: ThesisBindingSpec; report: Record<string, unknown> } | null {
+    const profile = card.profile;
+    if (!profile || profile.slots.length === 0) return null;
+    const knownKinds = new Set(["heading", "paragraph", "table", "image", "list"]);
+    const blocks = outline.map((block) => ({
+      index: block.index,
+      kind: (knownKinds.has(block.kind) ? block.kind : "paragraph") as "heading" | "paragraph" | "table" | "image" | "list",
+      ...(block.level !== undefined ? { level: block.level } : {}),
+      text: block.text,
+    }));
+    const content = buildContentProfile(blocks);
+    const plan = buildMappingPlan({ template: profile, content });
+    const { spec, notes } = planToBindingSpec({ plan, content, titleHint });
+    return {
+      spec,
+      report: {
+        version: 2,
+        conservation: plan.conservation,
+        report: plan.report,
+        assignments: plan.assignments.map((entry) => ({
+          slotId: entry.slotId,
+          headingText: entry.headingText,
+          rule: entry.rule,
+          confidence: Number(entry.confidence.toFixed(2)),
+          blockRange: entry.blockRange,
+          notes: entry.notes,
+        })),
+        unmatched: plan.unmatched,
+        // 0.40–0.62 区间的归属靠顺序推断，UI 提醒用户核对（不派代理，保持确定性）
+        needsReview: plan.pendingForSemantic.map((entry) => ({
+          chapterText: entry.chapterText,
+          candidates: entry.candidates.map((candidate) => candidate.slotId),
+        })),
+        gaps: [...profile.gaps, ...content.gaps],
+        notes,
+      },
+    };
   }
 
   private async dispatchAgent(task: string, input: Record<string, unknown>): Promise<Record<string, unknown> | null> {
