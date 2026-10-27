@@ -7,6 +7,7 @@ import type { WebContents, WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime, type ThesisBindingSpecPayload, type ThesisFormatCardPayload } from './office-runtime'
 import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from './thesis-logo-backfill'
+import { selfCheckThesisDocx } from './thesis-selfcheck'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
 import type { OfficeAgentAskEvent } from '../../shared/office'
 
@@ -217,6 +218,13 @@ export async function describeThesisDocxBlocks(sourceBytes: Buffer) {
   return docs.describeThesisBlocks(new Uint8Array(sourceBytes))
 }
 
+/** 取一级标题的中文字体（自检抽样用；格式卡结构宽松，这里做防御式读取）。 */
+function headingFontOf(card: ThesisFormatCardPayload): string | undefined {
+  const headings = (card as { headings?: Array<{ level?: number; font?: { eastAsia?: string } }> }).headings ?? []
+  const first = headings.find((entry) => entry.level === 1) ?? headings[0]
+  return typeof first?.font?.eastAsia === 'string' ? first.font.eastAsia : undefined
+}
+
 /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx（主进程纯函数，无渲染端）。 */
 export async function generateThesisDocx(
   input: {
@@ -254,8 +262,34 @@ export async function generateThesisDocx(
       console.warn('[thesis] 封面 logo 回填失败', error)
     }
   }
+  // 出稿前自检（方案 §7.3）：logo 字节、页眉页脚、目录域、未归类小节、标题字体。
+  // 硬伤直接抛错——宁可不给文件，也不给一个"看起来正常"的假货；软伤进 warnings。
+  const selfCheck = await selfCheckThesisDocx(bytes, {
+    expectLogos: [
+      ...(Array.isArray(headerImages) ? headerImages.map((image, index) => ({ role: `header#${index}`, dataUrl: String((image as { dataUrl?: unknown }).dataUrl ?? '') })) : []),
+      ...(coverLogo ? [{ role: 'cover', dataUrl: String(coverLogo.dataUrl ?? '') }] : []),
+    ].filter((entry) => entry.dataUrl.startsWith('data:image/')),
+    headerEnabled: input.formatCard.header?.enabled === true,
+    footerEnabled: input.formatCard.footer?.enabled === true,
+    tocEnabled: (input.formatCard.toc as { enabled?: boolean } | undefined)?.enabled === true,
+    expectUnmatchedSection: Array.isArray((input.bindingSpec as { unmatchedBlocks?: unknown[] }).unmatchedBlocks)
+      && ((input.bindingSpec as { unmatchedBlocks?: unknown[] }).unmatchedBlocks?.length ?? 0) > 0,
+    ...(headingFontOf(input.formatCard) ? { expectHeadingFont: headingFontOf(input.formatCard)! } : {}),
+  })
+  if (!selfCheck.ok) {
+    throw new Error(`论文排版自检未通过：${selfCheck.failures.join('；')}`)
+  }
+  if (selfCheck.warnings.length > 0) {
+    console.warn('[thesis] 自检提示', selfCheck.warnings)
+  }
+
   onPhase?.('saved')
-  return { filePath: await writeGeneratedTempFile(Buffer.from(bytes), '.docx'), bytes: Buffer.from(bytes), title }
+  return {
+    filePath: await writeGeneratedTempFile(Buffer.from(bytes), '.docx'),
+    bytes: Buffer.from(bytes),
+    title,
+    ...(selfCheck.warnings.length > 0 ? { warnings: selfCheck.warnings } : {}),
+  }
 }
 
 /**
