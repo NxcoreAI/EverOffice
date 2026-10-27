@@ -7,6 +7,7 @@ import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
 import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
 import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
+import { buildContentProfile, flattenChapters, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -457,7 +458,7 @@ describe("TemplateProfile（M1：固定元素 + 槽位骨架）", () => {
     const card = validateThesisFormatCard({}, "模版.docx");
     const profile = buildTemplateProfile({
       facts,
-      card: { ...card, cover: { ...card.cover, logo: facts.coverImages[0] } },
+      card: { ...card, cover: { ...card.cover, logo: facts.coverImages[0]! } },
       sourceName: "模版.docx",
     });
     expect(profile.fixed.logos.some((logo) => logo.role === "cover" && logo.widthPx === 626)).toBe(true);
@@ -468,5 +469,77 @@ describe("TemplateProfile（M1：固定元素 + 槽位骨架）", () => {
     const profile = buildTemplateProfile({ facts, card: cardOf(), sourceName: "规范.docx" });
     expect(profile.slots).toEqual([]);
     expect(profile.gaps.some((gap) => gap.includes("章节标题"))).toBe(true);
+  });
+});
+
+describe("ContentProfile（M2：内容剖面）", () => {
+  /** 贴近真实：一、/1.1 混排 + 图表题注 + 参考文献锚点。 */
+  const outline = (): OutlineBlock[] => [
+    { index: 0, kind: "heading", level: 2, text: "一、业务场景分析" },
+    { index: 1, kind: "heading", level: 3, text: "1.1 政策与业务背景" },
+    { index: 2, kind: "paragraph", text: "近年来……" },
+    { index: 3, kind: "heading", level: 3, text: "1.2 业务痛点（场景化）" },
+    { index: 4, kind: "list", text: "痛点一" },
+    { index: 5, kind: "image", text: "" },
+    { index: 6, kind: "paragraph", text: "图 1 系统架构示意" },
+    { index: 7, kind: "heading", level: 2, text: "二、需求梳理" },
+    { index: 8, kind: "table", text: "" },
+    { index: 9, kind: "paragraph", text: "表 1 功能需求清单" },
+    { index: 10, kind: "heading", level: 2, text: "参考文献" },
+    { index: 11, kind: "paragraph", text: "[1] 张三. 论文排版[J]. 2024." },
+  ];
+
+  it("标题剥离编号并归一化，保留原编号与体系", () => {
+    const profile = buildContentProfile(outline());
+    const first = profile.blocks[0]!;
+    expect(first.normalized).toBe("业务场景分析");
+    expect(first.originalNumber).toBe("一、");
+    expect(first.numberingFamily).toBe("cn");
+    expect(first.tokens).toContain("业务");
+    const sub = profile.blocks[1]!;
+    expect(sub.normalized).toBe("政策与业务背景");
+    expect(sub.originalNumber).toBe("1.1");
+    expect(sub.numberingFamily).toBe("decimal");
+  });
+
+  it("角色按相对深度推断：原始 H2→chapter、H3→section", () => {
+    const profile = buildContentProfile(outline());
+    expect(profile.blocks[0]!.role).toBe("chapter");
+    expect(profile.blocks[1]!.role).toBe("section");
+    expect(profile.blocks[2]!.role).toBe("body");
+  });
+
+  it("识别参考文献锚点与图表题注配对", () => {
+    const profile = buildContentProfile(outline());
+    expect(profile.anchors.reference).toBe("b10");
+    expect(profile.blocks[6]!.isCaption).toBe(true);
+    expect(profile.blocks[6]!.captionOf).toBe("b5");
+    expect(profile.blocks[9]!.captionOf).toBe("b8");
+    // 非紧邻的"图 x"文本不算题注
+    expect(profile.blocks[2]!.isCaption).toBeUndefined();
+  });
+
+  it("章节树带块区间与父子关系", () => {
+    const profile = buildContentProfile(outline());
+    const chapters = flattenChapters(profile);
+    const first = profile.outline[0]!;
+    expect(first.text).toBe("一、业务场景分析");
+    expect(first.children.map((child) => child.normalized)).toEqual(["政策与业务背景", "业务痛点场景化"]); // 归一化会去掉括号
+    // 第一章子树覆盖 [0,7)：到"二、需求梳理"之前
+    expect(first.blockStart).toBe(0);
+    expect(first.blockEnd).toBe(7);
+    expect(chapters.map((node) => node.normalized)).toEqual([
+      "业务场景分析", "政策与业务背景", "业务痛点场景化", "需求梳理", "参考文献",
+    ]);
+    // 每个块都能指回所属章节
+    expect(profile.blocks[5]!.chapterTraceId).toBe("b0");
+    expect(profile.blocks[11]!.chapterTraceId).toBe("b10");
+  });
+
+  it("无标题文档记 gap 且全部为 body 角色", () => {
+    const profile = buildContentProfile([{ index: 0, kind: "paragraph", text: "纯正文" }]);
+    expect(profile.outline).toEqual([]);
+    expect(profile.blocks[0]!.role).toBe("body");
+    expect(profile.gaps.some((gap) => gap.includes("没有标题层级"))).toBe(true);
   });
 });
