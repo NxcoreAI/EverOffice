@@ -49,6 +49,10 @@ export interface ContentOutlineNode {
   traceId: string;
   text: string;
   normalized: string;
+  /** 归一化后的 token（映射引擎算相似度用）。 */
+  tokens: string[];
+  /** 原文编号前缀（"一、"、"1.1"），判编号体系是否同类用。 */
+  originalNumber?: string;
   level: number;
   role: BlockRole;
   anchor?: AnchorKind;
@@ -160,6 +164,8 @@ function buildOutlineTree(content: ContentBlock[], gaps: string[]): ContentOutli
       traceId: block.traceId,
       text: block.text,
       normalized: block.normalized,
+      tokens: block.tokens ?? [],
+      ...(block.originalNumber ? { originalNumber: block.originalNumber } : {}),
       level: block.level ?? 1,
       role: block.role,
       ...(block.anchor ? { anchor: block.anchor } : {}),

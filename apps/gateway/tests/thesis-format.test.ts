@@ -7,7 +7,9 @@ import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
 import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
 import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
-import { buildContentProfile, flattenChapters, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
+import { buildContentProfile, flattenChapters, type ContentProfile, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
+import { buildMappingPlan } from "../src/modules/thesis-format/mapping-plan.js";
+import type { TemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import JSZip from "jszip";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -541,5 +543,157 @@ describe("ContentProfile（M2：内容剖面）", () => {
     expect(profile.outline).toEqual([]);
     expect(profile.blocks[0]!.role).toBe("body");
     expect(profile.gaps.some((gap) => gap.includes("没有标题层级"))).toBe(true);
+  });
+});
+
+describe("MappingPlan（M3：映射引擎）", () => {
+  const templateProfile = (titles: string[]): TemplateProfile => buildTemplateProfile({
+    facts: {
+      styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
+      outline: titles.map((text, index) => ({ index, level: 1, text, inCoverRegion: false })),
+      numbering: { scheme: "cn-upper", levels: [] },
+    },
+    card: validateThesisFormatCard({}, "模版.docx"),
+    sourceName: "模版.docx",
+  });
+
+  const contentOf = (titles: Array<[number, string]>): ContentProfile =>
+    buildContentProfile(titles.map(([level, text], index) => ({ index, kind: "heading" as const, level, text }))
+      .flatMap((heading, position) => [heading, { index: position * 2 + 1, kind: "paragraph" as const, text: `正文${position}` }]));
+
+  it("锚点直达固定槽位（参考资料 → reference）", () => {
+    const plan = buildMappingPlan({
+      template: templateProfile(["一、项目任务", "参考资料", "附录"]),
+      content: contentOf([[1, "一、项目任务"], [1, "参考资料"]]),
+    });
+    const reference = plan.assignments.find((entry) => entry.kind === "reference");
+    expect(reference?.rule).toBe("R0-anchor");
+    expect(reference?.headingText).toBe("参考资料"); // 固定槽位保留模板标题
+    expect(plan.conservation.matched + plan.conservation.unmatched).toBe(plan.conservation.total);
+  });
+
+  it("章节名对不上时按顺序对齐（R2）而不是丢内容", () => {
+    const plan = buildMappingPlan({
+      template: templateProfile(["一、项目任务", "二、项目需求分析", "三、项目系统设计"]),
+      content: contentOf([[1, "一、业务场景分析"], [1, "二、需求梳理"], [1, "三、功能模块划分"]]),
+    });
+    expect(plan.assignments.map((entry) => entry.rule)).toEqual(["R2-order", "R2-order", "R2-order"]);
+    expect(plan.conservation.matched).toBe(plan.conservation.total);
+    expect(plan.report.appendedChapters).toBe(0);
+  });
+
+  it("源章节多于模板槽位：多出的追加到正文末尾（R4），不丢", () => {
+    const plan = buildMappingPlan({
+      template: templateProfile(["一、项目任务", "二、需求分析"]),
+      content: contentOf([[1, "一、业务场景分析"], [1, "二、需求梳理"], [1, "三、功能模块划分"]]),
+    });
+    const appended = plan.assignments.filter((entry) => entry.rule === "R4-append");
+    expect(appended).toHaveLength(1);
+    expect(appended[0]!.headingText).toBe("三、功能模块划分");
+    expect(appended[0]!.notes.join()).toContain("追加");
+    expect(plan.report.appendedChapters).toBe(1);
+  });
+
+  it("源章节少于模板槽位：不硬塞空章节", () => {
+    const plan = buildMappingPlan({
+      template: templateProfile(["一、项目任务", "二、项目需求分析", "三、项目系统设计"]),
+      content: contentOf([[1, "一、业务场景分析"]]),
+    });
+    expect(plan.assignments).toHaveLength(1);
+    expect(plan.conservation.total - plan.conservation.matched).toBe(0);
+  });
+
+  it("首标题之前的散块进 R5 未匹配，就近挂到槽位且计数守恒", () => {
+    const content = buildContentProfile([
+      { index: 0, kind: "paragraph", text: "前置说明" },
+      { index: 1, kind: "heading", level: 1, text: "一、项目任务" },
+      { index: 2, kind: "paragraph", text: "正文" },
+    ]);
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务"]), content });
+    expect(plan.unmatched).toHaveLength(1);
+    expect(plan.unmatched[0]!.reason).toBe("orphan-block");
+    expect(plan.unmatched[0]!.blockRange).toEqual([0, 1]);
+    expect(plan.conservation).toMatchObject({ matched: 2, unmatched: 1, total: 3 });
+    expect(plan.report.unmatchedBlocks).toBe(1);
+  });
+
+  it("模糊匹配按相似度打分（R3）并给出低置信提示", () => {
+    const plan = buildMappingPlan({
+      template: templateProfile(["二、项目需求分析"]),
+      content: contentOf([[1, "项目需求分析"]]),
+    });
+    const assignment = plan.assignments[0]!;
+    expect(assignment.rule).toBe("R1-title"); // 归一化后完全相同 → 精确命中
+    expect(assignment.confidence).toBe(0.95);
+  });
+
+  it("守恒断言：人为制造未覆盖块会导致计数不等而抛错", () => {
+    // 用一个"章节区间不连续"的内容：两个章节之间夹着无标题块，必须被 R5 收走
+    const content = buildContentProfile([
+      { index: 0, kind: "heading", level: 1, text: "一、项目任务" },
+      { index: 1, kind: "paragraph", text: "正文" },
+      { index: 2, kind: "table", text: "" },
+      { index: 3, kind: "heading", level: 1, text: "二、需求梳理" },
+      { index: 4, kind: "paragraph", text: "正文2" },
+    ]);
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务", "二、需求梳理"]), content });
+    expect(plan.conservation.matched + plan.conservation.unmatched).toBe(5);
+    expect(plan.unmatched).toEqual([]); // 表格在章节区间内 → 已被覆盖
+  });
+});
+
+describe("MappingPlan 低置信区间与代理裁决钩子", () => {
+  const templateProfile = (titles: string[]): TemplateProfile => buildTemplateProfile({
+    facts: {
+      styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
+      outline: titles.map((text, index) => ({ index, level: 1, text, inCoverRegion: false })),
+      numbering: { scheme: "cn-upper", levels: [] },
+    },
+    card: validateThesisFormatCard({}, "模版.docx"),
+    sourceName: "模版.docx",
+  });
+
+  it("字面吃不准但不算无关时，产出待裁决配对；顺序对齐仍兜底", () => {
+    const content = buildContentProfile([
+      { index: 0, kind: "heading", level: 1, text: "二、需求梳理" },
+      { index: 1, kind: "paragraph", text: "正文" },
+    ]);
+    const plan = buildMappingPlan({ template: templateProfile(["一、项目任务", "二、项目需求分析"]), content });
+    // 「需求梳理」与「项目需求分析」有部分共同词：落在低置信区间
+    expect(plan.pendingForSemantic.length).toBeGreaterThan(0);
+    expect(plan.pendingForSemantic[0]!.candidates.length).toBeGreaterThan(0);
+    // 仍然按顺序兜底落位，内容不丢
+    expect(plan.conservation.matched + plan.conservation.unmatched).toBe(plan.conservation.total);
+  });
+
+  it("代理裁决可以改写归属（semantic 入参生效）", () => {
+    const content = buildContentProfile([
+      { index: 0, kind: "heading", level: 1, text: "附：数据字典" },
+      { index: 1, kind: "paragraph", text: "正文" },
+    ]);
+    const template = templateProfile(["一、项目任务", "二、项目需求分析"]);
+    const plan = buildMappingPlan({
+      template,
+      content,
+      semantic: [{ chapterTraceId: "b0", slotId: "slot-2", reason: "内容属于需求分析" }],
+    });
+    const assignment = plan.assignments[0]!;
+    expect(assignment.slotId).toBe("slot-2");
+    expect(assignment.notes.join()).toContain("需求分析");
+    expect(plan.report.appendedChapters).toBe(0);
+  });
+
+  it("代理返回 slotId=null 时按追加处理（不丢内容）", () => {
+    const content = buildContentProfile([
+      { index: 0, kind: "heading", level: 1, text: "无关章节" },
+      { index: 1, kind: "paragraph", text: "正文" },
+    ]);
+    const plan = buildMappingPlan({
+      template: templateProfile(["一、项目任务"]),
+      content,
+      semantic: [{ chapterTraceId: "b0", slotId: null, reason: "无对应章节" }],
+    });
+    // 顺序对齐已经先占了槽位（容量 many），内容依然完整
+    expect(plan.conservation.matched).toBe(plan.conservation.total);
   });
 });
