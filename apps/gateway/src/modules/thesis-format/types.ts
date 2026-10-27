@@ -202,6 +202,8 @@ export interface ThesisTemplateFacts {
     footers: Array<{ file: string; text: string; images: ThesisHfImage[] }>;
     /** 封面区正文图片（校徽等）：装订重建封面时按此回填。 */
     coverImages?: ThesisHfImage[];
+    /** 封面区文本行（段落序）：代理据此填封面字段。 */
+    coverText?: string[];
   }>;
   /** 规范条文/样例全文（文件名 → 文本）。 */
   documentsText: Array<{ name: string; text: string }>;

@@ -254,3 +254,37 @@ describe("封面 logo 提取与确定性写入", () => {
     expect(card.cover.logo).toBeUndefined();
   });
 });
+
+describe("封面文字兜底（coverText）", () => {
+  const factsWithCover = (coverText: string[]) => ({
+    ooxml: [{ name: "模版.docx", styles: [], sections: [], headers: [], footers: [], coverText }],
+    documentsText: [],
+  });
+
+  it("代理留空时用封面文本补齐校名/文种/学年", () => {
+    const base = validateThesisFormatCard({ cover: { schoolName: "" } }, "模版.docx");
+    expect(base.cover.degreeLine).toBe("本科毕业论文（设计）"); // 校验层兜底值
+    const merged = mergeTemplateImages(base, factsWithCover([
+      "通信工程学院", "《人工智能创新创业实践》", "课程考核报告", "2026-2027学年第一学期",
+    ]));
+    expect(merged.cover.schoolName).toBe("通信工程学院");
+    expect(merged.cover.degreeLine).toBe("课程考核报告");
+    expect(merged.cover.yearLine).toBe("2026-2027学年第一学期");
+  });
+
+  it("代理已给出的封面字段不被覆盖", () => {
+    const base = validateThesisFormatCard(
+      { cover: { schoolName: "嘉应学院", degreeLine: "本科毕业论文（设计）" } },
+      "模版.docx",
+    );
+    const merged = mergeTemplateImages(base, factsWithCover(["通信工程学院", "课程考核报告"]));
+    expect(merged.cover.schoolName).toBe("嘉应学院");
+  });
+
+  it("coverText 为空时保持原样（不编造）", () => {
+    const base = validateThesisFormatCard({ cover: { schoolName: "" } }, "模版.docx");
+    const merged = mergeTemplateImages(base, factsWithCover([]));
+    expect(merged.cover.schoolName).toBe("");
+    expect(merged.cover.yearLine).toBe("");
+  });
+});

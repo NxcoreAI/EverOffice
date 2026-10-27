@@ -58,6 +58,8 @@ export interface OoxmlFacts {
   /** 封面区（首个分节/分页之前）的正文图片：校徽、校名标识等。
    *  这类图不在页眉页脚里，装订重建封面时必须显式回填，否则直接丢失。 */
   coverImages: OoxmlHfImageFact[];
+  /** 封面区文本行（段落序，去空行）。代理据此填封面字段，网关也用它兜底。 */
+  coverText: string[];
 }
 
 function attr(xml: string, name: string): number | undefined {
@@ -294,6 +296,23 @@ export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts>
   }
 
   const coverFacts = documentXml ? await coverImages(zip, documentXml) : [];
+  const coverLines = documentXml ? coverText(documentXml) : [];
 
-  return { styles, sections, headers, footers, coverImages: coverFacts };
+  return { styles, sections, headers, footers, coverImages: coverFacts, coverText: coverLines };
+}
+
+/** 首个分节/分页之前的段落文本行（封面区），最多 40 行、单行 120 字符。 */
+function coverText(documentXml: string): string[] {
+  const boundaries = ["<w:sectPr", 'w:type="page"']
+    .map((token) => documentXml.indexOf(token))
+    .filter((index) => index > 0);
+  const head = documentXml.slice(0, boundaries.length > 0 ? Math.min(...boundaries) : documentXml.length);
+  const lines: string[] = [];
+  for (const para of head.match(/<w:p[\s>][\s\S]*?<\/w:p>/g) ?? []) {
+    const text = [...para.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("").trim();
+    if (!text) continue;
+    lines.push(text.slice(0, 120));
+    if (lines.length >= 40) break;
+  }
+  return lines;
 }

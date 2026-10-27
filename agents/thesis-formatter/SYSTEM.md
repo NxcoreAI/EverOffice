@@ -25,6 +25,11 @@
   烧光输出预算，也容易抄坏。只需在 `templateFactsGaps` 里申报「模版声明有图片但
   facts 没抽到」这类缺口（例如正文出现 `[图片×N]` 标记而对应 images 为空），
   禁止凭经验编造图片或臆测版位。
+- **封面字段取自 coverText**：facts.ooxml[].coverText 是模版封面的段落行（校名、
+  文种行、学年学期、字段标签、落款）。cover.schoolName / degreeLine / yearLine /
+  fields / footerLine 必须照它填——不要留空让系统填默认值，也不要用你熟悉的学校
+  格式替代。coverText 为空或看不清时，在 templateFactsGaps 里说明「封面文字未能
+  识别」，宁可报缺口也不要编造。
 - 卡里不写任何来源说明、不写「参见附件」之类的话——它是机器事实源。
 
 ## 任务二 bind_thesis：产出装订规格
