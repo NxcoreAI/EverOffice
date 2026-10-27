@@ -55,6 +55,32 @@ export class ThesisFormatGatewayBridge {
     return this.parse(roomId, { method: 'POST', body: form })
   }
 
+  /**
+   * 彻底删除一份模版：先删模版文件（连带 Room 成员引用），再删格式卡。
+   * 文件删除失败（例如早已不存在）不阻断删卡。
+   */
+  async deleteTemplate(
+    roomId: string,
+    cardId: string,
+    deleteFile: (fileEntryId: string) => Promise<{ deleted: boolean }>,
+    keepCard = false,
+  ): Promise<{ fileDeleted: boolean; hadFile: boolean; cardKept: boolean }> {
+    const cards = await this.listCards(roomId)
+    const card = cards.find((entry) => entry.id === cardId)
+    const fileEntryId = card?.sourceFileEntryId ?? null
+    let fileDeleted = false
+    if (fileEntryId) {
+      try {
+        fileDeleted = (await deleteFile(fileEntryId)).deleted
+      } catch (error) {
+        console.warn('[thesis] 删除模版文件失败（继续删卡）：', error instanceof Error ? error.message : String(error))
+      }
+    }
+    // keepCard=true：只删模版文件，格式卡留着继续可用（用户可自选）
+    if (!keepCard) await this.removeCard(roomId, cardId)
+    return { fileDeleted, hadFile: Boolean(fileEntryId), cardKept: keepCard }
+  }
+
   async removeCard(roomId: string, cardId: string): Promise<void> {
     const response = await this.request(
       `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/cards/${encodeURIComponent(cardId)}`,

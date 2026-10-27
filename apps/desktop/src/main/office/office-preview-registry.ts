@@ -96,7 +96,13 @@ export interface OfficeThesisPanelBridge {
   listCards(roomId: string): Promise<unknown[]>
   pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
   removeCard(roomId: string, cardId: string): Promise<void>
-  reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ originalName: string }>
+  /** 彻底删除模版（文件 + 格式卡）。 */
+  deleteTemplate(
+    roomId: string,
+    cardId: string,
+    options?: { keepCard?: boolean },
+  ): Promise<{ fileDeleted: boolean; hadFile: boolean; cardKept: boolean }>
+  reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ originalName: string; report?: Record<string, unknown> }>
 }
 
 /** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */
@@ -185,6 +191,12 @@ export class OfficePreviewRegistry {
           case 'remove':
             await bridge.removeCard(roomId, action.cardId)
             return { ok: true as const, value: null }
+          case 'delete-template':
+            // 彻底删除：模版文件（+ 可选格式卡）。文件删不掉也继续，不阻断。
+            return {
+              ok: true as const,
+              value: await bridge.deleteTemplate(roomId, action.cardId, { keepCard: action.keepCard === true }),
+            }
           case 'reformat':
             return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
         }

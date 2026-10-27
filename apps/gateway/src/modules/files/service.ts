@@ -19,6 +19,7 @@ import {
   ingestEvents,
   jobs,
   parsedContents,
+  roomSourceMemberships,
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
 import {
@@ -708,6 +709,11 @@ export class FilesService {
       ? await hooks.deleteMemoryDocuments(fileEntryId)
       : [];
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
+    // Room 成员引用必须一起清：不清就留下指向已删文件的悬空行，
+    // Room 的资料/知识列表仍会显示这个文件（用户看到的就是「删了还残留」）。
+    this.db.delete(roomSourceMemberships)
+      .where(and(eq(roomSourceMemberships.sourceKind, "file"), eq(roomSourceMemberships.sourceId, fileEntryId)))
+      .run();
     // 源行已删：worker 重读时移除索引行。
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     if (membership) {
@@ -1075,6 +1081,10 @@ export class FilesService {
     }
 
     this.db.delete(uploadedFiles).where(eq(uploadedFiles.id, fileId)).run();
+    // 同 deleteCatalogEntry：清掉 Room 里的悬空成员引用，避免列表残留。
+    this.db.delete(roomSourceMemberships)
+      .where(and(eq(roomSourceMemberships.sourceKind, "file"), eq(roomSourceMemberships.sourceId, fileId)))
+      .run();
 
     // 内容寻址 GC：同 hash 还有别的文件行引用 → 字节与解析产物保留
     const siblings = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)

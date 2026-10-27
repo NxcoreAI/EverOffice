@@ -674,6 +674,7 @@ const THESIS_FORMAT_CHANNELS = {
   parseFromLibrary: 'thesis-format:parse:library',
   pickAndParse: 'thesis-format:parse:pick',
   removeCard: 'thesis-format:cards:remove',
+  deleteTemplate: 'thesis-format:template:delete',
   reformat: 'thesis-format:reformat',
   cardChanged: 'thesis-format:card-changed',
 } as const
@@ -2840,7 +2841,11 @@ async function pickThesisTemplateFromDisk(
   return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
 }
 
-function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registry: OfficePreviewRegistry): void {
+function registerThesisFormatHandlers(
+  bridge: ThesisFormatGatewayBridge,
+  registry: OfficePreviewRegistry,
+  files: FilesGatewayBridge,
+): void {
   const cardChanged = () => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(THESIS_FORMAT_CHANNELS.cardChanged)
@@ -2861,6 +2866,28 @@ function registerThesisFormatHandlers(bridge: ThesisFormatGatewayBridge, registr
   handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, roomId: string, cardId: string) => {
     await bridge.removeCard(roomId, cardId)
     cardChanged()
+  })
+  /**
+   * 彻底删除一份模版：**先删模版文件再删格式卡**。
+   * 「只删卡」会把模版文件留在资料区，用户看到的就是"删了还残留"。
+   * 文件删除走 /v1/files/:id（硬删 + Room 成员引用级联），失败不阻断删卡。
+   */
+  handle(THESIS_FORMAT_CHANNELS.deleteTemplate, async (_event, roomId: string, cardId: string) => {
+    const cards = await bridge.listCards(roomId)
+    const card = cards.find((entry) => entry.id === cardId)
+    let fileDeleted = false
+    if (card?.sourceFileEntryId) {
+      try {
+        const result = await files.delete(card.sourceFileEntryId)
+        fileDeleted = result.deleted
+      } catch (error) {
+        // 文件可能早已被删：记日志继续删卡，接口照常返回
+        console.warn('[thesis] 删除模版文件失败（继续删卡）：', error instanceof Error ? error.message : String(error))
+      }
+    }
+    await bridge.removeCard(roomId, cardId)
+    cardChanged()
+    return { fileDeleted, hadFile: Boolean(card?.sourceFileEntryId) }
   })
   handle(THESIS_FORMAT_CHANNELS.reformat, (_event, roomId: string, fileEntryId: string, cardId?: string) =>
     bridge.reformat(roomId, fileEntryId, cardId))
@@ -4475,12 +4502,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerFilesHandlers(filesGatewayBridge, highRiskImports)
     const thesisFormatBridge = new ThesisFormatGatewayBridge(gatewaySupervisor)
     thesisFormatBridgeRef = thesisFormatBridge
-    registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry)
+    registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry, filesGatewayBridge)
     // AI 页签（docs 视图内）论文排版桥：复用同一网关实现，pick 走磁盘选择直传。
     officePreviewRegistry.setThesisPanelBridge({
       listCards: (roomId) => thesisFormatBridge.listCards(roomId),
       pickAndSet: (roomId) => pickThesisTemplateFromDisk(roomId),
       removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
+      // 彻底删除：先删模版文件（连带 Room 成员引用），再删格式卡
+      deleteTemplate: (roomId, cardId, options) =>
+        thesisFormatBridge.deleteTemplate(
+          roomId,
+          cardId,
+          (fileEntryId) => filesGatewayBridge.delete(fileEntryId),
+          options?.keepCard === true,
+        ),
       reformat: (roomId, fileEntryId, cardId) => thesisFormatBridge.reformat(roomId, fileEntryId, cardId),
     })
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))

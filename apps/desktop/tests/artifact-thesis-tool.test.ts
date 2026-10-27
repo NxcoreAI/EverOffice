@@ -11,63 +11,25 @@ const pane = readFileSync(
   resolve(__dirname, '../src/renderer/src/components/context-room/ported/components/detail-panels/ArtifactLibraryPane.tsx'),
   'utf8',
 )
-const dialog = readFileSync(
-  resolve(__dirname, '../src/renderer/src/components/context-room/ported/components/detail-panels/ThesisReformatDialog.tsx'),
-  'utf8',
-)
 const preload = readFileSync(resolve(__dirname, '../src/preload/index.ts'), 'utf8')
 
-describe('产物区排版工具接线', () => {
-  it('三点菜单里有排版工具项，且只对 .docx 产物显示', () => {
-    expect(pane).toContain("t('contextRoom:artifactLibrary.thesisTool')")
-    expect(pane).toContain('office && /\\.docx$/i.test(office.originalName)')
+describe('排版入口已迁到 Word 卡片的 AI 面板（产物区菜单移除）', () => {
+  it('产物区三点菜单不再有排版工具项，也不再挂弹窗', () => {
+    expect(pane).not.toContain("t('contextRoom:artifactLibrary.thesisTool')")
+    expect(pane).not.toContain('<ThesisReformatDialog')
+    expect(pane).not.toContain('thesisTarget')
   })
 
-  it('对话框以选中产物的 fileId 为排版目标，并传 roomId', () => {
-    expect(pane).toContain('<ThesisReformatDialog')
-    expect(pane).toContain('roomId={room.id}')
-    expect(pane).toContain('target={thesisTarget}')
-    expect(pane).toContain('setThesisTarget({ fileId: office.fileId, name: resource.name })')
-  })
-
-  it('模版上传限定 Word，并透传 wordOnly 到 IPC', () => {
-    expect(dialog).toContain('pickAndSet(roomId, { wordOnly: true })')
+  it('模版直传仍支持 wordOnly（AI 面板上传走同一 IPC）', () => {
     expect(preload).toContain("invoke('thesis-format:parse:pick', roomId, options)")
   })
 
-  it('导入模版后直接开排（贴合「导入即排版」的预期）', () => {
-    expect(dialog).toContain('await reformat(meta.cardId)')
-  })
-
-  it('长任务期间禁止关闭，且阶段文案可见', () => {
-    expect(dialog).toContain('if (!next && busy) return;')
-    expect(dialog).toContain("t('contextRoom:thesisFormat.phaseParsing')")
-    expect(dialog).toContain("t('contextRoom:thesisFormat.phaseReformatting')")
-  })
-
-  it('成功后排空产物清单缓存，让新文件立刻出现', () => {
-    expect(dialog).toContain("window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'))")
-  })
-})
-describe('M5 排版弹窗：映射报告与删除模版文件', () => {
-  it('reformat 返回 report 时留在弹窗展示，不直接关闭', () => {
-    expect(dialog).toContain('const mapping = (outcome.report ?? null) as MappingReport | null')
-    expect(dialog).toContain('if (mapping) setReport(mapping)')
-    expect(dialog).toContain("t('contextRoom:thesisFormat.reportTitle'")
-    expect(dialog).toContain("t('contextRoom:thesisFormat.reportUnmatched'")
-  })
-
-  it('删除的是模版文件而不是格式卡，且只在有库内文件时出现', () => {
-    expect(dialog).toContain('deleteTemplateFile')
-    // 只调 files.delete（删文件），绝不调 removeCard（删卡）
-    expect(dialog).toContain('await files.delete(fileId)')
-    expect(dialog).not.toContain('removeCard')
-    expect(dialog).toContain('{row.sourceFileEntryId ? (')
-  })
-
-  it('删除前有确认，且提示格式卡会保留', () => {
-    expect(dialog).toContain('window.confirm(')
-    const zh = readFileSync(resolve(__dirname, '../src/renderer/src/i18n/locales/zh-CN/contextRoom.json'), 'utf8')
-    expect(zh).toContain('格式卡会保留')
+  it('彻底删除模版的 IPC 存在，且先删文件再删卡', () => {
+    const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
+    expect(main).toContain("deleteTemplate: 'thesis-format:template:delete'")
+    const handlerIndex = main.indexOf('THESIS_FORMAT_CHANNELS.deleteTemplate')
+    expect(handlerIndex).toBeGreaterThan(0)
+    // 先 files.delete(模版文件) 再 removeCard
+    expect(main.indexOf('files.delete(card.sourceFileEntryId)')).toBeLessThan(main.indexOf('bridge.removeCard(roomId, cardId)', handlerIndex))
   })
 })

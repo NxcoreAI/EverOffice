@@ -32,6 +32,8 @@ export interface GenOfficeDocsRuntime {
             | { kind: 'list' }
             | { kind: 'pick' }
             | { kind: 'remove'; cardId: string }
+            /** 彻底删除模版（文件 + 格式卡）。 */
+            | { kind: 'delete-template'; cardId: string; keepCard?: boolean }
             | { kind: 'reformat'; cardId?: string },
         ) => Promise<
           { ok: true; value: unknown } | { ok: false; reason: 'no_room' | 'error'; message?: string }

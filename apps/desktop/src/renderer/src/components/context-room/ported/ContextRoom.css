@@ -14024,7 +14024,6 @@
   .context-room-history-summary-skeleton { animation: none; }
 }
 
-
 /* 记忆来源行（静态展示，无跳转）：与按钮行同款外观。 */
 .context-room-memory-inline-detail .context-room-memory-detail-list .context-room-memory-detail-row {
   display: flex;
@@ -14657,7 +14656,6 @@
   }
 }
 
-
 /* —— 思路板块（上图下卡）：头部一行（路径链 + 锁定 + 聚焦/漫游正反面）+ 图区常驻 —— */
 .context-room-thoughts-pane[data-variant='board'] {
   display: flex;
@@ -14846,7 +14844,6 @@
   font-size: 12px;
   text-align: center;
 }
-
 
 /* 知识涌现图（聚焦树 + 漫步步进链）：布局坐标来自 treeLayout.ts 的尺寸常量，CSS 只管配色字体 */
 .eg-viewport {
@@ -16253,173 +16250,10 @@ button.eg-walk.is-next:hover {
     0 4px 12px rgba(17, 24, 39, 0.05);
 }
 
-.context-room-thesis-dlg-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 2px 0 0;
-}
-
-.context-room-thesis-dlg-cards-title {
-  margin: 0 0 2px;
-  color: var(--cr-tertiary);
-  font-size: 11px;
-}
-
-.context-room-thesis-dlg-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.context-room-thesis-dlg-option[data-selected] {
-  border-color: color-mix(in srgb, var(--cr-accent, #3b6ea5) 40%, transparent);
-  background: color-mix(in srgb, var(--cr-accent, #3b6ea5) 6%, transparent);
-}
-
-.context-room-thesis-dlg-option span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 /* 长任务进度：解析/装订各 1–5 分钟，必须让用户看到「在跑」。 */
-.context-room-thesis-dlg-phase {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  color: var(--cr-secondary, #4b5563);
-  font-size: 12px;
-}
-
-.context-room-thesis-dlg-gaps {
-  margin: 0;
-  color: #b97909;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.context-room-action-confirm footer .context-room-thesis-dlg-upload {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 
 .context-room-action-confirm footer .context-room-primary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-/* ---- 排版弹窗：模版行（含删除模版文件）+ v2 映射报告 ---- */
-
-.context-room-thesis-dlg-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.context-room-thesis-dlg-row .context-room-thesis-dlg-option {
-  flex: 1;
-  min-width: 0;
-}
-
-.context-room-thesis-dlg-del {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--cr-tertiary, #6b7280);
-  cursor: pointer;
-}
-
-.context-room-thesis-dlg-del:hover:not(:disabled) {
-  border-color: rgba(200, 50, 50, 0.28);
-  color: #c83232;
-  background: rgba(200, 50, 50, 0.06);
-}
-
-.context-room-thesis-dlg-del:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.context-room-thesis-dlg-report {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 10px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 10px;
-  background: rgba(17, 24, 39, 0.02);
-}
-
-.context-room-thesis-dlg-report-head {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.context-room-thesis-dlg-report-warn {
-  margin: 0;
-  color: #b97909;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.context-room-thesis-dlg-report-list,
-.context-room-thesis-dlg-report-gaps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 150px;
-  overflow: auto;
-}
-
-.context-room-thesis-dlg-report-list li {
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 40px;
-  gap: 6px;
-  align-items: center;
-  font-size: 11px;
-  color: var(--cr-secondary, #4b5563);
-}
-
-.context-room-thesis-dlg-report-list li[data-low] {
-  color: #b97909;
-}
-
-.context-room-thesis-dlg-report-list .rule {
-  font-variant: all-small-caps;
-  color: var(--cr-tertiary, #6b7280);
-}
-
-.context-room-thesis-dlg-report-list .text {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.context-room-thesis-dlg-report-list .conf {
-  text-align: right;
-}
-
-.context-room-thesis-dlg-report-gaps li {
-  font-size: 11px;
-  color: #b97909;
-  line-height: 1.5;
 }
