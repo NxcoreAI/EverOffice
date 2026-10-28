@@ -94,7 +94,10 @@ interface EditSyncState {
 /** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
 export interface OfficeThesisPanelBridge {
   listCards(roomId: string): Promise<unknown[]>
-  pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+  pickAndSet(
+    roomId: string,
+    options?: { wordOnly?: boolean; overwrite?: boolean },
+  ): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[]; duplicate?: boolean }>
   removeCard(roomId: string, cardId: string): Promise<void>
   /** 彻底删除模版（文件 + 格式卡）。 */
   deleteTemplate(
@@ -197,7 +200,8 @@ export class OfficePreviewRegistry {
           case 'list':
             return { ok: true as const, value: await bridge.listCards(roomId) }
           case 'pick':
-            return { ok: true as const, value: await bridge.pickAndSet(roomId) }
+            // overwrite：同名冲突后用户选「替换原文件」→ 复用上次选择的文件直接解析
+            return { ok: true as const, value: await bridge.pickAndSet(roomId, { overwrite: action.overwrite === true }) }
           case 'remove':
             await bridge.removeCard(roomId, action.cardId)
             return { ok: true as const, value: null }

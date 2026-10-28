@@ -119,6 +119,30 @@ describe('AI 面板排版工具', () => {
     expect(ipc).toContain('sourceFileEntryId?: string | null')
   })
 
+  it('重名模版不直接覆盖：先弹「该论文模板已存在」，给替换/取消两个选项', () => {
+    expect(aiTab).toContain('setPendingDuplicate({ name: meta.sourceName')
+    expect(aiTab).toContain('ai-thesis-dup')
+    expect(aiTab).toContain("t('aiThesisDuplicateTitle')")
+    expect(aiTab).toContain("t('aiThesisDuplicateReplace')")
+    expect(aiTab).toContain("t('aiThesisDuplicateCancel')")
+    const zh = readFileSync(resolve(docsRoot, 'src/renderer/i18n/strings-ai.ts'), 'utf8')
+    expect(zh).toContain('该论文模板已存在')
+    expect(zh).toContain('替换原文件')
+    expect(zh).toContain('取消上传')
+    // 确认替换后带 overwrite 复用主进程暂存的文件，不再弹选择框
+    expect(aiTab).toContain('void uploadTemplate(true)')
+    // 提示框在面板内完成，不使用 window.confirm（会收起下拉）
+    expect(aiTab).not.toContain('window.confirm(')
+  })
+
+  it('宿主侧同名判定：大小写/空白不敏感，替换直接解析暂存文件', () => {
+    const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
+    expect(main).toContain('pendingTemplatePick')
+    expect(main).toContain("card.sourceName.trim().toLowerCase() === sourceName.trim().toLowerCase()")
+    // overwrite 路径：删掉暂存后立刻解析，不再弹选择框
+    expect(main).toContain('if (options?.overwrite) {')
+  })
+
   it('删除结果如实反馈：文件没删掉要提示而不是假装成功', () => {
     expect(aiTab).toContain("setError(t('aiThesisDeleteFileFailed'))")
   })

@@ -30,7 +30,7 @@ export interface GenOfficeDocsRuntime {
           wcId: number,
           action:
             | { kind: 'list' }
-            | { kind: 'pick' }
+            | { kind: 'pick'; overwrite?: boolean }
             | { kind: 'remove'; cardId: string }
             /** 彻底删除模版（文件 + 格式卡）。 */
             | { kind: 'delete-template'; cardId: string; keepCard?: boolean }

@@ -2827,12 +2827,34 @@ async function hashFileBytes(path: string): Promise<string> {
 }
 
 /** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
+/**
+ * 上一次选择但**尚未解析**的模版（同名冲突时暂存，等用户点「替换原文件」）。
+ * 只按 room 记一份：同一时刻用户不可能同时上传两份模版。
+ */
+const pendingTemplatePick = new Map<string, string>()
+
 async function pickThesisTemplateFromDisk(
   roomId: string,
-  options?: { wordOnly?: boolean },
-): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> {
+  options?: { wordOnly?: boolean; overwrite?: boolean },
+): Promise<{
+  canceled: boolean
+  cardId: string
+  sourceName: string
+  factGaps?: string[]
+  /** true = 同名模版已存在，尚未解析；UI 弹「替换 / 取消」二选一。 */
+  duplicate?: boolean
+}> {
   const thesisBridgeForPick = thesisFormatBridgeRef
   if (!thesisBridgeForPick) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
+
+  // 「替换原文件」：直接解析上次暂存的那份，不再弹选择框
+  if (options?.overwrite) {
+    const pending = pendingTemplatePick.get(roomId)
+    if (!pending) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
+    pendingTemplatePick.delete(roomId)
+    return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, pending) }
+  }
+
   const picked = await dialog.showOpenDialog({
     title: options?.wordOnly ? '选择论文模版（Word）' : '选择论文格式模版',
     properties: ['openFile'],
@@ -2843,6 +2865,15 @@ async function pickThesisTemplateFromDisk(
   })
   const filePath = picked.filePaths[0]
   if (!filePath) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
+
+  // 重名校验：同名模版已存在就先问用户，别直接覆盖（解析要几分钟，覆盖了没法撤回）
+  const sourceName = basename(filePath)
+  const cards = await thesisBridgeForPick.listCards(roomId).catch(() => [])
+  const clash = cards.find((card) => card.sourceName.trim().toLowerCase() === sourceName.trim().toLowerCase())
+  if (clash) {
+    pendingTemplatePick.set(roomId, filePath)
+    return { canceled: false, cardId: clash.id, sourceName, duplicate: true }
+  }
   return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
 }
 
@@ -2863,7 +2894,11 @@ function registerThesisFormatHandlers(
     cardChanged()
     return meta
   })
-  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (_event, roomId: string, options?: { wordOnly?: boolean }) => {
+  handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (
+    _event,
+    roomId: string,
+    options?: { wordOnly?: boolean; overwrite?: boolean },
+  ) => {
     const meta = await pickThesisTemplateFromDisk(roomId, options)
     if (!meta.canceled) cardChanged()
     return meta
@@ -4542,7 +4577,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // AI 页签（docs 视图内）论文排版桥：复用同一网关实现，pick 走磁盘选择直传。
     officePreviewRegistry.setThesisPanelBridge({
       listCards: (roomId) => thesisFormatBridge.listCards(roomId),
-      pickAndSet: (roomId) => pickThesisTemplateFromDisk(roomId),
+      pickAndSet: (roomId, options) => pickThesisTemplateFromDisk(roomId, options),
       removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
       // 彻底删除：先删模版文件（连带 Room 成员引用），再删格式卡
       deleteTemplate: (roomId, cardId, options) =>
