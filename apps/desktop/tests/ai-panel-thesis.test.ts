@@ -14,7 +14,7 @@ const ipc = readFileSync(resolve(docsRoot, 'src/shared/ipc.ts'), 'utf8')
 
 describe('AI 面板排版工具', () => {
   it('上传模版成功后直接排版当前文档（导入即排版）', () => {
-    expect(aiTab).toContain('if (meta.cardId && hasDoc) await reformatWith(meta.cardId)')
+    expect(aiTab).toContain('if (meta.cardId && hasDoc) await reformatWith(meta.cardId, { mode })')
   })
 
   it('模版解析缺口在面板里显性提示，不静默', () => {
@@ -168,6 +168,31 @@ describe('AI 面板排版工具', () => {
     expect(main).toContain("card.sourceName.trim().toLowerCase() === sourceName.trim().toLowerCase()")
     // overwrite 路径：删掉暂存后立刻解析，不再弹选择框
     expect(main).toContain('if (options?.overwrite) {')
+  })
+
+  it('排版走任务化：提交作业 + 轮询进度 + 10 分钟硬超时', () => {
+    expect(aiTab).toContain('thesisReformatJob')
+    expect(aiTab).toContain('thesisReformatJobStatus')
+    expect(aiTab).toContain('TIMEOUT_MS = 10 * 60 * 1000')
+    expect(aiTab).toContain('aiThesisTimeout')
+    expect(aiTab).toContain('ai-thesis-progress')
+    // 阶段文案
+    expect(aiTab).toContain("t('aiThesisPhaseParsing')")
+    expect(aiTab).toContain("t('aiThesisPhaseMapping')")
+    expect(aiTab).toContain("t('aiThesisPhaseRendering')")
+    const zh = readFileSync(resolve(docsRoot, 'src/renderer/i18n/strings-ai.ts'), 'utf8')
+    expect(zh).toContain('处理超时（已等 10 分钟）')
+    // 不再使用同步长请求路径
+    expect(aiTab).not.toContain('await window.desktop.thesisReformat(cardId)')
+  })
+
+  it('目录融合模式可选：严格（按模板目录筛选）/ 融合（全部保留）', () => {
+    expect(aiTab).toContain("useState<'strict' | 'blend'>('blend')")
+    expect(aiTab).toContain('aiThesisModeStrict')
+    expect(aiTab).toContain('aiThesisModeBlend')
+    // 模式随排版请求透传
+    expect(aiTab).toContain('reformatWith(row.id, { mode })')
+    expect(aiTab).toContain('reformatWith(meta.cardId, { mode })'); // 上传后自动排版
   })
 
   it('删除结果如实反馈：文件没删掉要提示而不是假装成功', () => {

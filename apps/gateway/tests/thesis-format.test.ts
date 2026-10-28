@@ -554,6 +554,7 @@ describe("MappingPlan（M3：映射引擎）", () => {
       styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
       outline: titles.map((text, index) => ({ index, level: 1, text, inCoverRegion: false })),
       numbering: { scheme: "cn-upper", levels: [] },
+      fixedBlocks: [],
     },
     card: validateThesisFormatCard({}, "模版.docx"),
     sourceName: "模版.docx",
@@ -650,6 +651,7 @@ describe("MappingPlan 低置信区间与代理裁决钩子", () => {
       styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
       outline: titles.map((text, index) => ({ index, level: 1, text, inCoverRegion: false })),
       numbering: { scheme: "cn-upper", levels: [] },
+      fixedBlocks: [],
     },
     card: validateThesisFormatCard({}, "模版.docx"),
     sourceName: "模版.docx",
@@ -706,6 +708,7 @@ describe("M4a 映射 → 装订规格（planToBindingSpec）", () => {
       styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
       outline: titles.map((text, index) => ({ index, level: 1, text, inCoverRegion: false })),
       numbering: { scheme: "cn-upper", levels: [] },
+      fixedBlocks: [],
     },
     card: validateThesisFormatCard({}, "模版.docx"),
     sourceName: "模版.docx",
@@ -832,6 +835,7 @@ describe("排版选项（第二期规则面板）", () => {
       styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
       outline: [{ index: 0, level: 1, text: "一、项目任务", inCoverRegion: false }],
       numbering: { scheme: "cn-upper", levels: [] },
+      fixedBlocks: [],
     },
     card: validateThesisFormatCard({}, "模版.docx"),
     sourceName: "模版.docx",
@@ -902,7 +906,7 @@ describe("任务化排版（第三期：进度与长任务）", () => {
     const template = buildTemplateProfile({
       facts: {
         styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [],
-        outline: [], numbering: { scheme: "cn-upper", levels: [] },
+        outline: [], numbering: { scheme: "cn-upper", levels: [] }, fixedBlocks: [],
       },
       card: validateThesisFormatCard({}, "模版.docx"),
       sourceName: "模版.docx",
@@ -913,5 +917,54 @@ describe("任务化排版（第三期：进度与长任务）", () => {
     expect(content.outline.length).toBeGreaterThan(0);
     expect(spec.chapters.length).toBeGreaterThan(0);
     expect(plan.unmatched).toBeDefined();
+  });
+});
+
+
+describe('模板固定表单保留（评价表等）', () => {
+  it('extractOoxmlFactsAsync 抽取正文顶层表格为 fixedBlocks（跳过槽位示例表与含图块）', async () => {
+    const { extractOoxmlFactsAsync } = await import('../src/modules/thesis-format/ooxml-facts.js');
+    // 手工构造：一个槽位标题 + 一个含图表格（应跳过）+ 一个纯表格（应保留）
+    const table = '<w:tbl><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>指导教师评分及评语</w:t></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const tableWithPic = '<w:tbl><w:tr><w:tc><w:p><w:r><w:drawing><a:blip r:embed="rId7"/></w:drawing></w:r></w:p></w:tc></w:tr></w:tbl>';
+    const doc = `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+      <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>一、项目任务</w:t></w:r></w:p>
+      <w:p><w:r><w:t>正文示例</w:t></w:r></w:p>
+      ${tableWithPic}${table}
+      <w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+    </w:body></w:document>`;
+    const { default: JSZip } = await import('jszip');
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>');
+    zip.file('_rels/.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+    zip.file('word/_rels/document.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>');
+    zip.file('word/document.xml', doc);
+    const bytes = await zip.generateAsync({ type: 'nodebuffer' });
+    const facts = await extractOoxmlFactsAsync(bytes);
+    expect(facts.fixedBlocks).toHaveLength(1);
+    expect(facts.fixedBlocks[0]!.heading).toBe('一、项目任务');
+    expect(facts.fixedBlocks[0]!.xml).toContain('指导教师评分及评语');
+  });
+
+  it('planToBindingSpec 透传 templateProfile.fixed.fixedBlocks 进 spec', async () => {
+    const { planToBindingSpec } = await import('../src/modules/thesis-format/plan-to-spec.js');
+    const { buildMappingPlan } = await import('../src/modules/thesis-format/mapping-plan.js');
+    const { buildContentProfile } = await import('../src/modules/thesis-format/content-profile.js');
+    const { buildTemplateProfile } = await import('../src/modules/thesis-format/template-profile.js');
+    const { describeThesisBlocks } = await import('../../desktop/vendor/genoffice/packages/docx-engine/src/index.js');
+    const { readFile } = await import('node:fs/promises');
+    const template = await readFile('/Users/nxcore/Downloads/人工智能创新创业实践课程设计报告(模板） (1).docx');
+    const source = await readFile('/Users/nxcore/Downloads/开题与需求、系统设计报告.docx');
+    const { extractOoxmlFactsAsync } = await import('../src/modules/thesis-format/ooxml-facts.js');
+    const facts = await extractOoxmlFactsAsync(template);
+    const { validateThesisFormatCard } = await import('../src/modules/thesis-format/validate.js');
+    const card = validateThesisFormatCard({}, '模板.docx');
+    card.numbering = facts.numbering;
+    const profile = buildTemplateProfile({ facts, card, sourceName: '模板.docx' });
+    const blocks = await describeThesisBlocks(source);
+    const plan = buildMappingPlan({ template: profile, content: buildContentProfile(blocks as never) });
+    const { spec } = planToBindingSpec({ plan, content: buildContentProfile(blocks as never), titleHint: 't', templateProfile: profile });
+    expect((spec.fixedBlocks ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((spec.fixedBlocks ?? []).some((b) => (b.heading ?? '').includes('项目经理评价'))).toBe(true);
   });
 });

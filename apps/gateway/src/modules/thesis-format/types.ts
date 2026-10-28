@@ -210,6 +210,8 @@ export interface ThesisTemplateFacts {
     outline?: import("./ooxml-facts.js").OoxmlOutlineEntry[];
     /** 编号方案。 */
     numbering?: import("./ooxml-facts.js").OoxmlNumberingFact;
+    /** 模板固定表单（评价表等，原样 XML）：装订时回插，保证模板自有内容不丢。 */
+    fixedBlocks?: import("./ooxml-facts.js").OoxmlFixedBlockFact[];
   }>;
   /** 规范条文/样例全文（文件名 → 文本）。 */
   documentsText: Array<{ name: string; text: string }>;
@@ -253,6 +255,8 @@ export interface ThesisBindingSpec {
   unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>;
   /** 融合模式：正文段落保留源文档格式（不套模板正文样式），结构/编号仍按模版。 */
   preserveSourceFormat?: boolean;
+  /** 模板自有固定表单（原样 XML）：prelim=目录后首个槽位前；appendix=全文末尾。 */
+  fixedBlocks?: Array<{ placement: 'prelim' | 'appendix'; heading?: string; xml: string }>;
   /** 攻读学位期间研究成果；空数组 = 无。 */
   achievements: string[];
 }

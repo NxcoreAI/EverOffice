@@ -51,6 +51,15 @@ export interface OoxmlSectionFact {
 }
 
 /** 模板正文大纲条目（模板自身的章节骨架——槽位识别的唯一来源）。 */
+/** 模板固定表单块：placement=prelim（首个槽位之前，如评审表）| appendix（最后一个槽位之后）。 */
+export interface OoxmlFixedBlockFact {
+  placement: 'prelim' | 'appendix'
+  /** 前置标题文本（作为回插时的小节标题；可空）。 */
+  heading?: string
+  /** 原样块 XML（w:tbl 或 w:p 序列拼接）。 */
+  xml: string
+}
+
 export interface OoxmlOutlineEntry {
   /** 段落序号（正文段落顺序，含非标题段，用于定位插入点）。 */
   index: number;
@@ -85,6 +94,9 @@ export interface OoxmlFacts {
   coverText: string[];
   /** 模板正文大纲（模板自身的章节骨架）：槽位识别的唯一来源。 */
   outline: OoxmlOutlineEntry[];
+  /** 模板固定表单（评价表/任务书表格等）：原样 XML + 前置标题，装订时原样回插。
+   *  只收不含图片引用（r:embed）的块——跨文档引用 rels 会断，宁可丢弃不产出坏图。 */
+  fixedBlocks: OoxmlFixedBlockFact[];
   /** 编号方案（numbering.xml + 标题样式 numPr）。 */
   numbering: OoxmlNumberingFact;
 }
@@ -398,6 +410,45 @@ async function numberingFacts(zip: JSZip, stylesXml: string | undefined): Promis
   };
 }
 
+/**
+ * 模板固定表单抽取：正文顶层 w:tbl（评价表/任务书表）+ 紧邻其上的标题段。
+ * 目标是「教师评价表」这类模板自有表单在排版产物里原样保留——当前管线只映射
+ * 源文档内容，模板自身表格会丢。placement 按首个大纲槽位位置二分。
+ */
+function fixedBlockFacts(documentXml: string, outline: OoxmlOutlineEntry[]): OoxmlFixedBlockFact[] {
+  if (outline.length === 0) return [];
+  const firstSlotText = outline[0]!.text.slice(0, 12);
+  const tables = documentXml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g) ?? [];
+  const out: OoxmlFixedBlockFact[] = [];
+  for (const table of tables) {
+    // 表格文本：判定属于哪个大纲槽位区间
+    const text = stripTags(table).replace(/\s+/g, "").slice(0, 400);
+    if (!text) continue;
+    // 含图片引用的块跨文档必然断链（rels/media 不随迁），跳过保平安
+    if (/r:embed=|r:id=/.test(table)) continue;
+    const slotHit = outline.find((entry) => text.includes(entry.text.replace(/\s+/g, "").slice(0, 8)));
+    if (slotHit) continue; // 槽位内部的示例表（会被源内容替换）不回收
+    // 找表格之前最近的标题（用 outline 的段落序近似：取表格位置在文档中的序数）
+    const tablePos = documentXml.indexOf(table);
+    const priorHeadings = outline.filter((entry) => entry.index !== undefined);
+    const heading = priorHeadings
+      .filter((entry) => {
+        const pos = documentXml.indexOf(entry.text.slice(0, 12));
+        return pos >= 0 && pos < tablePos;
+      })
+      .pop();
+    const placement: OoxmlFixedBlockFact["placement"] =
+      heading && heading.text.includes(firstSlotText) ? "appendix" : "prelim";
+    out.push({
+      placement,
+      ...(heading ? { heading: heading.text.slice(0, 60) } : {}),
+      xml: table,
+    });
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
 export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts> {
   const zip = await JSZip.loadAsync(bytes);
 
@@ -466,8 +517,19 @@ export async function extractOoxmlFactsAsync(bytes: Buffer): Promise<OoxmlFacts>
   const coverLines = documentXml ? coverText(documentXml) : [];
   const outline = documentXml ? outlineFacts(documentXml, stylesXml) : [];
   const numbering = await numberingFacts(zip, stylesXml);
+  const fixedBlocks = documentXml ? fixedBlockFacts(documentXml, outline) : [];
 
-  return { styles, sections, headers, footers, coverImages: coverFacts, coverText: coverLines, outline, numbering };
+  return {
+    styles,
+    sections,
+    headers,
+    footers,
+    coverImages: coverFacts,
+    coverText: coverLines,
+    outline,
+    numbering,
+    fixedBlocks,
+  };
 }
 
 /** 首个分节/分页之前的段落文本行（封面区），最多 40 行、单行 120 字符。 */

@@ -116,6 +116,28 @@ export interface OfficeThesisPanelBridge {
       headingMapping?: { chapter?: number; section?: number; subsection?: number }
     },
   ): Promise<{ originalName: string; report?: Record<string, unknown> }>
+  /** 任务化排版：立即返回 jobId（后台执行），用 reformatJobStatus 轮询进度。 */
+  startReformatJob(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: {
+      mode?: 'strict' | 'blend'
+      keepLogo?: boolean
+      keepHeaderFooter?: boolean
+      headingMapping?: { chapter?: number; section?: number; subsection?: number }
+    },
+  ): Promise<{ jobId: string; phase: string }>
+  reformatJobStatus(
+    jobId: string,
+  ): Promise<{
+    id: string
+    status: 'running' | 'completed' | 'failed'
+    phase: string
+    progress: number
+    result?: unknown
+    error?: string
+  }>
 }
 
 /** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */
@@ -213,6 +235,14 @@ export class OfficePreviewRegistry {
             }
           case 'reformat':
             return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
+          case 'reformat-job':
+            // 后台作业：立即返回 jobId，面板轮询进度（不再挂长请求）
+            return {
+              ok: true as const,
+              value: await bridge.startReformatJob(roomId, instance.fileId, action.cardId, action.options),
+            }
+          case 'reformat-job-status':
+            return { ok: true as const, value: await bridge.reformatJobStatus(action.jobId) }
         }
       } catch (error) {
         // 面板只显示这一行文本：内部错误码（thesis_format_card_not_found）与上游

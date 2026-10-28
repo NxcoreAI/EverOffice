@@ -115,6 +115,7 @@ export class ThesisFormatService {
           coverText: layoutMember.coverText ?? [],
           outline: layoutMember.outline ?? [],
           numbering: layoutMember.numbering ?? { scheme: "none", levels: [] },
+          fixedBlocks: (layoutMember.fixedBlocks ?? []) as never,
         },
         card,
         sourceName: name,
@@ -308,6 +309,8 @@ export class ThesisFormatService {
       titleHint,
       ...(options?.headingMapping ? { headingMapping: options.headingMapping } : {}),
       preserveSourceFormat: options?.mode === "blend",
+      // 模板自有固定表单（教师评价表等）：解析时存在卡片剖面里，这里原样带回
+      ...(card.profile?.fixed?.fixedBlocks?.length ? { templateProfile: card.profile } : {}),
     });
     diff.right = spec.chapters.map((chapter) => {
       const assignment = plan.assignments.find((entry) => entry.blockRange[0] === chapter.blockStart);

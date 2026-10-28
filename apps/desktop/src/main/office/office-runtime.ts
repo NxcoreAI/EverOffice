@@ -34,7 +34,18 @@ export interface GenOfficeDocsRuntime {
             | { kind: 'remove'; cardId: string }
             /** 彻底删除模版（文件 + 格式卡）。 */
             | { kind: 'delete-template'; cardId: string; keepCard?: boolean }
-            | { kind: 'reformat'; cardId?: string },
+            | { kind: 'reformat'; cardId?: string }
+            | {
+                kind: 'reformat-job'
+                cardId?: string
+                options?: {
+                  mode?: 'strict' | 'blend'
+                  keepLogo?: boolean
+                  keepHeaderFooter?: boolean
+                  headingMapping?: { chapter?: number; section?: number; subsection?: number }
+                }
+              }
+            | { kind: 'reformat-job-status'; jobId: string }
         ) => Promise<
           { ok: true; value: unknown } | { ok: false; reason: 'no_room' | 'error'; message?: string }
         >)

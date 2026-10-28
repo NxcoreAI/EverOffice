@@ -103,6 +103,8 @@ export function planToBindingSpec(input: {
   headingMapping?: { chapter?: 1 | 2 | 3 | 4; section?: 1 | 2 | 3 | 4; subsection?: 1 | 2 | 3 | 4 };
   /** 融合模式：正文保留源文档格式。 */
   preserveSourceFormat?: boolean;
+  /** 模板剖面（可选）：带 fixedBlocks 时原样回插模板自有表单。 */
+  templateProfile?: { fixed?: { fixedBlocks?: Array<{ placement: 'prelim' | 'appendix'; heading?: string; xml: string }> } };
 }): { spec: ThesisBindingSpec; notes: string[] } {
   const { plan, content, titleHint, headingMapping, preserveSourceFormat } = input;
   const notes: string[] = [];
@@ -192,6 +194,10 @@ export function planToBindingSpec(input: {
     achievements: [],
     ...(unmatchedBlocks.length > 0 ? { unmatchedBlocks } : {}),
     ...(preserveSourceFormat ? { preserveSourceFormat: true } : {}),
+    // 模板自有固定表单（教师评价表等）原样回插——模板内容不丢
+    ...(input.templateProfile?.fixed?.fixedBlocks?.length
+      ? { fixedBlocks: input.templateProfile.fixed.fixedBlocks }
+      : {}),
   };
   return { spec, notes };
 }

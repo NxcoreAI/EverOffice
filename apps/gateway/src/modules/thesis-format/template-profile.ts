@@ -85,6 +85,8 @@ export interface TemplateProfile {
     footer: ThesisFormatCard["footer"];
     styles: Record<string, StyleLock>;
     numbering: OoxmlNumberingFact;
+    /** 模板自有固定表单（教师评价表/任务书表等）：原样 XML，装订时回插。 */
+    fixedBlocks: Array<{ placement: 'prelim' | 'appendix'; heading?: string; xml: string }>;
   };
   slots: ThesisSlot[];
   /** 剖面自身的缺口（抽不到的东西），UI 必须显示。 */
@@ -293,6 +295,7 @@ export function buildTemplateProfile(input: {
       footer: card.footer,
       styles: styleLocks.styles,
       numbering: facts.numbering,
+      fixedBlocks: facts.fixedBlocks ?? [],
     },
     slots: slotInfo.slots,
     gaps,

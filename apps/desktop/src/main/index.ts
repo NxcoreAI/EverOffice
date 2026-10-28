@@ -4589,6 +4589,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         ),
       reformat: (roomId, fileEntryId, cardId, options) =>
         thesisFormatBridge.reformat(roomId, fileEntryId, cardId, options),
+      // 任务化排版：面板提交作业后每秒轮询一次状态（网关 30 分钟保留，重启丢、报错清晰）
+      startReformatJob: (roomId, fileEntryId, cardId, options) =>
+        thesisFormatBridge.startReformatJob(roomId, fileEntryId, cardId, options),
+      reformatJobStatus: (jobId) => thesisFormatBridge.reformatJobStatus(jobId),
     })
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)
