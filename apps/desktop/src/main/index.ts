@@ -2839,6 +2839,12 @@ const pendingTemplatePick = new Map<string, string>()
  */
 const uploadedTemplateBytes = new Map<string, { name: string; bytes: Uint8Array }>()
 
+/** files 桥的模块级引用（模版导入资料区要用；bridge 初始化时赋值）。 */
+let filesGatewayBridgeRef: {
+  importPathsOnce: (paths: string[], options?: { roomId?: string }) => Promise<Array<{ fileId: string | null }>>
+  list?: (limit?: number, offset?: number) => Promise<{ items: unknown[]; total: number }>
+} | null = null
+
 async function pickThesisTemplateFromDisk(
   roomId: string,
   options?: { wordOnly?: boolean; overwrite?: boolean },
@@ -2858,7 +2864,8 @@ async function pickThesisTemplateFromDisk(
     const pending = pendingTemplatePick.get(roomId)
     if (!pending) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
     pendingTemplatePick.delete(roomId)
-    return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, pending) }
+    const fileEntryId = await importTemplateFileIntoLibrary(roomId, pending)
+    return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, pending, fileEntryId) }
   }
 
   const picked = await dialog.showOpenDialog({
@@ -2880,7 +2887,57 @@ async function pickThesisTemplateFromDisk(
     pendingTemplatePick.set(roomId, filePath)
     return { canceled: false, cardId: clash.id, sourceName, duplicate: true }
   }
-  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath) }
+  // 先导入资料区（按内容去重）：卡片因此持有真实文件条目 —— 预览能打开原文件、
+  // 删除能级联清文件、日后也能「从资料区重新解析」。
+  const fileEntryId = await importTemplateFileIntoLibrary(roomId, filePath)
+  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath, fileEntryId) }
+}
+
+/**
+ * 把模版文件导入资料区并返回文件条目 id（失败返回 null，不阻断解析）。
+ * 导入走既有 ingest 管道（内容哈希去重）：同一个模版重复导入不会产生第二份文件。
+ */
+/**
+ * 按文件名在资料区找文件（老卡片自愈用）：仅在唯一同名时采用，避免张冠李戴。
+ */
+async function findLibraryFileByName(name: string | undefined): Promise<string | null> {
+  if (!name) return null
+  try {
+    const catalog = await filesGatewayBridgeRef?.list?.()
+    const items = (catalog?.items ?? []) as Array<{ id?: string; originalName?: string }>
+    const hits = items.filter((item) => item.originalName === name && item.id)
+    return hits.length === 1 ? (hits[0]!.id as string) : null
+  } catch {
+    return null
+  }
+}
+
+async function importTemplateBytesIntoLibrary(
+  roomId: string,
+  name: string,
+  bytes: Uint8Array,
+): Promise<string | null> {
+  try {
+    const tempDir = join(app.getPath('temp'), 'everroom-thesis-import')
+    await mkdir(tempDir, { recursive: true })
+    const safeName = name.replace(/[\\/:*?"<>|]/g, '_') || '模版.docx'
+    const tempPath = join(tempDir, `${Date.now()}-${safeName}`)
+    await writeFile(tempPath, bytes)
+    return await importTemplateFileIntoLibrary(roomId, tempPath)
+  } catch (error) {
+    console.warn('模版字节导入资料区失败（不影响解析）:', error instanceof Error ? error.message : String(error))
+    return null
+  }
+}
+
+async function importTemplateFileIntoLibrary(roomId: string, filePath: string): Promise<string | null> {
+  try {
+    const imported = await filesGatewayBridgeRef?.importPathsOnce([filePath], { roomId })
+    return imported?.map((entry) => entry.fileId).find((id): id is string => Boolean(id)) ?? null
+  } catch (error) {
+    console.warn('模版导入资料区失败（不影响解析）:', error instanceof Error ? error.message : String(error))
+    return null
+  }
 }
 
 function registerThesisFormatHandlers(
@@ -2920,7 +2977,9 @@ function registerThesisFormatHandlers(
    */
   handle(THESIS_FORMAT_CHANNELS.parseUpload, async (_event, roomId: string, name: string, bytes: ArrayBuffer) => {
     const data = new Uint8Array(bytes)
-    const meta = await bridge.parseFromBytes(roomId, name, data)
+    // 先落盘导入资料区（内容去重）→ 卡片关联真实文件，预览/删除级联才成立
+    const fileEntryId = await importTemplateBytesIntoLibrary(roomId, name, data)
+    const meta = await bridge.parseFromBytes(roomId, name, data, fileEntryId)
     if (meta.cardId) {
       uploadedTemplateBytes.set(meta.cardId, { name, bytes: data })
       if (uploadedTemplateBytes.size > 8) {
@@ -4562,6 +4621,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     const highRiskImports = new HighRiskImportCoordinator(join(dataDirectory, 'high-risk-imports.json'), join(dataDirectory, 'backups'))
     await highRiskImports.initialize()
     const filesGatewayBridge = new FilesGatewayBridge(gatewaySupervisor, highRiskImports)
+    filesGatewayBridgeRef = filesGatewayBridge
     migrationCoordinator = new MigrationCoordinator(new MigrationsGatewayBridge(gatewaySupervisor), filesGatewayBridge, () => BrowserWindow.getAllWindows()[0] ?? null, join(dataDirectory, 'migrations', 'sources.json'), join(dataDirectory, 'backups'))
     await migrationCoordinator.initialize()
     registerMigrationHandlers(migrationCoordinator)
@@ -4618,7 +4678,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           await opener(card.sourceFileEntryId, meta?.originalName ?? card.sourceName ?? '模版.docx')
           return { opened: true }
         }
-        // 拖拽直传的卡：字节还在缓存里就落盘 + 导入资料区（按内容去重）后打开真预览
+        // 老卡片（创建于「上传自动入库」之前）没有文件条目：
+        //  ① 资料区里有同名文件 → 直接用那份打开（常见于用户自己导入过的模版）
+        //  ② 本次运行还留着上传字节的缓存 → 落盘导入后打开
+        const sameName = await findLibraryFileByName(card.sourceName)
+        if (sameName) {
+          await opener(sameName, card.sourceName ?? '模版.docx')
+          return { opened: true }
+        }
         const cached = uploadedTemplateBytes.get(cardId)
         if (!cached) return { opened: false, reason: 'no_file' }
         const tempDir = join(app.getPath('temp'), 'everroom-thesis-preview')

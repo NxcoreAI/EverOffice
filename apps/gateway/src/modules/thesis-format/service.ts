@@ -68,9 +68,16 @@ export class ThesisFormatService {
     return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
-  async parseFromUpload(roomId: string, bytes: Buffer, name: string): Promise<ThesisParseResult> {
+  async parseFromUpload(
+    roomId: string,
+    bytes: Buffer,
+    name: string,
+    fileEntryId?: string | null,
+  ): Promise<ThesisParseResult> {
     const result = await this.parseBytes(bytes, name);
-    const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: null, sourceName: name });
+    // fileEntryId：桌面端上传前已把模版导入资料区，卡片直接关联该文件。
+    // 关联后：预览能打开真实原文件、删除能级联清文件、也能重新从资料区解析。
+    const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId ?? null, sourceName: name });
     return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 

@@ -204,9 +204,15 @@ describe('AI 面板排版工具', () => {
     const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
     expect(main).toMatch(/opened: false, reason: .no_file./)
     expect(main).toContain('previewTemplate: async (roomId, cardId, opener)')
-    // 拖拽直传的模版：字节留在缓存里，预览时落盘+导入资料区（去重）后打开真预览
-    expect(main).toContain('uploadedTemplateBytes')
+    // 上传（选择框/拖拽）都先导入资料区再解析：卡片持有真实文件条目，
+    // 预览能打开原文件、删除能级联、重复导入按内容去重
+    expect(main).toContain('importTemplateFileIntoLibrary')
+    expect(main).toContain('importTemplateBytesIntoLibrary')
     expect(main).toContain('importPathsOnce')
+    expect(main).toContain("parseFromDisk(roomId, filePath, fileEntryId)")
+    expect(main).toContain('parseFromBytes(roomId, name, data, fileEntryId)')
+    // 老卡片自愈：资料区唯一同名文件直接打开
+    expect(main).toContain('findLibraryFileByName')
   })
 
   it('排版走任务化：提交作业 + 轮询进度 + 10 分钟硬超时', () => {

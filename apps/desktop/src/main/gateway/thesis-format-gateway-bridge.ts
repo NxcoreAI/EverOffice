@@ -47,12 +47,16 @@ export class ThesisFormatGatewayBridge {
   }
 
   /** 磁盘直传模版（zip 不进文件库；docx/doc/pdf 也走此通道）。 */
-  async parseFromDisk(roomId: string, filePath: string): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
+  async parseFromDisk(
+    roomId: string,
+    filePath: string,
+    fileEntryId?: string | null,
+  ): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const bytes = await readFile(filePath)
     const name = basename(filePath)
     const form = new FormData()
     form.append('file', new Blob([new Uint8Array(bytes)]), name)
-    return this.parse(roomId, { method: 'POST', body: form })
+    return this.parse(roomId, { method: 'POST', body: form }, fileEntryId ?? null)
   }
 
   /**
@@ -82,10 +86,15 @@ export class ThesisFormatGatewayBridge {
   }
 
   /** 从内存字节解析模版（工作台拖拽上传用，不落盘）。 */
-  async parseFromBytes(roomId: string, name: string, bytes: Uint8Array): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
+  async parseFromBytes(
+    roomId: string,
+    name: string,
+    bytes: Uint8Array,
+    fileEntryId?: string | null,
+  ): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const form = new FormData()
     form.append('file', new Blob([new Uint8Array(bytes)]), name)
-    return this.parse(roomId, { method: 'POST', body: form })
+    return this.parse(roomId, { method: 'POST', body: form }, fileEntryId ?? null)
   }
 
   /** 提交排版作业（立即返回 jobId，长任务在网关侧推进）。 */
@@ -133,10 +142,15 @@ export class ThesisFormatGatewayBridge {
     if (!response.ok) throw new Error(`论文格式卡删除失败（${response.status}）`)
   }
 
-  private async parse(roomId: string, init: RequestInit): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
+  private async parse(
+    roomId: string,
+    init: RequestInit,
+    fileEntryId: string | null = null,
+  ): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const upload = init.body instanceof FormData
+    const query = fileEntryId ? `?fileEntryId=${encodeURIComponent(fileEntryId)}` : ''
     const response = await this.request(
-      `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/${upload ? 'parse-upload' : 'parse'}`,
+      `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/${upload ? 'parse-upload' : 'parse'}${query}`,
       init,
       // 必须大于网关侧代理超时（thesis-formatter 15 分钟）：客户端先断就等于白跑。
       20 * 60_000,

@@ -111,7 +111,11 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
     });
 
     app.post("/v1/thesis-format/rooms/:roomId/parse-upload", {
-      schema: { tags: ["thesis-format"], params: RoomParams },
+      schema: {
+        tags: ["thesis-format"],
+        params: RoomParams,
+        querystring: Type.Object({ fileEntryId: Type.Optional(Type.String()) }),
+      },
       bodyLimit: 80 * 1024 * 1024,
     }, async (request, reply) => {
       const file = await request.file();
@@ -120,7 +124,12 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
       const bytes = await file.toBuffer();
       if (bytes.length === 0) return reply.code(400).send({ error: "file_empty" });
       try {
-        const result = await service.parseFromUpload(request.params.roomId, bytes, name);
+        const result = await service.parseFromUpload(
+          request.params.roomId,
+          bytes,
+          name,
+          request.query.fileEntryId ?? null,
+        );
         return reply.send({ cardId: result.cardId, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps });
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "thesis_parse_failed" });
