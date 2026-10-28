@@ -71,13 +71,12 @@
   padding: 16px 12px 12px;
 }
 /* 品牌与账户（侧边栏内） */
-/* 应用图标式 squircle：蓝色纵向渐变 + 白字 */
+/* EverRoomMac 品牌标：项目原有 app 图标图片（原型占位为蓝色渐变 squircle + "E" 白字，
+ * 迁移时替换为 everroom-app-icon.png，此处仅保留尺寸与圆角投影）。 */
 .op-brand-mark {
-  background: linear-gradient(180deg, #2f96ff, #0060df);
-  color: #fff; font-weight: 700;
-  display: grid; place-items: center;
-  border-radius: 24%;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 3px rgba(0, 60, 160, 0.35);
+  display: block;
+  object-fit: contain;
+  border-radius: 22%;
 }
 .op-brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 14px; }
 .op-brand .op-brand-mark { width: 30px; height: 30px; font-size: 15px; flex: none; }

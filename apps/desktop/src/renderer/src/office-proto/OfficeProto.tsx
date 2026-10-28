@@ -3,6 +3,8 @@ import {
   Clock, FolderOpen, Bot, Library, Plug, Settings, X, Home, Plus,
 } from 'lucide-react'
 
+import everroomAppIcon from '@/assets/everroom-app-icon.png'
+
 import { type MenuKey, type OfficeFile, blankFile } from './data'
 import { FileTypeIcon } from './pages/parts'
 import { RecentView } from './pages/RecentView'
@@ -134,7 +136,8 @@ function Sidebar({ active, onSelect }: { active: MenuKey; onSelect: (k: MenuKey)
   return (
     <aside className="op-sidebar">
       <div className="op-brand">
-        <div className="op-brand-mark">E</div>
+        {/* EverRoomMac 品牌标：项目原有 app 图标（原型占位 "E" 字方块已替换） */}
+        <img className="op-brand-mark" src={everroomAppIcon} alt="" aria-hidden="true" draggable={false} />
         <div className="op-brand-text">
           <span className="op-brand-name">EverRoom</span>
           <span className="op-brand-sub">Office</span>

@@ -42,3 +42,6 @@ TencentDB-Agent-Memory/
 
 # PPT 实验产物（渲染图/PPTX/评审画廊）只留本地，不入库
 materials/ppt-style-experiments/
+
+# 本地调试截图 / 临时检查产物（UI 迁移验证等），不入库
+.tmp-inspect/
