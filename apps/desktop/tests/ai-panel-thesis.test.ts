@@ -53,16 +53,27 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain('setCards((prev) => (prev ? prev.filter((entry) => entry.id !== cardId) : prev))')
   })
 
-  it('弹窗不横向溢出：宽度自适应 + 视口内收，列表禁横向滚动', () => {
+  it('弹窗宽度随视口自适应，且不裁剪内容（裁剪会把右侧删除按钮藏掉）', () => {
     const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
     const panel = css.slice(css.indexOf('.ai-thesis-panel,'), css.indexOf('.ai-thesis-title {'))
-    expect(panel).toContain('width: fit-content')
-    expect(panel).toContain('max-width: min(336px, calc(100vw - 24px), 100%)')
-    expect(panel).toContain('overflow-x: hidden')
+    expect(panel).toContain('width: min(336px, calc(100vw - 24px))')
+    expect(panel).toContain('max-width: 100%')
     expect(panel).toContain('box-sizing: border-box')
+    // 绝不能在浮层/列表上用 overflow hidden 裁掉按钮
+    expect(panel).toContain('overflow: visible')
+    expect(panel).not.toContain('overflow-x: hidden')
     const cards = css.slice(css.indexOf('.ai-thesis-cards {'), css.indexOf('.ai-thesis-card {'))
-    expect(cards).toContain('overflow-x: hidden')
-    expect(cards).toContain('min-width: 0')
+    expect(cards).not.toContain('overflow-x: hidden')
+    // 主区自己裁剪，长文件名不会顶飞按钮
+    const main = css.slice(css.indexOf('.ai-thesis-card-main {'), css.indexOf('}', css.indexOf('.ai-thesis-card-main {')) + 1)
+    expect(main).toContain('overflow: hidden')
+    expect(main).toContain('min-width: 0')
+  })
+
+  it('删除按钮始终渲染（不依赖是否来自资料库）', () => {
+    expect(aiTab).toContain('ai-thesis-card-act is-danger ai-thesis-card-del')
+    // 不包在 sourceFileEntryId 条件里
+    expect(aiTab).not.toContain('{row.sourceFileEntryId ? (')
   })
 
   it('删除按钮不被挤压且加大点击区（flex-shrink:0 / 28px / 16px 图标）', () => {
