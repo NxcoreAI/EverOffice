@@ -1,21 +1,22 @@
 import type { LucideIcon } from 'lucide-react'
 import {
-  Bot,
+  BookOpen,
+  BookOpenText,
+  Brain,
   Building2,
-  Clock,
   FileText,
   FolderOpen,
   FolderSync,
   Home,
-  Library,
+  AudioLines,
+  NotebookPen,
   ListTodo,
-  Plug,
   PlugZap,
   Settings,
   FilePenLine,
 } from 'lucide-react'
 
-export type PageId = 'home' | 'office' | 'office-document' | 'doc-flow' | 'docs' | 'sources' | 'files' | 'schedules' | 'agent-connections' | 'settings'
+export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'agent-connections' | 'settings'
 
 export interface NavigationItem {
   id: PageId
@@ -36,7 +37,9 @@ export const navigationSections: NavigationSection[] = [
     label: 'surface:navigation.coreWork',
     items: [
       { id: 'home', label: 'surface:navigation.home', icon: Home, tone: 'slate' },
+      { id: 'rooms', label: 'surface:navigation.contextRoom', icon: BookOpen, tone: 'blue' },
       { id: 'docs', label: 'surface:navigation.documents', icon: FileText, tone: 'indigo' },
+      { id: 'recording', label: 'surface:navigation.realityPerception', icon: AudioLines, tone: 'cyan' },
     ],
   },
   {
@@ -45,6 +48,8 @@ export const navigationSections: NavigationSection[] = [
     items: [
       { id: 'sources', label: 'surface:navigation.sources', icon: FolderSync, tone: 'cyan' },
       { id: 'files', label: 'surface:navigation.files', icon: FolderOpen, tone: 'green' },
+      { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
+      { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
     ],
   },
   {
@@ -52,6 +57,7 @@ export const navigationSections: NavigationSection[] = [
     label: 'surface:navigation.execution',
     items: [
       { id: 'office', label: 'surface:navigation.office', icon: Building2, tone: 'blue' },
+      { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
       { id: 'schedules', label: 'surface:navigation.schedules', icon: ListTodo, tone: 'orange' },
       { id: 'agent-connections', label: 'surface:navigation.agentConnections', icon: PlugZap, tone: 'indigo' },
     ],
@@ -72,49 +78,39 @@ const officeDocumentItem: NavigationItem = {
   tone: 'indigo',
 }
 
-/** 隐藏页（不进侧边栏）：Doc 生成流程工作台，入口在首页任务卡。 */
-const docFlowItem: NavigationItem = {
-  id: 'doc-flow',
-  label: 'surface:navigation.officeDocument',
-  icon: FilePenLine,
-  tone: 'blue',
-}
-
-/**
- * 侧边栏一级菜单（不分组），布局对齐 everoffice 原型：
- * 最近 / 所有文件 / Agent / 知识库 / 连接器。设置收进底部账户条的齿轮。
- */
-export const sidebarNavigation: NavigationItem[] = [
-  { id: 'home', label: '最近', icon: Clock, tone: 'slate' },
-  { id: 'files', label: '所有文件', icon: FolderOpen, tone: 'green' },
-  { id: 'office', label: 'Agent', icon: Bot, tone: 'blue' },
-  { id: 'docs', label: '知识库', icon: Library, tone: 'indigo' },
-  { id: 'sources', label: '连接器', icon: Plug, tone: 'cyan' },
-]
-
 export const pageLabels: Record<PageId, string> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeDocumentItem, docFlowItem]
+  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
     .map((item) => [item.id, item.label])
 ) as Record<PageId, string>
 
 export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeDocumentItem, docFlowItem]
+  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
     .map((item) => [item.id, item.icon])
 ) as Record<PageId, LucideIcon>
 
 const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   '首页': 'surface:navigation.home',
   'Home': 'surface:navigation.home',
+  'Context Room': 'surface:navigation.contextRoom',
   '文档': 'surface:navigation.documents',
   'Documents': 'surface:navigation.documents',
+  '现实感知': 'surface:navigation.realityPerception',
+  'Reality perception': 'surface:navigation.realityPerception',
   '数据源': 'surface:navigation.sources',
   'Sources': 'surface:navigation.sources',
   '文件': 'surface:navigation.files',
   'Files': 'surface:navigation.files',
+  '灵感': 'surface:navigation.inspiration',
+  'Inspiration': 'surface:navigation.inspiration',
+  '记忆': 'surface:navigation.memory',
+  'Memory': 'surface:navigation.memory',
+  'Wiki': 'surface:navigation.wiki',
   '办公室': 'surface:navigation.office',
   'Office': 'surface:navigation.office',
   'Agent 状态': 'surface:navigation.office',
   'Agent status': 'surface:navigation.office',
+  '日记': 'surface:navigation.diary',
+  'Diary': 'surface:navigation.diary',
   '设置': 'surface:navigation.settings',
   'Settings': 'surface:navigation.settings',
 }

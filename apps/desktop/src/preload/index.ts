@@ -797,3 +797,24 @@ const api: NxcoreDesktopApi = {
 }
 
 contextBridge.exposeInMainWorld('nxcore', api)
+
+// everoffice UI 迁移：office-proto 原型的 GenOffice 编辑器桥（window.desktop）。
+// 通道由 src/main/genoffice/bridge.ts 注册，独立于上面的 office:instance:* 体系。
+contextBridge.exposeInMainWorld('desktop', {
+  platform: process.platform,
+  versions: {
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+  },
+  office: {
+    open: (request: { fileId: string; title: string; spec: unknown }) =>
+      ipcRenderer.invoke('office:open', request) as Promise<{ ok: boolean; error?: string }>,
+    activate: (fileId: string | null) => ipcRenderer.invoke('office:activate', fileId) as Promise<boolean>,
+    close: (fileId: string) => ipcRenderer.invoke('office:close', fileId) as Promise<boolean>,
+    dirty: (fileId: string) => ipcRenderer.invoke('office:dirty', fileId) as Promise<boolean>,
+    sendBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.send('office:bounds', bounds),
+    pickMaterials: () =>
+      ipcRenderer.invoke('office:pick-materials') as Promise<Array<{ name: string; size: number }>>,
+  },
+})

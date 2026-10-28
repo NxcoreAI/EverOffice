@@ -1,41 +1,22 @@
 import * as Sentry from '@sentry/electron/renderer'
 import React from 'react'
-import ReactDOM from 'react-dom/client'
+import { createRoot } from 'react-dom/client'
 
-import { App } from '@/App'
-import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary'
-import { WorkspaceDocumentsProvider, useWorkspaceDocuments } from '@/components/documents/WorkspaceDocumentsProvider'
-import { desktopOperationBridge, DocumentOperationProvider } from './components/office-editor/operations/index'
-import { AccountProvider } from '@/state/AccountContext'
-import { ActiveDocumentProvider } from '@/state/ActiveDocumentContext'
-import { LocaleProvider } from '@/i18n/LocaleContext'
+import { OfficeProto } from '@/office-proto/OfficeProto'
 import '@/styles/tokens.css'
-import '@/styles.css'
+import '@/office-proto/office-proto.css'
+import '@/desktop-frame.css'
 
 Sentry.init({ beforeBreadcrumb: () => null })
 
-function DocumentOperationRoot() {
-  const { upsertDocument } = useWorkspaceDocuments()
-  const operationBridge = React.useMemo(() => desktopOperationBridge(), [])
-  return (
-    <DocumentOperationProvider operationBridge={operationBridge} onDocumentApplied={upsertDocument}>
-      <ActiveDocumentProvider>
-        <App />
-      </ActiveDocumentProvider>
-    </DocumentOperationProvider>
+// 平台标记:desktop-frame.css 据此在 macOS 上隐藏原型的假红绿灯、给系统红绿灯让位
+document.documentElement.dataset.desktop = window.desktop?.platform ?? 'darwin'
+
+const el = document.getElementById('root')
+if (el) {
+  createRoot(el).render(
+    <React.StrictMode>
+      <OfficeProto />
+    </React.StrictMode>,
   )
 }
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <GlobalErrorBoundary>
-    <LocaleProvider>
-      <AccountProvider>
-        <WorkspaceDocumentsProvider>
-          <DocumentOperationRoot />
-        </WorkspaceDocumentsProvider>
-      </AccountProvider>
-    </LocaleProvider>
-    </GlobalErrorBoundary>
-  </React.StrictMode>
-)

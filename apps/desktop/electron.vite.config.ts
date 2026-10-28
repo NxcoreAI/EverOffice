@@ -62,6 +62,9 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
+          // everoffice UI 迁移：GenOffice 内嵌停靠栏 iframe 装载的 Agent 聊天页
+          //（见 src/main/genoffice/bridge.ts agentDockUrl）
+          'agent-dock': resolve('src/renderer/agent-dock.html'),
         },
       },
     },
@@ -76,6 +79,9 @@ export default defineConfig({
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: {
+        // everoffice UI 迁移：复制来的组件用 '@/shared/*' 引用主进程/渲染层共享类型，
+        // 解析到真实 shared 目录（与 tsconfig paths 对齐）。
+        '@/shared': resolve('src/shared'),
         '@': resolve('src/renderer/src'),
       },
     },

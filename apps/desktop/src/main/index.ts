@@ -120,8 +120,19 @@ import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shar
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
 import { OfficePreviewRegistry } from './office/office-preview-registry'
+import { OfficeBridge as GenofficeProtoBridge } from './genoffice/bridge'
 
 const APP_NAME = 'EverRoom'
+
+// 调试用：EVERROOM_CDP=<port> 时开远程调试口，便于 Playwright/CDP 直连截图
+// （GenOffice 是 WebContentsView，宿主页截图看不到它）。
+if (process.env.EVERROOM_CDP) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.EVERROOM_CDP)
+}
+
+/** everoffice UI 迁移：office-proto 原型的 GenOffice 视图桥（window.desktop.office）。
+ *  与 OfficePreviewRegistry（真实文档体系）并存，各自管理自己的原生视图实例。 */
+let genofficeProtoBridge: GenofficeProtoBridge | null = null
 
 function loadPackagedEnvironment(): void {
   if (!app.isPackaged) return
@@ -3091,6 +3102,22 @@ function createWindow(): BrowserWindow {
     openExternalUrl(url)
   })
 
+  // everoffice UI 迁移：office-proto GenOffice 桥随首个窗口初始化；
+  // 关窗前跑脏关闭守卫（守卫里点过取消则维持原状）。
+  genofficeProtoBridge ??= new GenofficeProtoBridge()
+  {
+    let protoCloseApproved = false
+    window.on('close', (event) => {
+      if (protoCloseApproved || !genofficeProtoBridge) return
+      event.preventDefault()
+      void genofficeProtoBridge.confirmCloseAll().then((clean) => {
+        if (!clean) return
+        protoCloseApproved = true
+        window.destroy()
+      })
+    })
+  }
+
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -3687,6 +3714,8 @@ app.on('before-quit', (event) => {
   void notificationBridge?.stop()
   pushNotificationsService?.stop()
   void officePreviewRegistry.disposeAll()
+  void genofficeProtoBridge?.confirmCloseAll()
+  genofficeProtoBridge = null
   if (connectorConsole && !connectorConsole.isDestroyed()) connectorConsole.destroy()
   connectorCli?.shutdown()
   agentBridge?.dispose()

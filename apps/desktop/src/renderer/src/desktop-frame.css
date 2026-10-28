@@ -1,0 +1,39 @@
+/* Electron 桌面窗口适配层:不改动 office-proto 原始样式,
+   只为「浏览器原型 → 桌面窗口」补三件事——
+   1. macOS:系统红绿灯顶替标签栏里的假灯(op-win-dots),并让出空间
+   2. 标签栏空白区域可拖拽移动窗口,交互元素排除
+   3. 桌面端字体渲染微调 */
+
+html[data-desktop='darwin'] .op-win-dots {
+  display: none;
+}
+
+html[data-desktop='darwin'] .op-tabbar {
+  /* 系统红绿灯占据 x=16..68；让出到 96px，与活动标签保持 Safari 式呼吸感 */
+  padding-left: 96px;
+}
+
+.op-tabbar {
+  -webkit-app-region: drag;
+}
+
+.op-tabbar .op-tab,
+.op-tabbar .op-tab-add,
+.op-tabbar button {
+  -webkit-app-region: no-drag;
+}
+
+html,
+body {
+  /* 浏览器默认 body margin 8px 会在窗口四周露出一条白边 */
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}

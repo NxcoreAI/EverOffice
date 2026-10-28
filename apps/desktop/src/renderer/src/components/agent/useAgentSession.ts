@@ -16,7 +16,7 @@ import type {
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
-import type { AgentApprovalDecision } from '../../../../shared/sources'
+import type { AgentApprovalDecision } from '@/shared/sources'
 
 import {
   createAgentRunActivityAccumulator,
@@ -771,7 +771,9 @@ export function useAgentSession(
 
     if (api) {
       setLoading(true)
-      void api.listSessions()
+      // 原型适配：会话列表按当前页面（pageLabel）过滤，停靠栏只看到本文件的
+      // 会话；mock 后端已支持该参数（真实后端本就按 scope 返回）。
+      void api.listSessions(pageLabel)
         .then(async (listedSessions) => {
           if (!alive) return
           const userSessions = listedSessions.filter(isUserSession)
