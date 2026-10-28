@@ -91,9 +91,6 @@ interface EditSyncState {
   runner: Promise<void> | null
 }
 
-/** 面板「预览模板」：宿主注入的文件打开器（复用 files.openOriginal 主进程实现）。 */
-export type ThesisPanelHostOpener = (fileId: string, originalName: string) => Promise<unknown>
-
 /** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
 export interface OfficeThesisPanelBridge {
   listCards(roomId: string): Promise<unknown[]>
@@ -132,11 +129,7 @@ export interface OfficeThesisPanelBridge {
     },
   ): Promise<{ jobId: string; phase: string }>
   /** 打开模板原文件的真预览：应用自带 Office 渲染器（多页滚动、表格/图片完整）。 */
-  previewTemplate(
-    roomId: string,
-    cardId: string,
-    opener: (fileId: string, originalName: string) => Promise<unknown>,
-  ): Promise<{ opened: boolean; reason?: string }>
+  previewTemplate(roomId: string, cardId: string): Promise<{ opened: boolean; reason?: string }>
   reformatJobStatus(
     jobId: string,
   ): Promise<{
@@ -164,8 +157,6 @@ export class OfficePreviewRegistry {
   private activeId: string | null = null
   private readonly editStates = new Map<string, EditSyncState>()
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
-  /** 宿主注入：按文件 id 打开真预览（files.openOriginal 的主进程实现）。 */
-  openHostFile: ThesisPanelHostOpener | null = null
   private thesisBridge: OfficeThesisPanelBridge | null = null
 
   /** 生成完成 → 渲染端自动打开的等待窗口；测试可传 0 关闭。 */
@@ -254,13 +245,9 @@ export class OfficePreviewRegistry {
             }
           case 'reformat-job-status':
             return { ok: true as const, value: await bridge.reformatJobStatus(action.jobId) }
-          case 'preview-template': {
-            // 真预览：用宿主的 Office 渲染器打开模板原文件（多页、表格、图片完整）
-            const result = await bridge.previewTemplate(roomId, action.cardId, async (fileId, originalName) => {
-              await this.openHostFile?.(fileId, originalName)
-            })
-            return { ok: true as const, value: result }
-          }
+          case 'preview-template':
+            // 真预览：宿主用自带 Office 渲染器打开模版原文件（多页、表格、图片完整）
+            return { ok: true as const, value: await bridge.previewTemplate(roomId, action.cardId) }
         }
       } catch (error) {
         // 面板只显示这一行文本：内部错误码（thesis_format_card_not_found）与上游

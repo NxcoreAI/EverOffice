@@ -203,7 +203,7 @@ describe('AI 面板排版工具', () => {
     // 宿主侧：无文件条目返回 no_file，有则用 openOriginal 打开
     const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
     expect(main).toMatch(/opened: false, reason: .no_file./)
-    expect(main).toContain('previewTemplate: async (roomId, cardId, opener)')
+    expect(main).toContain('previewTemplate: async (roomId, cardId) =>')
     // 上传（选择框/拖拽）都先导入资料区再解析：卡片持有真实文件条目，
     // 预览能打开原文件、删除能级联、重复导入按内容去重
     expect(main).toContain('importTemplateFileIntoLibrary')
@@ -213,6 +213,15 @@ describe('AI 面板排版工具', () => {
     expect(main).toContain('parseFromBytes(roomId, name, data, fileEntryId)')
     // 老卡片自愈：资料区唯一同名文件直接打开
     expect(main).toContain('findLibraryFileByName')
+    // 关键回归：预览必须真的打开实例（曾经只挂了个空 opener 钩子 → 点了没反应）
+    expect(main).toContain('openFileInAppPreview(filesGatewayBridge, fileId, originalName')
+    expect(main).not.toContain('openHostFile')
+    // 从 docs 面板打开时把主窗口提到前台，否则用户看不到预览标签
+    expect(main).toContain('focusWindow: true')
+    expect(main).toContain('window.focus()')
+    // 注册表分派直接把参数交给桥，不再经回调
+    const registry = readFileSync(resolve(__dirname, '../src/main/office/office-preview-registry.ts'), 'utf8')
+    expect(registry).toContain('bridge.previewTemplate(roomId, action.cardId)')
   })
 
   it('排版走任务化：提交作业 + 轮询进度 + 10 分钟硬超时', () => {
