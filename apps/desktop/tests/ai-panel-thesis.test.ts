@@ -53,12 +53,40 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain('setCards((prev) => (prev ? prev.filter((entry) => entry.id !== cardId) : prev))')
   })
 
+  it('弹窗不横向溢出：宽度自适应 + 视口内收，列表禁横向滚动', () => {
+    const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
+    const panel = css.slice(css.indexOf('.ai-thesis-panel,'), css.indexOf('.ai-thesis-title {'))
+    expect(panel).toContain('width: fit-content')
+    expect(panel).toContain('max-width: min(336px, calc(100vw - 24px), 100%)')
+    expect(panel).toContain('overflow-x: hidden')
+    expect(panel).toContain('box-sizing: border-box')
+    const cards = css.slice(css.indexOf('.ai-thesis-cards {'), css.indexOf('.ai-thesis-card {'))
+    expect(cards).toContain('overflow-x: hidden')
+    expect(cards).toContain('min-width: 0')
+  })
+
+  it('删除按钮不被挤压且加大点击区（flex-shrink:0 / 28px / 16px 图标）', () => {
+    const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
+    const from = css.indexOf('.ai-thesis-card-act.ai-thesis-card-del {')
+    const del = css.slice(from, css.indexOf('}', from) + 1)
+    expect(del).toContain('flex-shrink: 0')
+    expect(del).toContain('width: 28px')
+    expect(del).toContain('height: 28px')
+    expect(del).toContain('padding: 0 6px')
+    const iconFrom = css.indexOf('.ai-thesis-card-act.ai-thesis-card-del svg {')
+    const icon = css.slice(iconFrom, css.indexOf('}', iconFrom) + 1)
+    expect(icon).toContain('width: 16px')
+    // 行内按钮组同样不压缩
+    const actFrom = css.indexOf('.ai-thesis-card-act {')
+    expect(css.slice(actFrom, css.indexOf('}', actFrom) + 1)).toContain('flex-shrink: 0')
+  })
+
   it('删除按钮与其它行内按钮同尺寸，浅灰常态 hover 转红', () => {
     const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
     const selector = '.ai-thesis-card-act.ai-thesis-card-del {'
     const from = css.indexOf(selector)
     const block = css.slice(from, css.indexOf('}', from) + 1)
-    expect(block).toContain('width: 24px')
+    expect(block).toContain('width: 28px')
     expect(block).toContain('color: var(--text-muted)')
     expect(block).not.toContain('position: absolute')
     // hover 变红在独立规则里
