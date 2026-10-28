@@ -34,15 +34,14 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain('event.preventDefault()')
     // 单一删除入口：不再有第二个「只删文件」按钮
     expect(aiTab).not.toContain('aiThesisDeleteFileTip')
-    const dels = aiTab.match(/deleteTemplate\(row\.id/g) ?? []
+    const dels = aiTab.match(/setPendingDeleteId\(\(current\)|setPendingDeleteId\(row\.id|deleteTemplate\(row\.id/g) ?? []
     expect(dels).toHaveLength(1)
   })
 
-  it('二次确认在面板内联完成，不用 window.confirm（否则会收起下拉）', () => {
+  it('二次确认在面板内完成，不用 window.confirm（否则会收起下拉）', () => {
     expect(aiTab).not.toContain('window.confirm(')
-    expect(aiTab).toContain('ai-thesis-card-confirm')
-    expect(aiTab).toContain("t('aiThesisDeleteConfirmInline')")
-    expect(aiTab).toContain("t('aiThesisDeleteOk')")
+    expect(aiTab).toContain('ai-thesis-modal-mask')
+    expect(aiTab).toContain("t('aiThesisDeleteConfirmNote')")
     expect(aiTab).toContain("t('aiThesisDeleteCancel')")
     const zh = readFileSync(resolve(docsRoot, 'src/renderer/i18n/strings-ai.ts'), 'utf8')
     expect(zh).toContain('确定要删除该模板文件吗？')
@@ -70,25 +69,26 @@ describe('AI 面板排版工具', () => {
     expect(main).toContain('min-width: 0')
   })
 
-  it('卡片行 grid 布局：文件名列可收缩、按钮恒在右侧，确认条绝对覆盖不撑宽行', () => {
+  it('卡片行 grid 布局：文件名列可收缩、按钮恒在右侧；删除弹窗遮罩全屏居中', () => {
     const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
     const cardFrom = css.indexOf('.ai-thesis-card {')
     const card = css.slice(cardFrom, css.indexOf('}', cardFrom) + 1)
     expect(card).toContain('display: grid')
     expect(card).toContain('grid-template-columns: minmax(0, 1fr) auto auto')
-    expect(card).toContain('position: relative')
-    // 确认条必须绝对定位（此前无样式，作为行内子元素把整行撑宽 → 横向滚动条 + 内容被挤没）
-    const cfFrom = css.indexOf('.ai-thesis-card-confirm {')
-    const confirm = css.slice(cfFrom, css.indexOf('}', cfFrom) + 1)
-    expect(confirm).toContain('position: absolute')
-    expect(confirm).toContain('inset: 0')
-    // 确认条内部：文本列可收缩省略，按钮不参与收缩
-    const cfText = css.slice(css.indexOf('.ai-thesis-card-confirm-text {'), css.indexOf('}', css.indexOf('.ai-thesis-card-confirm-text {')) + 1)
-    expect(cfText).toContain('min-width: 0')
-    expect(cfText).toContain('overflow: hidden')
-    for (const sel of ['.ai-thesis-card-confirm-cancel,', '.ai-thesis-card-confirm-ok {']) {
+    // 确认改为居中模态：遮罩 fixed 全屏 + 内容卡片浮在其上（不再有内联确认条）
+    const maskFrom = css.indexOf('.ai-thesis-modal-mask {')
+    const mask = css.slice(maskFrom, css.indexOf('}', maskFrom) + 1)
+    expect(mask).toContain('position: fixed')
+    expect(mask).toContain('inset: 0')
+    expect(mask).toContain('align-items: center')
+    expect(mask).toContain('justify-content: center')
+    const modalFrom = css.indexOf('.ai-thesis-modal {')
+    const modal = css.slice(modalFrom, css.indexOf('}', modalFrom) + 1)
+    expect(modal).toContain('border-radius')
+    // 弹窗按钮：确认键红底、两键都不收缩
+    for (const sel of ['.ai-thesis-modal-cancel,', '.ai-thesis-modal-ok {']) {
       const from = css.indexOf(sel)
-      expect(css.slice(from, css.indexOf('}', from) + 1)).toContain('flex: 0 0 auto')
+      expect(css.slice(from, css.indexOf('}', from) + 1)).toContain('white-space: nowrap')
     }
     // 删除按钮钉在行尾
     const delFrom = css.indexOf('.ai-thesis-card-act.ai-thesis-card-del {')
@@ -168,6 +168,26 @@ describe('AI 面板排版工具', () => {
     expect(main).toContain("card.sourceName.trim().toLowerCase() === sourceName.trim().toLowerCase()")
     // overwrite 路径：删掉暂存后立刻解析，不再弹选择框
     expect(main).toContain('if (options?.overwrite) {')
+  })
+
+  it('点删除弹居中确认弹窗：「确认删除」+「取消」两个选项', () => {
+    // 面板内模态（遮罩 + 弹窗），不再是盖在卡片上的内联确认条
+    expect(aiTab).toContain('ai-thesis-modal-mask')
+    expect(aiTab).toContain('ai-thesis-modal')
+    expect(aiTab).toContain("t('aiThesisDeleteConfirmTitle')")
+    expect(aiTab).toContain("t('aiThesisDeleteConfirmOk')")
+    expect(aiTab).toContain("t('aiThesisDeleteCancel')")
+    // 卡片行里不再有内联确认条
+    expect(aiTab).not.toContain('ai-thesis-card-confirm')
+    // 确认后仍走既有的 deleteTemplate（模板文件+卡一并删）
+    expect(aiTab).toContain('void deleteTemplate(pendingDeleteId)')
+    // 不使用 window.confirm（会抢焦点收起面板）
+    expect(aiTab).not.toContain('window.confirm(')
+    const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
+    expect(css).toContain('.ai-thesis-modal-mask {')
+    expect(css).toContain('position: fixed')
+    const zh = readFileSync(resolve(docsRoot, 'src/renderer/i18n/strings-ai.ts'), 'utf8')
+    expect(zh).toContain('确认删除')
   })
 
   it('排版走任务化：提交作业 + 轮询进度 + 10 分钟硬超时', () => {
