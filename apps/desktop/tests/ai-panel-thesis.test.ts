@@ -190,6 +190,25 @@ describe('AI 面板排版工具', () => {
     expect(zh).toContain('确认删除')
   })
 
+  it('预览打开模板原文件（真渲染），不再用格式卡重建示意', () => {
+    // 面板按钮走宿主预览通道
+    expect(aiTab).toContain('thesisPreviewTemplate')
+    expect(aiTab).toContain('void previewTemplate(row.id)')
+    // 格式卡重建的示意弹窗已移除（缩略示意 ≠ 真实文档）
+    expect(aiTab).not.toContain('ThesisFullPaper')
+    expect(aiTab).not.toContain('ai-thesis-preview-modal')
+    expect(aiTab).not.toContain('SAMPLE_TITLE')
+    // 拖拽直传（无文件条目）给出明确提示而非假装打开
+    expect(aiTab).toContain('aiThesisPreviewNoFile')
+    // 宿主侧：无文件条目返回 no_file，有则用 openOriginal 打开
+    const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
+    expect(main).toMatch(/opened: false, reason: .no_file./)
+    expect(main).toContain('previewTemplate: async (roomId, cardId, opener)')
+    // 拖拽直传的模版：字节留在缓存里，预览时落盘+导入资料区（去重）后打开真预览
+    expect(main).toContain('uploadedTemplateBytes')
+    expect(main).toContain('importPathsOnce')
+  })
+
   it('排版走任务化：提交作业 + 轮询进度 + 10 分钟硬超时', () => {
     expect(aiTab).toContain('thesisReformatJob')
     expect(aiTab).toContain('thesisReformatJobStatus')

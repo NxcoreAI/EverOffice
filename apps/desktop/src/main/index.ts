@@ -2833,6 +2833,12 @@ async function hashFileBytes(path: string): Promise<string> {
  */
 const pendingTemplatePick = new Map<string, string>()
 
+/**
+ * 拖拽直传的模版字节缓存：这类卡片没有资料区文件条目，预览时先落到临时文件
+ * 再导入资料区（按内容去重，重复预览不会产生重复文件）后打开真预览。
+ */
+const uploadedTemplateBytes = new Map<string, { name: string; bytes: Uint8Array }>()
+
 async function pickThesisTemplateFromDisk(
   roomId: string,
   options?: { wordOnly?: boolean; overwrite?: boolean },
@@ -2913,7 +2919,15 @@ function registerThesisFormatHandlers(
    * 文件删除走 /v1/files/:id（硬删 + Room 成员引用级联），失败不阻断删卡。
    */
   handle(THESIS_FORMAT_CHANNELS.parseUpload, async (_event, roomId: string, name: string, bytes: ArrayBuffer) => {
-    const meta = await bridge.parseFromBytes(roomId, name, new Uint8Array(bytes))
+    const data = new Uint8Array(bytes)
+    const meta = await bridge.parseFromBytes(roomId, name, data)
+    if (meta.cardId) {
+      uploadedTemplateBytes.set(meta.cardId, { name, bytes: data })
+      if (uploadedTemplateBytes.size > 8) {
+        const oldest = uploadedTemplateBytes.keys().next().value
+        if (oldest) uploadedTemplateBytes.delete(oldest)
+      }
+    }
     cardChanged()
     return meta
   })
@@ -4593,6 +4607,31 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       startReformatJob: (roomId, fileEntryId, cardId, options) =>
         thesisFormatBridge.startReformatJob(roomId, fileEntryId, cardId, options),
       reformatJobStatus: (jobId) => thesisFormatBridge.reformatJobStatus(jobId),
+      // 真预览：直接用 files.openOriginal 的主进程实现打开模板原文件
+      previewTemplate: async (roomId, cardId, opener) => {
+        const cards = await thesisFormatBridge.listCards(roomId)
+        const card = cards.find((entry) => entry.id === cardId)
+        if (!card) return { opened: false, reason: 'card_not_found' }
+        if (card.sourceFileEntryId) {
+          const meta = (await filesGatewayBridge.get(card.sourceFileEntryId).catch(() => null)) as
+            | { originalName?: string } | null
+          await opener(card.sourceFileEntryId, meta?.originalName ?? card.sourceName ?? '模版.docx')
+          return { opened: true }
+        }
+        // 拖拽直传的卡：字节还在缓存里就落盘 + 导入资料区（按内容去重）后打开真预览
+        const cached = uploadedTemplateBytes.get(cardId)
+        if (!cached) return { opened: false, reason: 'no_file' }
+        const tempDir = join(app.getPath('temp'), 'everroom-thesis-preview')
+        await mkdir(tempDir, { recursive: true })
+        const safeName = cached.name.replace(/[\\/:*?"<>|]/g, '_') || '模版.docx'
+        const tempPath = join(tempDir, `${cardId}-${safeName}`)
+        await writeFile(tempPath, cached.bytes)
+        const imported = await filesGatewayBridge.importPathsOnce([tempPath], { roomId })
+        const fileId = imported.map((entry) => entry.fileId).find((id): id is string => Boolean(id))
+        if (!fileId) return { opened: false, reason: 'no_file' }
+        await opener(fileId, cached.name)
+        return { opened: true }
+      },
     })
     registerIngestHandlers(new IngestGatewayBridge(gatewaySupervisor))
     macosPushNotifications = new MacosPushNotificationService(() => saasClient, openAgentNotificationTarget)

@@ -46,6 +46,7 @@ export interface GenOfficeDocsRuntime {
                 }
               }
             | { kind: 'reformat-job-status'; jobId: string }
+            | { kind: 'preview-template'; cardId: string }
         ) => Promise<
           { ok: true; value: unknown } | { ok: false; reason: 'no_room' | 'error'; message?: string }
         >)
