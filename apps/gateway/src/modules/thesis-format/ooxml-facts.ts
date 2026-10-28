@@ -72,6 +72,10 @@ export interface OoxmlOutlineEntry {
   ilvl?: number;
   /** 是否落在封面区（首个分节/分页之前）。 */
   inCoverRegion: boolean;
+  /** 标题段落首个 run 的版式事实：样式常留空，段落 run 才是模板真实观感。 */
+  runFontEastAsia?: string;
+  runSizePt?: number;
+  runBold?: boolean;
 }
 
 /** 编号方案（numbering.xml + 标题样式的 numPr 反推）。 */
@@ -327,11 +331,20 @@ function outlineFacts(documentXml: string, stylesXml: string | undefined): Ooxml
     const numPr = pPr.match(/<w:numPr>[\s\S]*?<\/w:numPr>/)?.[0];
     const numId = numPr ? numAttr(numPr, "w:numId", "w:val") : undefined;
     const ilvl = numPr ? numAttr(numPr, "w:ilvl", "w:val") : undefined;
+    // 优先 run 自带的 rPr；pPr 里的 rPr 是「段落标记」格式，仅作兜底
+    const runRPr = paragraph.match(/<w:r>[\s\S]*?<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0];
+    const firstRunRPr = runRPr?.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0]
+      ?? paragraph.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0]
+      ?? "";
+    const runFactOfHeading = runFact(firstRunRPr);
     out.push({
       index,
       level,
       text: text.slice(0, 200),
       ...(styleId ? { styleId } : {}),
+      ...(runFactOfHeading.fontEastAsia ? { runFontEastAsia: runFactOfHeading.fontEastAsia } : {}),
+      ...(runFactOfHeading.sizePt !== undefined ? { runSizePt: runFactOfHeading.sizePt } : {}),
+      ...(runFactOfHeading.bold !== undefined ? { runBold: runFactOfHeading.bold } : {}),
       ...(numId !== undefined ? { numId } : {}),
       ...(ilvl !== undefined ? { ilvl } : {}),
       inCoverRegion: coverCut > 0 && documentXml.indexOf(paragraph) < coverCut,

@@ -5,7 +5,8 @@ import { SubagentRegistry } from "../src/modules/subagents/registry.js";
 import { ThesisFormatCardStore } from "../src/modules/thesis-format/card-store.js";
 import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.js";
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
-import { cardForAgent, factsForAgent, mergeTemplateImages } from "../src/modules/thesis-format/service.js";
+import { cardForAgent, factsForAgent } from "../src/modules/thesis-format/service.js";
+import { mergeTemplateImages } from "../src/modules/thesis-format/template-images.js";
 import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import { buildContentProfile, flattenChapters, type ContentProfile, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
 import { buildMappingPlan, sanitizeMappingDecisions } from "../src/modules/thesis-format/mapping-plan.js";
@@ -959,12 +960,63 @@ describe('模板固定表单保留（评价表等）', () => {
     const facts = await extractOoxmlFactsAsync(template);
     const { validateThesisFormatCard } = await import('../src/modules/thesis-format/validate.js');
     const card = validateThesisFormatCard({}, '模板.docx');
-    card.numbering = facts.numbering;
+    (card as { numbering?: unknown }).numbering = facts.numbering;
     const profile = buildTemplateProfile({ facts, card, sourceName: '模板.docx' });
     const blocks = await describeThesisBlocks(source);
     const plan = buildMappingPlan({ template: profile, content: buildContentProfile(blocks as never) });
     const { spec } = planToBindingSpec({ plan, content: buildContentProfile(blocks as never), titleHint: 't', templateProfile: profile });
     expect((spec.fixedBlocks ?? []).length).toBeGreaterThanOrEqual(2);
     expect((spec.fixedBlocks ?? []).some((b) => (b.heading ?? '').includes('项目经理评价'))).toBe(true);
+  });
+});
+
+
+describe('本地确定性出卡（跳过解析代理，秒级上传）', () => {
+  const templatePath = '/Users/nxcore/Downloads/人工智能创新创业实践课程设计报告(模板） (1).docx';
+
+  it('从 OOXML 事实直接产出可信卡：页面/字体/标题/封面/页眉都按模板真实值', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { extractOoxmlFactsAsync } = await import('../src/modules/thesis-format/ooxml-facts.js');
+    const { buildCardFromFacts } = await import('../src/modules/thesis-format/card-from-facts.js');
+    const facts = await extractOoxmlFactsAsync(await readFile(templatePath));
+    const member = {
+      styles: facts.styles, sections: facts.sections, headers: facts.headers, footers: facts.footers,
+      coverImages: facts.coverImages, coverText: facts.coverText, outline: facts.outline,
+      numbering: facts.numbering, fixedBlocks: facts.fixedBlocks,
+    };
+    const started = Date.now();
+    const local = buildCardFromFacts(member as never, '模板.docx');
+    const elapsed = Date.now() - started;
+
+    // 速度：本地出卡必须是毫秒级（原来要等代理 30s+）
+    expect(elapsed).toBeLessThan(200);
+    expect(local.confident).toBe(true);
+
+    // 版式取值来自模板本身，不是 schema 默认值
+    expect(local.card.page.marginLeftMm).toBe(22);
+    expect(local.card.page.marginTopMm).toBe(25.4);
+    expect(local.card.base.font.eastAsia).toBe('宋体');
+    expect(local.card.base.font.size).toBe(12);
+    // 标题字号取标题段落 run（宋体 16pt），不是默认 18 也不是猜的黑体
+    const h1 = local.card.headings.find((h) => h.level === 1)!;
+    expect(h1.font.size).toBe(16);
+    expect(h1.font.eastAsia).toBe('宋体');
+    // 封面：页眉里的正式校名 + 封面真实字段标签
+    expect(local.card.cover.schoolName).toBe('广州城市理工学院');
+    expect(local.card.cover.degreeLine).toBe('课程考核报告');
+    const labels = local.card.cover.fields.map((f) => f.label.replace(/\s+/g, ''));
+    expect(labels).toContain('题目');
+    expect(labels).toContain('学生学号');
+    expect(labels).toContain('指导教师');
+    // 页眉用模板真实文字（不是占位 {title}）
+    expect(local.card.header.template).toContain('广州城市理工学院');
+  });
+
+  it('可信度把关：没有章节大纲/样式时判为不可信，交由解析代理兜底', async () => {
+    const { buildCardFromFacts } = await import('../src/modules/thesis-format/card-from-facts.js');
+    const empty = { styles: [], sections: [], headers: [], footers: [], coverImages: [], coverText: [], outline: [], numbering: { scheme: 'none', levels: [] }, fixedBlocks: [] };
+    const local = buildCardFromFacts(empty as never, 'x.docx');
+    expect(local.confident).toBe(false);
+    expect(local.gaps.join('；')).toContain('章节大纲');
   });
 });

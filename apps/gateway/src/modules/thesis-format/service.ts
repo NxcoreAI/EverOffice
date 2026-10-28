@@ -15,6 +15,8 @@ import { ThesisFormatCardStore } from "./card-store.js";
 import { buildTemplateFacts, normalizeMembersToDocx, unpackTemplateInput } from "./normalize.js";
 import { validateThesisFormatCard } from "./validate.js";
 import { buildTemplateProfile } from "./template-profile.js";
+import { mergeTemplateImages } from "./template-images.js";
+import { buildCardFromFacts } from "./card-from-facts.js";
 import { buildContentProfile } from "./content-profile.js";
 import { ThesisJobRegistry, type ThesisJobSnapshot } from "./jobs.js";
 import { buildMappingPlan, sanitizeMappingDecisions, type SemanticDecision } from "./mapping-plan.js";
@@ -88,6 +90,34 @@ export class ThesisFormatService {
     const facts = await buildTemplateFacts(normalized).catch((error: unknown) => {
       throw new Error(`thesis_template_facts_failed:${error instanceof Error ? error.message : String(error)}`);
     });
+    // ---- 本地快速路径：版式事实齐全时直接确定性地出卡（20ms 级），不调解析代理 ----
+    // 原来每次上传都要等 LLM 往返（30s–数分钟），而决定排版的版式信息全部在
+    // OOXML 事实里。只有本地拿不到章节骨架/样式（扫描件、老格式、怪模板）才升级代理。
+    const forceAgent = process.env.THESIS_PARSE_ENGINE === "agent";
+    const ooxmlFacts = (facts.ooxml ?? [])[0];
+    if (!forceAgent && ooxmlFacts) {
+      const local = buildCardFromFacts(ooxmlFacts as never, name);
+      if (local.confident) {
+        const profile = buildTemplateProfile({
+          facts: {
+            styles: ooxmlFacts.styles ?? [],
+            sections: (ooxmlFacts.sections ?? []) as never,
+            headers: (ooxmlFacts.headers ?? []) as never,
+            footers: (ooxmlFacts.footers ?? []) as never,
+            coverImages: (ooxmlFacts.coverImages ?? []) as never,
+            coverText: ooxmlFacts.coverText ?? [],
+            outline: ooxmlFacts.outline ?? [],
+            numbering: ooxmlFacts.numbering ?? { scheme: "none", levels: [] },
+            fixedBlocks: (ooxmlFacts.fixedBlocks ?? []) as never,
+          },
+          card: local.card,
+          sourceName: name,
+        });
+        local.card.profile = profile;
+        return { sourceName: name, card: local.card, factGaps: local.gaps };
+      }
+    }
+
     const task = `解析论文格式模版并产出格式卡：${name}`;
     const input = {
       task: "parse_template" as const,
@@ -505,42 +535,3 @@ const DEFAULT_DEGREE_LINE = "本科毕业论文（设计）";
  * 确定性合并：只补卡片里缺的字段，不覆盖已解析代理给出的合法值；没有图片事实
  * 时保持字段缺省——绝不编造 logo。
  */
-export function mergeTemplateImages(card: ThesisFormatCard, facts: ThesisTemplateFacts): ThesisFormatCard {
-  const members = facts.ooxml ?? [];
-  const headerImages = members.map((member) => member.headers ?? []).flat()
-    .map((header) => header.images ?? []).find((images) => images.length > 0) ?? [];
-  const coverImage = members.map((member) => member.coverImages ?? []).flat()[0];
-
-  const next: ThesisFormatCard = { ...card, cover: { ...card.cover } };
-  // 封面文字兜底：模版封面区文本就摆在 facts 里，但解析代理可能整段留空、让校验层
-  // 填 schema 默认值（卡外观完整、内容却不是模版的）。这里用确定性规则补最机械的几项，
-  // 只填空缺、绝不覆盖代理给出的非空值。
-  const lines = members.flatMap((member) => member.coverText ?? []).map((line) => line.trim()).filter(Boolean);
-  if (lines.length > 0) {
-    if (!next.cover.schoolName) {
-      const school = lines
-        .filter((line) => /(学院|大学|学校|研究院|职业技术学院)$/.test(line) && line.length <= 24)
-        .sort((a, b) => b.length - a.length)[0];
-      if (school) next.cover.schoolName = school;
-    }
-    if (!next.cover.degreeLine || next.cover.degreeLine === DEFAULT_DEGREE_LINE) {
-      const degree = lines.find((line) => /(课程考核报告|毕业设计|毕业论文|实践报告|课程设计报告|设计报告|研究报告)$/.test(line) && line.length <= 30);
-      if (degree && degree !== next.cover.degreeLine) next.cover.degreeLine = degree;
-    }
-    if (!next.cover.yearLine) {
-      const year = lines.find((line) => /20\d{2}\s*[-–—~至]\s*20\d{2}\s*学年/.test(line) || /^(二[〇零]|20\d{2})\S*年\S*学期/.test(line));
-      if (year) next.cover.yearLine = year;
-    }
-    if (!next.cover.footerLine) {
-      const footer = lines.find((line) => /制$/.test(line) && line.length <= 24);
-      if (footer) next.cover.footerLine = footer;
-    }
-  }
-  if ((next.header.images ?? []).length === 0 && headerImages.length > 0) {
-    next.header = { ...next.header, images: headerImages.slice(0, 6) };
-  }
-  if (!next.cover.logo && coverImage) {
-    next.cover = { ...next.cover, logo: coverImage };
-  }
-  return next;
-}
