@@ -70,6 +70,33 @@ describe('AI 面板排版工具', () => {
     expect(main).toContain('min-width: 0')
   })
 
+  it('卡片行 grid 布局：文件名列可收缩、按钮恒在右侧，确认条绝对覆盖不撑宽行', () => {
+    const css = readFileSync(resolve(docsRoot, 'src/renderer/styles.css'), 'utf8')
+    const cardFrom = css.indexOf('.ai-thesis-card {')
+    const card = css.slice(cardFrom, css.indexOf('}', cardFrom) + 1)
+    expect(card).toContain('display: grid')
+    expect(card).toContain('grid-template-columns: minmax(0, 1fr) auto auto')
+    expect(card).toContain('position: relative')
+    // 确认条必须绝对定位（此前无样式，作为行内子元素把整行撑宽 → 横向滚动条 + 内容被挤没）
+    const cfFrom = css.indexOf('.ai-thesis-card-confirm {')
+    const confirm = css.slice(cfFrom, css.indexOf('}', cfFrom) + 1)
+    expect(confirm).toContain('position: absolute')
+    expect(confirm).toContain('inset: 0')
+    // 确认条内部：文本列可收缩省略，按钮不参与收缩
+    const cfText = css.slice(css.indexOf('.ai-thesis-card-confirm-text {'), css.indexOf('}', css.indexOf('.ai-thesis-card-confirm-text {')) + 1)
+    expect(cfText).toContain('min-width: 0')
+    expect(cfText).toContain('overflow: hidden')
+    for (const sel of ['.ai-thesis-card-confirm-cancel,', '.ai-thesis-card-confirm-ok {']) {
+      const from = css.indexOf(sel)
+      expect(css.slice(from, css.indexOf('}', from) + 1)).toContain('flex: 0 0 auto')
+    }
+    // 删除按钮钉在行尾
+    const delFrom = css.indexOf('.ai-thesis-card-act.ai-thesis-card-del {')
+    const del = css.slice(delFrom, css.indexOf('}', delFrom) + 1)
+    expect(del).toContain('grid-column: -2 / -1')
+    expect(del).toContain('justify-self: end')
+  })
+
   it('删除按钮始终渲染（不依赖是否来自资料库）', () => {
     expect(aiTab).toContain('ai-thesis-card-act is-danger ai-thesis-card-del')
     // 不包在 sourceFileEntryId 条件里
