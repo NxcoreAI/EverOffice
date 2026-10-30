@@ -5,8 +5,9 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import JSZip from "jszip";
+import { extname, join } from "node:path";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import type { FilesService } from "../files/service.js";
 import type { SubagentOrchestrator } from "../subagents/orchestrator.js";
@@ -41,6 +42,57 @@ export interface ThesisReformatResult {
   report?: Record<string, unknown>;
 }
 
+
+/**
+ * 从模版块大纲里挑出「渲染时会出现灰字提示」的小节标题。
+ *
+ * 判据与引擎侧的目标识别保持一致：标题块（≤3 级），或「短、无句读」的编号列表项
+ * （实验目的/实验仪器与工具/实验步骤这类自动编号小节在模版里就是列表项）。
+ * 目录、封面、守则、评分说明、图表题注这些不是章节，全部排掉。
+ */
+export function pickFillSectionTitles(
+  outline: Array<{ kind: string; level?: number; text: string }>,
+  options?: { withContext?: boolean },
+): Array<{ title: string }> {
+  const chapterish = /^(第[一二三四五六七八九十百0-9]{1,4}[章篇节]|[一二三四五六七八九十]{1,3}\s*[、.．]|\d{1,2}(\.\d{1,2}){1,2}\s*[、.．]?\s*\S)/;
+  const skip = /^(目录|目次|contents|摘要|abstract|参考文献|参考资料|附录|致谢|封面|守则|说明|评分|汇总|声明|承诺)/i;
+  // 需要本人填写/主观打分的字段，AI 不能代写：个人信息、签名、评审与成绩
+  const manualOnly = /(姓名|学号|班级|专业|学院|年级|指导教师|指导老师|联系方式|电话|邮箱|签名|签字|日期|评语|评分|成绩|考核|评价|等级|分数|意见|打钩|勾选)/;
+  const seen = new Set<string>();
+  const out: Array<{ title: string }> = [];
+  let chapter = "";
+  for (const block of outline) {
+    const title = (block.text ?? "").trim();
+    if (!title || title.length > 40) continue;
+    const isTop = block.kind === "heading" && (block.level ?? 9) === 1;
+    if (isTop) chapter = title;
+    const flat = title.replace(/\s+/g, "");
+    if (skip.test(flat)) continue;
+    if (manualOnly.test(flat)) continue;
+    // 封面/守则/评分说明/年份行/图表题注都不是要补写的章节
+    if (/守则|评分|汇总|说明/.test(flat)) continue;
+    if (/^\d{4}/.test(flat)) continue;
+    if (/^《/.test(flat) || /^实验报告$/.test(flat)) continue;
+    if (/^[图表]\d/.test(flat)) continue;
+    if (/(图|表)$/.test(flat) && !chapterish.test(title)) continue;
+    // 「五、在实验室内不准喧哗…」这类整句不是章节标题
+    if (chapterish.test(title) && (flat.length > 24 || /[。；]/.test(flat))) continue;
+    const isHeading = block.kind === "heading" && (block.level ?? 9) <= 3;
+    const plainShort = !/[。，；：？！]/.test(flat) && flat.length <= 16;
+    const isNumbered = (block.kind === "list" || block.kind === "paragraph") && (chapterish.test(title) || plainShort);
+    if (!isHeading && !isNumbered) continue;
+    // 「章｜小节」带上上下文：8 个实验都有「实验步骤」，不带上下文模型只能写一份，
+    // 排版时会被复制到所有同名小节。带上后每节各写各的，引擎按整串匹配。
+    const combined = chapter && chapter !== title ? `${chapter}｜${title}` : title;
+    const contextual = options?.withContext && !isTop && combined.length <= 70 ? combined : title;
+    const key = contextual.replace(/\s+/g, "").slice(0, 80);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ title: contextual });
+  }
+  return out.slice(0, 60);
+}
+
 export class ThesisFormatService {
   private readonly store: ThesisFormatCardStore;
 
@@ -65,6 +117,7 @@ export class ThesisFormatService {
     const bytes = await readFile(storagePath);
     const result = await this.parseBytes(bytes, entry.originalName);
     const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId, sourceName: entry.originalName });
+    if (result.templateDocx) await this.writeTemplateCache(row.id, result.templateDocx);
     return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
@@ -78,14 +131,24 @@ export class ThesisFormatService {
     // fileEntryId：桌面端上传前已把模版导入资料区，卡片直接关联该文件。
     // 关联后：预览能打开真实原文件、删除能级联清文件、也能重新从资料区解析。
     const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId ?? null, sourceName: name });
+    if (result.templateDocx) await this.writeTemplateCache(row.id, result.templateDocx);
     return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
   removeCard(roomId: string, cardId: string): boolean {
-    return this.store.remove(roomId, cardId);
+    const removed = this.store.remove(roomId, cardId);
+    // 卡没了，骨架缓存也没意义；失败不阻断（下次解析会覆盖同名文件）
+    if (removed) void this.dropTemplateCache(cardId);
+    return removed;
   }
 
-  private async parseBytes(bytes: Buffer, name: string): Promise<{ sourceName: string; card: ThesisFormatCard; factGaps: string[] }> {
+  private async parseBytes(bytes: Buffer, name: string): Promise<{
+    sourceName: string;
+    card: ThesisFormatCard;
+    factGaps: string[];
+    /** 模版 docx 字节（装订骨架用）；拿不到（如 PDF 模版）时为 null，排版回落 v2。 */
+    templateDocx: Buffer | null;
+  }> {
     // 全链路显性失败：解包/归一化/事实抽取任一步失败都直接抛错（带阶段名），
     // 由 routes 层回 400 与 UI toast——绝不静默降级用默认样式出卡。
     const members = await unpackTemplateInput(bytes, name).catch((error: unknown) => {
@@ -94,6 +157,15 @@ export class ThesisFormatService {
     const normalized = await normalizeMembersToDocx(members).catch((error: unknown) => {
       throw new Error(`thesis_template_normalize_failed:${error instanceof Error ? error.message : String(error)}`);
     });
+    // 装订骨架要的是「和用户看到的模版一模一样」的那份 docx：输入本来就是 docx 时
+    // 保留原始字节（归一化会重新打包，封面/浮动图片/复杂表格有丢失风险）；
+    // .doc/.dotx/.zip 本来就不是 docx，用归一化后承载版式的那个成员。
+    const skeletonMember = normalized.find((member) => member.ext === ".docx");
+    // 骨架必须是真 docx：老版 .doc（含「改名的 .docx」）喂给渲染器只会在装订阶段炸，
+    // 然后静默回落到「照内容重建」——用户看到的就是目录/结构全变。
+    const templateDocx = isDocxInput(bytes, name) && looksLikeDocx(bytes)
+      ? bytes
+      : (skeletonMember && looksLikeDocx(skeletonMember.bytes) ? skeletonMember.bytes : null);
     const facts = await buildTemplateFacts(normalized).catch((error: unknown) => {
       throw new Error(`thesis_template_facts_failed:${error instanceof Error ? error.message : String(error)}`);
     });
@@ -121,7 +193,7 @@ export class ThesisFormatService {
           sourceName: name,
         });
         local.card.profile = profile;
-        return { sourceName: name, card: local.card, factGaps: local.gaps };
+        return { sourceName: name, card: local.card, factGaps: local.gaps, templateDocx };
       }
     }
 
@@ -162,7 +234,15 @@ export class ThesisFormatService {
     const factGaps = Array.isArray(rawGaps)
       ? rawGaps.filter((g): g is string => typeof g === "string" && g.trim().length > 0).slice(0, 20)
       : [];
-    return { sourceName: name, card, factGaps };
+    // 模版不是真 docx（老版 .doc / 改了扩展名）时，骨架排版用不了。
+    // 必须在这里说清楚，否则用户只会看到「排版结果和模版不一样」。
+    if (!templateDocx) {
+      factGaps.unshift(
+        "模版文件不是标准 .docx（常见于老版 .doc，或 .doc 改了扩展名）：本次只能按论文内容重建排版，"
+        + "模版的封面/表格/目录无法原样保留。请用 Word/WPS 打开模版「另存为 .docx」后重新导入。",
+      );
+    }
+    return { sourceName: name, card, factGaps, templateDocx };
   }
 
   private readonly jobs = new ThesisJobRegistry();
@@ -209,7 +289,41 @@ export class ThesisFormatService {
     onPhase?.("parsing");
     const row = cardId ? this.store.byId(roomId, cardId) : this.store.latest(roomId);
     if (!row) throw new Error("thesis_format_card_not_found");
-    const card = row.card;
+    let card = row.card;
+    // 老卡片自愈：剖面版本比当前规则旧（导入时还没有「模版优先」模式）时，
+    // 用模版原文件重建一次剖面。重建失败不阻断——仍然按老逻辑排版。
+    const profileVersion = Number((card.profile as { version?: number } | undefined)?.version ?? 0);
+    if (profileVersion < 3) {
+      const staleProfileBytes = await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName);
+      if (staleProfileBytes) {
+        const rebuilt = await this.rebuildTemplateProfile(card, staleProfileBytes, row.sourceName).catch((error: unknown) => {
+          console.warn("[thesis] 剖面重建失败，按旧剖面排版：", error instanceof Error ? error.message : String(error));
+          return null;
+        });
+        if (rebuilt) {
+          card = { ...card, profile: rebuilt };
+          // 落库：下次排版直接用新剖面，不必每次重算
+          try {
+            this.store.upsert({
+              roomId,
+              card,
+              sourceFileEntryId: row.sourceFileEntryId,
+              sourceName: row.sourceName,
+            });
+          } catch (error) {
+            console.warn("[thesis] 新剖面落库失败（不影响本次排版）：", error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
+    }
+    // 「AI 补写空白小节」开关必须在映射之前落到卡片上：映射阶段就要判断要不要补写，
+    // 渲染阶段再由引擎据此决定空节是写提示还是写补写内容。
+    if (options?.aiFill === true && card.profile) {
+      card = { ...card, profile: { ...card.profile, aiFill: true } };
+      console.info("[thesis] AI 补写空白小节：本次已开启");
+    } else if (options?.aiFill === true) {
+      console.info("[thesis] AI 补写空白小节：已开启，但卡片没有模版剖面，跳过");
+    }
     const bridge = this.deps.officeBridge;
     if (!bridge) throw new Error("thesis_bridge_unavailable");
     const entry = this.deps.files.catalogEntry(fileEntryId);
@@ -224,7 +338,11 @@ export class ThesisFormatService {
 
     const titleHint = entry.originalName.replace(/\.[^.]+$/, "").slice(0, 300);
     onPhase?.("mapping");
-    const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint, options);
+    // AI 补写需要知道「模版正文里哪些小节会出现灰字提示」——先读模版字节
+    const templateForFill = options?.aiFill === true
+      ? await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName).catch(() => null)
+      : null;
+    const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint, options, templateForFill);
     let spec: ThesisBindingSpec;
     let report: Record<string, unknown> | undefined;
     if (v2) {
@@ -257,17 +375,147 @@ export class ThesisFormatService {
         }
       : withNumbering;
     onPhase?.("rendering");
+    // v3 模板骨架装订：把模版原文件一起下发，渲染器以模版为底、只替换内容槽位，
+    // 封面/核心信息区/表格/教师评价表/目录按模版原位置原样保留。
+    // 模版读不出来（老卡片、非 docx）就不带——渲染器回落 v2 重建路径。
+    const templateBytes = await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName);
+    // 卡片有剖面说明用户是按「模版排版」导入的；此时拿不到模版字节，成品必然和模版不一致。
+    // 必须显性告知，否则用户只会看到「表格又跑位了」却不知道是模版文件丢了。
+    const missingTemplateNote = !templateBytes && card.profile
+      ? ["模板原文件不可用（可能已删除/移动，或是老版 .doc、改了扩展名的 .doc）——本次按论文内容重建排版；"
+        + "用 Word/WPS 把模版另存为 .docx 后重新导入，即可恢复「以模版为底」的排版"]
+      : [];
     const built = await bridge.reformatThesisDocx({
       docxBase64: bytes.toString("base64"),
+      ...(templateBytes ? { templateBase64: templateBytes.toString("base64") } : {}),
       formatCard: renderCard,
       bindingSpec: spec,
       roomId,
       sourceFileName: entry.originalName,
       sourceFileEntryId: fileEntryId,
       keepLogo: options?.keepLogo !== false,
+      ...(options?.aiFill === true ? { aiFill: true } : {}),
       idempotencyKey: `thesis-reformat:${fileEntryId}:${row.id}:${card.cardMeta.parsedAt}:${optionsFingerprint(options)}`,
     });
-    return { fileEntryId: built.fileEntryId, originalName: built.originalName, ...(report ? { report } : {}) };
+    // 出稿提示（模版骨架回落、自检软伤）并进报告：面板必须能看到「为什么这次排版不对」，
+    // 否则用户只能看到成品、猜不到原因——这是「表格跑位」反复反馈却查不出所以然的根因。
+    // AI 补写的结果必须让用户看见：补了几处、还是没补上（面板只显示 warnings）
+    const aiFillWarnings: string[] = [];
+    if (options?.aiFill === true) {
+      const generated = spec.generatedSections ?? [];
+      aiFillWarnings.push(generated.length > 0
+        ? `AI 补写 ${generated.length} 处空白小节：${generated.map((entry) => entry.title).join("、")}（请核对后提交）`
+        : "AI 补写未返回内容（模型不可用或素材不足），空白小节已退回灰字提示");
+    }
+    const warnings = [...missingTemplateNote, ...aiFillWarnings, ...(built.warnings ?? [])];
+    const finalReport = report || warnings.length > 0
+      ? { ...(report ?? {}), ...(warnings.length > 0 ? { warnings } : {}) }
+      : undefined;
+    return { fileEntryId: built.fileEntryId, originalName: built.originalName, ...(finalReport ? { report: finalReport } : {}) };
+  }
+
+  /**
+   * 读模版原文件字节（仅 docx）。读不到返回 null：调用方回落 v2 重建路径，
+   * 而不是让整个排版失败——老格式卡没有可用的模版文件是历史事实。
+   */
+  /** 模版 docx 缓存目录（与对象库同盘，不进 catalog）。 */
+  private templateCachePath(cardId: string): string {
+    return join(this.deps.files.dataDirectory(), "thesis-templates", `${cardId}.docx`);
+  }
+
+  /**
+   * 解析时落一份 docx 骨架：排版因此不依赖资料区文件是否还在、fileEntryId 是否还有效
+   * （上传通道可能拿不到 fileEntryId，老卡片也可能是 null——那样 v3 永远拿不到模版）。
+   */
+  private async writeTemplateCache(cardId: string, bytes: Buffer): Promise<void> {
+    try {
+      await mkdir(join(this.deps.files.dataDirectory(), "thesis-templates"), { recursive: true });
+      await writeFile(this.templateCachePath(cardId), bytes);
+    } catch (error) {
+      // 缓存写不进去不影响解析：排版时还有资料区文件这条回退路径
+      console.warn("[thesis] 模版 docx 缓存写入失败：", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async dropTemplateCache(cardId: string): Promise<void> {
+    try {
+      await unlink(this.templateCachePath(cardId));
+    } catch {
+      // 不存在即视为已清理
+    }
+  }
+
+  /**
+   * 读模版 docx 字节（v3 骨架装订的底稿）。四级回退：
+   * 1) 解析时落盘的缓存——最可靠，不依赖资料区；
+   * 2) 卡片关联的资料区文件；
+   * 3) 按模版文件名在资料区找唯一同名 docx（老卡片 sourceFileEntryId 为 null 时自愈）；
+   * 4) 都拿不到 → null，渲染器回落 v2 内容重建。
+   */
+  /** 旧剖面自愈：按模版原文件重建剖面（与导入时同一条本地确定性路径）。 */
+  private async rebuildTemplateProfile(
+    card: ThesisFormatCard,
+    templateBytes: Buffer,
+    sourceName?: string,
+  ): Promise<ThesisFormatCard["profile"]> {
+    const name = sourceName ?? "template.docx";
+    const members = await unpackTemplateInput(templateBytes, name);
+    const normalized = await normalizeMembersToDocx(members);
+    const facts = await buildTemplateFacts(normalized);
+    const member = (facts.ooxml ?? []).find((item) => (item.outline ?? []).length > 0) ?? facts.ooxml?.[0];
+    if (!member) return undefined;
+    return buildTemplateProfile({
+      facts: {
+        styles: member.styles ?? [],
+        sections: (member.sections ?? []) as never,
+        headers: (member.headers ?? []) as never,
+        footers: (member.footers ?? []) as never,
+        coverImages: (member.coverImages ?? []) as never,
+        coverText: member.coverText ?? [],
+        outline: member.outline ?? [],
+        numbering: member.numbering ?? { scheme: "none", levels: [] },
+        fixedBlocks: (member.fixedBlocks ?? []) as never,
+      },
+      card,
+      sourceName: name,
+    });
+  }
+
+  private async readTemplateDocx(
+    cardId: string,
+    fileEntryId: string | null | undefined,
+    sourceName?: string,
+  ): Promise<Buffer | null> {
+    try {
+      const cached = await readFile(this.templateCachePath(cardId));
+      if (looksLikeDocx(cached)) return cached;
+      // 缓存里是「改名的 .doc」这类假 docx：删掉，免得每次排版都在装订阶段炸一次
+      await rm(this.templateCachePath(cardId), { force: true }).catch(() => {});
+    } catch {
+      // 无缓存，继续回退
+    }
+    const fromCatalog = async (id: string): Promise<Buffer | null> => {
+      try {
+        const entry = this.deps.files.catalogEntry(id);
+        if (!entry || extname(entry.originalName).toLowerCase() !== ".docx") return null;
+        const storagePath = this.deps.files.catalogStoragePathOf(id);
+        if (!storagePath) return null;
+        return await readFile(storagePath);
+      } catch {
+        return null;
+      }
+    };
+    let bytes = fileEntryId ? await fromCatalog(fileEntryId) : null;
+    if (bytes && !looksLikeDocx(bytes)) bytes = null;
+    // 老卡片自愈：id 没了但文件还在资料区里。只在同名 docx 唯一时采用，避免张冠李戴。
+    if (!bytes && sourceName) {
+      const hits = this.deps.files.catalogEntriesByName(sourceName)
+        .filter((entry) => extname(entry.originalName).toLowerCase() === ".docx");
+      if (hits.length === 1) bytes = await fromCatalog(hits[0]!.id);
+    }
+    // 顺手补缓存：缓存机制上线前解析的老卡片跑一次就自愈了
+    if (bytes) await this.writeTemplateCache(cardId, bytes);
+    return bytes;
   }
 
   /**
@@ -304,6 +552,149 @@ export class ThesisFormatService {
     }
   }
 
+
+  /**
+   * 模版正文里「会出现在排版结果中的小节标题」。
+   *
+   * AI 补写的候选必须来自这里，而不是只来自格式卡剖面：
+   * 剖面只有一级/二级槽位，像「实验目的 / 实验仪器与工具 / 实验步骤」这种
+   * 编号列表小节根本不在剖面里——只在渲染时才被识别成目标、才出灰字提示。
+   * 只按剖面发补写任务，就会出现「勾了 AI 补写，提示还在」。
+   */
+  private async templateSectionTitles(bytes: Buffer | null): Promise<Array<{ title: string }>> {
+    if (!bytes) return [];
+    // 直接扫模版 OOXML，不走桌面桥：桥那一步在带 WMF 的大模版上会静默失败，
+    // 结果就是「模版正文小节一个都没进补写列表」——实验目的/实验步骤永远补不上。
+    const zip = await JSZip.loadAsync(bytes);
+    const documentXml = await zip.file("word/document.xml")?.async("string");
+    if (!documentXml) return [];
+    // 表格单元格里的段落不是章节（评分表、成绩汇总表会混进来一堆「序号/得分」）
+    const tableRanges: Array<[number, number]> = [];
+    for (const tableMatch of documentXml.matchAll(/<w:tbl>/g)) {
+      const start = tableMatch.index ?? 0;
+      let depth = 0;
+      const scanner = /<\/?w:tbl>/g;
+      scanner.lastIndex = start;
+      for (const tag of documentXml.matchAll(scanner)) {
+        depth += tag[0] === "</w:tbl>" ? -1 : 1;
+        if (depth === 0) {
+          tableRanges.push([start, (tag.index ?? start) + tag[0].length]);
+          break;
+        }
+      }
+    }
+    const inTable = (position: number): boolean =>
+      tableRanges.some(([start, end]) => position >= start && position < end);
+    const outline: Array<{ kind: string; level?: number; text: string }> = [];
+    for (const match of documentXml.matchAll(/<w:p[\s>][\s\S]*?<\/w:p>/g)) {
+      const paragraph = match[0];
+      if (inTable(match.index ?? 0)) continue;
+      const text = [...paragraph.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((item) => item[1]).join("").trim();
+      if (!text) continue;
+      const styleId = paragraph.match(/<w:pStyle[^>]*\bw:val="([^"]+)"/)?.[1] ?? "";
+      const level = /^Heading\s*([1-4])$/i.exec(styleId)?.[1];
+      const numbered = /<w:numPr[\s>]/.test(paragraph);
+      outline.push({
+        kind: level ? "heading" : numbered ? "list" : "paragraph",
+        ...(level ? { level: Number(level) } : {}),
+        text,
+      });
+    }
+    return pickFillSectionTitles(outline, { withContext: true });
+  }
+
+  /**
+   * AI 补写空白小节（用户开关，默认关）。
+   *
+   * 只把「模版有、映射后没有任何内容」的小节发给代理，并要求：
+   * 只能改写论文里已有的事实，不许编造数据/人名/单位，拿不准就留空。
+   * 返回文本在渲染时带「AI 生成 · 请核对」标记，导出时保留。
+   */
+  private async fillEmptySectionsWithAgent(
+    profile: { slots: Array<{ id: string; title: string }>; subSlots?: Array<{ id: string; title: string }> },
+    plan: ReturnType<typeof buildMappingPlan>,
+    content: ReturnType<typeof buildContentProfile>,
+    templateSections: Array<{ title: string }> = [],
+  ): Promise<Array<{ title: string; text: string }>> {
+    const used = new Set(plan.assignments.map((assignment) => assignment.slotId));
+    const skipTitle = /^(目录|摘要|abstract|参考资料|参考文献|附录|致谢)/i;
+    const candidates = [
+      ...[...profile.slots, ...(profile.subSlots ?? [])]
+        .filter((slot) => !used.has(slot.id))
+        .map((slot) => slot.title),
+      // 模版正文里的编号小节（实验目的/实验步骤…）——它们不在剖面里，
+      // 但渲染时会出「本节待补充」，必须一起交给模型补。
+      ...templateSections.map((section) => section.title),
+    ];
+    const seen = new Set<string>();
+    const empty: Array<{ title: string }> = [];
+    for (const title of candidates) {
+      if (!title || skipTitle.test(title)) continue;
+      const key = title.replace(/\s+/g, "");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      empty.push({ title });
+    }
+    if (empty.length === 0) return [];
+    // 素材 = 论文每个章节的标题 + 该节正文摘录。
+    // 注意：node.blockStart 指向**标题块本身**，直接取它只会把标题再发一遍——
+    // 模型拿到的 snippet 等于标题，判定「没有素材」，于是如实提交空结果，
+    // 表现就是「勾了 AI 补写但提示还在」。必须从标题之后的第一个正文块开始取。
+    const sourceSummary = content.outline.map((node) => {
+      const parts: string[] = [];
+      let used = 0;
+      for (let index = node.blockStart; index < Math.min(node.blockEnd, content.blocks.length); index += 1) {
+        const block = content.blocks[index];
+        if (!block) continue;
+        if (index === node.blockStart && block.kind === "heading") continue;
+        const text = (block.text ?? "").trim();
+        if (!text) continue;
+        parts.push(text);
+        used += text.length;
+        if (used >= 240) break;
+      }
+      return { level: node.level, title: node.text, snippet: parts.join(" ").slice(0, 240) };
+    });
+    // 全文素材：补写要基于论文整体，不能只看每节首句。
+    // 截断上限控制在 12000 字，避免把上下文撑爆；超出时保留开头与结尾。
+    const fullText = content.blocks.map((block) => (block.text ?? "").trim()).filter(Boolean).join("\n");
+    const sourceText = fullText.length <= 12000
+      ? fullText
+      : `${fullText.slice(0, 8000)}\n…（中间略）…\n${fullText.slice(-4000)}`;
+    // 一次 22 节要跑 6~7 分钟。拆成几批并发送，墙钟时间按批次降下来，
+    // 否则加上映射阶段很容易撞到面板 10 分钟上限（用户看到「排版超时」）。
+    const BATCH_SIZE = 8;
+    const batches: Array<Array<{ title: string }>> = [];
+    for (let index = 0; index < empty.length; index += BATCH_SIZE) {
+      batches.push(empty.slice(index, index + BATCH_SIZE));
+    }
+    const settled = await Promise.allSettled(batches.map((batch) => this.dispatchAgent(
+      `补写空白小节（${batch.length} 节）`,
+      { task: "fill_sections" as const, emptySections: batch, sourceSummary, sourceText },
+    )));
+    const raw = settled.flatMap((outcome) => {
+      if (outcome.status !== "fulfilled") {
+        console.warn("[thesis] 某一批空小节补写失败，跳过该批：",
+          outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason));
+        return [];
+      }
+      const value = outcome.value as { generatedSections?: unknown } | null;
+      return Array.isArray(value?.generatedSections) ? (value!.generatedSections as Array<Record<string, unknown>>) : [];
+    });
+    // 标题比对放宽：模型常把「七、」这类编号省掉，按去编号后的文本对，再换回模版原标题
+    const loose = (value: string): string =>
+      value.replace(/^\s*[一二三四五六七八九十百]+[、.．]\s*/, "").replace(/^\s*\d+(\.\d+)*[、.．]?\s*/, "").replace(/\s+/g, "");
+    const canonical = new Map(empty.map((slot) => [loose(slot.title), slot.title]));
+    return raw.flatMap((entry) => {
+      const item = entry as Record<string, unknown>;
+      const title = typeof item.title === "string" ? canonical.get(loose(item.title)) : undefined;
+      const text = typeof item.text === "string" ? item.text.trim() : "";
+      if (!title || !text) return [];
+      if (text.length < 20 || text.length > 1200) return [];
+      return [{ title, text }];
+    });
+  }
+
   /**
    * v2 映射：卡片带模板剖面时，用「内容剖面 → 映射计划 → 装订规格」确定性产出，
    * 不再派代理猜区间。返回 null = 老卡片，调用方回落原路径。
@@ -314,6 +705,7 @@ export class ThesisFormatService {
     outline: Array<{ index: number; kind: string; level?: number; text: string }>,
     titleHint: string,
     options?: ThesisReformatOptions,
+    templateBytes?: Buffer | null,
   ): Promise<{ spec: ThesisBindingSpec; report: Record<string, unknown> } | null> {
     const profile = card.profile;
     if (!profile || profile.slots.length === 0) return null;
@@ -345,10 +737,24 @@ export class ThesisFormatService {
       content,
       titleHint,
       ...(options?.headingMapping ? { headingMapping: options.headingMapping } : {}),
-      preserveSourceFormat: options?.mode === "blend",
       // 模板自有固定表单（教师评价表等）：解析时存在卡片剖面里，这里原样带回
       ...(card.profile?.fixed?.fixedBlocks?.length ? { templateProfile: card.profile } : {}),
     });
+    // AI 补写空小节（默认关）：只对「模版有、论文没有」的小节生成，且只允许改写论文已有信息。
+    // 失败一律跳过——补写是锦上添花，不能阻断排版。
+    if ((profile as { aiFill?: boolean }).aiFill === true) {
+      const templateSections = await this.templateSectionTitles(templateBytes ?? null).catch(() => []);
+      const filled = await this.fillEmptySectionsWithAgent(profile, plan, content, templateSections).catch((error: unknown) => {
+        console.warn("[thesis] 空小节补写失败，跳过：", error instanceof Error ? error.message : String(error));
+        return [];
+      });
+      if (filled.length > 0) {
+        spec.generatedSections = filled;
+        notes.push(`AI 补写空小节：${filled.length} 处（请核对）`);
+      } else {
+        notes.push("AI 补写未返回内容（模型不可用或素材不足），空白小节已退回灰字提示");
+      }
+    }
     diff.right = spec.chapters.map((chapter) => {
       const assignment = plan.assignments.find((entry) => entry.blockRange[0] === chapter.blockStart);
       return {
@@ -524,7 +930,6 @@ export function cardForAgent(card: ThesisFormatCard): unknown {
 function optionsFingerprint(options?: ThesisReformatOptions): string {
   if (!options) return "default";
   return [
-    options.mode ?? "strict",
     options.keepLogo === false ? "nologo" : "logo",
     options.keepHeaderFooter === false ? "nohf" : "hf",
     options.headingMapping
@@ -542,3 +947,19 @@ const DEFAULT_DEGREE_LINE = "本科毕业论文（设计）";
  * 确定性合并：只补卡片里缺的字段，不覆盖已解析代理给出的合法值；没有图片事实
  * 时保持字段缺省——绝不编造 logo。
  */
+
+/**
+ * 输入是否已经是 docx：扩展名 + zip 魔数双确认。
+ * 只看扩展名会把改名的 zip/rar 当成骨架，parseDocx 直接抛错；只看魔数又会把
+ * 扩展名为 .zip 的 docx 误判——两者都满足才按「原件即骨架」处理。
+ */
+/** 真正的 docx：ZIP 容器且含 word/document.xml。改名的 .doc 会在这里被挡掉。 */
+function looksLikeDocx(bytes: Buffer): boolean {
+  if (bytes.length < 8 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return false;
+  return bytes.includes(Buffer.from("word/document.xml"));
+}
+
+function isDocxInput(bytes: Buffer, name: string): boolean {
+  if (extname(name).toLowerCase() !== ".docx") return false;
+  return bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+}

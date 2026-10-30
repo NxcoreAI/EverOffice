@@ -23,7 +23,7 @@ import type {
 import type { CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult } from '../shared/sources'
 import type { SearchItemType, SearchRequestDto } from '../shared/search'
 import type { PrivateTranscriptionSyncCompletedEvent, RuntimeConfigSnapshot } from '../shared/sources'
-import { officePreviewKindForFileName } from '../shared/sources'
+import { officePreviewKindForFileName, type OfficePreviewKind } from '../shared/sources'
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
@@ -163,6 +163,7 @@ import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shar
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
 import { OfficePreviewRegistry } from './office/office-preview-registry'
+import { notifyPreviewRequested, previewRequestFromOpenResult } from './office/preview-request'
 
 const APP_NAME = 'EverRoom'
 
@@ -3047,7 +3048,7 @@ async function openFileInAppPreview(
   fileId: string,
   originalName: string,
   options?: { contentHash?: string; editable?: boolean; roomId?: string; focusWindow?: boolean },
-): Promise<{ openedWith: 'office' | 'external'; instanceId?: string; kind?: string; title?: string }> {
+): Promise<{ openedWith: 'office' | 'external'; instanceId?: string; kind?: OfficePreviewKind; title?: string }> {
   const extension = extname(originalName).toLowerCase()
   const legacy = extension === '.doc' || extension === '.xls' || extension === '.ppt'
   if (officePreviewKindForFileName(originalName) === null) {
@@ -4682,12 +4683,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
         // 打开真预览：与应用内「打开 Office 文件」同一条路径（失败会抛错，不再静默）
         const open = async (fileId: string, originalName: string) => {
-          await openFileInAppPreview(filesGatewayBridge, fileId, originalName, {
+          const result = await openFileInAppPreview(filesGatewayBridge, fileId, originalName, {
             ...(roomId ? { roomId } : {}),
             // 预览标签开在主窗口：从 docs 面板点预览时要把主窗口提到前台，
             // 否则用户看着 docs 窗口会觉得「点了没反应」。
             focusWindow: true,
           })
+          // 光把窗口提到前台不够：实例的 WebContentsView 默认是隐藏的，可见性由
+          // 渲染端驱动（开标签 → 上报矩形 → setActiveInstance）。docs 面板发起的
+          // 打开不经过渲染端的 openOriginal，所以必须在这里补一条通知，否则
+          // 用户看到的就是「点了 👁 完全没反应」。
+          const request = previewRequestFromOpenResult(result)
+          if (request) notifyPreviewRequested(request)
           return { opened: true as const }
         }
 

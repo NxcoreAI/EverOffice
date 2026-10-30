@@ -179,6 +179,14 @@ export class FilesService {
     private readonly dataDir: string,
   ) {}
 
+  /**
+   * 服务数据根目录。旁路文件（如论文模版 docx 缓存）需要与对象库同盘，
+   * 但不属于 catalog 条目，因此单独暴露根路径给需要的模块。
+   */
+  dataDirectory(): string {
+    return this.dataDir;
+  }
+
   /** Backfill the compatibility table without changing any legacy IDs. */
   initializeCatalog(): void {
     const legacyRows = this.db.select().from(uploadedFiles).all();
@@ -600,6 +608,20 @@ export class FilesService {
       .where(and(eq(fileEntries.id, fileEntryId), isNull(fileEntries.deletedAt)))
       .get();
     return row ? this.toCatalogFileDto(row) : null;
+  }
+
+  /**
+   * 按文件名取全部目录条目（同名可能有多份）。
+   *
+   * 用于「丢了 id 但文件还在」的自愈场景：论文模版卡片的 sourceFileEntryId 可能
+   * 是 null（上传通道拿不到），排版时需要靠文件名把模版 docx 找回来。调用方必须
+   * 只在结果唯一时才采用，避免张冠李戴。
+   */
+  catalogEntriesByName(originalName: string): CatalogFileDto[] {
+    return this.catalogQuery()
+      .where(and(eq(fileEntries.originalName, originalName), isNull(fileEntries.deletedAt)))
+      .all()
+      .map((row) => this.toCatalogFileDto(row));
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {

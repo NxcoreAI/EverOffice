@@ -14,7 +14,7 @@ const ipc = readFileSync(resolve(docsRoot, 'src/shared/ipc.ts'), 'utf8')
 
 describe('AI 面板排版工具', () => {
   it('上传模版成功后直接排版当前文档（导入即排版）', () => {
-    expect(aiTab).toContain('if (meta.cardId && hasDoc) await reformatWith(meta.cardId, { mode })')
+    expect(aiTab).toContain('if (meta.cardId && hasDoc) await reformatWith(meta.cardId)')
   })
 
   it('模版解析缺口在面板里显性提示，不静默', () => {
@@ -240,13 +240,15 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).not.toContain('await window.desktop.thesisReformat(cardId)')
   })
 
-  it('目录融合模式可选：严格（按模板目录筛选）/ 融合（全部保留）', () => {
-    expect(aiTab).toContain("useState<'strict' | 'blend'>('blend')")
-    expect(aiTab).toContain('aiThesisModeStrict')
-    expect(aiTab).toContain('aiThesisModeBlend')
-    // 模式随排版请求透传
-    expect(aiTab).toContain('reformatWith(row.id, { mode })')
-    expect(aiTab).toContain('reformatWith(meta.cardId, { mode })'); // 上传后自动排版
+  it('两种模式已移除：点卡片直接排版，不再让用户选严格/融合', () => {
+    expect(aiTab).not.toContain("useState<'strict' | 'blend'>")
+    expect(aiTab).not.toContain('aiThesisModeStrict')
+    expect(aiTab).not.toContain('aiThesisModeBlend')
+    expect(aiTab).not.toContain('name="ai-thesis-mode"')
+    // 点击即排版：不带 mode 参数
+    expect(aiTab).toContain('reformatWith(row.id)')
+    expect(aiTab).not.toContain('reformatWith(row.id, { mode })')
+    expect(aiTab).toContain('reformatWith(meta.cardId)'); // 上传后自动排版
   })
 
   it('删除结果如实反馈：文件没删掉要提示而不是假装成功', () => {
@@ -260,5 +262,59 @@ describe('删除模版文件「删干净」的底层保证', () => {
     const matches = service.match(/delete\(roomSourceMemberships\)/g) ?? []
     expect(matches.length).toBeGreaterThanOrEqual(2) // deleteCatalogEntry + deleteFile 两条路径
     expect(service).toContain('sourceKind, "file"')
+  })
+})
+
+/**
+ * 点 👁 之后预览必须真的出现在用户眼前。
+ *
+ * 回归的坑：实例在主进程建好了，但可见性由渲染端驱动（开标签 → 上报矩形 →
+ * setActiveInstance）。docs 面板发起的打开不经过渲染端的 openOriginal，
+ * 少一条通知，WebContentsView 就一直是 setVisible(false) —— 用户看到的是
+ * 「点预览完全没反应」，而不是报错，最难查。
+ */
+describe('预览可见性：主进程建好实例后必须通知渲染端', () => {
+  const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
+  const app = readFileSync(resolve(__dirname, '../src/renderer/src/App.tsx'), 'utf8')
+  const preload = readFileSync(resolve(__dirname, '../src/preload/index.ts'), 'utf8')
+
+  it('排版面板预览打开成功后补发通知（否则视图永远隐藏）', () => {
+    expect(main).toContain('previewRequestFromOpenResult')
+    expect(main).toContain('notifyPreviewRequested')
+    const block = main.slice(main.indexOf('previewTemplate: async (roomId, cardId)'))
+    expect(block.slice(0, block.indexOf('if (card.sourceFileEntryId)'))).toContain('notifyPreviewRequested(request)')
+  })
+
+  it('渲染端收到通知就开顶栏标签并激活（矩形上报沿用 office-document 视口）', () => {
+    expect(app).toContain('office.onPreviewRequest(')
+    expect(app).toContain('openOfficeTab({ id: request.instanceId, title: request.title, kind: request.kind })')
+  })
+
+  it('preload 暴露 onPreviewRequest，通道名两端一致', () => {
+    expect(preload).toContain('onPreviewRequest:')
+    expect(preload).toContain('OFFICE_PREVIEW_REQUEST_CHANNEL')
+    const sources = readFileSync(resolve(__dirname, '../src/shared/sources.ts'), 'utf8')
+    expect(sources).toContain("export const OFFICE_PREVIEW_REQUEST_CHANNEL = 'office:preview-request'")
+    expect(sources).toContain('onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void')
+  })
+})
+
+/**
+ * 作业失败也必须是人话。
+ *
+ * 回归的坑：作业失败是「轮询成功、状态为 failed」，走不到宿主钩子的 catch，
+ * describeThesisError 根本没机会跑——用户看到的是 thesis_source_not_docx 这种机器码。
+ */
+describe('排版作业失败：错误在返回面板前翻译成人话', () => {
+  it('reformat-job-status 对 failed 快照套 describeThesisError', () => {
+    const registry = readFileSync(resolve(__dirname, '../src/main/office/office-preview-registry.ts'), 'utf8')
+    const block = registry.slice(registry.indexOf("case 'reformat-job-status'"))
+    expect(block.slice(0, block.indexOf("case 'preview-template'"))).toContain('describeThesisError(snapshot.error)')
+  })
+
+  it('提交作业失败时保留服务端原因（不吞成裸状态码）', () => {
+    const bridge = readFileSync(resolve(__dirname, '../src/main/gateway/thesis-format-gateway-bridge.ts'), 'utf8')
+    const block = bridge.slice(bridge.indexOf('async startReformatJob'))
+    expect(block.slice(0, block.indexOf('/** 查作业状态'))).toContain('body.error')
   })
 })

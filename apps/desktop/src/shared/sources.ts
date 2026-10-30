@@ -879,6 +879,22 @@ export interface OfficePreviewTab {
   kind: OfficePreviewKind
 }
 
+/**
+ * 主进程主动发起的预览：实例已经在主进程建好（例：排版面板点 👁 预览模版原文件），
+ * 渲染端只需要开一个顶栏标签并激活它。
+ *
+ * 少了这条通知，实例的 WebContentsView 会一直是 setVisible(false)：没人开标签、
+ * 没人上报矩形、没人调 setActiveInstance，用户看到的就是「点了预览完全没反应」。
+ */
+export interface OfficePreviewRequest {
+  instanceId: string
+  title: string
+  kind: OfficePreviewKind
+}
+
+/** 主进程 → 主窗口渲染端：请把已建好的预览实例显示出来。 */
+export const OFFICE_PREVIEW_REQUEST_CHANNEL = 'office:preview-request'
+
 /** 内嵌 Office 预览的文件名分流（主进程白名单与渲染端入口共用；旧格式经 LibreOffice 转换后同样内嵌）。 */
 export function officePreviewKindForFileName(fileName: string): OfficePreviewKind | null {
   const dot = fileName.lastIndexOf('.')
@@ -983,6 +999,8 @@ export interface NxcoreDesktopApi {
     /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
     closeInstance(id: string): Promise<boolean>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
+    /** 主进程主动打开的预览实例（渲染端负责开标签并激活；如排版面板预览模版原文件）。 */
+    onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
@@ -1672,10 +1690,11 @@ export interface NxcoreDesktopApi {
       cardId?: string,
       /** 工作台规则面板：严格/融合、Logo 与页眉页脚保留、标题层级映射。 */
       options?: {
-        mode?: 'strict' | 'blend'
         keepLogo?: boolean
         keepHeaderFooter?: boolean
         headingMapping?: { chapter?: number; section?: number; subsection?: number }
+        /** 允许 AI 补写空白小节（默认关）。 */
+        aiFill?: boolean
       },
     ): Promise<{
       fileEntryId: string
@@ -1688,7 +1707,6 @@ export interface NxcoreDesktopApi {
       fileEntryId: string,
       cardId?: string,
       options?: {
-        mode?: 'strict' | 'blend'
         keepLogo?: boolean
         keepHeaderFooter?: boolean
         headingMapping?: { chapter?: number; section?: number; subsection?: number }

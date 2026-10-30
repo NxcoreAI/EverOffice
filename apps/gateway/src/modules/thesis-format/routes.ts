@@ -17,9 +17,10 @@ const ParseBody = Type.Object({
 }, { additionalProperties: false });
 
 const ReformatOptions = Type.Object({
-  mode: Type.Optional(Type.Union([Type.Literal("strict"), Type.Literal("blend")])),
   keepLogo: Type.Optional(Type.Boolean()),
   keepHeaderFooter: Type.Optional(Type.Boolean()),
+  /** 允许 AI 补写空白小节（默认关）。 */
+  aiFill: Type.Optional(Type.Boolean()),
   headingMapping: Type.Optional(Type.Object({
     chapter: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
     section: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)])),
@@ -145,6 +146,9 @@ export function thesisFormatRoutes(service: ThesisFormatService): FastifyPluginA
           200: Type.Object({
             fileEntryId: Type.String(),
             originalName: Type.String(),
+            // 映射报告 + 出稿提示（warnings）。少了这一行，Fastify 的序列化会把
+            // report 整个丢掉——同步路径的调用方就永远看不到「为什么这次排版不对」。
+            report: Type.Optional(Type.Unknown()),
           }),
           400: Type.Object({ error: Type.String() }),
           404: Type.Object({ error: Type.String() }),

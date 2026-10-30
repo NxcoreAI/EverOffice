@@ -109,7 +109,12 @@ export class ThesisFormatGatewayBridge {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileEntryId, cardId, ...(options ? { options } : {}) }),
     })
-    if (!response.ok) throw new Error(`排版作业提交失败（${response.status}）`)
+    if (!response.ok) {
+      // 服务端的原因（thesis_format_card_not_found 等）比状态码有用得多：
+      // 上游 describeThesisError 就靠这串码给用户可执行的提示，吞掉等于白排查。
+      const body = await response.json().catch(() => ({}) as { error?: string })
+      throw new Error(body.error || `排版作业提交失败（${response.status}）`)
+    }
     return await response.json() as { jobId: string; phase: string }
   }
 
@@ -175,10 +180,10 @@ export class ThesisFormatGatewayBridge {
     fileEntryId: string,
     cardId?: string,
     options?: {
-      mode?: 'strict' | 'blend'
       keepLogo?: boolean
       keepHeaderFooter?: boolean
       headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      aiFill?: boolean
     },
   ): Promise<ThesisReformatOutcomeDto> {
     const response = await this.request(

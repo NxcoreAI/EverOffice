@@ -110,10 +110,10 @@ export interface OfficeThesisPanelBridge {
     fileEntryId: string,
     cardId?: string,
     options?: {
-      mode?: 'strict' | 'blend'
       keepLogo?: boolean
       keepHeaderFooter?: boolean
       headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      aiFill?: boolean
     },
   ): Promise<{ originalName: string; report?: Record<string, unknown> }>
   /** 任务化排版：立即返回 jobId（后台执行），用 reformatJobStatus 轮询进度。 */
@@ -122,7 +122,6 @@ export interface OfficeThesisPanelBridge {
     fileEntryId: string,
     cardId?: string,
     options?: {
-      mode?: 'strict' | 'blend'
       keepLogo?: boolean
       keepHeaderFooter?: boolean
       headingMapping?: { chapter?: number; section?: number; subsection?: number }
@@ -243,8 +242,18 @@ export class OfficePreviewRegistry {
               ok: true as const,
               value: await bridge.startReformatJob(roomId, instance.fileId, action.cardId, action.options),
             }
-          case 'reformat-job-status':
-            return { ok: true as const, value: await bridge.reformatJobStatus(action.jobId) }
+          case 'reformat-job-status': {
+            const snapshot = await bridge.reformatJobStatus(action.jobId)
+            // 作业失败是「轮询成功、状态为 failed」，走不到下面的 catch——
+            // 错误码（thesis_source_not_docx 等）必须在这里翻译，否则面板
+            // 显示的就是一串机器码（那正是 describeThesisError 要消灭的东西）。
+            return {
+              ok: true as const,
+              value: snapshot.status === 'failed' && snapshot.error
+                ? { ...snapshot, error: describeThesisError(snapshot.error) }
+                : snapshot,
+            }
+          }
           case 'preview-template':
             // 真预览：宿主用自带 Office 渲染器打开模版原文件（多页、表格、图片完整）
             return { ok: true as const, value: await bridge.previewTemplate(roomId, action.cardId) }

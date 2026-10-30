@@ -6,7 +6,8 @@
       "enum": [
         "parse_template",
         "bind_thesis",
-        "adjudicate_mapping"
+        "adjudicate_mapping",
+        "fill_sections"
       ]
     },
     "formatCard": {
@@ -184,6 +185,30 @@
           "chapterTraceId"
         ],
         "additionalProperties": false
+      }
+    },
+    "generatedSections": {
+      "type": "array",
+      "maxItems": 60,
+      "description": "fill_sections only: 空小节的补写内容。只能改写论文已有事实，不许编造。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "text": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 1200
+          }
+        },
+        "required": [
+          "title",
+          "text"
+        ]
       }
     }
   },

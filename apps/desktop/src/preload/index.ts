@@ -37,7 +37,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type RoomAgentSelectionRewriteInput } from '../shared/sources'
+import { OFFICE_PREVIEW_REQUEST_CHANNEL, OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewRequest, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
@@ -254,6 +254,16 @@ const api: NxcoreDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
       ipcRenderer.on('office:agent-ask', handler)
       return () => ipcRenderer.removeListener('office:agent-ask', handler)
+    },
+    /**
+     * 主进程主动打开的预览实例（排版面板 👁 预览模版原文件等）：
+     * 实例已在主进程建好，渲染端只需开顶栏标签并激活——不接这条事件，
+     * 原生视图会一直隐藏，用户看到的就是「点了预览没反应」。
+     */
+    onPreviewRequest: (listener: (request: OfficePreviewRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficePreviewRequest) => listener(payload)
+      ipcRenderer.on(OFFICE_PREVIEW_REQUEST_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(OFFICE_PREVIEW_REQUEST_CHANNEL, handler)
     },
   },
   locale: {
@@ -1051,7 +1061,6 @@ const api: NxcoreDesktopApi = {
       fileEntryId: string,
       cardId?: string,
       options?: {
-        mode?: 'strict' | 'blend'
         keepLogo?: boolean
         keepHeaderFooter?: boolean
         headingMapping?: { chapter?: number; section?: number; subsection?: number }
@@ -1063,7 +1072,6 @@ const api: NxcoreDesktopApi = {
       fileEntryId: string,
       cardId?: string,
       options?: {
-        mode?: 'strict' | 'blend'
         keepLogo?: boolean
         keepHeaderFooter?: boolean
         headingMapping?: { chapter?: number; section?: number; subsection?: number }

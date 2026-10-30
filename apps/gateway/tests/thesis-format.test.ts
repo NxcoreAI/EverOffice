@@ -430,7 +430,7 @@ describe("TemplateProfile（M1：固定元素 + 槽位骨架）", () => {
   it("模板章节 → 槽位：锚点升级为固定槽位，其余为 body 且可扩展", async () => {
     const facts = await extractOoxmlFactsAsync(await docxWithOutline());
     const profile = buildTemplateProfile({ facts, card: cardOf(), sourceName: "模版.docx" });
-    expect(profile.version).toBe(2);
+    expect(profile.version).toBe(3);
     expect(profile.slots.map((slot) => `${slot.kind}:${slot.title}`)).toEqual([
       "body:一、项目任务",
       "body:二、项目需求分析",
@@ -842,12 +842,16 @@ describe("排版选项（第二期规则面板）", () => {
     sourceName: "模版.docx",
   });
 
-  it("融合模式在装订规格上标记 preserveSourceFormat", () => {
+  it("章节带上所属槽位 id（渲染器据此把内容放回模版原位）", () => {
     const plan = buildMappingPlan({ template: template(), content: content() });
-    const strict = planToBindingSpec({ plan, content: content(), titleHint: "论文" });
-    expect(strict.spec.preserveSourceFormat).toBeUndefined();
-    const blend = planToBindingSpec({ plan, content: content(), titleHint: "论文", preserveSourceFormat: true });
-    expect(blend.spec.preserveSourceFormat).toBe(true);
+    const { spec } = planToBindingSpec({ plan, content: content(), titleHint: "论文" });
+    expect(spec.chapters.length).toBeGreaterThan(0);
+    // 映射到的章节必须带槽位 id；槽位顺序 = 模板顺序
+    const slotIds = spec.chapters.map((chapter) => chapter.slotId).filter((id): id is string => Boolean(id));
+    expect(slotIds.length).toBeGreaterThan(0);
+    const slotOrder = template().slots.map((slot) => slot.id);
+    const positions = slotIds.map((id) => slotOrder.indexOf(id)).filter((index) => index >= 0);
+    expect([...positions].sort((left, right) => left - right)).toEqual(positions);
   });
 
   it("标题层级映射改变输出层级（章→二级标题）", () => {

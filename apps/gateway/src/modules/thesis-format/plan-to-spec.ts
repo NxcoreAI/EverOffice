@@ -101,12 +101,10 @@ export function planToBindingSpec(input: {
   titleHint: string;
   /** 标题层级映射（规则面板）。 */
   headingMapping?: { chapter?: 1 | 2 | 3 | 4; section?: 1 | 2 | 3 | 4; subsection?: 1 | 2 | 3 | 4 };
-  /** 融合模式：正文保留源文档格式。 */
-  preserveSourceFormat?: boolean;
   /** 模板剖面（可选）：带 fixedBlocks 时原样回插模板自有表单。 */
   templateProfile?: { fixed?: { fixedBlocks?: Array<{ placement: 'prelim' | 'appendix'; heading?: string; xml: string }> } };
 }): { spec: ThesisBindingSpec; notes: string[] } {
-  const { plan, content, titleHint, headingMapping, preserveSourceFormat } = input;
+  const { plan, content, titleHint, headingMapping } = input;
   const notes: string[] = [];
   const nodes = new Map<string, ContentOutlineNode>();
   const walk = (list: ContentOutlineNode[]): void => {
@@ -161,7 +159,13 @@ export function planToBindingSpec(input: {
       case "toc":
         break; // 模板固定部件，内容侧不参与
       default:
-        if (node) chapters.push(...flattenLeafRanges(node, headingMapping));
+        // 带上槽位 id：渲染器（v3 模板骨架装订）据此把章节内容放回模版原位，
+        // 而不是按内容顺序重排。
+        if (node) {
+          chapters.push(...flattenLeafRanges(node, headingMapping).map((chapter) => (
+            assignment.slotId ? { ...chapter, slotId: assignment.slotId } : chapter
+          )));
+        }
         break;
     }
   }
@@ -193,7 +197,6 @@ export function planToBindingSpec(input: {
     // 研究成果（P-05「研究成果」）当前无自动来源：保持为空而不是编造
     achievements: [],
     ...(unmatchedBlocks.length > 0 ? { unmatchedBlocks } : {}),
-    ...(preserveSourceFormat ? { preserveSourceFormat: true } : {}),
     // 模板自有固定表单（教师评价表等）原样回插——模板内容不丢
     ...(input.templateProfile?.fixed?.fixedBlocks?.length
       ? { fixedBlocks: input.templateProfile.fixed.fixedBlocks }

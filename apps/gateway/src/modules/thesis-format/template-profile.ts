@@ -10,6 +10,7 @@
 
 import { anchorKindOf, type AnchorKind } from "./thesis-anchors.js";
 import { normalizeTitle, titleTokens } from "./text-normalize.js";
+import { isStyleSpecLine } from "./ooxml-facts.js";
 import type { OoxmlFacts, OoxmlNumberingFact, OoxmlOutlineEntry } from "./ooxml-facts.js";
 import type { ThesisFontSpec, ThesisFormatCard, ThesisHfImage, ThesisParagraphSpec } from "./types.js";
 
@@ -68,7 +69,24 @@ export interface ThesisSlot {
 }
 
 export interface TemplateProfile {
-  version: 2;
+  /**
+   * 剖面版本。3 = 带 template-first 模式与二级小节（目录/标题按模版原样保留）。
+   * 旧卡片是 2：排版前会自动按模版重建一次，不需要用户重新导入。
+   */
+  version: 3;
+  /**
+   * 装订模式（v3）：
+   * - template-first：模版优先——目录/章节标题/模版自带正文全部保留，论文内容按小节归类填入；
+   * - 缺省：沿用旧行为（章节标题换成论文标题、目录按论文章节重算）。
+   */
+  mode?: "template-first";
+  /** 排版规则开关：允许 AI 补写空白小节（默认关；开启后生成内容带「AI 生成」标记）。 */
+  aiFill?: boolean;
+  /**
+   * 模版里的二级小节（如「1.1 背景」）。模版优先模式下论文内容按这些小节归类；
+   * id 形如 slot-1.2，parentId 指向所属一级槽位。
+   */
+  subSlots?: Array<{ id: string; parentId: string; title: string; order: number }>;
   sourceName: string;
   fixed: {
     page: ThesisFormatCard["page"];
@@ -234,10 +252,43 @@ function collectLogos(facts: OoxmlFacts, card: ThesisFormatCard): TemplateProfil
  * - 命中锚点词典的升级为固定槽位（参考文献/附录/致谢等保留原标题）；
  * - 模板没有正文骨架时返回空数组，由调用方降级为「单 body 容器 + 全追加」。
  */
+
+/** 剔除排版说明行后的模版大纲（章节骨架只保留真标题）。 */
+function cleanOutline(outline: OoxmlFacts["outline"]): OoxmlFacts["outline"] {
+  return (outline ?? []).filter((entry) => !isStyleSpecLine(entry.text));
+}
+
+export function identifySubSlots(
+  facts: OoxmlFacts,
+): Array<{ id: string; parentId: string; title: string; order: number }> {
+  const outline = cleanOutline((facts.outline ?? []).filter((entry) => !entry.inCoverRegion));
+  if (outline.length === 0) return [];
+  const topLevel = Math.min(...outline.map((entry) => entry.level));
+  const subs: Array<{ id: string; parentId: string; title: string; order: number }> = [];
+  let slotOrder = -1;
+  let subOrder = 0;
+  for (const entry of outline) {
+    if (entry.level === topLevel) {
+      slotOrder += 1;
+      subOrder = 0;
+      continue;
+    }
+    if (entry.level !== topLevel + 1 || slotOrder < 0) continue;
+    subOrder += 1;
+    subs.push({
+      id: `slot-${slotOrder + 1}.${subOrder}`,
+      parentId: `slot-${slotOrder + 1}`,
+      title: entry.text,
+      order: subs.length,
+    });
+  }
+  return subs;
+}
+
 export function identifySlots(facts: OoxmlFacts): { slots: ThesisSlot[]; gaps: string[] } {
   const gaps: string[] = [];
   // 模板剖面针对**单个** docx 成员（承载版式的那份），因此直接用成员事实。
-  const outline: OoxmlOutlineEntry[] = (facts.outline ?? [])
+  const outline: OoxmlOutlineEntry[] = cleanOutline(facts.outline ?? [])
     // 封面区的标题不算章节骨架（那是封面文案）
     .filter((entry) => !entry.inCoverRegion);
   if (outline.length === 0) {
@@ -285,8 +336,15 @@ export function buildTemplateProfile(input: {
   if (facts.numbering.scheme === "none") {
     gaps.push("模板未提取到标题编号方案，输出将不生成自动编号");
   }
+  // 模版里有二级小节（如「1.1 背景」）时走「模版优先」：小节是学校规定的写作骨架，
+  // 不能被论文自己的章节名覆盖，论文内容只往里填。
+  const cleanFactsOutline = cleanOutline((facts.outline ?? []).filter((entry) => !entry.inCoverRegion));
+  const topLevel = Math.min(...cleanFactsOutline.map((entry) => entry.level));
+  const hasSubHeadings = cleanFactsOutline.some((entry) => entry.level === topLevel + 1);
   return {
-    version: 2,
+    version: 3,
+    ...(Number.isFinite(topLevel) && hasSubHeadings ? { mode: "template-first" as const } : {}),
+    ...(hasSubHeadings ? { subSlots: identifySubSlots(facts) } : {}),
     sourceName,
     fixed: {
       page: card.page,

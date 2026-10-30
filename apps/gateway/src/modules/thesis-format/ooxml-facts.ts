@@ -311,6 +311,129 @@ function paragraphOutlineLevel(
   return undefined;
 }
 
+/**
+ * 普通段落标题的启发式识别。
+ *
+ * 中文论文模版大量用「普通段落 + 手工编号」排章节标题（根本不套 Heading 样式），
+ * 只认 outlineLvl/样式会让大纲为空 —— 槽位骨架随之消失，排版只能回落成
+ * 「照内容重建」，模版里的表格/评价表就会被搬离原位。
+ *
+ * 判据（同时满足才认，宁可漏判也不误判正文）：
+ * 1. 文本短（标题不会是一整段话）；
+ * 2. 段落没有首行缩进（正文段落的典型特征，标题一般顶格或居中）；
+ * 3. 形如「一、」「（一）」「第一章」「1.」「1.1」的编号开头；
+ * 4. 不是目录行、不在表格单元格里。
+ */
+function heuristicHeadingLevel(text: string, pPr: string): number | undefined {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 40) return undefined;
+  // 正文段落的首行缩进：firstLine / firstLineChars 非零即视为正文
+  if (/<w:ind[^>]*\bw:firstLine(?:Chars)?="[1-9]/.test(pPr)) return undefined;
+  // 手工目录行（带引导点）：「一、项目任务……1」
+  if (/[.．·…]{2,}\s*\d{1,4}$/.test(trimmed)) return undefined;
+  // 手工目录行（无引导点）：标题后直接黏着页码——「一、项目任务1」「1.1 背景2」。
+  // 真章节标题几乎不会以一个紧跟在汉字/字母后面的裸数字收尾；
+  // 漏掉这条，目录里的每一行都会进大纲、槽位骨架被成倍污染。
+  if (/[一-龥A-Za-z）)]\d{1,4}$/.test(trimmed)) return undefined;
+  // 层级要区分：槽位只取顶层标题，把「（一）」当成一级会让二级标题挤进槽位骨架
+  if (/^[（(][一二三四五六七八九十]{1,3}[）)]/.test(trimmed)) return 2;
+  if (/^[一二三四五六七八九十]{1,3}\s*[、.．]/.test(trimmed)) return 1;
+  if (/^第[一二三四五六七八九十百零0-9]{1,4}[章篇]/.test(trimmed)) return 1;
+  if (/^第[一二三四五六七八九十百零0-9]{1,4}[节]/.test(trimmed)) return 2;
+  // 数字编号：多级「1.1 背景」必须在数字后跟空白，否则「3.5万元预算」「1.5 倍」
+  // 这类以小数开头的正文行会被当成标题（实测复现）。
+  // 单级「1. 背景」「1.绪论」允许紧贴汉字——紧贴的是数字就说明是小数，不认。
+  if (/^[0-9]{1,2}(\.[0-9]{1,2}){1,2}\s+\S/.test(trimmed)) return 2;
+  if (/^[0-9]{1,2}\s*、\s*\S/.test(trimmed)) return 1;
+  if (/^[0-9]{1,2}\.\s*[一-龥A-Za-z]/.test(trimmed)) return 1;
+  return undefined;
+}
+
+
+/**
+ * 目录派生大纲：模版正文几乎不用标题样式（手写编号、或整篇只有样式示范文字）时，
+ * **模版自己的目录行**就是最可靠的章节骨架。
+ *
+ * 触发条件：真标题（样式/大纲级/启发式）识别出的正文标题少于 2 条。
+ * 目录行特征：带引导点（……/.）或标题后直接黏着页码，例如
+ *   「第一章 前言1」「1.1 课程设计的目标1」「2.1.1计算公式3」「2.2计算内容………」
+ * 去掉尾部页码后按编号形态定级，与正文启发式同一套规则。
+ */
+
+/** 目录行用的是「去页码后的标题」，编号与中文之间常常没有空格，判定可以放宽。 */
+function tocHeadingLevel(text: string): number | undefined {
+  const strict = heuristicHeadingLevel(text, "");
+  if (strict !== undefined) return strict;
+  const flat = text.trim();
+  if (/^第[一二三四五六七八九十百零0-9]{1,4}[章篇]/.test(flat)) return 1;
+  if (/^第[一二三四五六七八九十百零0-9]{1,4}[节]/.test(flat)) return 2;
+  if (/^[一二三四五六七八九十]{1,3}\s*[、.．]/.test(flat)) return 1;
+  if (/^[（(][一二三四五六七八九十]{1,3}[）)]/.test(flat)) return 2;
+  const numbered = /^(\d{1,2}(?:\.\d{1,2}){1,2})\s*[、.．]?\s*[\u4e00-\u9fa5A-Za-z]/.exec(flat);
+  if (numbered) return Math.min(4, numbered[1]!.split(".").length);
+  if (/^(参考文献|参考资料|附录|致谢|结论与展望)(\s|$|[：:、.．A-Za-z一二三四五六七八九十])/.test(flat)) return 1;
+  return undefined;
+}
+
+function tocDerivedOutline(
+  documentXml: string,
+  existing: OoxmlOutlineEntry[],
+): OoxmlOutlineEntry[] {
+  const realBodyHeadings = existing.filter((entry) => !entry.inCoverRegion).length;
+  if (realBodyHeadings >= 2) return [];
+  const seen = new Set(existing.map((entry) => entry.text.replace(/\s+/g, "").slice(0, 40)));
+  const out: OoxmlOutlineEntry[] = [];
+  let paragraphIndex = 0;
+  for (const paragraphMatch of documentXml.matchAll(/<w:p[\s>][\s\S]*?<\/w:p>/g)) {
+    const index = paragraphIndex++;
+    const paragraph = paragraphMatch[0];
+    const text = [...paragraph.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("").trim();
+    if (!text || text.length > 60) continue;
+    // 目录行的两个特征：引导点 tab / 结尾黏着页码
+    const leaderTab = /<w:tab[^>]*w:leader="(dot|hyphen|underscore|middleDot)"/.test(paragraph);
+    const pageSuffix = /^(.*?[^\d\s])\s*(\d{1,4})$/.exec(text);
+    const dotLeader = /[.．·…]{3,}/.test(text);
+    if (!leaderTab && !pageSuffix && !dotLeader) continue;
+    const base = pageSuffix?.[1] ?? text;
+    const stripped = base.replace(/[.．·…\s]+$/g, "").trim();
+    if (!stripped) continue;
+    const key = stripped.replace(/\s+/g, "").slice(0, 40);
+    if (seen.has(key)) continue;
+    const level = tocHeadingLevel(stripped);
+    if (level === undefined) continue;
+    seen.add(key);
+    out.push({
+      index,
+      level,
+      text: stripped.slice(0, 200),
+      // 目录可能排在封面之后、正文之前，但它描述的是正文章节：
+      // 不能按「封面区」剔除，否则整份骨架又没了。
+      inCoverRegion: false,
+    });
+  }
+  return out;
+}
+
+
+/**
+ * 模版里的「排版说明行」不是章节标题。
+ *
+ * 很多学校模版是"样式示范"写法：每个样式旁边跟一行
+ * 「黑体三号，段前12磅，行距1.5倍」「宋体小四号，行距1.5倍，余同」。
+ * 这些行常常套着标题样式，大纲抽取会把它们当成一级/二级标题，
+ * 于是槽位变成「宋体小四号，行距1.5倍」——后面的内容归类全乱。
+ */
+export function isStyleSpecLine(text: string): boolean {
+  const flat = text.replace(/\s+/g, "");
+  if (!flat || flat.length > 40) return false;
+  const markers = [
+    "宋体", "黑体", "楷体", "仿宋", "微软雅黑", "Times", "Arial", "Cambria",
+    "行距", "段前", "段后", "磅", "倍", "缩进", "居中", "左对齐", "右对齐", "页边距",
+  ].filter((marker) => flat.includes(marker)).length;
+  const sizeLike = /[一二三四五]号|小[一二三四五]/.test(flat);
+  return markers >= 2 && (sizeLike || flat.includes("行距") || flat.includes("段前") || flat.includes("段后"));
+}
+
 /** 模板正文大纲：标题段落序列（槽位骨架）。 */
 function outlineFacts(documentXml: string, stylesXml: string | undefined): OoxmlOutlineEntry[] {
   const levelsByStyle = outlineLevelsByStyle(stylesXml);
@@ -319,15 +442,45 @@ function outlineFacts(documentXml: string, stylesXml: string | undefined): Ooxml
     .filter((position) => position > 0);
   const coverCut = boundaries.length > 0 ? Math.min(...boundaries) : 0;
 
+  // 表格区间：<w:tbl>…</w:tbl>（含嵌套，按最外层配对）。表格单元格里的「1.」「（一）」
+  // 是表单行，不是章节标题——启发式会误认，把槽位骨架污染成表格行清单。
+  const tableRanges: Array<[number, number]> = [];
+  const tableOpen = /<w:tbl>/g;
+  for (const match of documentXml.matchAll(tableOpen)) {
+    const start = match.index;
+    let depth = 0;
+    const scanner = /<\/?w:tbl>/g;
+    scanner.lastIndex = start;
+    for (const tag of documentXml.matchAll(scanner)) {
+      depth += tag[0] === "</w:tbl>" ? -1 : 1;
+      if (depth === 0) {
+        tableRanges.push([start, (tag.index ?? start) + tag[0].length]);
+        break;
+      }
+    }
+  }
+  const inTable = (position: number): boolean =>
+    tableRanges.some(([start, end]) => position >= start && position < end);
+
   const out: OoxmlOutlineEntry[] = [];
-  const paragraphs = documentXml.match(/<w:p[\s>][\s\S]*?<\/w:p>/g) ?? [];
-  paragraphs.forEach((paragraph, index) => {
+  const paragraphPattern = /<w:p[\s>][\s\S]*?<\/w:p>/g;
+  // index 语义保持与旧实现一致：**段落**在全文段落序列里的序号（含非标题段落）。
+  let paragraphIndex = 0;
+  for (const paragraphMatch of documentXml.matchAll(paragraphPattern)) {
+    const index = paragraphIndex++;
+    const paragraph = paragraphMatch[0];
+    const paragraphStart = paragraphMatch.index ?? 0;
     const pPr = paragraph.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] ?? "";
     const styleId = pPr.match(/<w:pStyle[^>]*\bw:val="([^"]+)"/)?.[1];
-    const level = paragraphOutlineLevel(pPr, styleId, levelsByStyle);
-    if (level === undefined || level > 4) return;
+    const declaredLevel = paragraphOutlineLevel(pPr, styleId, levelsByStyle);
     const text = [...paragraph.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("").trim();
-    if (!text) return;
+    if (!text) continue;
+    // 样式/大纲级优先；没有标题语义时再走启发式（普通段落模拟的标题）。
+    // 表格单元格里的段落不吃启发式——「1. xxx」「（一）xxx」在表单里是行不是标题。
+    // 排版说明行（「黑体三号，段前12磅…」）再像标题也不是章节
+    if (isStyleSpecLine(text)) continue;
+    const level = declaredLevel ?? (inTable(paragraphStart) ? undefined : heuristicHeadingLevel(text, pPr));
+    if (level === undefined || level > 4) continue;
     const numPr = pPr.match(/<w:numPr>[\s\S]*?<\/w:numPr>/)?.[0];
     const numId = numPr ? numAttr(numPr, "w:numId", "w:val") : undefined;
     const ilvl = numPr ? numAttr(numPr, "w:ilvl", "w:val") : undefined;
@@ -349,7 +502,10 @@ function outlineFacts(documentXml: string, stylesXml: string | undefined): Ooxml
       ...(ilvl !== undefined ? { ilvl } : {}),
       inCoverRegion: coverCut > 0 && documentXml.indexOf(paragraph) < coverCut,
     });
-  });
+  }
+  // 模版几乎没用标题样式时，用模版自己的目录行补出骨架
+  const derived = tocDerivedOutline(documentXml, out);
+  if (derived.length > 0) out.push(...derived.filter((entry) => !out.some((item) => item.text === entry.text)));
   return out;
 }
 

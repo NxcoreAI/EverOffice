@@ -244,17 +244,27 @@ export interface ThesisBindingSpec {
   abstractEn: string;
   keywordsEn: string[];
   /** 正文章节：headingText 为去编号干净标题（编号由引擎按卡生成）。 */
-  chapters: Array<{ level: 1 | 2 | 3 | 4; headingText: string; blockStart: number; blockEnd: number }>;
+  chapters: Array<{
+    level: 1 | 2 | 3 | 4;
+    headingText: string;
+    blockStart: number;
+    blockEnd: number;
+    /** 该章节归属的模板槽位 id（v3 模板骨架装订据此把内容放回模版原位）。 */
+    slotId?: string;
+  }>;
   /** 参考文献条目（已按卡模板逐条排好的最终文本，含 [n] 前缀）。 */
   references: string[];
   /** 附录：复用源块区间；null = 无附录。 */
   appendixBlocks: { start: number; end: number } | null;
+  /**
+   * AI 补写的空小节内容（仅当用户打开「AI 补写空白小节」时存在）。
+   * title 对应模版小节标题；渲染器插入时自带「AI 生成」标记。
+   */
+  generatedSections?: Array<{ title: string; text: string }>;
   /** 致谢段落；空数组 = 源文档无致谢（仅排标题页）。 */
   acknowledgementParagraphs: string[];
   /** v2 未归类内容区间（渲染为正文末尾独立小节并高亮标记，不丢内容）。 */
   unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>;
-  /** 融合模式：正文段落保留源文档格式（不套模板正文样式），结构/编号仍按模版。 */
-  preserveSourceFormat?: boolean;
   /** 模板自有固定表单（原样 XML）：prelim=目录后首个槽位前；appendix=全文末尾。 */
   fixedBlocks?: Array<{ placement: 'prelim' | 'appendix'; heading?: string; xml: string }>;
   /** 攻读学位期间研究成果；空数组 = 无。 */
@@ -274,12 +284,12 @@ export interface ThesisSourceOutlineBlock {
  * 全部可缺省——缺省即严格模式 + 保留全部固定元素（与既有行为一致）。
  */
 export interface ThesisReformatOptions {
-  /** strict = 完全套模版样式（默认）；blend = 正文保留原文档格式，只套模版的页面/页眉页脚/标题编号。 */
-  mode?: "strict" | "blend";
   /** 是否回填模版 Logo（封面校徽 + 页眉图）。 */
   keepLogo?: boolean;
   /** 是否沿用模版的页眉页脚（false = 输出不带页眉页脚）。 */
   keepHeaderFooter?: boolean;
+  /** 允许 AI 补写空白小节（默认关；生成内容带「AI 生成」标记）。 */
+  aiFill?: boolean;
   /** 标题层级映射：源文档角色 → 模板标题级别（1–4）。 */
   headingMapping?: {
     chapter?: 1 | 2 | 3 | 4;

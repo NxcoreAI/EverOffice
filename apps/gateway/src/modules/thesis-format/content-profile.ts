@@ -147,9 +147,52 @@ export function buildContentProfile(blocks: OutlineBlock[]): ContentProfile {
   });
 
   const outline = buildOutlineTree(content, gaps);
+  promoteDocumentTitle(outline, content, gaps);
   if (headingLevels.length === 0) gaps.push("内容文档没有标题层级，全部内容将按追加规则落位");
 
   return { version: 2, blocks: content, outline, anchors, gaps };
+}
+
+/**
+ * 单根 + 多子：源文档把「题目」排成了 H1（报告类文档极常见），真正的章节是它的下一级。
+ *
+ * 不提升的话 `inferRoles` 会把 H1 判成 chapter、H2 判成 section，
+ * 整篇正文就成了「一个章节」——映射层只能把它整体塞进模板的第一个槽位，
+ * 结果是所有内容挤在「一、项目任务」下面，后面的槽位全空。
+ *
+ * 提升后：root 降为 body（不再参与章节匹配，它的块由映射层的 R5 前置兜底承接），
+ * 其子节点升为 chapter，孙节点升为 section，以此类推。
+ *
+ * 例外：root 自己长得就像章标题（「第一章 绪论」「一、XX」），而全文又只有这一个
+ * 顶级标题时，它**就是**那一章——把它降级会让整章没有章名、子节冒充章节。
+ * 单章文档（绪论 + 1.1/1.2）正是这种形状，实测会被误提升。
+ */
+function promoteDocumentTitle(roots: ContentOutlineNode[], content: ContentBlock[], gaps: string[]): void {
+  if (roots.length !== 1) return;
+  const root = roots[0]!;
+  if (root.children.length < 2) return;
+  if (root.children[0]!.level <= root.level) return;
+  if (/^\s*(第[一二三四五六七八九十百零0-9]{1,4}\s*[章篇节]|[一二三四五六七八九十]{1,3}\s*[、.．]|[0-9]{1,2}(\.[0-9]{1,2})+\s*\S?|[0-9]{1,2}\s*[、.．])/.test(root.text)) {
+    return;
+  }
+
+  const promote = (node: ContentOutlineNode, role: BlockRole): void => {
+    node.role = role;
+    const block = content.find((entry) => entry.traceId === node.traceId);
+    if (block) block.role = role;
+  };
+  const walk = (node: ContentOutlineNode, role: BlockRole): void => {
+    promote(node, role);
+    const childRole: BlockRole = role === "chapter" ? "section" : "subsection";
+    for (const child of node.children) walk(child, childRole);
+  };
+
+  promote(root, "body");
+  for (const child of root.children) walk(child, "chapter");
+  roots.splice(0, roots.length, ...root.children);
+  gaps.push(
+    `源文档只有一个一级标题「${root.text}」，已按题目处理，其下 ${root.children.length} 个二级标题作为章节`,
+  );
 }
 
 /** 章节树：按标题块的层级建树，并回填每棵子树覆盖的块区间 [start,end)。 */

@@ -39,10 +39,10 @@ export interface GenOfficeDocsRuntime {
                 kind: 'reformat-job'
                 cardId?: string
                 options?: {
-                  mode?: 'strict' | 'blend'
                   keepLogo?: boolean
                   keepHeaderFooter?: boolean
                   headingMapping?: { chapter?: number; section?: number; subsection?: number }
+                  aiFill?: boolean
                 }
               }
             | { kind: 'reformat-job-status'; jobId: string }
@@ -60,8 +60,38 @@ export interface GenOfficeDocsRuntime {
     formatCard: ThesisFormatCardPayload,
     bindingSpec: ThesisBindingSpecPayload,
   ): Promise<Uint8Array>
+  /**
+   * 论文装订（v3 模板骨架版）：以模版 docx 为底，只替换内容槽位。
+   * 封面/核心信息区/表格/教师评价表/目录按模版原位置原样保留。
+   *
+   * 签名必须与引擎一致：**一个对象**（`{ templateBytes, sourceBytes, card, spec }`）。
+   * 曾经这里写成 4 个位置参数，`requireRuntime(...) as GenOfficeDocsRuntime` 又拦不住，
+   * 引擎拿到的是个裸 Uint8Array、第一行就抛错 → 每次排版静默回落 v2，
+   * 「表格跑位」反复查不出原因就是这个签名漂移。
+   */
+  buildThesisDocxOnTemplate(input: {
+    templateBytes: Uint8Array
+    sourceBytes: Uint8Array
+    card: ThesisFormatCardPayload
+    spec: ThesisBindingSpecPayload
+  }): Promise<{ bytes: Uint8Array; diagnostics: ThesisTemplateDiagnostics }>
   /** 源论文 docx → 块大纲（装订映射的区间事实源，索引与 buildThesisDocx 对齐）。 */
   describeThesisBlocks(bytes: Uint8Array): Promise<ThesisOutlineBlock[]>
+}
+
+/**
+ * 模板骨架装订诊断：面板据此告诉用户「这次是按模板排的」还是「正文只能堆到文末」。
+ * slots=0 表示模板章节骨架没解析出来（模版用普通段落排标题、且卡片是旧版本解析的）。
+ */
+export interface ThesisTemplateDiagnostics {
+  slots: number
+  blocks: number
+  anchors: number
+  bodyStart: number
+  chapters: number
+  appendedOnly: boolean
+  /** true = 模版正文认出的章节锚点太少（如「只有目录」的模版），骨架排版降级为内容重建。 */
+  templateFirstDowngraded?: boolean
 }
 
 export interface ThesisOutlineBlock {
@@ -95,7 +125,14 @@ export interface ThesisBindingSpecPayload {
   keywordsZh: string[]
   abstractEn: string
   keywordsEn: string[]
-  chapters: Array<{ level: number; headingText: string; blockStart: number; blockEnd: number }>
+  chapters: Array<{
+    level: number
+    headingText: string
+    blockStart: number
+    blockEnd: number
+    /** v3 模板骨架装订：该章节要落回的模版槽位 id（缺省时按槽位顺序对齐）。 */
+    slotId?: string
+  }>
   references: string[]
   appendixBlocks: { start: number; end: number } | null
   acknowledgementParagraphs: string[]

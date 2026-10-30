@@ -661,6 +661,18 @@ export function App() {
     return () => window.removeEventListener('nxcore:office:open', open as EventListener)
   }, [openOfficeTab])
 
+  // 主进程主动打开的预览（排版面板 👁 预览模版原文件等）：实例已在主进程建好，
+  // 这里只补「开标签 + 激活」。不接这条事件，原生视图会一直隐藏 —— 用户点预览
+  // 完全没反应；矩形上报仍由 office-document 页的视口模块照常接管。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onPreviewRequest) return
+    return office.onPreviewRequest((request) => {
+      if (!request?.instanceId) return
+      openOfficeTab({ id: request.instanceId, title: request.title, kind: request.kind })
+    })
+  }, [openOfficeTab])
+
   // Agent 生成 Word（office 桥）：阶段进度提示；完成后刷新 Room 清单并导航
   // 进所属 Room、右区原位打开产物（PortedDetail 消费 focus 请求）。
   useEffect(() => {
