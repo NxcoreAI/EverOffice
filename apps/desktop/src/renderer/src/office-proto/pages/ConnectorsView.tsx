@@ -508,7 +508,9 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
 
   /**
    * 飞书授权（本机 lark-cli）：两阶段（应用初始化 → 用户设备码授权）由主进程
-   * 自动推进；这里只负责打开验证链接并轮询 agentAuth.status()。
+   * 自动推进；这里只轮询 agentAuth.status()。授权页由主进程 onVerificationUrl
+   * 自动打开系统浏览器（每阶段一次）——渲染层不再 window.open，否则同一验证
+   * 链接会被打开两次（用户看到「发起了两个请求」，第二个标签页提示已使用）。
    */
   const connectFeishu = async (item: ConnectorItem) => {
     const api = window.nxcore?.agentAuth
@@ -518,21 +520,12 @@ export function ConnectorsView({ onToast }: { onToast: (msg: string) => void }) 
     }
     setBusyId(item.provider)
     try {
-      const challenge = await api.start({ provider: 'feishu' })
-      let openedUrl = ''
-      const openVerification = (url: string | null | undefined) => {
-        if (!url || url === openedUrl) return
-        openedUrl = url
-        // Electron 主窗口拦截 window.open → 系统浏览器打开。
-        window.open(url, '_blank', 'noopener,noreferrer')
-        onToast('已打开飞书授权页，请在浏览器中完成授权。')
-      }
-      openVerification(challenge.verificationUrl)
+      await api.start({ provider: 'feishu' })
+      onToast('正在发起飞书授权，请在自动打开的浏览器页面中完成授权。')
       const deadline = Date.now() + 15 * 60_000
       while (Date.now() < deadline) {
         await new Promise((resolve) => window.setTimeout(resolve, 2_000))
         const status = await api.status()
-        openVerification(status.activeChallenge?.verificationUrl)
         if (status.feishu?.userAuthorized) {
           // 之前被「关闭」过（墓碑还在）：授权成功后顺带开启，省一次点击。
           if (disconnected?.has(FEISHU_CONNECTION_ID)) {
