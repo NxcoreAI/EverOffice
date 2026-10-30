@@ -8,8 +8,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { loadEnvFile } from 'node:process'
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, protocol, session, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, protocol, session, shell, systemPreferences } from 'electron'
 import type {
+  CreateAgentWorkspaceInput,
   ImportRoomDocumentInput,
   DocumentOperationCommandInput,
   LocalAgentInvocationTarget,
@@ -17,9 +18,11 @@ import type {
   SaveRoomDocumentInput,
   StartAgentRunInput,
   StartDocumentOperationInput,
+  UpdateAgentWorkspaceInput,
 } from '@nxcore/agent-contract'
 
 import type { AccountKeyringStatus, CloudAccountStatus, DefaultLocalFolder, DefaultLocalFolderConnectionResult, SubagentSelectionRewriteInput } from '../shared/sources'
+import { applyNativeTheme, appearanceWindowBackground, isAppearanceThemeId, readAppearanceTheme, writeAppearanceTheme } from './appearance-store'
 import type { SearchItemType, SearchRequestDto } from '../shared/search'
 import type { RuntimeConfigSnapshot } from '../shared/sources'
 import { officePreviewKindForFileName } from '../shared/sources'
@@ -40,6 +43,7 @@ import { GatewaySupervisor } from './gateway/gateway-supervisor'
 import { AgentAccessSettingsStore, isValidFixedPort } from './agent-access/settings-store'
 import { AgentAccessInstaller } from './agent-access/installer'
 import { AgentAccessGatewayBridge } from './gateway/agent-access-gateway-bridge'
+import { AgentDebugGatewayBridge } from './gateway/agent-debug-gateway-bridge'
 import { cleanupStaleProcessRecords, installExitCleanupHook } from './process-cleanup'
 import { startDesktopUpdater } from './updater'
 import { RuntimeConfigBridge } from './gateway/runtime-config-bridge'
@@ -59,15 +63,14 @@ import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
 import { WritingStyleGatewayBridge } from './gateway/writing-style-gateway-bridge'
 import { AgentSchedulerGatewayBridge } from './gateway/agent-scheduler-gateway-bridge'
 import { ConnectorGatewayBridge } from './gateway/connector-gateway-bridge'
-import { providerOfService, SaasConnectorBridge } from './gateway/saas-connector-bridge'
-import { createConnectorTombstoneStore } from './core/connector-tombstone-store'
+import { SaasConnectorBridge } from './gateway/saas-connector-bridge'
 import { isSaasRateLimitError, OIDC_CALLBACK_URL, SaasClient, type ConnectorOoSession, type OidcCallbackOutcome } from './cloud/saas-client'
 import { AgentStatusReporter } from './cloud/agent-status-reporter'
 import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
-import { OfficeBridgeServer } from './gateway/office-bridge'
+import { OfficeBridgeServer, type OfficeAgentToolsRequest } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
@@ -100,6 +103,7 @@ import {
 } from '@nxcore/desktop-connector-host/open-connector-supervisor'
 import { LarkAuthRunner } from './agent-auth/lark-auth-runner'
 import { AgentAuthController } from './agent-auth/controller'
+import { createLarkCliRuntime, type LarkCliRuntime } from './runtime/lark-cli-runtime'
 import { ExternalDocumentsGatewayBridge } from './gateway/external-documents-gateway-bridge'
 import { startDocumentAssetBridge, type DocumentAssetBridge } from './document-asset-bridge'
 import { NtnAuthRunner } from './agent-auth/ntn-auth-runner'
@@ -263,7 +267,14 @@ const RUNTIME_CONFIG_CHANNELS = {
 } as const
 
 const CONNECTOR_CHANNELS = {
-  runtimeStatus: 'nango-connector:runtime-status', status: 'nango-connector:status', providers: 'nango-connector:providers', oauthConfigs: 'nango-connector:oauth-configs', startAuthorization: 'nango-connector:start-authorization', authorizationStatus: 'nango-connector:authorization-status', remoteAccount: 'nango-connector:remote-account', registerConnection: 'nango-connector:register-connection', createWebcalSubscription: 'nango-connector:create-webcal-subscription', disableConnection: 'nango-connector:disable-connection', enableConnection: 'nango-connector:enable-connection', purgeConnection: 'nango-connector:purge-connection', triggerSync: 'nango-connector:trigger-sync', cancelRun: 'nango-connector:cancel-run', listScopes: 'nango-connector:list-scopes', listRuns: 'nango-connector:list-runs', listMail: 'nango-connector:list-mail', listFailures: 'nango-connector:list-failures', listDocuments: 'nango-connector:list-documents', readDocument: 'nango-connector:read-document', listRecords: 'nango-connector:list-records', recordTotals: 'nango-connector:record-totals', armFault: 'nango-connector:arm-fault',
+  status: 'nango-connector:status',
+  providers: 'nango-connector:providers',
+  oauthConfigs: 'nango-connector:oauth-configs',
+  startAuthorization: 'nango-connector:start-authorization',
+  authorizationStatus: 'nango-connector:authorization-status',
+  remoteAccount: 'nango-connector:remote-account',
+  purgeConnection: 'nango-connector:purge-connection',
+  reconnectConnection: 'nango-connector:reconnect-connection',
 } as const
 const OPEN_CONNECTOR_CHANNELS = {
   status: 'open-connector:status',
@@ -325,6 +336,12 @@ const AGENT_CHANNELS = {
   bindLocalAgentWorkspace: 'agent:bind-local-agent-workspace',
   getStatus: 'agent:get-status',
   getUsage: 'agent:get-usage',
+  // 工作区（Workspace）：会话的组织容器，由 gateway agent_workspaces 表承载。
+  workspaceList: 'workspace:list',
+  workspaceCreate: 'workspace:create',
+  workspaceUpdate: 'workspace:update',
+  workspaceRemove: 'workspace:remove',
+  workspacePickDirectory: 'workspace:pick-directory',
   listSessions: 'agent:list-sessions',
   createSession: 'agent:create-session',
   createSessionLink: 'agent:create-session-link',
@@ -534,6 +551,16 @@ const AGENT_ACCESS_CHANNELS = {
   restartGateway: 'agent-access:restart-gateway',
 } as const
 
+// Agent 调试面板（docs/design/agent-debug-panel.zh-CN.md）：只读的 Agent 上下文检查器，
+// 数据来自网关 /v1/agent-debug/*（运行时 describe() 的实际装配结果）。
+// 面板是独立窗口（独立渲染入口 debug.html），从 Agent 页的「调试」按钮打开。
+const AGENT_DEBUG_CHANNELS = {
+  listAgents: 'agent-debug:list-agents',
+  getAgent: 'agent-debug:get-agent',
+  listUsage: 'agent-debug:list-usage',
+  openWindow: 'agent-debug:open-window',
+} as const
+
 // 窗口先显示、服务后台初始化:所有 IPC 通道提前挂上路由,处理器注册前先等待就绪。
 // IpcHandler 的 never 参数让任意签名的处理器都可直接注册。
 type IpcHandler = (event: Electron.IpcMainInvokeEvent, ...args: never[]) => unknown
@@ -587,6 +614,7 @@ function installIpcRouters(): void {
     MIGRATION_CHANNELS,
     AGENT_SCHEDULER_CHANNELS,
     AGENT_ACCESS_CHANNELS,
+    AGENT_DEBUG_CHANNELS,
     WRITING_STYLE_CHANNELS,
     SLIDES_CHANNELS,
     THESIS_FORMAT_CHANNELS,
@@ -643,15 +671,16 @@ let connectorOoAppliedEnvJson = '{}'
 let connectorOoSessionCache: { userId: string; session: ConnectorOoSession | null } | null = null
 let connectorOoUserId: string | null = null
 let saasConnectorBridge: SaasConnectorBridge | null = null
-const connectorTombstones = createConnectorTombstoneStore(dataDirectory)
-let connectorReconcileTimer: NodeJS.Timeout | null = null
 let openConnectorConsoleWindow: BrowserWindow | null = null
+// Agent 调试面板的独立窗口（单例：重复点击聚焦已开窗口，不重复创建）。
+let agentDebugWindow: BrowserWindow | null = null
 let agentGatewayBridge: AgentGatewayBridge | null = null
 let cursorCompletionAgentBridge: AgentGatewayBridge | null = null
 let documentGatewayBridge: DocumentGatewayBridge | null = null
 let writingStyleGatewayBridge: WritingStyleGatewayBridge | null = null
 let agentSchedulerGatewayBridge: AgentSchedulerGatewayBridge | null = null
 let agentAccessGatewayBridge: AgentAccessGatewayBridge | null = null
+let agentDebugGatewayBridge: AgentDebugGatewayBridge | null = null
 let agentAccessInstaller: AgentAccessInstaller | null = null
 let connectorGatewayBridge: ConnectorGatewayBridge | null = null
 let migrationCoordinator: MigrationCoordinator | null = null
@@ -865,6 +894,11 @@ ipcMain.handle('window:close', (event) => {
 ipcMain.handle('window:get-state', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   return { maximized: window?.isMaximized() ?? false }
+})
+
+/** 全局外观：渲染端切换主题时镜像到主进程（窗口底色 + 原生主题）。 */
+ipcMain.handle('appearance:set-theme', (_event, theme: unknown) => {
+  if (isAppearanceThemeId(theme)) writeAppearanceTheme(theme)
 })
 
 function logRendererDiagnostic(input: unknown): void {
@@ -1365,8 +1399,6 @@ function registerGatewayHandlers(): void {
     }
     return gatewayRecoverInFlight
   })
-  ipcMain.handle(CONNECTOR_CHANNELS.runtimeStatus, () =>
-    ({ state: 'disabled', message: 'nango runtime removed (P3); link-A runs on OpenConnector' }))
 }
 
 function registerRuntimeConfigHandlers(): void {
@@ -1458,39 +1490,20 @@ async function syncManagedChildProcesses(snapshot: RuntimeConfigSnapshot): Promi
 function registerConnectorHandlers(bridge: ConnectorGatewayBridge): void {
   ipcMain.handle(CONNECTOR_CHANNELS.status, () => bridge.status())
   ipcMain.handle(CONNECTOR_CHANNELS.providers, () => bridge.providers())
-  // saas 连接层返回 SaaS 已配置 OAuth 的 provider 名单，local 模式返回 null（渲染层回落注册表）。
-  ipcMain.handle(CONNECTOR_CHANNELS.oauthConfigs, () => bridge.configuredProviders())
+  // saas 连接层返回 SaaS 已配置 OAuth 的 provider 名单（新版带 SaaS 图标 URL 明细；
+  // 旧连接层无明细方法时回落纯名单），local 模式返回 null（渲染层回落注册表）。
+  ipcMain.handle(CONNECTOR_CHANNELS.oauthConfigs, async () => {
+    const detailed = await bridge.configuredProvidersDetailed().catch(() => null)
+    if (detailed) return detailed
+    return bridge.configuredProviders().catch(() => null)
+  })
   ipcMain.handle(CONNECTOR_CHANNELS.startAuthorization, (_event, provider) => bridge.startAuthorization(provider))
   ipcMain.handle(CONNECTOR_CHANNELS.authorizationStatus, (_event, id) => bridge.authorizationStatus(id))
   ipcMain.handle(CONNECTOR_CHANNELS.remoteAccount, (_event, provider) => bridge.remoteAccount(provider))
-  ipcMain.handle(CONNECTOR_CHANNELS.registerConnection, (_event, input) => bridge.registerConnection(input))
-  ipcMain.handle(CONNECTOR_CHANNELS.createWebcalSubscription, (_event, url) => bridge.createWebcalSubscription(url))
-  ipcMain.handle(CONNECTOR_CHANNELS.disableConnection, (_event, id) => bridge.disableConnection(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.enableConnection, (_event, id) => bridge.enableConnection(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, async (_event, id) => {
-    // saas 模式删除不上行（远端 oo 凭据保留）：purge 前取 provider 记墓碑，
-    // 否则重登录后 reconcile 对账会把连接自动补注册复活。
-    const userId = connectorOoSessionCache?.userId
-    const provider = userId
-      ? (await bridge.status().catch(() => null))?.connections.find((item) => item.id === id)?.provider
-      : null
-    await bridge.purgeConnection(id)
-    if (userId && provider) await connectorTombstones.add(userId, provider)
-  })
-  ipcMain.handle(CONNECTOR_CHANNELS.triggerSync, (_event, id, mode) => bridge.triggerSync(id, mode))
-  ipcMain.handle(CONNECTOR_CHANNELS.cancelRun, (_event, id) => bridge.cancelRun(id))
-  ipcMain.handle(CONNECTOR_CHANNELS.listScopes, (_event, connectionId) => bridge.scopes(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.listRuns, (_event, connectionId) => bridge.runs(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.listMail, (_event, query) => bridge.mail(query))
-  ipcMain.handle(CONNECTOR_CHANNELS.listFailures, (_event, query) => bridge.failures(query))
-  ipcMain.handle(CONNECTOR_CHANNELS.listDocuments, (_event, connectionId) => bridge.documents(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.readDocument, (_event, connectionId, documentId) => bridge.document(connectionId, documentId))
-  ipcMain.handle(CONNECTOR_CHANNELS.listRecords, (_event, connectionId, type) => bridge.records(connectionId, type))
-  ipcMain.handle(CONNECTOR_CHANNELS.recordTotals, (_event, connectionId) => bridge.recordTotals(connectionId))
-  ipcMain.handle(CONNECTOR_CHANNELS.armFault, (_event, point) => {
-    if (process.env.NXCORE_CONNECTOR_DEBUG_FAULTS !== '1') throw new Error('故障注入未启用。')
-    return bridge.armFault(point)
-  })
+  // 断开：Gateway 写本地墓碑（远端 oo 凭据保留），查询/执行层按墓碑过滤。
+  ipcMain.handle(CONNECTOR_CHANNELS.purgeConnection, (_event, id) => bridge.purgeConnection(id))
+  // 重新开启：移除墓碑（oo 凭据一直在），连接回到可见/可查询状态。
+  ipcMain.handle(CONNECTOR_CHANNELS.reconnectConnection, (_event, id) => bridge.reconnectConnection(id))
 }
 function resolveOoCliExecutable(): string {
   const configured = process.env.NXCORE_OO_CLI_PATH?.trim()
@@ -1504,15 +1517,22 @@ function resolveOoCliExecutable(): string {
   return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'oo'
 }
 
-function resolveLarkCliExecutable(): string {
-  const configured = process.env.NXCORE_LARK_CLI_PATH?.trim()
-  if (configured) return configured
-  const executableName = process.platform === 'win32' ? 'lark-cli.exe' : 'lark-cli'
-  const packagedCandidates = [
-    join(process.resourcesPath, 'lark-cli', `${process.platform}-${process.arch}`, executableName),
-    join(app.getAppPath(), 'build', 'lark-cli', `${process.platform}-${process.arch}`, executableName),
-  ]
-  return packagedCandidates.find((candidate) => existsSync(candidate)) ?? 'lark-cli'
+/** lark-cli 运行时（内置优先 + 应用私有 HOME 隔离），首次使用时解析并缓存。 */
+let larkCliRuntime: LarkCliRuntime | null = null
+function getLarkCliRuntime(): LarkCliRuntime {
+  if (!larkCliRuntime) {
+    larkCliRuntime = createLarkCliRuntime({
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      homeDirectory: join(resolvedDataDirectory, 'lark-cli', 'home'),
+    })
+    // 内置二进制随应用安装/卸载；系统兜底只在内置缺失时发生（见 runtime 模块）。
+    console.info(
+      `[lark-cli] ${larkCliRuntime.source}: ${larkCliRuntime.executable}`
+      + ` (${larkCliRuntime.version ?? 'version unknown'}); home=${larkCliRuntime.homeDirectory}`,
+    )
+  }
+  return larkCliRuntime
 }
 
 /** ntn（Notion 官方 CLI）随包分发，当前仅 macOS 支持 Notion 导出；其余平台返回 null。 */
@@ -1535,6 +1555,7 @@ function createOoCliBridge(connection: OpenConnectorConnection): OoCliBridge {
     executable: resolveOoCliExecutable(),
     baseUrl: connection.baseUrl,
     runtimeToken: connection.runtimeToken,
+    ...(connection.adminToken ? { adminToken: connection.adminToken } : {}),
     managed: connection.managed,
     gatewayPid: connection.pid,
     gatewayVersion: connection.version,
@@ -1593,8 +1614,7 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
   connectorOoAppliedEnvJson = nextJson
   const supervisor = gatewaySupervisor
   if (!supervisor?.isRunning()) {
-    // 启动期：env 随首次 spawn 生效，gateway 就绪后由 scheduleSaasConnectorReconcile 对账。
-    scheduleSaasConnectorReconcile(20_000)
+    // 启动期：env 随首次 spawn 生效；连接列表/查询都实时读 oo，无需对账任务。
     return
   }
   // 运行中热推送，不再重启 gateway：重启窗口会把登录瞬间的 refresh-saas
@@ -1604,7 +1624,6 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
       session ? { baseUrl: session.baseUrl, runtimeToken: session.token } : null,
     )
     console.info(`[connector-mode] oo session applied to gateway (configured=${String(applied?.configured ?? false)})`)
-    scheduleSaasConnectorReconcile()
   } catch (error) {
     console.error('[connector-mode] applying oo session to gateway failed:', error)
   }
@@ -1619,65 +1638,6 @@ async function applyConnectorOoSession(session: ConnectorOoSession | null): Prom
  * 用户主动 purge 过的 provider 有墓碑（远端凭据仍在），对账跳过不复活——
  * 重连由数据源页弹窗显式选择（使用旧账号免授权复活 / 切换其他账号重新授权）。
  */
-async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
-  const bridge = saasConnectorBridge
-  const cache = connectorOoSessionCache
-  const session = cache?.session
-  if (!bridge || !session || !cache?.userId) return
-  const userId = cache.userId
-  try {
-    const [status, providersResponse, appsResponse] = await Promise.all([
-      bridge.status(),
-      bridge.providers(),
-      fetch(`${session.baseUrl}/v1/apps`, {
-        headers: { authorization: `Bearer ${session.token}` },
-        signal: AbortSignal.timeout(5_000),
-      })
-        .then((response) => (response.ok ? response.json() as Promise<{ data?: unknown[] } | null> : null))
-        .catch(() => null),
-    ])
-    if (!Array.isArray(appsResponse?.data)) return
-    // oo service（googlecalendar 等）↔ 注册表 provider（google-calendar）命名
-    // 分裂：对账必须先映射，Google 系才能命中注册表白名单。
-    const knownProviders = new Set(providersResponse.providers.map((item) => item.provider))
-    const registered = new Set(status.connections.map((item) => item.provider))
-    for (const value of appsResponse.data) {
-      const account = (value ?? {}) as { service?: unknown; alias?: unknown; connectionName?: unknown; status?: unknown }
-      const service = typeof account.service === 'string' ? account.service : ''
-      const connectionName = typeof account.alias === 'string' ? account.alias
-        : typeof account.connectionName === 'string' ? account.connectionName : ''
-      const activeStatus = typeof account.status === 'string' ? account.status.toLowerCase() : ''
-      if (!service || !connectionName) continue
-      const provider = providerOfService(service)
-      if (!provider || !knownProviders.has(provider)) continue
-      if (activeStatus && !['active', 'connected', 'ready'].includes(activeStatus)) continue
-      if (registered.has(provider)) {
-        // 连接已回到本地注册表（用户显式重连成功）：清墓碑，恢复对账自愈。
-        await connectorTombstones.remove(userId, provider)
-        continue
-      }
-      if (await connectorTombstones.has(userId, provider)) continue
-      await bridge.registerConnection({ provider, service, connectionName }).catch((error: unknown) => {
-        console.warn('[connector-mode] connector reconcile register failed:', error instanceof Error ? error.message : error)
-      })
-    }
-  } catch (error) {
-    console.warn('[connector-mode] connector reconcile failed:', error instanceof Error ? error.message : error)
-    // gateway 刚拉起时可能尚未就绪：退避重试，最多三轮。
-    if (attempt < 3) scheduleSaasConnectorReconcile(30_000, attempt + 1)
-  }
-}
-
-function scheduleSaasConnectorReconcile(delayMs = 2_000, attempt = 1): void {
-  // saasConnectorBridge 仅在 saas 模式下创建，作为模式判据。
-  if (!saasConnectorBridge) return
-  if (connectorReconcileTimer) clearTimeout(connectorReconcileTimer)
-  connectorReconcileTimer = setTimeout(() => {
-    connectorReconcileTimer = null
-    void reconcileSaasConnectorConnections(attempt)
-  }, delayMs)
-}
-
 function openExternalUrl(value: string): void {  try {
     const url = new URL(value)
     if (url.protocol === 'http:' || url.protocol === 'https:') void shell.openExternal(url.toString())
@@ -1850,10 +1810,13 @@ function registerOpenConnectorHandlers(): void {
 function registerAgentAuthHandlers(): void {
   handle(AGENT_AUTH_CHANNELS.status, () => {
     if (!agentAuthController) {
+      const runtime = getLarkCliRuntime()
       return {
         feishu: {
           cliState: 'missing' as const,
-          cliPath: resolveLarkCliExecutable(),
+          cliPath: runtime.executable,
+          cliSource: runtime.source,
+          cliVersion: runtime.version,
           appConfigured: null,
           userAuthorized: null,
           userName: null,
@@ -2137,6 +2100,26 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   })
   handle(AGENT_CHANNELS.getStatus, () => bridge.getStatus())
   handle(AGENT_CHANNELS.getUsage, (_event, range) => bridge.getUsage(range))
+  handle(AGENT_CHANNELS.workspaceList, () => bridge.listWorkspaces())
+  handle(AGENT_CHANNELS.workspaceCreate, (_event, input: CreateAgentWorkspaceInput) =>
+    bridge.createWorkspace(input))
+  handle(AGENT_CHANNELS.workspaceUpdate, (_event, workspaceId: string, input: UpdateAgentWorkspaceInput) =>
+    bridge.updateWorkspace(workspaceId, input))
+  handle(AGENT_CHANNELS.workspaceRemove, (_event, workspaceId: string) =>
+    bridge.deleteWorkspace(workspaceId))
+  handle(AGENT_CHANNELS.workspacePickDirectory, async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: '选择工作区目录',
+      buttonLabel: '使用此文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    }
+    const result = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths[0]) return null
+    return result.filePaths[0]
+  })
   handle(AGENT_CHANNELS.listSessions, (_event, pageLabel, roomId) => bridge.listSessions(pageLabel, roomId))
   handle(AGENT_CHANNELS.createSession, (_event, input) => bridge.createSession(input))
   handle(AGENT_CHANNELS.createSessionLink, (_event, input) => bridge.createSessionLink(input))
@@ -3026,6 +3009,30 @@ function registerAgentAccessHandlers(): void {
   })
 }
 
+function registerAgentDebugHandlers(): void {
+  const requireBridge = (): AgentDebugGatewayBridge => {
+    if (!agentDebugGatewayBridge) throw new Error('Agent 调试服务尚未就绪。')
+    return agentDebugGatewayBridge
+  }
+  handle(AGENT_DEBUG_CHANNELS.listAgents, () => requireBridge().listAgents())
+  handle(AGENT_DEBUG_CHANNELS.getAgent, (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) throw new Error('Agent ID 无效。')
+    return requireBridge().getAgent(id)
+  })
+  handle(AGENT_DEBUG_CHANNELS.listUsage, (_event, id: unknown, limit: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) throw new Error('Agent ID 无效。')
+    if (limit !== undefined
+      && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100)) {
+      throw new Error('limit 无效。')
+    }
+    return requireBridge().listUsage(id, limit)
+  })
+  // 独立窗口不依赖网关桥就绪：窗口先开，页面自己再拉数据（失败就显示可读错误）。
+  handle(AGENT_DEBUG_CHANNELS.openWindow, () => {
+    openAgentDebugWindow()
+  })
+}
+
 function isAppWindowNavigationAllowed(url: string): boolean {
   try {
     if (process.env.ELECTRON_RENDERER_URL) {
@@ -3037,6 +3044,64 @@ function isAppWindowNavigationAllowed(url: string): boolean {
   }
 }
 
+/**
+ * Agent 调试面板的独立窗口：独立渲染入口 debug.html（复用同一 preload），
+ * 与主窗口解耦——不参与 GenOffice 脏关闭守卫，关闭它也不影响主窗口。
+ * 单例：已开窗时聚焦（最小化则先还原）。
+ */
+function openAgentDebugWindow(): BrowserWindow {
+  if (agentDebugWindow && !agentDebugWindow.isDestroyed()) {
+    if (agentDebugWindow.isMinimized()) agentDebugWindow.restore()
+    agentDebugWindow.show()
+    agentDebugWindow.focus()
+    return agentDebugWindow
+  }
+  const window = new BrowserWindow({
+    width: 1180,
+    height: 820,
+    minWidth: 900,
+    minHeight: 600,
+    show: false,
+    title: 'Agent 调试',
+    backgroundColor: appearanceWindowBackground(),
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
+      : { titleBarStyle: 'hidden' as const }),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  const sendMaximizedChanged = () => {
+    if (!window.isDestroyed()) window.webContents.send('window:maximized-changed', window.isMaximized())
+  }
+  window.on('maximize', sendMaximizedChanged)
+  window.on('unmaximize', sendMaximizedChanged)
+  window.on('closed', () => {
+    if (agentDebugWindow === window) agentDebugWindow = null
+  })
+  window.once('ready-to-show', () => window.show())
+  window.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error(`Failed to load Agent debug preload script: ${preloadPath}`, error)
+  })
+  // 调试页没有外链：任何窗口打开/跳转都拦下，避免页面拿着 preload 桥离开应用。
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event) => event.preventDefault())
+  if (process.env.ELECTRON_RENDERER_URL) {
+    const base = `${process.env.ELECTRON_RENDERER_URL.replace(/\/$/, '')}/`
+    void window.loadURL(new URL('debug.html', base).toString())
+  } else {
+    void window.loadFile(join(__dirname, '../renderer/debug.html'))
+  }
+  agentDebugWindow = window
+  return window
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -3045,7 +3110,7 @@ function createWindow(): BrowserWindow {
     minHeight: 700,
     show: false,
     title: 'Everroom',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: appearanceWindowBackground(),
     // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
     // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
     ...(process.platform === 'darwin'
@@ -3127,7 +3192,7 @@ function createWindow(): BrowserWindow {
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
-  nativeTheme.themeSource = 'light'
+  applyNativeTheme(readAppearanceTheme())
   if (process.defaultApp && process.argv[1] && process.platform !== 'darwin') {
     app.setAsDefaultProtocolClient('everroom', process.execPath, [app.getAppPath()])
   } else {
@@ -3182,8 +3247,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   registerGatewayHandlers()
   registerOpenConnectorHandlers()
   // Agent 授权引导（飞书 lark-cli）：不依赖 gateway/OpenConnector，尽早可用。
+  // lark-cli 使用应用私有 HOME：不读写用户终端里 `~/.lark-cli` 的配置，随应用卸载清理。
+  const larkRuntime = getLarkCliRuntime()
   agentAuthController = new AgentAuthController(
-    new LarkAuthRunner(resolveLarkCliExecutable()),
+    new LarkAuthRunner(larkRuntime.executable, {
+      homeDirectory: larkRuntime.homeDirectory,
+      source: larkRuntime.source,
+    }),
     {
       onEvent: (frame) => {
         for (const window of BrowserWindow.getAllWindows()) {
@@ -3309,6 +3379,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       // Agent 改写当前打开的 Word/Excel：字节 → 工作副本 → 版本链（含访达写回）→ 重开视图。
       () => (fileId, bytes, expectedContentHash) =>
         officePreviewRegistry.applyAgentFileBytes(fileId, bytes, expectedContentHash),
+      // 活 Word/Excel 宿主执行器：read = describe（上下文+词汇表+指南）；
+      // apply = 渲染层执行 docs/sheets AI 工具调用 + 静默保存（fileSaved → 版本链回填）。
+      () => async (req: OfficeAgentToolsRequest): Promise<
+        | { ok: true; data: Record<string, unknown> }
+        | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved'; open?: unknown[] }
+      > => {
+        if (req.mode === 'read') {
+          const outcome = req.kind === 'docx'
+            ? await officePreviewRegistry.describeDocArtifact(req.fileId)
+            : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId)
+          return outcome.ok
+            ? { ok: true, data: { describe: outcome.describe } as unknown as Record<string, unknown> }
+            : outcome
+        }
+        const calls = (req.calls ?? []).map((call) => ({
+          id: call.id,
+          name: call.name,
+          input: call.input ?? {},
+        }))
+        const outcome = req.kind === 'docx'
+          ? await officePreviewRegistry.applyDocAgentTools(req.fileId, calls)
+          : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls)
+        return outcome.ok
+          ? {
+            ok: true,
+            data: {
+              results: outcome.results,
+              ...(outcome.error ? { error: outcome.error } : {}),
+            } as unknown as Record<string, unknown>,
+          }
+          : outcome
+      },
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
@@ -3363,6 +3465,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     agentAccessGatewayBridge = new AgentAccessGatewayBridge(gatewaySupervisor)
     agentAccessInstaller = new AgentAccessInstaller()
     registerAgentAccessHandlers()
+    // Agent 调试面板同理：桥只包 supervisor（ensureConnection 惰性等待网关就绪），
+    // 处理器必须在 start() 前注册，否则冷启动打开面板会排队等 servicesReady。
+    agentDebugGatewayBridge = new AgentDebugGatewayBridge(gatewaySupervisor)
+    registerAgentDebugHandlers()
     const gateway = await gatewaySupervisor.start()
     console.info(`NxCore Gateway ready at ${gateway.baseUrl} (pid=${gateway.pid})`)
     runtimeConfigBridge = new RuntimeConfigBridge(gatewaySupervisor)

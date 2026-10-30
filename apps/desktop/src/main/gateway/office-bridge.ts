@@ -69,6 +69,35 @@ export interface OfficeApplyBytesRequest {
   expectedContentHash: string
 }
 
+/** Agent 驱动活 Word/Excel 的宿主执行器请求（gateway 工具 → /v1/office-agent-tools）。 */
+export interface OfficeAgentToolsRequest {
+  /** docx = Word 活文档；spreadsheet = Excel 活工作簿。 */
+  kind: 'docx' | 'spreadsheet'
+  /** read = describe（上下文+词汇表+指南）；apply = 执行工具调用。 */
+  mode: 'read' | 'apply'
+  fileId: string
+  /** apply：docs/sheets AI 工具调用（id/name/input）。 */
+  calls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
+}
+
+function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeAgentToolsRequest>
+  if (input.kind !== 'docx' && input.kind !== 'spreadsheet') return false
+  if (input.mode !== 'read' && input.mode !== 'apply') return false
+  if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
+  if (input.calls !== undefined) {
+    if (!Array.isArray(input.calls) || input.calls.length === 0 || input.calls.length > 50) return false
+    if (!input.calls.every((call) => call && typeof call === 'object'
+      && typeof (call as { id?: unknown }).id === 'string' && (call as { id?: unknown }).id
+      && typeof (call as { name?: unknown }).name === 'string' && (call as { name?: unknown }).name
+      && (call as { input?: unknown }).input !== undefined
+      && typeof (call as { input?: unknown }).input === 'object')) return false
+  }
+  if (input.mode === 'apply' && !Array.isArray(input.calls)) return false
+  return true
+}
+
 /** 论文装订请求（gateway thesis-format → /v1/office-reformat）。 */
 export interface OfficeReformatRequest {
   action: 'describe' | 'build'
@@ -228,6 +257,13 @@ export class OfficeBridgeServer {
         | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved' | 'conflict' | 'error'; message?: string }
       >)
       | null = () => null,
+    /** 活 Word/Excel 宿主执行器（registry 的 describe/apply 方法；未注入 = 工具不可用）。 */
+    private readonly agentTools: () =>
+      | ((req: OfficeAgentToolsRequest) => Promise<
+        | { ok: true; data: Record<string, unknown> }
+        | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved'; open?: unknown[] }
+      >)
+      | null = () => null,
   ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
@@ -267,6 +303,7 @@ export class OfficeBridgeServer {
       || request.url === '/v1/office-render-page'
       || request.url === '/v1/office-reformat'
       || request.url === '/v1/office-apply-bytes'
+      || request.url === '/v1/office-agent-tools'
     if (!known) {
       return { status: 404, body: { message: 'Not found' } }
     }
@@ -275,7 +312,10 @@ export class OfficeBridgeServer {
       request,
       request.url === '/v1/office-reformat' || request.url === '/v1/office-apply-bytes'
         ? 64 * 1024 * 1024
-        : undefined,
+        // agent-tools may carry base64 images (insert_image_base64)
+        : request.url === '/v1/office-agent-tools'
+          ? 16 * 1024 * 1024
+          : undefined,
     )
     if ('error' in read) return read.error
     if (request.url === '/v1/office-complete') {
@@ -285,6 +325,10 @@ export class OfficeBridgeServer {
     if (request.url === '/v1/office-apply-bytes') {
       if (!validApplyBytesBody(read.parsed)) return { status: 422, body: { message: 'Invalid office apply-bytes request' } }
       return this.applyBytes(read.parsed)
+    }
+    if (request.url === '/v1/office-agent-tools') {
+      if (!validAgentToolsBody(read.parsed)) return { status: 422, body: { message: 'Invalid office agent-tools request' } }
+      return this.agentToolsRoute(read.parsed)
     }
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
@@ -309,6 +353,43 @@ export class OfficeBridgeServer {
    * /v1/office-apply-bytes：Agent 改写当前打开的 Word/Excel。
    * 桌面端负责脏检查/基线校验/覆盖工作副本/版本回填/重开视图，网关只送字节。
    */
+  /**
+   * 活 Word/Excel 宿主执行器入口：read = describe（上下文+工具词汇表+指南），
+   * apply = 执行 docs/sheets 渲染层工具调用（编辑实时重绘在打开的视图上，
+   * 变更后静默保存触发版本链回填）。not_open 时与 office-edit 同规则重试自动打开。
+   */
+  private async agentToolsRoute(req: OfficeAgentToolsRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    const agentTools = this.agentTools()
+    if (!agentTools) return { status: 503, body: { message: 'EverRoom Office 宿主执行器尚未就绪' } }
+    let outcome = await agentTools(req)
+    // 与 /v1/office-edit 同规则：重启后文件未打开时，显式 fileId 先请渲染端
+    // 以可编辑方式打开再重试（8s 内部等待 + 30s 外层兜底）。
+    if (!outcome.ok && outcome.reason === 'not_open' && req.fileId !== 'active') {
+      console.info('office-bridge: office-agent-tools 命中 not_open，尝试自动打开', { fileId: req.fileId })
+      const opened = await this.requestRendererOpen(req.fileId)
+      if (opened) {
+        const deadline = Date.now() + 30_000
+        do {
+          outcome = await agentTools(req)
+        } while (!outcome.ok && outcome.reason === 'not_open' && Date.now() < deadline)
+      }
+    }
+    if (!outcome.ok) {
+      const kindLabel = req.kind === 'docx' ? 'Word' : 'Excel'
+      const openSummary = describeOpenInstances(outcome.open)
+      const message =
+        outcome.reason === 'unsaved'
+          ? `该${kindLabel}文件有未保存的修改，为避免覆盖用户输入已拒绝执行。请先让用户保存（或等自动保存完成）再重试。${openSummary}`
+          : outcome.reason === 'not_editable'
+            ? `该${kindLabel}文件当前不是以可编辑方式打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
+            : req.fileId === 'active'
+              ? `当前没有已打开的${kindLabel}文件。若知道目标文件的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在产物库打开该文件。${openSummary}`
+              : `fileId 对应的${kindLabel}文件未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在产物库打开该文件。${openSummary}`
+      return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
+    }
+    return { status: 200, body: { data: outcome.data } }
+  }
+
   private async applyBytes(req: OfficeApplyBytesRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const apply = this.applyAgentBytes()
     if (!apply) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }

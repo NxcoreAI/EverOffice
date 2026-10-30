@@ -11,6 +11,20 @@ export type SourceFileStatus =
   | 'error'
 export type EvidenceParseStatus = 'pending' | 'running' | 'success' | 'failed' | 'unsupported'
 
+/** 全局外观主题：与 renderer styles/themes.css 的 [data-theme] 一一对应。 */
+export type AppearanceThemeId = 'paper' | 'plain' | 'moss' | 'night'
+export const APPEARANCE_THEME_IDS: readonly AppearanceThemeId[] = ['paper', 'plain', 'moss', 'night']
+/** 主进程建窗底色：深色主题下避免首帧/缩放时闪白。 */
+export const APPEARANCE_THEME_BACKGROUND: Record<AppearanceThemeId, string> = {
+  paper: '#fbfaf6',
+  plain: '#f7f8fa',
+  moss: '#f4f6ef',
+  night: '#15191c',
+}
+export function isAppearanceThemeId(value: unknown): value is AppearanceThemeId {
+  return typeof value === 'string' && (APPEARANCE_THEME_IDS as readonly string[]).includes(value)
+}
+
 import type {
   AgentEvent,
   AgentAttachmentReference,
@@ -23,6 +37,9 @@ import type {
   AgentSessionLink,
   AgentSessionSnapshot,
   AgentSocketFrame,
+  AgentWorkspace,
+  CreateAgentWorkspaceInput,
+  UpdateAgentWorkspaceInput,
   MovedRoomDocument,
   MoveRoomDocumentsResult,
   SubagentInvocation,
@@ -602,6 +619,10 @@ export interface NxcoreDesktopApi {
     getState(): Promise<{ maximized: boolean }>
     onMaximizedChange(listener: (maximized: boolean) => void): () => void
   }
+  appearance: {
+    /** 把全局外观主题持久化到主进程（窗口底色 / 原生主题跟随；渲染端仍以 localStorage 为准）。 */
+    setTheme(theme: AppearanceThemeId): Promise<void>
+  }
   office: {
     /** 激活指定 Office 预览实例并隐藏其余实例；null = 全部隐藏（标签仍保留）。false = 实例未找到。 */
     setActiveInstance(id: string | null): Promise<boolean>
@@ -646,29 +667,18 @@ export interface NxcoreDesktopApi {
     test(): Promise<RuntimeConfigTestResult>
   }
   nangoConnector: {
-    runtimeStatus(): Promise<NangoRuntimeStatus>
     status(): Promise<ConnectorStatus>
     providers(): Promise<ConnectorProvidersResponse>
-    /** SaaS 已配置 OAuth 的 provider 名单；null = 不可用（local 模式/未登录/旧主进程），渲染层回落注册表全量。 */
-    oauthConfigs?(): Promise<string[] | null>
+    /** SaaS 已配置 OAuth 的应用全集（连接器目录源）；null = 不可用（local 模式/未登录/旧主进程），渲染层回落网关注册表。
+     *  新版主进程返回带 displayName/iconUrl 的明细（SaaS 配置即目录）；旧版只有 provider 名（仅作过滤）。 */
+    oauthConfigs?(): Promise<Array<{ provider: string; displayName: string | null; iconUrl: string | null }> | string[] | null>
     startAuthorization(provider: string): Promise<ConnectorAuthorizationAttempt>
     authorizationStatus(id: string): Promise<ConnectorAuthorizationAttempt>
     /** 远端 oo 租户的活跃旧授权探测（saas 模式；local/无会话返回 null）——重连弹窗选择用。 */
     remoteAccount(provider: string): Promise<ConnectorRemoteAccount | null>
-    registerConnection(input: { provider: string; service: string; connectionName: string; filters?: Record<string, unknown> }): Promise<ConnectorConnection>
-    createWebcalSubscription(url: string): Promise<ConnectorConnection>
-    disableConnection(id: string): Promise<void>
-    enableConnection(id: string): Promise<void>
     purgeConnection(id: string): Promise<void>
-    triggerSync(id: string, mode: SyncMode): Promise<SyncRun>
-    cancelRun(id: string): Promise<SyncRun>
-    scopes(connectionId?: string): Promise<SyncScope[]>
-    runs(connectionId?: string): Promise<SyncRun[]>
-    mail(query?: { connectionId?: string; scopeId?: string; search?: string; limit?: number; cursor?: string }): Promise<MailMessage[]>
-    documents(connectionId: string): Promise<WikiDocumentSummary[]>
-    document(connectionId: string, documentId: string): Promise<WikiDocumentPreview>
-    records(connectionId: string, type: 'mail' | 'calendar'): Promise<ConnectorJsonRecord[]>
-    recordTotals(connectionId: string): Promise<{ mail: number; calendar: number }>
+    /** 重新开启：移除本地墓碑（oo 凭据保留），连接回到可见/可查询状态。 */
+    reconnectConnection?(id: string): Promise<void>
   }
   cliConnector: {
     status(): Promise<OpenConnectorStatus>
@@ -807,6 +817,14 @@ export interface NxcoreDesktopApi {
     setFixedPort(port: number | null): Promise<{ fixedPort: number | null; needsRestart: boolean }>
     restartGateway(): Promise<{ baseUrl: string }>
   }
+  agentDebug: {
+    listAgents(): Promise<import('./agent-debug').AgentDebugAgentsResponse>
+    getAgent(id: string): Promise<import('./agent-debug').AgentDebugAgentResponse>
+    /** 使用记录（内置 Agent = agent_runs，子 Agent = subagent_invocations）。 */
+    listUsage(id: string, limit?: number): Promise<import('./agent-debug').AgentDebugUsageResponse>
+    /** 打开独立调试窗口（单例；已打开时聚焦）。 */
+    openWindow(): Promise<void>
+  }
   slides: {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }
@@ -921,6 +939,15 @@ export interface NxcoreDesktopApi {
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
+  }
+  /** 工作区（Workspace）：本地目录 + 会话组织容器；默认工作区永远存在。 */
+  workspace: {
+    list(): Promise<AgentWorkspace[]>
+    create(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace>
+    update(workspaceId: string, input: UpdateAgentWorkspaceInput): Promise<AgentWorkspace>
+    remove(workspaceId: string): Promise<void>
+    /** 原生目录选择器；用户取消返回 null。 */
+    pickDirectory(): Promise<string | null>
   }
   cursorCompletionAgent: {
     createSession(input: CreateAgentSessionInput): Promise<AgentSession>

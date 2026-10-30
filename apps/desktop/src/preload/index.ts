@@ -13,6 +13,11 @@ import type {
   AgentConnectionDto,
 } from '../shared/agent-access'
 import type {
+  AgentDebugAgentResponse,
+  AgentDebugAgentsResponse,
+  AgentDebugUsageResponse,
+} from '../shared/agent-debug'
+import type {
   SearchItemType,
   SearchMessageContextDto,
   SearchPageDto,
@@ -220,6 +225,9 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('window:maximized-changed', handler)
     },
   },
+  appearance: {
+    setTheme: (theme) => ipcRenderer.invoke('appearance:set-theme', theme),
+  },
   office: {
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
@@ -300,27 +308,14 @@ const api: NxcoreDesktopApi = {
     },
   },
   nangoConnector: {
-    runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
     providers: () => invoke('nango-connector:providers'),
-    oauthConfigs: () => invokeQuietly<string[] | null>('nango-connector:oauth-configs'),
+    oauthConfigs: () => invokeQuietly<Array<{ provider: string; displayName: string | null; iconUrl: string | null }> | string[] | null>('nango-connector:oauth-configs'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
     remoteAccount: (provider) => invoke('nango-connector:remote-account', provider),
-    registerConnection: (input) => invoke('nango-connector:register-connection', input),
-    createWebcalSubscription: (url) => invoke('nango-connector:create-webcal-subscription', url),
-    disableConnection: (id) => invoke('nango-connector:disable-connection', id),
-    enableConnection: (id) => invoke('nango-connector:enable-connection', id),
     purgeConnection: (id) => invoke('nango-connector:purge-connection', id),
-    triggerSync: (id, mode) => invoke('nango-connector:trigger-sync', id, mode),
-    cancelRun: (id) => invoke('nango-connector:cancel-run', id),
-    scopes: (connectionId) => invoke('nango-connector:list-scopes', connectionId),
-    runs: (connectionId) => invoke('nango-connector:list-runs', connectionId),
-    mail: (query) => invoke('nango-connector:list-mail', query),
-    documents: (connectionId) => invoke('nango-connector:list-documents', connectionId),
-    document: (connectionId, documentId) => invoke('nango-connector:read-document', connectionId, documentId),
-    records: (connectionId, type) => invoke('nango-connector:list-records', connectionId, type),
-    recordTotals: (connectionId) => invoke('nango-connector:record-totals', connectionId),
+    reconnectConnection: (id) => invoke('nango-connector:reconnect-connection', id),
   },
   cliConnector: {
     // 通道名与主进程 OPEN_CONNECTOR_CHANNELS 对齐（open-connector:*；统一改名前的
@@ -440,6 +435,16 @@ const api: NxcoreDesktopApi = {
     setFixedPort: (port: number | null) =>
       invoke<{ fixedPort: number | null; needsRestart: boolean }>('agent-access:settings-set-fixed-port', port),
     restartGateway: () => invoke<{ baseUrl: string }>('agent-access:restart-gateway'),
+  },
+  agentDebug: {
+    // 调试面板是只读查询：quiet 调用（不弹全局错误、不做 gateway recovery 重试），
+    // 失败文本由面板自己以一行弱化文字展示。
+    listAgents: () => invokeQuietly<AgentDebugAgentsResponse>('agent-debug:list-agents'),
+    getAgent: (id: string) => invokeQuietly<AgentDebugAgentResponse>('agent-debug:get-agent', id),
+    listUsage: (id: string, limit?: number) =>
+      invokeQuietly<AgentDebugUsageResponse>('agent-debug:list-usage', id, limit),
+    // 打开独立调试窗口（单例）。窗口的生命周期由主进程持有，渲染层只触发。
+    openWindow: () => invoke<void>('agent-debug:open-window'),
   },
   slides: {
     /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
@@ -578,6 +583,13 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('agent:event', handleEvent)
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
     },
+  },
+  workspace: {
+    list: () => invoke('workspace:list'),
+    create: (input) => invoke('workspace:create', input),
+    update: (workspaceId, input) => invoke('workspace:update', workspaceId, input),
+    remove: (workspaceId) => invoke('workspace:remove', workspaceId),
+    pickDirectory: () => invoke('workspace:pick-directory'),
   },
   cursorCompletionAgent: {
     createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),

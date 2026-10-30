@@ -14,10 +14,6 @@ export interface GenOfficeDocsRuntime {
   createDocsView(
     openPath?: string,
     options?: {
-      hostMode?: 'tab' | 'everroom'
-      readonly?: boolean
-      sideDock?: boolean
-      dockAgentSrc?: string
     },
   ): WebContentsView
   registerDocsIpc(): void
@@ -35,10 +31,6 @@ export interface GenOfficeSheetsRuntime {
     sidecarPath: string
   }): void
   createSheetsView(options?: {
-    includeAiHandlers?: boolean
-    readonly?: boolean
-    sideDock?: boolean
-    dockAgentSrc?: string
   }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
@@ -52,7 +44,7 @@ export interface GenOfficeSlidesRuntime {
   configureSlidesRuntime(config: { preloadPath: string; rendererFilePath?: string }): void
   createSlidesView(
     openPath?: string | null,
-    options?: { readonly?: boolean; sideDock?: boolean; dockAgentSrc?: string },
+    options?: { readonly?: boolean },
   ): WebContentsView
   registerSlidesIpc(): void
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
@@ -65,7 +57,7 @@ export interface GenOfficePdfRuntime {
   configurePdfRuntime(config: { preloadPath: string; rendererFile?: string }): void
   createPdfView(
     openPath?: string | null,
-    options?: { readonly?: boolean; sideDock?: boolean; dockAgentSrc?: string },
+    options?: { readonly?: boolean },
   ): WebContentsView
   registerPdfIpc(): void
   pdfIsDirty(webContentsId: number): boolean

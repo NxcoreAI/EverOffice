@@ -17,6 +17,10 @@ import {
   loadPreparedGenOfficeRuntime,
   type AgentSlidesDeckInfo,
   type AgentSlidesEditResult,
+  type GenOfficeAgentDocDescription,
+  type GenOfficeAgentToolCall,
+  type GenOfficeAgentToolResult,
+  type GenOfficeAgentWorkbookDescription,
   type PreparedGenOfficeRuntime,
 } from './office-runtime'
 import { OfficeViewManager, prepareOfficeDocument } from './office-view-manager'
@@ -86,6 +90,11 @@ export interface OpenOfficeInstanceInfo {
   editable: boolean
   active: boolean
 }
+
+/** 活 Word/Excel 宿主执行器结果：apply 的错误随行（已应用但保存失败等）。 */
+export type AgentArtifactToolsOutcome =
+  | { ok: true; results: GenOfficeAgentToolResult[]; error?: string }
+  | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved'; open?: OpenOfficeInstanceInfo[] }
 
 export type SlidesEditArtifactOutcome =
   | { ok: true; info?: AgentSlidesDeckInfo; result?: AgentSlidesEditResult }
@@ -361,6 +370,133 @@ export class OfficePreviewRegistry {
     return 'pngBase64' in rendered
       ? { ok: true, pngBase64: rendered.pngBase64 }
       : { ok: false, error: rendered.error }
+  }
+
+  /** 'active' 的解析：焦点实例优先；无焦点时该 kind 唯一打开的实例兜底。 */
+  private resolveActiveKind(kind: 'docx' | 'spreadsheet'): string | null {
+    if (this.activeId) {
+      const instance = this.instances.get(this.activeId)
+      if (instance?.descriptor.kind === kind) return this.activeId
+    }
+    const ids = [...this.instances.entries()]
+      .filter(([, instance]) => instance.descriptor.kind === kind)
+      .map(([id]) => id)
+    return ids.length === 1 ? ids[0]! : null
+  }
+
+  /** 定位目标实例（active/显式 id + 自动打开等待窗口），并校验 kind。 */
+  private async resolveAgentInstance(
+    fileId: string,
+    kind: 'docx' | 'spreadsheet',
+  ): Promise<
+    | { ok: true; instance: OfficePreviewInstance; wcId: number }
+    | { ok: false; reason: 'not_open' | 'not_editable'; open: OpenOfficeInstanceInfo[] }
+  > {
+    const resolvedId = fileId === 'active' ? this.resolveActiveKind(kind) : fileId
+    let instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
+    if (!instance && fileId !== 'active') {
+      instance = await this.waitForInstance(fileId)
+    }
+    const wcId = instance?.view.webContentsId
+    if (!instance || !this.runtime || typeof wcId !== 'number') {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    if (instance.descriptor.kind !== kind) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    return { ok: true, instance, wcId }
+  }
+
+  /** Agent 读活 Word：块列表上下文 + 工具词汇表（只读实例同样可读）。 */
+  async describeDocArtifact(
+    fileId: string,
+  ): Promise<
+    | { ok: true; describe: GenOfficeAgentDocDescription }
+    | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
+  > {
+    const resolved = await this.resolveAgentInstance(fileId, 'docx')
+    if (!resolved.ok) return resolved
+    const target = webContents.fromId(resolved.wcId)
+    if (!target || target.isDestroyed()) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    const described = await this.runtime!.docs.describeAgentDoc(target)
+    if ('error' in described) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    return { ok: true, describe: described }
+  }
+
+  /** Agent 编辑活 Word：渲染层执行 docs AI 工具调用，变更后静默保存（fileSaved → 版本链回填）。 */
+  async applyDocAgentTools(
+    fileId: string,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<AgentArtifactToolsOutcome> {
+    const resolved = await this.resolveAgentInstance(fileId, 'docx')
+    if (!resolved.ok) return resolved
+    if (!resolved.instance.editable) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    const target = webContents.fromId(resolved.wcId)
+    if (!target || target.isDestroyed()) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    if (await this.runtime!.docs.docsQueryDirty(target)) {
+      return { ok: false, reason: 'unsaved', open: this.listOpenOffice() }
+    }
+    const applied = await this.runtime!.docs.applyAgentDocTools(target, calls)
+    if (!('results' in applied)) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    return 'error' in applied && typeof applied.error === 'string'
+      ? { ok: true, results: applied.results, error: applied.error }
+      : { ok: true, results: applied.results }
+  }
+
+  /** Agent 读活 Excel：工作簿上下文 + 工具词汇表 + 操作指南（只读实例同样可读）。 */
+  async describeSpreadsheetArtifact(
+    fileId: string,
+  ): Promise<
+    | { ok: true; describe: GenOfficeAgentWorkbookDescription }
+    | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
+  > {
+    const resolved = await this.resolveAgentInstance(fileId, 'spreadsheet')
+    if (!resolved.ok) return resolved
+    const target = webContents.fromId(resolved.wcId)
+    if (!target || target.isDestroyed()) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    const described = await this.runtime!.sheets.describeAgentWorkbook(target)
+    if ('error' in described) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    return { ok: true, describe: described }
+  }
+
+  /** Agent 编辑活 Excel：渲染层执行 workbook 工具调用（含 propose_operations），变更后静默保存。 */
+  async applySpreadsheetAgentTools(
+    fileId: string,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<AgentArtifactToolsOutcome> {
+    const resolved = await this.resolveAgentInstance(fileId, 'spreadsheet')
+    if (!resolved.ok) return resolved
+    if (!resolved.instance.editable) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    const target = webContents.fromId(resolved.wcId)
+    if (!target || target.isDestroyed()) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    }
+    if (this.runtime!.sheets.sheetsPendingEditCount(resolved.wcId) > 0) {
+      return { ok: false, reason: 'unsaved', open: this.listOpenOffice() }
+    }
+    const applied = await this.runtime!.sheets.applyAgentWorkbookTools(target, calls)
+    if (!('results' in applied)) {
+      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    }
+    return 'error' in applied && typeof applied.error === 'string'
+      ? { ok: true, results: applied.results, error: applied.error }
+      : { ok: true, results: applied.results }
   }
 
   private async waitForInstance(
@@ -720,6 +856,8 @@ export class OfficePreviewRegistry {
     file: OfficePreviewFile,
     editable: boolean,
   ): Promise<{ view: OfficePreviewView; documentPath: string | null }> {
+    // 停靠栏（Agent / 材料 / 历史记录）只由主窗口渲染层挂 SideDock；GenOffice
+    // 自带的对话区/侧栏已从 vendor 源码删除，视图创建不再有 dock 选项。
     if (kind === 'docx') {
       const documentPath = await prepareOfficeDocument(file.id, file.contentHash, file.originalName, file.storagePath)
       const view = OfficeViewManager.createWithRuntime(window, runtime.docs, documentPath, { editable })

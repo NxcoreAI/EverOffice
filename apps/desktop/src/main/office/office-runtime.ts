@@ -5,6 +5,38 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 
+export interface GenOfficeAgentToolCall {
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
+export interface GenOfficeAgentToolResult {
+  id: string
+  name: string
+  output: string
+  isError?: boolean
+  mutated?: boolean
+  summary?: string
+}
+
+export interface GenOfficeAgentDocDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }
+  /** 当前文字水印；null = 无 */
+  watermark?: string | null
+  /** 当前页面设置（orientation/paper/margins/columns/pageColor） */
+  pageSetup?: Record<string, unknown>[]
+  commandsGuide?: string
+  htmlRules?: string
+}
+
+export interface GenOfficeAgentWorkbookDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }[]
+  guides?: Record<string, string>
+}
+
 export interface GenOfficeDocsRuntime {
   configureDocsRuntime(config: {
     preloadPath: string
@@ -13,7 +45,8 @@ export interface GenOfficeDocsRuntime {
   }): void
   createDocsView(
     openPath?: string,
-    options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
+    options?: {
+    },
   ): WebContentsView
   markDocsNewBlank(wcId: number): void
   queueDocsAiContent(wcId: number, content: { title: string; html: string }): void
@@ -40,6 +73,15 @@ export interface GenOfficeDocsRuntime {
   ): void
   setDocsShellWindow(window: BrowserWindow | null): void
   teardownDocsRenderer(contents: WebContents): void
+  /** Agent 读取活文档：块列表上下文 + 工具词汇表 + 命令/HTML 指南（无会话返回 error）。 */
+  describeAgentDoc(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentDocDescription | { error: string }>
+  /** Agent 编辑活文档：渲染层执行 docs AI 工具调用，变更后静默保存（fileSaved hook 回填版本链）。 */
+  applyAgentDocTools(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
   /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx 字节（主进程纯函数）。 */
   buildThesisDocx(
     sourceBytes: Uint8Array,
@@ -87,7 +129,8 @@ export interface ThesisBindingSpecPayload {
 }
 export interface GenOfficeSheetsRuntime {
   configureSheetsRuntime(config: { preloadPath: string; rendererFile: string; sidecarPath: string }): void
-  createSheetsView(options?: { includeAiHandlers?: boolean; readonly?: boolean }): WebContentsView
+  createSheetsView(options?: {
+  }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
   /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
@@ -98,6 +141,15 @@ export interface GenOfficeSheetsRuntime {
   setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void
+  /** Agent 读取活工作簿：工作簿上下文 + 工具词汇表 + 操作指南（无会话返回 error）。 */
+  describeAgentWorkbook(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentWorkbookDescription | { error: string }>
+  /** Agent 编辑活工作簿：渲染层执行 workbook AI 工具调用（含 propose_operations），变更后静默保存。 */
+  applyAgentWorkbookTools(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
 }
 
 export interface GenOfficeAgentDeckResult {
@@ -137,7 +189,10 @@ export interface AgentSlidesEditResult {
 
 export interface GenOfficeSlidesRuntime {
   configureSlidesRuntime(config: { preloadPath: string; rendererFilePath?: string }): void
-  createSlidesView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
+  createSlidesView(
+    openPath?: string | null,
+    options?: { readonly?: boolean },
+  ): WebContentsView
   registerSlidesIpc(): void
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
@@ -188,7 +243,10 @@ export interface GenOfficeSlidesRuntime {
 
 export interface GenOfficePdfRuntime {
   configurePdfRuntime(config: { preloadPath: string; rendererFile?: string }): void
-  createPdfView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
+  createPdfView(
+    openPath?: string | null,
+    options?: { readonly?: boolean },
+  ): WebContentsView
   requestPdfClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   pdfIsDirty(webContentsId: number): boolean
 }

@@ -321,8 +321,8 @@ export class OfficeFixtureStore {
   async materialize(id: string, title: string, spec: NativeFileSpec): Promise<string> {
     const safeId = id.replaceAll(/[^a-zA-Z0-9_-]/g, '_')
     const fileBase = title.replace(/\.(docx|xlsx|pptx|pdf)$/i, '') || '未命名'
-    // 落盘文件用真实标题命名（去掉路径非法字符），编辑器标题与停靠栏
-    // Agent 聊天（iframe 的 file 参数）拿到的就是展示名；重名再退回内部 ID。
+    // 落盘文件用真实标题命名（去掉路径非法字符），编辑器标题与渲染层文件标签
+    // 拿到的就是展示名；重名再退回内部 ID。
     const prettyBase = fileBase.replaceAll(/[/\\:*?"<>|]/g, ' ').trim() || '未命名'
     let name = `${prettyBase}.${spec.kind}`
     let target = join(this.dir, name)

@@ -1,6 +1,5 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import type { Rectangle, WebContentsView } from 'electron'
@@ -16,17 +15,6 @@ import { loadGenOfficeRuntime, type PreparedGenOfficeRuntime } from './runtime'
  */
 
 const BOUNDS_CHANNEL = 'office:bounds'
-
-/**
- * 内嵌停靠栏 Agent 标签装载的聊天页地址：dev 走渲染层开发服务器，
- * 产物走 out/renderer/agent-dock.html。运行时以 docksrc 参数把它传进
- * 编辑器视图，停靠栏（dock=1）用 iframe 打开本页。
- */
-function agentDockUrl(): string {
-  const dev = process.env.ELECTRON_RENDERER_URL
-  if (dev) return `${dev.replace(/\/$/, '')}/agent-dock.html`
-  return pathToFileURL(join(__dirname, '../renderer/agent-dock.html')).toString()
-}
 
 type NativeKind = NativeFileSpec['kind']
 
@@ -206,19 +194,20 @@ export class OfficeBridge {
   ): OfficeInstance {
     const { spec } = request
     const editable = spec.kind !== 'pdf'
-    const dockAgentSrc = agentDockUrl()
+    // GenOffice 自带的对话区/侧栏已从 vendor 源码删除，停靠栏只由主窗口渲染层提供
+    // （SideDock → AgentChatDock → 真实 window.nxcore 网关桥）。
     let view: WebContentsView
     if (spec.kind === 'docx') {
-      view = runtime.docs.createDocsView(path, { hostMode: 'everroom', readonly: false, sideDock: true, dockAgentSrc })
+      view = runtime.docs.createDocsView(path, { hostMode: 'everroom', readonly: false })
     } else if (spec.kind === 'xlsx') {
       runtime.sheets.setSheetsShellWindow(window)
-      view = runtime.sheets.createSheetsView({ includeAiHandlers: false, readonly: false, sideDock: true, dockAgentSrc })
+      view = runtime.sheets.createSheetsView({ includeAiHandlers: false, readonly: false })
       runtime.sheets.queueWorkbookForView(view.webContents, path)
     } else if (spec.kind === 'pptx') {
       runtime.slides.setSlidesShellWindow(window)
-      view = runtime.slides.createSlidesView(path, { readonly: false, sideDock: true, dockAgentSrc })
+      view = runtime.slides.createSlidesView(path, { readonly: false })
     } else {
-      view = runtime.pdf.createPdfView(path, { readonly: true, sideDock: true, dockAgentSrc })
+      view = runtime.pdf.createPdfView(path, { readonly: true })
     }
     view.setVisible(false)
     window.contentView.addChildView(view)

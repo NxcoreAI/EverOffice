@@ -57,7 +57,10 @@ export class SpreadsheetViewManager {
     const path = await prepareSpreadsheet(file.id, file.contentHash, file.originalName, file.storagePath)
     const editable = options?.editable === true
     sheets.setSheetsShellWindow(window)
-    const view = sheets.createSheetsView({ includeAiHandlers: false, readonly: !editable })
+    const view = sheets.createSheetsView({
+      includeAiHandlers: false,
+      readonly: !editable,
+    })
     sheets.queueWorkbookForView(view.webContents, path)
     sheets.setActiveSheetsWebContents(view.webContents)
     view.setVisible(false)

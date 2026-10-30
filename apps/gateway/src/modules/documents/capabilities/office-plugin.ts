@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { annotations, manifest } from "./shared.js";
 import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageProgressReporter } from "./types.js";
 import type {
+  OfficeAgentToolCall,
   OfficeApplyBytesResult,
   OfficeBridgeClient,
   OfficeSheetBridgeInput,
@@ -811,6 +812,229 @@ export function officePlugin(
     },
   };
 
+  // ── 活 Word/Excel 宿主执行器（渲染层 AI 工具直通：块级/富文本编辑 + propose_operations DSL）──
+
+  const agentToolsFailureMessage = (title: string, message: string): string =>
+    `《${title}》无法执行：${message}`;
+
+  const wordAgentRead: DocumentCapabilityTool = {
+    name: "word_agent_read",
+    title: "读取当前 Word 的块结构与工具指南",
+    description: "读取用户当前浏览（或显式 fileId）的 .docx 的活文档状态：块列表（index|type|内容预览）、全文统计、"
+      + "以及可用的编辑工具词汇表（insert_content/replace_blocks/apply_commands 等）与 HTML 片段规则、命令指南。"
+      + "块索引是 word_agent_edit 的定位依据：每次编辑后索引会变，需要最新索引时重新调用本工具。"
+      + "只读打开的文件也能读。比 office_read 的段落列表更精确（含块类型/预览截断标记）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+      },
+      required: [],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_agent_read 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      try {
+        const described = await bridge.describeAgentArtifact({ kind: "docx", fileId: target.fileId });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...described,
+          hint: "用 context 里的块索引驱动 word_agent_edit 的工具调用；replace_blocks/insert_content 的 html 遵循 htmlRules。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
+  const wordAgentEdit: DocumentCapabilityTool = {
+    name: "word_agent_edit",
+    title: "用文档 AI 工具链编辑当前 Word",
+    description: "把 GenOffice Docs 的编辑器 AI 工具调用直接作用到用户正开着的 .docx 上（编辑实时重绘，随后静默保存并更新版本）。"
+      + "先 word_agent_read 拿块索引与规则。可用工具（本环境不支持联网类工具）："
+      + "get_document_context（刷新块列表）、read_blocks（读块全文）、"
+      + "insert_content（{afterIndex, html} 插入）、replace_blocks（{start, end, html} 区间替换）、"
+      + "apply_commands（格式/结构/查找替换/批处理，命令见 word_agent_read 返回的 commandsGuide）、"
+      + "read_revisions / read_comments / reply_comment / resolve_comment（修订与评论）、"
+      + "insert_chart / edit_chart（图表）、set_header_footer（页眉页脚，text 里 {PAGE}/{NUMPAGES} 是页码/总页数域，\n 分行）、"
+      + "set_watermark（{text} 设置文字水印如 机密/草稿，text:null 移除；当前水印见 word_agent_read 的 watermark 字段）、"
+      + "set_page_setup（{orientation/paperSize/margins(单位 twip, 1cm=567)/columns/pageColor/theme} 页面设置与主题；当前值见 pageSetup 字段）、"
+      + "insert_image_base64（{base64, mime, afterIndex?, maxWidthPx?} 插图：宿主外的取图由你自己完成后传 base64 字节）、"
+      + "add_comment（{startIndex, endIndex?, text} 在块上建批注）、delete_comment（{id} 删整个批注线程）、"
+      + "insert_shape（{prst, widthEmu?, heightEmu?, afterIndex?} 插入形状，prst 如 rect/roundRect/ellipse/triangle/star5/lineArrow）、"
+      + "update_toc（{} 重建目录并回填真实页码）。"
+      + "一次最多 50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
+      + "文件必须以可编辑方式打开且有未保存修改时会被拒绝（提示用户先保存）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        calls: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          description: "工具调用数组（{id, name, input}），name 必须是 word_agent_read 返回的 tools 之一",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["id", "name", "input"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              name: { type: "string", minLength: 1 },
+            },
+          },
+        },
+      },
+      required: ["calls"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.calls) || args.calls.length === 0) {
+        throw new Error("INVALID_REQUEST: calls 必须是非空数组");
+      }
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_agent_edit 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      try {
+        const applied = await bridge.applyAgentArtifactTools({
+          kind: "docx",
+          fileId: target.fileId,
+          calls: args.calls as OfficeAgentToolCall[],
+        });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...applied,
+          nextAction: "report_result",
+          hint: applied.results?.some((r) => r.isError)
+            ? "部分调用失败：读每条 output 修正后重试失败的调用；成功条目已生效，不要重复执行。"
+            : "修改已生效并保存；回复里只说明改了什么。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
+  const sheetsAgentRead: DocumentCapabilityTool = {
+    name: "sheets_agent_read",
+    title: "读取当前 Excel 的工作簿上下文与操作指南",
+    description: "读取用户当前浏览（或显式 fileId）的 .xlsx 的活工作簿状态：工作表清单（id/名称/数据范围）、当前选区、"
+      + "已知非空单元格，以及 propose_operations DSL 的工具词汇表与全部操作指南（writing/formatting/layout/structure/charts/…）。"
+      + "sheetId 是 sheets_agent_edit 里操作的定位依据（不是工作表名）。"
+      + "只读打开的文件也能读。比 sheets_read 更适合作为 propose_operations 的前置。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+      },
+      required: [],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.xlsx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: sheets_agent_read 只支持 .xlsx；《${target.entry.originalName}》不是 Excel 表格`);
+      }
+      try {
+        const described = await bridge.describeAgentArtifact({ kind: "spreadsheet", fileId: target.fileId });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...described,
+          hint: "读单元格用 read_range/read_cells；写改动用 propose_operations（op 字段定义在 guides 里，先查再写）。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
+  const sheetsAgentEdit: DocumentCapabilityTool = {
+    name: "sheets_agent_edit",
+    title: "用表格 AI 工具链编辑当前 Excel",
+    description: "把 GenOffice Sheets 的编辑器 AI 工具调用直接作用到用户正开着的 .xlsx 上（编辑实时重绘，随后静默保存并更新版本）。"
+      + "先 sheets_agent_read 拿工作簿上下文与指南。常用工具："
+      + "read_range / read_cells（读值与公式）、find_cells（全簿搜索）、select_range（选区定位）、"
+      + "aggregate_range（大批量统计）、propose_operations（{operations, summary} 唯一的写路径，op 定义见指南）、"
+      + "trace_precedents / trace_dependents（公式审计）。"
+      + "打印控制走 set_page_setup（含 printArea/printTitles/header/footer（&P 页码 &N 总页数 &D 日期 &A 表名）/rowBreaks/colBreaks）、"
+      + "条件格式支持 iconSet 图标集。"
+      + "一次最多 50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
+      + "文件必须以可编辑方式打开且有未保存修改时会被拒绝（提示用户先保存）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        calls: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          description: "工具调用数组（{id, name, input}），name 必须是 sheets_agent_read 返回的 tools 之一",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["id", "name", "input"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              name: { type: "string", minLength: 1 },
+            },
+          },
+        },
+      },
+      required: ["calls"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.calls) || args.calls.length === 0) {
+        throw new Error("INVALID_REQUEST: calls 必须是非空数组");
+      }
+      const target = await resolveEditableTarget(args, context);
+      if (!/\.xlsx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: sheets_agent_edit 只支持 .xlsx；《${target.entry.originalName}》不是 Excel 表格`);
+      }
+      try {
+        const applied = await bridge.applyAgentArtifactTools({
+          kind: "spreadsheet",
+          fileId: target.fileId,
+          calls: args.calls as OfficeAgentToolCall[],
+        });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...applied,
+          nextAction: "report_result",
+          hint: applied.results?.some((r) => r.isError)
+            ? "部分调用失败：读每条 output 修正后重试失败的调用；成功条目已生效，不要重复执行。"
+            : "修改已生效并保存；回复里只说明改了哪些单元格/工作表。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
   return {
     manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
@@ -833,6 +1057,7 @@ export function officePlugin(
       slidesRead,
       slidesEdit,
       ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
+      ...(files ? [wordAgentRead, wordAgentEdit, sheetsAgentRead, sheetsAgentEdit] : []),
     ],
   };
 }

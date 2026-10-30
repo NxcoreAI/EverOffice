@@ -97,6 +97,40 @@ export interface OfficeSlidesEditInput {
   isolation?: "atomic" | "per_op";
 }
 
+/** /v1/office-agent-tools 工具调用（docs/sheets 渲染层 AI 工具）。 */
+export interface OfficeAgentToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** describe 结果：上下文 + 工具词汇表（+ 指南）。 */
+export interface OfficeAgentArtifactDescription {
+  context: string;
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  commandsGuide?: string;
+  htmlRules?: string;
+  guides?: Record<string, string>;
+  /** current text watermark (Word), null when the document has none */
+  watermark?: string | null;
+  /** current page setup: orientation/paper/margins/columns/pageColor/sectionCount */
+  pageSetup?: Record<string, unknown>;
+}
+
+/** apply 结果：逐调用结果（isError = 该调用失败；mutated = 有落盘变更）。 */
+export interface OfficeAgentToolsResult {
+  ok: boolean;
+  error?: string;
+  results?: Array<{
+    id: string;
+    name: string;
+    output: string;
+    isError?: boolean;
+    mutated?: boolean;
+    summary?: string;
+  }>;
+}
+
 export class OfficeBridgeClient {
   constructor(private readonly config: NonNullable<GatewayConfig["officeBridge"]>) {}
 
@@ -202,6 +236,44 @@ export class OfficeBridgeClient {
       page: { slideIndex: input.slideIndex, specJson: input.specJson },
     });
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
+  }
+
+  /** 活 Word/Excel describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
+  async describeAgentArtifact(
+    input: { kind: "docx" | "spreadsheet"; fileId: string },
+  ): Promise<OfficeAgentArtifactDescription> {
+    const data = await this.postAgentTools({ ...input, mode: "read" });
+    const describe = (data.describe ?? {}) as Record<string, unknown>;
+    const result: OfficeAgentArtifactDescription = {
+      context: typeof describe.context === "string" ? describe.context : "",
+      tools: [],
+      guides: {},
+    };
+    if (Array.isArray(describe.tools)) result.tools = describe.tools as NonNullable<OfficeAgentArtifactDescription["tools"]>;
+    if (describe.guides && typeof describe.guides === "object") result.guides = describe.guides as Record<string, string>;
+    if (typeof describe.commandsGuide === "string") result.commandsGuide = describe.commandsGuide;
+    if (typeof describe.htmlRules === "string") result.htmlRules = describe.htmlRules;
+    if (typeof describe.watermark === "string" || describe.watermark === null) {
+      result.watermark = describe.watermark;
+    }
+    if (describe.pageSetup && typeof describe.pageSetup === "object") {
+      result.pageSetup = describe.pageSetup as Record<string, unknown>;
+    }
+    return result;
+  }
+
+  /** 活 Word/Excel apply：渲染层执行 docs/sheets AI 工具调用（编辑实时重绘，随后静默保存）。 */
+  async applyAgentArtifactTools(
+    input: { kind: "docx" | "spreadsheet"; fileId: string; calls: OfficeAgentToolCall[] },
+  ): Promise<OfficeAgentToolsResult> {
+    const data = await this.postAgentTools({ ...input, mode: "apply" });
+    const result: OfficeAgentToolsResult = {
+      ok: true,
+      results: [],
+    };
+    if (typeof data.error === "string") result.error = data.error;
+    if (Array.isArray(data.results)) result.results = data.results as NonNullable<OfficeAgentToolsResult["results"]>;
+    return result;
   }
 
   /** 视觉复检：已打开 slides 产物的一页 → 1x PNG base64（渲染层离屏栅格化，秒级）。 */
@@ -337,6 +409,30 @@ export class OfficeBridgeClient {
       ...(typeof data.version === "number" ? { version: data.version } : {}),
       ...(typeof data.fileVersionId === "string" ? { fileVersionId: data.fileVersionId } : {}),
     }
+  }
+
+  private async postAgentTools(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-agent-tools`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+      // 渲染层执行 + 一次静默保存；大文档的 insert/replace 可能接近这个量级。
+      signal: AbortSignal.timeout(150_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+    };
+    if (!response.ok) {
+      throw new Error(
+        typeof parsed.message === "string" ? parsed.message : `Office agent-tools failed (${response.status})`,
+      );
+    }
+    return parsed.data ?? {};
   }
 
   private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {
