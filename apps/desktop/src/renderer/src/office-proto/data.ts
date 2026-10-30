@@ -29,6 +29,9 @@ export interface OfficeFile {
   sizeLabel: string
   memoryCount: number
   content: FileContent
+  /** 真实文件库条目：存在时编辑页走 nxcore 文件库内置预览（可编辑 + 保存回填版本链），
+   *  不存在（mock 文件）才走原型 GenOffice 桥。 */
+  realCatalog?: FileCatalogDto
 }
 
 export const files: OfficeFile[] = [
@@ -349,35 +352,10 @@ export const sourceMeta: Record<SourceKind, { label: string; color: string }> = 
   note: { label: '笔记', color: '#2fa14e' },
 }
 
-/* ───────────── 连接器 ───────────── */
-
-import type { BrandSlug } from './brandLogos'
-
-export interface Connector {
-  id: string
-  name: string
-  desc: string
-  category: string
-  slug: BrandSlug
-  color: string
-  connected: boolean
-  lastSyncLabel?: string
-  scopes: string[]
-}
-
-export const connectorCategories = ['邮件与日历', '文档与云盘', '通讯协作', '开发与工具']
-
-export const connectors: Connector[] = [
-  { id: 'c-gmail', name: 'Gmail', desc: '邮件是记忆的主要来源，支持检索与代回', category: '邮件与日历', slug: 'gmail', color: '#EA4335', connected: true, lastSyncLabel: '5 分钟前', scopes: ['读取邮件正文', '搜索邮件', '以你的名义回复'] },
-  { id: 'c-outlook', name: 'Outlook 日历', desc: '同步日程与参会人，会前自动摘要', category: '邮件与日历', slug: 'outlook', color: '#0F6CBD', connected: true, lastSyncLabel: '1 小时前', scopes: ['读取日程', '读取参会人', '写入日程'] },
-  { id: 'c-drive', name: 'Google Drive', desc: '把云盘文档纳入引用范围', category: '文档与云盘', slug: 'googledrive', color: '#1FAF73', connected: false, scopes: ['浏览文件', '读取文档内容'] },
-  { id: 'c-notion', name: 'Notion', desc: '同步工作区页面为知识来源', category: '文档与云盘', slug: 'notion', color: '#181717', connected: false, scopes: ['读取页面', '搜索工作区'] },
-  { id: 'c-feishudoc', name: '飞书云文档', desc: '读取云文档与知识库节点', category: '文档与云盘', slug: 'feishu', color: '#3370FF', connected: true, lastSyncLabel: '20 分钟前', scopes: ['读取云文档', '读取知识库'] },
-  { id: 'c-feishuim', name: '飞书消息', desc: '从群聊提取决策与待办', category: '通讯协作', slug: 'feishu', color: '#00B8D9', connected: false, scopes: ['读取消息', '发送消息'] },
-  { id: 'c-slack', name: 'Slack', desc: '频道消息检索与摘要', category: '通讯协作', slug: 'slack', color: '#4A154B', connected: false, scopes: ['读取频道', '读取消息'] },
-  { id: 'c-github', name: 'GitHub', desc: '跟踪仓库动态与排期 Issue', category: '开发与工具', slug: 'github', color: '#181717', connected: true, lastSyncLabel: '2 小时前', scopes: ['读取仓库', '读取 Issue 与 PR'] },
-  { id: 'c-linear', name: 'Linear', desc: '同步项目与任务进展', category: '开发与工具', slug: 'linear', color: '#5E6AD2', connected: false, scopes: ['读取 Issue', '读取项目'] },
-]
+/* ───────────── 连接器 ─────────────
+ * 连接器页已改为真实数据驱动（pages/ConnectorsView.tsx）：
+ * 目录来自网关注册表（nangoConnector.providers），连接状态来自
+ * nangoConnector.status，不再使用这里的 mock 目录。 */
 
 /* ───────────── 模板 / 起草 ───────────── */
 
@@ -559,8 +537,9 @@ export const starterPrompts: Record<FileKind, string[]> = {
 
 /* ───────────── EverRoomMac 真实文件接入（迁移附加层，不改上方原型数据） ─────────────
  * 有 preload 网关桥（window.nxcore.files）时，最近/所有文件列表显示真实文件库；
- * 打开真实 docx/xlsx/pptx/pdf 走 nxcore.files.openOriginal（内置 GenOffice 预览，
- * 可编辑），无桥或打开失败时回退原型 mock 行为。 */
+ * 真实 docx/xlsx/pptx/pdf 点开后进标签页，由 NativeEditorHost 的 realCatalog 分支
+ * 调 nxcore.files.openOriginal 打开内置 GenOffice 预览（可编辑，保存回填版本链），
+ * 无桥/为空时回退原型 mock 列表。 */
 
 import type { FileCatalogDto } from '@/shared/ingest'
 
@@ -613,35 +592,25 @@ export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | n
       updatedLabel: updatedLabelFrom(catalog.updatedAt),
       sizeLabel: bytesToLabel(catalog.bytes),
       memoryCount: 0,
-      // 真实文件内容不走 mock content：打开走 openOriginal 原生预览
+      // 真实文件内容不走 mock content：编辑页按 realCatalog 打开文件库内置预览。
       content: { type: 'md', source: '' },
+      realCatalog: catalog,
     },
   }
 }
 
-/** 拉取真实文件库（只取能映射到五种原型类型的）；无桥/失败返回 null（调用方回退 mock）。 */
-export async function fetchRealFiles(limit = 100): Promise<RealOfficeFile[] | null> {
+/** 拉取真实文件库（只取能映射到五种原型类型的）；无桥/失败返回 null（调用方回退 mock）。
+ *  total 是文件库全量计数（分页语义，不受 limit 影响），供「最近」页副标题等展示。 */
+export async function fetchRealFiles(limit = 100): Promise<{ items: RealOfficeFile[]; total: number } | null> {
   const api = window.nxcore?.files
   if (!api?.list) return null
   try {
-    const { items } = await api.list(limit)
-    return items
-      .map(catalogToOfficeFile)
-      .filter((x): x is RealOfficeFile => x !== null)
+    const { items, total } = await api.list(limit)
+    return {
+      items: items.map(catalogToOfficeFile).filter((x): x is RealOfficeFile => x !== null),
+      total,
+    }
   } catch {
     return null
-  }
-}
-
-/** 打开真实文件：优先内置 GenOffice 预览（docx/xlsx/pptx/pdf 可编辑）。
- * 返回 true = 已用原生预览打开；false = 不支持/失败，调用方回退 mock 打开。 */
-export async function openRealFile(catalog: FileCatalogDto, editable = true): Promise<boolean> {
-  const api = window.nxcore?.files
-  if (!api?.openOriginal) return false
-  try {
-    const result = await api.openOriginal(catalog.id, catalog.originalName, catalog.contentHash, { editable })
-    return result.openedWith === 'office' || result.openedWith === 'external'
-  } catch {
-    return false
   }
 }

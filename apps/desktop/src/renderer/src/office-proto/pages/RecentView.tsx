@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { Sparkles, RefreshCw, ChevronRight } from 'lucide-react'
 
+import { useOptionalAccount } from '@/state/AccountContext'
+
 import {
   type InsightAction, type OfficeFile, blankFile, dailyInsight, dailyInsightActions,
-  draftFile, files, draftingSteps, fetchRealFiles, openRealFile, type RealOfficeFile,
+  draftFile, files, draftingSteps, fetchRealFiles, type RealOfficeFile,
 } from '../data'
 import { FileTable, FileTypeIcon } from './parts'
 
@@ -14,6 +16,10 @@ function greeting(): string {
   if (h < 18) return '下午好'
   return '晚上好'
 }
+
+/** 每日洞察卡的数据仍是原型 mock（data.ts 的 dailyInsight），
+ *  接上真实洞察数据源前先隐藏；恢复时置回 true 即可。 */
+const SHOW_DAILY_INSIGHT = false
 
 /** 打字机效果：AI「正在说话」的感觉；nonce 变化时从头再打一遍。 */
 function useTypewriter(text: string, nonce: number): string {
@@ -46,22 +52,24 @@ export function RecentView({
   const [drafting, setDrafting] = useState(false)
   // EverRoomMac 接入：有真实文件库时最近文件显示真实文件（打开走内置预览）。
   const [real, setReal] = useState<RealOfficeFile[] | null>(null)
+  // 副标题的真实文件库计数；null = 无桥/查询失败（文案退回中性兜底）。
+  const [fileTotal, setFileTotal] = useState<number | null>(null)
+  // 问候语用真实账号名（AccountProvider，App 内必有）；无 provider（浏览器预览/
+  // 单测）或未登录/缺名字时退回不含姓名的纯问候，不再显示 mock 人名「王小雨」。
+  const accountState = useOptionalAccount()
+  const accountName = accountState?.account?.user?.name || null
 
   useEffect(() => {
     let cancelled = false
-    void fetchRealFiles(20).then((items) => {
-      if (!cancelled) setReal(items)
+    void fetchRealFiles(20).then((result) => {
+      if (cancelled || !result) return
+      setReal(result.items)
+      setFileTotal(result.total)
     })
     return () => { cancelled = true }
   }, [])
 
-  const openFromTable = (f: OfficeFile) => {
-    const entry = real?.find((x) => x.file.id === f.id)
-    if (!entry) { onOpenFile(f); return }
-    void openRealFile(entry.catalog).then((opened) => {
-      if (!opened) onOpenFile(f)
-    })
-  }
+  const openFromTable = (f: OfficeFile) => onOpenFile(f)
 
   const act = (a: InsightAction) => {
     if (a.type === 'draft') { setDrafting(true); return }
@@ -72,30 +80,46 @@ export function RecentView({
   return (
     <>
       <section className="op-greeting">
-        <h1>{greeting()}，王小雨</h1>
-        <p>今天有 3 封新邮件和 1 场会议进入了你的记忆，随时可以调用。</p>
+        <h1>{greeting()}{accountName ? `，${accountName}` : ''}</h1>
+        <p>
+          {fileTotal !== null && fileTotal > 0
+            ? `文件库里已有 ${fileTotal} 份文件进入了你的记忆，随时可以调用。`
+            : '文件库还没有内容，导入文件后即可在记忆中调用。'}
+        </p>
       </section>
 
-      <InsightCard onAct={act} onToast={onToast} />
+      {SHOW_DAILY_INSIGHT && <InsightCard onAct={act} onToast={onToast} />}
 
       <section className="op-section">
-        <div className="op-section-head"><h2>新建</h2></div>
+        <div className="op-section-head"><h2>新建</h2><span className="op-section-hint">从空白开始，随时接入记忆</span></div>
         <div className="op-create-row">
           <button className="op-create-tile" type="button" onClick={() => onOpenFile(blankFile('docx'))}>
-            <FileTypeIcon kind="docx" size={46} />
-            <span className="op-create-name">文字文档</span>
+            <FileTypeIcon kind="docx" size={40} />
+            <span className="op-create-text">
+              <span className="op-create-name">文字文档</span>
+              <span className="op-create-desc">写报告、方案与说明</span>
+            </span>
           </button>
           <button className="op-create-tile" type="button" onClick={() => onOpenFile(blankFile('xlsx'))}>
-            <FileTypeIcon kind="xlsx" size={46} />
-            <span className="op-create-name">表格</span>
+            <FileTypeIcon kind="xlsx" size={40} />
+            <span className="op-create-text">
+              <span className="op-create-name">表格</span>
+              <span className="op-create-desc">整理数据与预算</span>
+            </span>
           </button>
           <button className="op-create-tile" type="button" onClick={() => onOpenFile(blankFile('pptx'))}>
-            <FileTypeIcon kind="pptx" size={46} />
-            <span className="op-create-name">演示</span>
+            <FileTypeIcon kind="pptx" size={40} />
+            <span className="op-create-text">
+              <span className="op-create-name">演示</span>
+              <span className="op-create-desc">做汇报与提案</span>
+            </span>
           </button>
           <button className="op-create-tile" type="button" onClick={() => onOpenFile(blankFile('md'))}>
-            <FileTypeIcon kind="md" size={46} />
-            <span className="op-create-name">Markdown</span>
+            <FileTypeIcon kind="md" size={40} />
+            <span className="op-create-text">
+              <span className="op-create-name">Markdown</span>
+              <span className="op-create-desc">写笔记与技术文档</span>
+            </span>
           </button>
         </div>
       </section>

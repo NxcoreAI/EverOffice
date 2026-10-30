@@ -198,13 +198,31 @@ export function isAutoFallbackTitle(serverTitle: string | null | undefined, acce
   return serverTitle?.trim() === acceptedPrompt.slice(0, 48).trim()
 }
 
+export interface UseAgentSessionOptions {
+  /** 工作区工作台：会话清单按 workspaceId 过滤，新建会话归属该工作区。 */
+  workspaceId?: string | null
+  /**
+   * 初始选中会话：
+   * - undefined = 沿用原有行为（本地记忆 → 第一条）
+   * - null = 草稿态（不自动选会话）
+   * - string = 选中该会话
+   */
+  initialSessionId?: string | null
+}
+
 export function useAgentSession(
   pageLabel: string,
   roomId: string | null,
   rooms: AgentRoomReference[],
+  options: UseAgentSessionOptions = {},
 ) {
   const { locale, t } = useLocale()
   const api = window.nxcore?.agent
+  const workspaceId = options.workspaceId ?? null
+  const workspaceIdRef = useRef<string | null>(workspaceId)
+  workspaceIdRef.current = workspaceId
+  /** 只在挂载时生效：之后切会话由工作台调用 selectSessionById。 */
+  const initialSessionIdRef = useRef<string | null | undefined>(options.initialSessionId)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<AgentSession[]>([])
   const [currentSession, setCurrentSession] = useState<AgentSession | null>(null)
@@ -772,15 +790,26 @@ export function useAgentSession(
     if (api) {
       setLoading(true)
       // 原型适配：会话列表按当前页面（pageLabel）过滤，停靠栏只看到本文件的
-      // 会话；mock 后端已支持该参数（真实后端本就按 scope 返回）。
-      void api.listSessions(pageLabel)
+      // 会话；工作台（workspaceId）模式下列出全部会话再按工作区过滤——工作区
+      // 是会话分区键，pageLabel 只是最后出现的界面。
+      void api.listSessions(workspaceId ? undefined : pageLabel)
         .then(async (listedSessions) => {
           if (!alive) return
-          const userSessions = listedSessions.filter(isUserSession)
+          const scoped = workspaceId
+            ? listedSessions.filter((session) => session.workspaceId === workspaceId)
+            : listedSessions
+          const userSessions = scoped.filter(isUserSession)
           setSessions(userSessions)
+          const requested = initialSessionIdRef.current
           const storedSessionId = readStoredSession()
-          const selected = userSessions.find((session) => session.id === storedSessionId)
-            ?? userSessions[0]
+          const wanted = requested !== undefined ? requested : storedSessionId
+          // 显式传了 initialSessionId（工作台的会话视图）就严格按它选；未传（文件
+          // 停靠栏）时「全局记住的会话」可能属于别的分区，找不到就回落到本分区最近
+          // 一条，否则停靠栏会误停在草稿态、看不到本文件的对话记录。
+          const selected = (wanted
+            ? userSessions.find((session) => session.id === wanted)
+            : undefined)
+            ?? (requested === undefined ? userSessions[0] : undefined)
           if (selected) await selectSession(selected)
           else if (alive) {
             // 无历史会话：停在草稿态（不建会话），首条消息发出时才创建——
@@ -829,7 +858,7 @@ export function useAgentSession(
       pendingEventsRef.current = []
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush])
+  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush, workspaceId])
 
   // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
   // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
@@ -860,8 +889,11 @@ export function useAgentSession(
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
       const session = await api.createSession({
-        pageLabel: 'Agent',
+        // 分区键必须与 listSessions 一致：停靠栏按 pageLabel（= 文件名）列会话，
+        // 建会话若写死 'Agent'，它永远列不出自己刚建的会话（离开再回来即丢失）。
+        pageLabel,
         roomId: null,
+        ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
         // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
         ...(channelAgentDefaultRef.current
           ? { channelAgentId: channelAgentDefaultRef.current }

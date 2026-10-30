@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 
 import everroomAppIcon from '@/assets/everroom-app-icon.png'
+import { useOptionalAccount } from '@/state/AccountContext'
 
 import { type MenuKey, type OfficeFile, blankFile } from './data'
 import { FileTypeIcon } from './pages/parts'
@@ -13,12 +14,15 @@ import { AgentView } from './pages/AgentView'
 import { KnowledgeView } from './pages/KnowledgeView'
 import { ConnectorsView } from './pages/ConnectorsView'
 import { EditorView } from './EditorView'
+import { SettingsView } from './SettingsView'
 
 export function OfficeProto() {
   // 标签栏状态：activeId 为 null 表示停在主页 tab。
   const [tabs, setTabs] = useState<OfficeFile[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  // 设置页：侧栏账户栏的齿轮打开（覆盖整个窗口，含账号/登录、模型、连接器等）。
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     if (!toast) return
@@ -32,16 +36,24 @@ export function OfficeProto() {
   }
 
   const closeTab = (id: string) => {
+    const target = tabs.find((t) => t.id === id)
+    // 真实文件走文件库预览实例（脏关闭守卫在 officePreviewRegistry），mock 文件走原型桥。
+    const closing = target?.realCatalog
+      ? window.nxcore?.office.closeInstance(target.realCatalog.id)
+      : window.desktop?.office.close(id)
     // 先过主进程的脏关闭守卫（GenOffice 保存对话框里点取消 → 保留标签）。
-    void window.desktop?.office.close(id).then((closed) => {
-      if (closed === false) return
-      setTabs((prev) => {
-        const idx = prev.findIndex((t) => t.id === id)
-        const next = prev.filter((t) => t.id !== id)
-        if (activeId === id) setActiveId(next[Math.min(idx, next.length - 1)]?.id ?? null)
-        return next
+    void Promise.resolve(closing)
+      .then((closed) => {
+        if (closed === false) return
+        setTabs((prev) => {
+          const idx = prev.findIndex((t) => t.id === id)
+          const next = prev.filter((t) => t.id !== id)
+          if (activeId === id) setActiveId(next[Math.min(idx, next.length - 1)]?.id ?? null)
+          return next
+        })
       })
-    })
+      // 关闭失败（主窗口不可用等）保留标签页，别让 rejection 冒成全局错误。
+      .catch(() => undefined)
   }
 
   return (
@@ -57,7 +69,11 @@ export function OfficeProto() {
       />
       <div className="op-window-body">
         <div className={activeId === null ? 'op-tabpane active' : 'op-tabpane'}>
-          <HomeView onOpenFile={openFile} onToast={setToast} />
+          <HomeView
+            onOpenFile={openFile}
+            onToast={setToast}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </div>
         {tabs.map((t) => (
           <div key={t.id} className={t.id === activeId ? 'op-tabpane active' : 'op-tabpane'}>
@@ -66,6 +82,7 @@ export function OfficeProto() {
         ))}
       </div>
       {toast && <div className="op-toast">{toast}</div>}
+      {settingsOpen && <SettingsView onClose={() => setSettingsOpen(false)} />}
     </div>
   )
 }
@@ -125,7 +142,21 @@ function TabBar({
 }
 
 /** 主页标签页内部的侧边栏（品牌 + 五个一级菜单 + 账户），不分组。 */
-function Sidebar({ active, onSelect }: { active: MenuKey; onSelect: (k: MenuKey) => void }) {
+function Sidebar({
+  active, onSelect, onOpenSettings,
+}: {
+  active: MenuKey
+  onSelect: (k: MenuKey) => void
+  onOpenSettings: () => void
+}) {
+  // 真实登录态（Electron 里由 AccountProvider 提供）；无 provider（浏览器预览/单测）
+  // 时退回登录入口文案，齿轮始终可点开设置页。
+  const accountState = useOptionalAccount()
+  const account = accountState?.account ?? null
+  const accountName = account?.user?.name || account?.user?.email || account?.user?.phone || null
+  const signedIn = account?.authenticated === true
+  const userbarName = signedIn && accountName ? accountName : signedIn ? '已登录' : '登录 / 设置'
+  const avatarText = signedIn && accountName ? accountName.trim().slice(0, 1).toUpperCase() : '登'
   const menus: { key: MenuKey; label: string; icon: React.ReactNode }[] = [
     { key: 'recent', label: '最近', icon: <Clock size={18} /> },
     { key: 'files', label: '所有文件', icon: <FolderOpen size={18} /> },
@@ -158,9 +189,16 @@ function Sidebar({ active, onSelect }: { active: MenuKey; onSelect: (k: MenuKey)
         </div>
       </nav>
       <div className="op-sidebar-foot">
-        <button className="op-userbar" type="button" title="账户与设置">
-          <div className="op-avatar">王</div>
-          <span className="op-userbar-name">王小雨</span>
+        <button
+          className="op-userbar"
+          type="button"
+          title="账户与设置"
+          aria-label="账户与设置"
+          aria-haspopup="dialog"
+          onClick={onOpenSettings}
+        >
+          <div className="op-avatar" aria-hidden="true">{avatarText}</div>
+          <span className="op-userbar-name">{userbarName}</span>
           <span className="op-userbar-gear"><Settings size={15} /></span>
         </button>
       </div>
@@ -185,16 +223,17 @@ function NavItem({
 }
 
 function HomeView({
-  onOpenFile, onToast,
+  onOpenFile, onToast, onOpenSettings,
 }: {
   onOpenFile: (f: OfficeFile) => void
   onToast: (msg: string) => void
+  onOpenSettings: () => void
 }) {
   const [view, setView] = useState<MenuKey>('recent')
 
   return (
     <div className="op-home">
-      <Sidebar active={view} onSelect={setView} />
+      <Sidebar active={view} onSelect={setView} onOpenSettings={onOpenSettings} />
       <div className="op-home-main">
         <div className="op-scroll">
           {view === 'recent' && (

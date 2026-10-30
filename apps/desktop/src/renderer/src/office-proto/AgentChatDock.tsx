@@ -1,6 +1,7 @@
 // 编辑器停靠栏的 Agent 聊天面板：移植自 EverRoom 的 AgentPanel/AgentChatView
 // 全套交互框架（多会话切换 / 工具时间线 / 流式回答 / 写入审阅 / 排队发送 /
-// 模型档位 / 权限模式 / @提及），数据源是 agentChatMock 的脚本化事件流。
+// 模型档位 / 权限模式 / @提及），数据源是主窗口 preload 暴露的真实网关桥
+// （window.nxcore.agent → 主进程 IPC → AgentGatewayBridge → gateway）。
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { LocaleProvider } from '@/i18n/LocaleContext'
@@ -15,10 +16,7 @@ import { onToast as onAppToast } from '@/state/toast'
 import '@/components/agent/AgentChat.css'
 import '@/components/agent/AgentPanel.css'
 
-import { installAgentChatMock } from './agentChatMock'
 import { type OfficeFile, starterPrompts } from './data'
-
-installAgentChatMock()
 
 export function AgentChatDock({ file, onToast }: { file: OfficeFile; onToast: (msg: string) => void }) {
   const operationBridge = useMemo(() => desktopOperationBridge(), [])

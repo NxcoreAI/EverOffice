@@ -1,45 +1,61 @@
 import React, { useState } from 'react'
-import { MoreHorizontal, Search, List, LayoutGrid, ChevronDown, X } from 'lucide-react'
+import {
+  ChevronDown, FileText, Files, Import, LayoutGrid, List, MoreHorizontal, Search, X,
+} from 'lucide-react'
 
-import { type FileKind, type OfficeFile, kindMeta } from '../data'
+import { blankFile, type FileKind, type OfficeFile, kindMeta } from '../data'
 
-/* ───────────── WPS 风格文件类型图标 ─────────────
-   渐变圆角方块（squircle）+ 白色类型字母 + 顶部高光，
-   配色与「新建」tiles 一致：W=文档 S=表格 P=演示，PDF / MD 小尺寸收成单字母。 */
+/* ───────────── 文件类型图标 ─────────────
+   暖纸体系下的统一文件图标：低透明度色块 + 同色墨字。
+   色相全部取自 --ui-icon-* token，同一套比例从 15px（标签栏）缩放到 46px（新建卡），
+   不再用高饱和渐变，免得在暖纸底上抢戏。 */
 
-const ftThemes: Record<FileKind, { from: string; to: string; letters: string }> = {
-  docx: { from: '#4aa3ff', to: '#0a6fe8', letters: 'W' },
-  xlsx: { from: '#4cc478', to: '#1f9450', letters: 'S' },
-  pptx: { from: '#ffb340', to: '#ef7d0e', letters: 'P' },
-  pdf: { from: '#ff6f61', to: '#e0362a', letters: 'PDF' },
-  md: { from: '#b9bbc2', to: '#83868f', letters: 'MD' },
+const ftThemes: Record<FileKind, { ink: string; letters: string }> = {
+  docx: { ink: 'var(--ui-icon-doc)', letters: 'W' },
+  xlsx: { ink: 'var(--ui-icon-sheet)', letters: 'S' },
+  pptx: { ink: 'var(--ui-icon-slide)', letters: 'P' },
+  pdf: { ink: 'var(--ui-icon-pdf)', letters: 'PDF' },
+  md: { ink: 'var(--ui-icon-md)', letters: 'MD' },
 }
 
-export function FileTypeIcon({ kind, size = 28 }: { kind: FileKind; size?: number }) {
+export function FileTypeIcon({
+  kind, size = 28, className,
+}: {
+  kind: FileKind
+  size?: number
+  className?: string
+}) {
   const th = ftThemes[kind]
-  const gid = `ftg-${kind}`
   // 小尺寸（标签栏）下多字母会糊成一片，收成首字母靠颜色区分
   const letters = size < 24 && th.letters.length > 1 ? th.letters[0] : th.letters
-  const fs = letters.length > 1 ? 12.5 : 20
+  const fs = letters.length > 1 ? 13 : 20
   return (
-    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden className="op-ft-icon">
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor={th.from} />
-          <stop offset="1" stopColor={th.to} />
-        </linearGradient>
-        <linearGradient id={`${gid}-g`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#fff" stopOpacity="0.32" />
-          <stop offset="1" stopColor="#fff" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <rect x="1.5" y="1.5" width="45" height="45" rx="11.5" fill={`url(#${gid})`} />
-      <path d="M1.5 13 A11.5 11.5 0 0 1 13 1.5 H35 A11.5 11.5 0 0 1 46.5 13 V21 H1.5 Z" fill={`url(#${gid}-g)`} />
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      aria-hidden
+      className={className ? `op-ft-icon ${className}` : 'op-ft-icon'}
+    >
+      <rect
+        x="1.25"
+        y="1.25"
+        width="45.5"
+        height="45.5"
+        rx="12"
+        strokeWidth="1.5"
+        style={{ fill: th.ink, fillOpacity: 0.12, stroke: th.ink, strokeOpacity: 0.18 }}
+      />
       <text
-        x="24" y="25.5" textAnchor="middle" dominantBaseline="central"
-        fill="#fff" fontWeight="800" fontSize={fs}
-        letterSpacing={letters.length > 1 ? 0.8 : 0}
+        x="24"
+        y="25"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={fs}
+        fontWeight="650"
+        letterSpacing={letters.length > 1 ? 0.6 : 0}
         fontFamily="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif"
+        style={{ fill: th.ink }}
       >
         {letters}
       </text>
@@ -63,7 +79,7 @@ export function FileRow({
       onClick={onOpen}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
     >
-      <FileTypeIcon kind={file.kind} size={36} />
+      <FileTypeIcon kind={file.kind} size={34} />
       <span className="op-file-name">{file.name}</span>
       <span className="op-file-time">{file.updatedLabel}</span>
       <span className="op-file-size">{file.sizeLabel}</span>
@@ -81,7 +97,7 @@ export function FileRow({
   )
 }
 
-/** 文件列表卡（WPS 式）：搜索框 + 视图切换 + 类型筛选标签 + 表头 + 单行行。 */
+/** 文件列表卡：筛选标签 + 搜索 + 视图切换 + 表头 + 行；空态给导入/新建两个动作。 */
 export function FileTable({
   files, onOpenFile, onToast,
 }: {
@@ -111,18 +127,31 @@ export function FileTable({
         <Seg items={tabs} value={kindFilter} onChange={setKindFilter} />
         <div className="op-ft-search">
           <Search size={14} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索文件名…" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="搜索文件名…"
+            aria-label="搜索文件名"
+          />
           {q && (
             <button className="op-ft-search-clear" type="button" title="清空" onClick={() => setQ('')}>
               <X size={12} />
             </button>
           )}
         </div>
-        <div className="op-ft-views">
-          <button className="active" type="button" title="列表视图"><List size={15} /></button>
+        <div className="op-ft-views" role="group" aria-label="视图切换">
+          <button
+            className="active"
+            type="button"
+            title="列表视图"
+            aria-pressed="true"
+          >
+            <List size={15} />
+          </button>
           <button
             type="button"
-            title="网格视图"
+            title="网格视图（原型暂未开放）"
+            aria-pressed="false"
             onClick={() => onToast?.('网格视图（原型暂未开放）')}
           >
             <LayoutGrid size={15} />
@@ -130,36 +159,67 @@ export function FileTable({
         </div>
       </div>
 
-      <div className="op-file-grid op-file-head">
-        <span />
-        <span>文件名</span>
-        <span className="op-file-sort">修改时间 <ChevronDown size={11} /></span>
-        <span>大小</span>
-        <span />
-      </div>
+      <div className="op-file-card">
+        <div className="op-file-grid op-file-head">
+          <span />
+          <span>文件名</span>
+          <span className="op-file-sort">修改时间 <ChevronDown size={11} /></span>
+          <span>大小</span>
+          <span />
+        </div>
 
-      {shown.map((f) => (
-        <FileRow
-          key={f.id}
-          file={f}
-          onOpen={() => onOpenFile(f)}
-          onMore={onToast ? () => onToast('文件菜单：重命名 / 移动 / 分享（原型）') : undefined}
-        />
-      ))}
-      {shown.length === 0 && <div className="op-empty">没有匹配的文件</div>}
+        {shown.map((f) => (
+          <FileRow
+            key={f.id}
+            file={f}
+            onOpen={() => onOpenFile(f)}
+            onMore={onToast ? () => onToast('文件菜单：重命名 / 移动 / 分享（原型）') : undefined}
+          />
+        ))}
+
+        {shown.length === 0 && (files.length === 0 ? (
+          <div className="op-empty-state">
+            <span className="op-empty-icon"><Files size={21} /></span>
+            <div className="op-empty-title">还没有文件</div>
+            <p className="op-empty-text">
+              导入一份文件，或从空白文档开始。之后它就会出现在记忆里，随时可以调用。
+            </p>
+            <div className="op-empty-actions">
+              <button
+                className="op-primary-btn"
+                type="button"
+                onClick={() => onToast?.('导入文件（原型占位）')}
+              >
+                <Import size={14} /> 导入文件
+              </button>
+              <button
+                className="op-ghost-btn"
+                type="button"
+                onClick={() => onOpenFile(blankFile('docx'))}
+              >
+                <FileText size={14} /> 新建文档
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="op-empty">没有匹配的文件</div>
+        ))}
+      </div>
     </div>
   )
 }
 
 export function PageHead({
-  title, hint, children,
+  title, hint, icon, children,
 }: {
   title: string
   hint?: string
+  icon?: React.ReactNode
   children?: React.ReactNode
 }) {
   return (
     <header className="op-page-head">
+      {icon && <span className="op-page-head-icon" aria-hidden>{icon}</span>}
       <div className="op-page-head-text">
         <h1>{title}</h1>
         {hint && <p>{hint}</p>}

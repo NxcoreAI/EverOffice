@@ -5,7 +5,7 @@ import {
   type OfficeFile, agentSessions, agentSkills, files, knowledgeCards,
   mcpServers, memoryKindMeta, persona, userProfile,
 } from '../data'
-import { Seg } from './parts'
+import { FileTypeIcon, PageHead, Seg } from './parts'
 
 type AgentTab = 'memory' | 'sessions' | 'mcp' | 'skills' | 'persona' | 'profile'
 
@@ -26,8 +26,22 @@ export function AgentView({
 }) {
   const [tab, setTab] = useState<AgentTab>('memory')
 
+  /** 调试面板是独立窗口：这里只触发主进程开窗（单例），失败给出可读提示。 */
+  const openAgentDebug = () => {
+    const api = window.nxcore?.agentDebug
+    if (!api?.openWindow) {
+      onToast('调试窗口不可用（桌面服务未就绪）')
+      return
+    }
+    void api.openWindow().catch((error: unknown) => {
+      onToast(error instanceof Error ? error.message : '打开调试窗口失败')
+    })
+  }
+
   return (
     <>
+      <PageHead title="智能体" hint="管理本地 Agent 的记忆、工具与人格" />
+
       <section className="op-agent-hero">
         <div className="op-agent-avatar"><Bot size={24} /></div>
         <div className="op-agent-hero-text">
@@ -37,7 +51,7 @@ export function AgentView({
           </div>
           <p>基于你的记忆、连接器与技能自动起草文档</p>
         </div>
-        <button className="op-ghost-btn" type="button" onClick={() => onToast('Agent 设置（原型占位）')}>管理</button>
+        <button className="op-ghost-btn" type="button" title="打开独立的 Agent 调试窗口" onClick={openAgentDebug}>调试</button>
       </section>
 
       <Seg items={agentTabs} value={tab} onChange={setTab} />
@@ -66,9 +80,7 @@ function MemoryTab({ onToast }: { onToast: (msg: string) => void }) {
             className="op-mem-row"
             onClick={() => onToast(`「${k.title}」：${k.quote}`)}
           >
-            <span className="op-mem-kind" style={{ color: meta.color, background: `${meta.color}14` }}>
-              {meta.label}
-            </span>
+            <span className={`op-mem-kind op-mem-kind--${k.kind}`}>{meta.label}</span>
             <span className="op-mem-main">
               <span className="op-mem-title">{k.title}</span>
               <span className="op-mem-quote">{k.quote}</span>
@@ -109,7 +121,10 @@ function SessionsTab({
               <span className="op-mem-quote">{s.whenLabel} · {s.duration} · {s.turns} 轮对话</span>
             </span>
             <span className="op-mem-side">
-              <span className="op-file-chip">{related ? related.name : '无关联文档'}</span>
+              <span className="op-file-chip">
+                {related && <FileTypeIcon kind={related.kind} size={15} />}
+                {related ? related.name : '无关联文档'}
+              </span>
             </span>
           </button>
         )
