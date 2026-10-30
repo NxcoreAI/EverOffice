@@ -14024,7 +14024,6 @@
   .context-room-history-summary-skeleton { animation: none; }
 }
 
-
 /* 记忆来源行（静态展示，无跳转）：与按钮行同款外观。 */
 .context-room-memory-inline-detail .context-room-memory-detail-list .context-room-memory-detail-row {
   display: flex;
@@ -14657,7 +14656,6 @@
   }
 }
 
-
 /* —— 思路板块（上图下卡）：头部一行（路径链 + 锁定 + 聚焦/漫游正反面）+ 图区常驻 —— */
 .context-room-thoughts-pane[data-variant='board'] {
   display: flex;
@@ -14846,7 +14844,6 @@
   font-size: 12px;
   text-align: center;
 }
-
 
 /* 知识涌现图（聚焦树 + 漫步步进链）：布局坐标来自 treeLayout.ts 的尺寸常量，CSS 只管配色字体 */
 .eg-viewport {
@@ -16240,4 +16237,23 @@ button.eg-walk.is-next:hover {
 .context-room-artifact-menu svg {
   width: 15px;
   height: 15px;
+}
+
+/* ---- 产物区「排版工具」对话框：模版选择 + 长任务阶段提示 ---- */
+
+.context-room-dialog-content.context-room-thesis-dialog-shell {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  border-radius: 16px;
+  box-shadow:
+    0 16px 40px rgba(17, 24, 39, 0.14),
+    0 4px 12px rgba(17, 24, 39, 0.05);
+}
+
+/* 长任务进度：解析/装订各 1–5 分钟，必须让用户看到「在跑」。 */
+
+.context-room-action-confirm footer .context-room-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

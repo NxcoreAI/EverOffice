@@ -1,4 +1,8 @@
-import type { PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
+import type {
+  PendingAgentIntent,
+  PendingAgentIntentTargetCapability,
+  RoomDocument,
+} from '@nxcore/agent-contract'
 import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -58,7 +62,7 @@ vi.mock('../../i18n/LocaleContext', async (importOriginal) => {
 
 import { AgentChatView } from './AgentChatView'
 
-function pendingIntent(targetCapability: 'document.edit' | 'document.continue'): PendingAgentIntent {
+function pendingIntent(targetCapability: PendingAgentIntentTargetCapability): PendingAgentIntent {
   return {
     id: `intent-${targetCapability}`,
     sessionId: 'session-1',
@@ -159,6 +163,77 @@ describe('AgentChatView', () => {
       )
     },
   )
+
+  it('keeps decision cards clickable while the agent run is still pending (waiting for input)', async () => {
+    const intent = pendingIntent('document.edit')
+    const onSelectRoom = vi.fn().mockResolvedValue(undefined)
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<AgentChatView
+        activeDocument={null}
+        activeRunId="run-1"
+        agentIdByRun={{}}
+        agentNamesById={{}}
+        activityByRun={{}}
+        availableRooms={[{ id: 'room-1', title: '产品 Room' }]}
+        composer={null}
+        currentSessionId="session-1"
+        draftHasContent={false}
+        error={null}
+        loading={false}
+        messages={[]}
+        onOpenSessionLink={vi.fn()}
+        onRejectDocumentIntent={vi.fn()}
+        onRetryPrompt={vi.fn()}
+        onSelectDocument={vi.fn()}
+        onSelectPrompt={vi.fn()}
+        onSelectRoom={onSelectRoom}
+        pendingNavigationByRun={{}}
+        runCompletedAtByRun={{}}
+        runStartedAtByRun={{ 'run-1': '2026-08-20T00:00:00.000Z' }}
+        scopeReady
+        sessionLinks={[]}
+        submitting={false}
+        toolCallsByRun={{
+          'run-1': [{
+            id: 'tool-1',
+            runId: 'run-1',
+            name: 'context_room_list',
+            status: 'completed',
+            args: {},
+            result: {
+              rooms: [{ id: 'room-1', title: '产品 Room' }],
+              selectionRequired: true,
+              pendingIntent: intent,
+            },
+            startedAt: '2026-08-20T00:00:00.000Z',
+            completedAt: '2026-08-20T00:00:01.000Z',
+          }],
+        }}
+      />)
+    })
+
+    // run 未完成（activeRunId 挂着、无 completedAt）= agent 在等输入：
+    // 房间选择按钮必须可点。document.edit 意图点完 Room 后进入文档选择，
+    // 选中文档才真正提交 —— 两步都必须在 run 未完成时可交互。
+    const roomButton = renderer.root.findByProps({ title: '产品 Room' })
+    expect(roomButton.props.disabled).toBe(false)
+    await act(async () => {
+      roomButton.props.onClick()
+      await Promise.resolve()
+    })
+    const documentButton = renderer.root.findByProps({ title: '发布计划' })
+    expect(documentButton.props.disabled).toBe(false)
+    await act(async () => {
+      documentButton.props.onClick()
+      await Promise.resolve()
+    })
+    expect(onSelectRoom).toHaveBeenCalledWith(
+      { id: 'room-1', title: '产品 Room' },
+      intent,
+      expect.objectContaining({ documentId: 'document-1', roomId: 'room-1' }),
+    )
+  })
 
   it('scrolls to and highlights a notification run after its messages load', async () => {
     const scrollIntoView = vi.fn()

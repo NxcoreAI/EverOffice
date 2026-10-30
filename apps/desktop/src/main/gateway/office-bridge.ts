@@ -66,12 +66,16 @@ export interface OfficeEditRequest {
 export interface OfficeReformatRequest {
   action: 'describe' | 'build'
   docxBase64: string
+  /** 模版 docx 原文件（base64）：有则按「模板骨架」装订，模版元素原位置保留。 */
+  templateBase64?: string
   formatCard?: ThesisFormatCardPayload
   bindingSpec?: ThesisBindingSpecPayload
   roomId?: string
   sourceFileName?: string
   sourceFileEntryId?: string
   idempotencyKey?: string
+  /** true = 本次勾选了「AI 补写」：产物文件名加 -ai补写版 后缀，便于和原稿区分。 */
+  aiFill?: boolean
 }
 
 /** 只渲染不入库的请求（风格演示页自校用：PageSpec → pptx 字节）。 */
@@ -299,11 +303,18 @@ export class OfficeBridgeServer {
           this.broadcast({ type: 'phase', title: sourceFileName, phase, format: 'docx' })
         }
         const generated = await generateThesisDocx(
-          { sourceBytes, formatCard: req.formatCard, bindingSpec: req.bindingSpec },
+          {
+            sourceBytes,
+            ...(req.templateBase64 ? { templateBytes: Buffer.from(req.templateBase64, 'base64') } : {}),
+            formatCard: req.formatCard,
+            bindingSpec: req.bindingSpec,
+          },
           broadcastPhase,
         )
         const baseName = sourceFileName.replace(/\.(docx|doc)$/i, '').trim() || generated.title
-        const originalName = `${baseName}-排版版.docx`
+        // 勾了 AI 补写时文件名带 -ai补写版：用户要能一眼分清「原稿排版」和「补写版」
+        const suffix = req.aiFill === true ? '-ai补写版' : '-排版版'
+        const originalName = `${baseName}${suffix}.docx`
         this.broadcast({ type: 'phase', title: baseName, phase: 'importing', format: 'docx' })
         let accepted: FileImportAcceptedDto
         try {
@@ -339,6 +350,9 @@ export class OfficeBridgeServer {
               versionDeduped: accepted.versionDeduped,
               roomRequested: Boolean(req.roomId),
               originalName,
+              // 出稿自检/骨架回落提示：面板要能让用户看到「为什么这次排版不对」，
+              // 否则只能看到成品、猜不到原因。
+              ...(generated.warnings ? { warnings: generated.warnings } : {}),
             },
           },
         }

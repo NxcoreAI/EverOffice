@@ -29,6 +29,7 @@ import { FilterSelect } from '../shared';
 import { ConnectorMailDetailPanel, useConnectorMailDetail } from './ConnectorMailDetail';
 import { PanelEmptyState } from './PanelEmptyState';
 import type { WorkspaceObjectPreview } from './index';
+import { describeThesisError } from '../../../../../../../shared/thesis-error-message'
 
 type RoomUpdater = (room: ContextRoomRecord) => ContextRoomRecord;
 
@@ -214,8 +215,18 @@ export function MaterialsPane({
     if (!thesisFormat) return;
     setParsingTemplateId(fileEntryId);
     try {
-      await thesisFormat.setFromLibrary(room.id, fileEntryId);
-      showToast({ title: t('contextRoom:thesisFormat.templateReady'), message: name });
+      const meta = await thesisFormat.setFromLibrary(room.id, fileEntryId);
+      const gaps = meta.factGaps ?? [];
+      if (gaps.length > 0) {
+        // 解析有缺口（如页眉图片抽不出）：明示用户，而不是静默用默认样式
+        showToast({
+          title: t('contextRoom:thesisFormat.templatePartial'),
+          message: `${name}：${gaps.join('；')}`,
+          variant: 'warning',
+        });
+      } else {
+        showToast({ title: t('contextRoom:thesisFormat.templateReady'), message: name });
+      }
     } catch (error: unknown) {
       showToast({
         title: t('contextRoom:thesisFormat.templateParseFailed'),
@@ -234,12 +245,21 @@ export function MaterialsPane({
     try {
       const meta = await thesisFormat.pickAndSet(room.id);
       if (!meta.canceled) {
-        showToast({ title: t('contextRoom:thesisFormat.templateReady'), message: meta.sourceName });
+        const gaps = meta.factGaps ?? [];
+        if (gaps.length > 0) {
+          showToast({
+            title: t('contextRoom:thesisFormat.templatePartial'),
+            message: `${meta.sourceName}：${gaps.join('；')}`,
+            variant: 'warning',
+          });
+        } else {
+          showToast({ title: t('contextRoom:thesisFormat.templateReady'), message: meta.sourceName });
+        }
       }
     } catch (error: unknown) {
       showToast({
         title: t('contextRoom:thesisFormat.templateParseFailed'),
-        message: `${error instanceof Error ? error.message : String(error)}。${t('contextRoom:thesisFormat.templateParseFailedHint')}`,
+        message: `${describeThesisError(error instanceof Error ? error.message : String(error))}${t('contextRoom:thesisFormat.templateParseFailedHint')}`,
         variant: 'error',
       });
     } finally {

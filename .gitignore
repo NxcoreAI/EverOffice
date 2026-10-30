@@ -69,3 +69,8 @@ coverage/
 # 外部资料 PDF，体积大且可从原始渠道获取，不入库
 *.pdf
 !apps/desktop/build/*.pdf
+
+# 本地排版/预览调试产物（一次性脚本与效果图，不入库）
+/scratch/
+/.dsh-office.*/
+/.workbuddy-ai/

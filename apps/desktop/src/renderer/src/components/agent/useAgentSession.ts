@@ -1291,7 +1291,14 @@ export function useAgentSession(
     selectedRoomId: string,
     documentId?: string,
   ): Promise<string | null> => {
-    if (!api || activeRunId || loading || sending) return null
+    if (!api || loading || sending) return null
+    // 决策卡的「等待输入」态：run 还挂着，但用户必须能作答。
+    // 这里不再静默 return null（审查指出的「看起来能点、点了没反应」），
+    // 而是把「仍在处理中」显性告诉用户——真的提交不了时至少知道原因。
+    if (activeRunId) {
+      setError(t('surface:useAgentSession.agentBusy'))
+      return null
+    }
     setSending(true)
     setError(null)
     try {

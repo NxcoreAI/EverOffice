@@ -1,4 +1,4 @@
-import { CircleAlert, Info, X } from 'lucide-react'
+import { CircleAlert, Info, TriangleAlert, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { onToast, type AppToastDetail } from '@/state/toast'
@@ -13,6 +13,7 @@ const TOAST_OUT_MS = 240
 
 function toastDurationMs(toast: AppToastDetail): number {
   if (toast.variant === 'error') return toast.actionLabel ? 8_000 : 4_500
+  if (toast.variant === 'warning') return 6_000
   return 3_200
 }
 
@@ -49,6 +50,7 @@ export function AppToast() {
 
   if (!toast) return null
   const isError = toast.variant === 'error'
+  const isWarning = toast.variant === 'warning'
 
   return (
     <div
@@ -62,7 +64,7 @@ export function AppToast() {
         if (leaving && event.animationName.endsWith('-out')) finishLeave()
       }}
     >
-      <span aria-hidden="true">{isError ? <CircleAlert /> : <Info />}</span>
+      <span aria-hidden="true">{isError ? <CircleAlert /> : isWarning ? <TriangleAlert /> : <Info />}</span>
       <div>
         <strong>{toast.title}</strong>
         {toast.message ? <small>{toast.message}</small> : null}

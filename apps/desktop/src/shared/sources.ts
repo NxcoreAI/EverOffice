@@ -879,6 +879,22 @@ export interface OfficePreviewTab {
   kind: OfficePreviewKind
 }
 
+/**
+ * 主进程主动发起的预览：实例已经在主进程建好（例：排版面板点 👁 预览模版原文件），
+ * 渲染端只需要开一个顶栏标签并激活它。
+ *
+ * 少了这条通知，实例的 WebContentsView 会一直是 setVisible(false)：没人开标签、
+ * 没人上报矩形、没人调 setActiveInstance，用户看到的就是「点了预览完全没反应」。
+ */
+export interface OfficePreviewRequest {
+  instanceId: string
+  title: string
+  kind: OfficePreviewKind
+}
+
+/** 主进程 → 主窗口渲染端：请把已建好的预览实例显示出来。 */
+export const OFFICE_PREVIEW_REQUEST_CHANNEL = 'office:preview-request'
+
 /** 内嵌 Office 预览的文件名分流（主进程白名单与渲染端入口共用；旧格式经 LibreOffice 转换后同样内嵌）。 */
 export function officePreviewKindForFileName(fileName: string): OfficePreviewKind | null {
   const dot = fileName.lastIndexOf('.')
@@ -959,13 +975,15 @@ export interface NxcoreDesktopApi {
   }
   updater: {
     /** 当前版本、渠道与安装标识（诊断/白名单登记用） */
-    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean }>
+    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean; lastError: string | null }>
     /** 手动检查更新：update-found=有新版正在后台下载（完成后弹窗）；no-update=已是最新 */
     checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'>
     /** 订阅下载进度（percent 0-100、bytesPerSecond），返回取消函数 */
     onProgress(listener: (progress: { percent: number; bytesPerSecond: number }) => void): () => void
     /** 订阅下载完成（version），返回取消函数 */
     onDownloaded(listener: (info: { version: string }) => void): () => void
+    /** 订阅更新链路错误（检查/下载/校验/安装失败），返回取消函数 */
+    onError(listener: (payload: { message: string }) => void): () => void
   }
   window: {
     minimize(): Promise<void>
@@ -981,6 +999,8 @@ export interface NxcoreDesktopApi {
     /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
     closeInstance(id: string): Promise<boolean>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void
+    /** 主进程主动打开的预览实例（渲染端负责开标签并激活；如排版面板预览模版原文件）。 */
+    onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
@@ -1651,14 +1671,60 @@ export interface NxcoreDesktopApi {
       updatedAt: string
       card: Record<string, unknown>
     }>>
-    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。 */
-    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string }>
-    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。 */
-    pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+    /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。factGaps 非空 = 模版部分信息未能解析（UI 必须提示，不得静默）。 */
+    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。factGaps 语义同 setFromLibrary。
+     *  options.wordOnly（产物区「排版工具」用）：选择框只接受 Word .docx。 */
+    pickAndSet(roomId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }>
     /** 删除一张格式卡。 */
     removeCard(roomId: string, cardId: string): Promise<void>
-    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。 */
-    reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ fileEntryId: string; originalName: string }>
+    /** 工作台拖拽上传：字节直传网关解析成格式卡（不落盘）。factGaps 语义同 setFromLibrary。 */
+    parseUpload(roomId: string, name: string, bytes: ArrayBuffer): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    /** 彻底删除模版：模版文件 + 格式卡。 */
+    deleteTemplate(roomId: string, cardId: string): Promise<{ fileDeleted: boolean; hadFile: boolean }>
+    /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。
+     *  report 为 v2 槽位映射报告（守恒核对/规则/未匹配块/待复核章节）。 */
+    reformat(
+      roomId: string,
+      fileEntryId: string,
+      cardId?: string,
+      /** 工作台规则面板：严格/融合、Logo 与页眉页脚保留、标题层级映射。 */
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+        /** 允许 AI 补写空白小节（默认关）。 */
+        aiFill?: boolean
+      },
+    ): Promise<{
+      fileEntryId: string
+      originalName: string
+      report?: Record<string, unknown>
+    }>
+    /** 任务化排版：提交即返回 jobId（长任务不占客户端请求槽）。 */
+    reformatStart(
+      roomId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ): Promise<{ jobId: string; phase: string }>
+    /** 轮询排版作业：phase ∈ parsing|mapping|rendering|done，progress 0–100。 */
+    reformatStatus(jobId: string): Promise<{
+      id: string
+      status: 'running' | 'completed' | 'failed'
+      phase: string
+      progress: number
+      result?: { fileEntryId: string; originalName: string; report?: Record<string, unknown> }
+      error?: string
+    }>
+    /** 导出 PDF：本机无 LibreOffice 时 unavailable=true（UI 需给出可执行说明）。 */
+    exportPdf(roomId: string, fileEntryId: string): Promise<
+      { unavailable: true } | { unavailable: false; path: string }
+    >
     onCardChanged(listener: () => void): () => void
   }
   ingest: {
