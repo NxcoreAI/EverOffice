@@ -87,8 +87,50 @@ export interface AgentContextCompaction {
   error?: string;
 }
 
+/**
+ * 工作区：会话的组织容器。默认工作区（id='default'）永远存在且不可删除；
+ * path 为本地目录（默认工作区为 null，表示不绑定具体目录）。
+ */
+export interface AgentWorkspace {
+  id: string;
+  name: string;
+  /** 空间描述（概览页展示）；未填写为 null，落库前 trim，最长 2000 字符。 */
+  description: string | null;
+  /** 目标列表（概览页药丸）；无目标为空数组，最多 12 条、每条 trim 后 ≤ 200 字符。 */
+  goals: string[];
+  path: string | null;
+  kind: "default" | "custom";
+  createdAt: string;
+  updatedAt: string;
+  lastOpenedAt: string;
+}
+
+export interface CreateAgentWorkspaceInput {
+  name: string;
+  path?: string | null;
+  /** 可选描述；空串/空白按 null 存。 */
+  description?: string | null;
+  /** 可选目标列表；省略等价于空数组。 */
+  goals?: string[];
+}
+
+export interface UpdateAgentWorkspaceInput {
+  name?: string;
+  path?: string | null;
+  /** 传 null 或空白串清空描述。 */
+  description?: string | null;
+  /** 传 [] 清空目标，传数组整体替换。 */
+  goals?: string[];
+  lastOpenedAt?: string;
+}
+
+/** 默认工作区 id（迁移与懒初始化共用；不可删除）。 */
+export const DEFAULT_AGENT_WORKSPACE_ID = "default" as const;
+
 export interface AgentSession {
   id: string;
+  /** 会话所属工作区；旧会话迁移后为 'default'。 */
+  workspaceId: string | null;
   /** Legacy metadata; user sessions are not Room-scoped. */
   roomId: string | null;
   /** Last/creation UI surface, never a session partition key. */
@@ -282,6 +324,8 @@ export interface SubagentInvocationEvent {
 
 export interface CreateAgentSessionInput {
   pageLabel: string;
+  /** 会话所属工作区；缺省/非法时归入默认工作区。 */
+  workspaceId?: string | null;
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
   /**

@@ -4,6 +4,9 @@ import type {
   AgentOpenFileContext,
   AgentPermissionMode,
   AgentPermissionModeState,
+  AgentWorkspace,
+  CreateAgentWorkspaceInput,
+  UpdateAgentWorkspaceInput,
   PendingAgentIntent,
   AgentRun,
   AgentStatusSnapshot,
@@ -190,6 +193,25 @@ export class AgentGatewayBridge {
 
   getUsage(range: AgentUsageRange = '7d'): Promise<AgentUsageSnapshot> {
     return this.request(`/v1/agent/usage?range=${encodeURIComponent(range)}`)
+  }
+
+  listWorkspaces(): Promise<AgentWorkspace[]> {
+    return this.request('/v1/agent/workspaces')
+  }
+
+  createWorkspace(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace> {
+    return this.request('/v1/agent/workspaces', { method: 'POST', data: input })
+  }
+
+  updateWorkspace(workspaceId: string, input: UpdateAgentWorkspaceInput): Promise<AgentWorkspace> {
+    return this.request(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: 'PATCH',
+      data: input,
+    })
+  }
+
+  deleteWorkspace(workspaceId: string): Promise<void> {
+    return this.request(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
   }
 
   getEvents(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]> {
