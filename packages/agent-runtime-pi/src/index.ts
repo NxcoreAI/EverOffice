@@ -19,6 +19,7 @@ import { Type } from "typebox";
 import {
   AsyncEventQueue,
   type AgentRuntime,
+  type AgentRuntimeDescription,
   type ResumeRuntimeRunInput,
   type RuntimeEvent,
   type RuntimeRun,
@@ -590,6 +591,75 @@ export class PiAgentRuntime implements AgentRuntime {
     };
   }
 
+  /**
+   * 调试面板数据源：只读报告本 runtime 实际装配的 systemPrompt/工具/模型参数。
+   * 全部来自构造参数与 integration（与 getSession 的装配口径一致），不读任何声明文件，
+   * 也不含 apiKey。
+   */
+  async describe(): Promise<AgentRuntimeDescription> {
+    const memoryToolNames = this.config.memory && this.memoryClient ? [...MEMORY_TOOL_NAMES] : [];
+    const knowledgeToolNames = this.config.knowledge && this.knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : [];
+    return {
+      runtimeId: this.config.runtimeId ?? this.id,
+      model: {
+        provider: this.config.provider,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+        api: this.config.api,
+        reasoning: this.config.reasoning,
+        temperature: this.config.temperature,
+        maxTokens: this.config.maxTokens,
+        contextWindow: this.config.contextWindow,
+      },
+      role: this.config.runtimeRole ?? null,
+      // 未配置 systemPrompt 时运行期会用默认聊天人设兜底；这里如实返回 null。
+      systemPrompt: this.config.systemPrompt ?? null,
+      skills: Object.entries(this.config.skillPrompts ?? {}).map(([name, prompt]) => ({ name, prompt })),
+      tools: [
+        ...(this.integration.tools ?? []).map((tool) => ({
+          name: tool.name,
+          label: tool.label,
+          description: tool.description,
+        })),
+        ...memoryToolNames.map((name) => ({ name })),
+        ...knowledgeToolNames.map((name) => ({ name })),
+      ],
+      builtinTools: this.enabledBuiltinTools(),
+      mcpServers: Object.keys(this.config.mcp?.mcpServers ?? {}),
+      promptGuidelines: [...(this.integration.promptGuidelines ?? [])],
+      limits: {
+        maxToolCallsPerRun: this.config.maxToolCallsPerRun ?? null,
+        maxToolResultChars: this.config.maxToolResultChars ?? null,
+        runContextGuard: this.config.runContextGuard
+          ? {
+              triggerTokens: this.config.runContextGuard.triggerTokens,
+              keepRecentTurns: this.config.runContextGuard.keepRecentTurns,
+            }
+          : null,
+      },
+      capabilities: await this.getCapabilities(),
+    };
+  }
+
+  /**
+   * 实际启用的 pi 内置工具集合：与 getSession 里 toolNames 的口径一致
+   * （白名单收窄 + bash 受 includeBashTool 控制）。describe 与运行时共用，
+   * 避免面板另抄一份 DEFAULT 列表而与实际装配漂移。
+   */
+  private enabledBuiltinTools(): PiBuiltinToolName[] {
+    const configured = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
+      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
+    ) as PiBuiltinToolName[];
+    const names: PiBuiltinToolName[] = [
+      ...(this.config.includeBashTool === false ? [] : (["bash"] as PiBuiltinToolName[])),
+      ...configured,
+    ];
+    // includeBashTool=false 是显式关闭 shell 的语义：白名单里残留的 bash 也不挂载。
+    return [
+      ...new Set(this.config.includeBashTool === false ? names.filter((name) => name !== "bash") : names),
+    ];
+  }
+
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
     if (this.activeRuns.has(input.runId)) throw new Error(`Pi run is already active: ${input.runId}`);
     const handle = await this.getSession(input.runtimeSessionRef, input);
@@ -792,9 +862,7 @@ export class PiAgentRuntime implements AgentRuntime {
       },
     }));
     const toolNames = customTools.map((tool) => tool.name);
-    const builtinTools = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
-      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
-    ) as PiBuiltinToolName[];
+    const builtinTools = this.enabledBuiltinTools();
 
     const settingsManager = SettingsManager.inMemory({
       defaultProvider: this.config.provider,

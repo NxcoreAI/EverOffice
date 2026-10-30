@@ -62,9 +62,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          // everoffice UI 迁移：GenOffice 内嵌停靠栏 iframe 装载的 Agent 聊天页
-          //（见 src/main/genoffice/bridge.ts agentDockUrl）
-          'agent-dock': resolve('src/renderer/agent-dock.html'),
+          // Agent 调试面板的独立窗口入口（主进程 openAgentDebugWindow 装载）
+          'agent-debug': resolve('src/renderer/debug.html'),
         },
       },
     },
