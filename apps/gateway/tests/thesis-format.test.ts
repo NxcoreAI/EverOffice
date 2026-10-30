@@ -956,17 +956,22 @@ describe('模板固定表单保留（评价表等）', () => {
     const { buildMappingPlan } = await import('../src/modules/thesis-format/mapping-plan.js');
     const { buildContentProfile } = await import('../src/modules/thesis-format/content-profile.js');
     const { buildTemplateProfile } = await import('../src/modules/thesis-format/template-profile.js');
-    const { describeThesisBlocks } = await import('../../desktop/vendor/genoffice/packages/docx-engine/src/index.js');
+    // 不引入 vendored 引擎源码：它的相对导入在 NodeNext 下会让 gateway 的 tsc 报错。
+    // 这里只要一份「源文档块大纲」，手写即可（真实解析在桥那侧，由应用测试覆盖）。
+    const blocks = [
+      { index: 0, kind: 'heading', level: 1, text: '一、项目任务' },
+      { index: 1, kind: 'paragraph', text: '项目背景与目标。' },
+      { index: 2, kind: 'heading', level: 1, text: '二、需求分析' },
+      { index: 3, kind: 'paragraph', text: '功能需求与非功能需求。' },
+    ];
     const { readFile } = await import('node:fs/promises');
     const template = await readFile('/Users/nxcore/Downloads/人工智能创新创业实践课程设计报告(模板） (1).docx');
-    const source = await readFile('/Users/nxcore/Downloads/开题与需求、系统设计报告.docx');
     const { extractOoxmlFactsAsync } = await import('../src/modules/thesis-format/ooxml-facts.js');
     const facts = await extractOoxmlFactsAsync(template);
     const { validateThesisFormatCard } = await import('../src/modules/thesis-format/validate.js');
     const card = validateThesisFormatCard({}, '模板.docx');
     (card as { numbering?: unknown }).numbering = facts.numbering;
     const profile = buildTemplateProfile({ facts, card, sourceName: '模板.docx' });
-    const blocks = await describeThesisBlocks(source);
     const plan = buildMappingPlan({ template: profile, content: buildContentProfile(blocks as never) });
     const { spec } = planToBindingSpec({ plan, content: buildContentProfile(blocks as never), titleHint: 't', templateProfile: profile });
     expect((spec.fixedBlocks ?? []).length).toBeGreaterThanOrEqual(2);
