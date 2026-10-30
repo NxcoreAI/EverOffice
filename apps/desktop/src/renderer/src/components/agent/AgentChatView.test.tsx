@@ -1,4 +1,8 @@
-import type { PendingAgentIntent, RoomDocument } from '@nxcore/agent-contract'
+import type {
+  PendingAgentIntent,
+  PendingAgentIntentTargetCapability,
+  RoomDocument,
+} from '@nxcore/agent-contract'
 import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -58,7 +62,7 @@ vi.mock('../../i18n/LocaleContext', async (importOriginal) => {
 
 import { AgentChatView } from './AgentChatView'
 
-function pendingIntent(targetCapability: 'document.edit' | 'document.continue'): PendingAgentIntent {
+function pendingIntent(targetCapability: PendingAgentIntentTargetCapability): PendingAgentIntent {
   return {
     id: `intent-${targetCapability}`,
     sessionId: 'session-1',
