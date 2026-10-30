@@ -17,6 +17,8 @@
   min-width: 320px;
   min-height: 0;
   overflow: hidden;
+  /* 面板宽度动画时把重排限制在本区域，减少整页 layout 抖动。 */
+  contain: layout paint;
 }
 
 .wb-ws-missing {
@@ -224,4 +226,8 @@
   color: var(--ui-text-2);
 }
 .wb-chat-head-actions { display: flex; align-items: center; gap: 2px; flex: none; }
-.wb-chat > .wb-conversation { flex: 1; min-height: 0; }
+.wb-chat > .wb-conversation { flex: 1; min-height: 0; contain: layout paint; }
+
+/* 对话区「资料与文件」入口：面板打开时只隐藏不卸载，保证标题不被挤动。 */
+.wb-chat-files-slot { display: inline-flex; }
+.wb-chat-files-slot.is-hidden { visibility: hidden; pointer-events: none; }

@@ -1,5 +1,5 @@
 import { FolderOpen } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 
 import type { AgentWorkspace } from '@nxcore/agent-contract'
 
@@ -39,49 +39,13 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
   const finishWorkspaceSetup = useWorkbenchStore((state) => state.finishWorkspaceSetup)
   const bubble = useWorkspaceBubble(tab.id)
 
-  // 气泡窗的退场动画：state 先变 closed，再保留 160ms 播放完 fade/slide-out 才卸载。
-  const [bubbleMounted, setBubbleMounted] = useState(false)
-  const [bubbleClosing, setBubbleClosing] = useState(false)
-  // 「收起（最小化）」也播一段向右收拢的退场动画，再切成右缘把手，避免面板瞬间消失。
-  const [bubbleMinimizing, setBubbleMinimizing] = useState(false)
-  const previousBubbleMode = useRef(bubble.bubble.mode)
-  const bubbleMode = bubble.bubble.mode
-  useEffect(() => {
-    const previous = previousBubbleMode.current
-    previousBubbleMode.current = bubbleMode
-    if (previous === 'open' && bubbleMode === 'minimized') {
-      setBubbleMinimizing(true)
-      const timer = window.setTimeout(() => setBubbleMinimizing(false), 150)
-      return () => window.clearTimeout(timer)
-    }
-  }, [bubbleMode])
-  useEffect(() => {
-    if (bubbleMode !== 'closed') {
-      setBubbleMounted(true)
-      setBubbleClosing(false)
-      return
-    }
-    if (!bubbleMounted) return
-    setBubbleClosing(true)
-    const timer = window.setTimeout(() => {
-      setBubbleClosing(false)
-      setBubbleMounted(false)
-    }, 170)
-    return () => window.clearTimeout(timer)
-  }, [bubbleMode, bubbleMounted])
-
-  // ⌘J：与旧版文件面板一致——收起时打开「资料与文件」浏览（没有文件也能开），
-  // 已展开时在「最小化 ↔ 还原」之间切换。
+  // ⌘J：面板收起时打开「资料与文件」浏览（没有文件也能开），已展开时收起。
   useEffect(() => {
     const onToggle = (event: Event) => {
       const detail = (event as CustomEvent<string>).detail
       if (detail !== tab.id || !active) return
-      if (bubble.bubble.mode === 'closed') {
-        bubble.openBrowser()
-        return
-      }
-      if (bubble.bubble.mode === 'minimized') bubble.restore()
-      else bubble.minimize()
+      if (bubble.visible) bubble.minimize()
+      else bubble.openBrowser()
     }
     window.addEventListener('everroom:workbench-toggle-bubble', onToggle)
     return () => window.removeEventListener('everroom:workbench-toggle-bubble', onToggle)
@@ -140,27 +104,21 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
             <header className="wb-chat-head">
               <span className="wb-chat-head-title" title={chatTitle}>{chatTitle}</span>
               <div className="wb-chat-head-actions">
-                <Hint label={
-                  bubbleMode === 'minimized'
-                    ? '展开资料与文件（⌘J）'
-                    : bubbleMode === 'open' && bubble.bubble.activeFileId === null
-                      ? '收起资料与文件（⌘J）'
-                      : '资料与文件（⌘J）'
-                }>
-                  <IconButton
-                    label="资料与文件"
-                    size="sm"
-                    icon={<FolderOpen size={15} />}
-                    active={bubbleMode === 'open' && bubble.bubble.activeFileId === null && !bubbleClosing}
-                    aria-expanded={bubbleMode === 'open' && bubble.bubble.activeFileId === null && !bubbleClosing}
-                    onClick={() => {
-                      if (bubble.bubble.mode === 'closed') bubble.openBrowser()
-                      else if (bubble.bubble.mode === 'minimized') bubble.restore()
-                      else if (bubble.bubble.activeFileId === null) bubble.close()
-                      else bubble.openBrowser()
-                    }}
-                  />
-                </Hint>
+                {/* 面板打开时它自己有浏览/收起/关闭按钮；这里保留同一个按钮的位置（仅隐藏），
+                    避免收起/展开最后一步因「按钮出现/消失」把标题挤动一下。 */}
+                <span className={bubble.visible ? 'wb-chat-files-slot is-hidden' : 'wb-chat-files-slot'}>
+                  <Hint label="资料与文件（⌘J）">
+                    <IconButton
+                      label="资料与文件"
+                      size="sm"
+                      icon={<FolderOpen size={15} />}
+                      aria-expanded={bubble.visible}
+                      aria-hidden={bubble.visible}
+                      tabIndex={bubble.visible ? -1 : 0}
+                      onClick={() => bubble.openBrowser()}
+                    />
+                  </Hint>
+                </span>
               </div>
             </header>
             {view.kind === 'session' ? (
@@ -191,15 +149,13 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
         <SetupWizard workspace={workspace as AgentWorkspace} onDone={finishWorkspaceSetup} />
       ) : null}
 
-      {bubbleMounted ? (
+      {bubble.visible ? (
         <BubbleWindow
-          closing={bubbleClosing}
-          minimizing={bubbleMinimizing}
-          bubble={bubbleMinimizing ? { ...bubble.bubble, mode: 'open' } : bubble.bubble}
+          exiting={bubble.exitKind}
+          bubble={bubble.exitKind ? { ...bubble.bubble, mode: 'open' } : bubble.bubble}
           onResize={bubble.setWidth}
           onMinimize={bubble.minimize}
           onToggleMax={bubble.toggleMaximize}
-          onRestore={bubble.restore}
           onClose={bubble.close}
           onActivateFile={bubble.activateFile}
           onCloseFile={(fileId) => { void bubble.closeFile(fileId) }}

@@ -8,6 +8,11 @@ export const BUBBLE_MIN_WIDTH = 360
 export const BUBBLE_MAX_WIDTH = 720
 export const BUBBLE_DEFAULT_WIDTH = 480
 
+/** 退场动画时长（与 bubble.css 的 keyframes 对齐，留 20ms 余量后再卸载 DOM）。 */
+const EXIT_MS = 240
+
+export type BubbleExitKind = 'close' | 'minimize'
+
 export interface BubbleState {
   mode: 'closed' | 'open' | 'minimized'
   width: number
@@ -26,44 +31,96 @@ const CLOSED: BubbleState = {
 }
 
 /**
- * 工作空间气泡窗的状态机（组件级，一个工作空间标签一套，多开天然隔离）。
+ * 工作空间文件面板的状态机（组件级，一个工作空间标签一套，多开天然隔离）。
  *
- * 关闭文件/整个气泡前先过主进程脏关闭守卫（保存对话框点取消 → 保留）。
- * 标签关闭时通过 registerTabCloser 把「串行关掉所有文件」注册给 store，
- * 避免关标签直接卸载原生编辑器导致丢改动。
+ * 关键点：可见性 / 退场动画在这里统一管理，宿主只按 visible + exitKind 渲染，
+ * 避免「收起 → 长条把手 → 再展开」两套 UI 切换造成的闪烁：
+ * - 打开/还原：面板挂载，宽度从 0 动画到目标宽度，内容区同步让位；
+ * - 收起（minimize）/关闭（close）：面板宽度动画收到 0，结束后直接卸载；
+ *   收起后对话区右上角的入口按钮重新出现（外观与首次完全一致，没有长条）；
+ * - 最大化/还原也走宽度过渡（面板始终在 flex 布局里），对话区逐帧跟着变。
  */
 export function useWorkspaceBubble(tabId: string) {
   const [bubble, setBubble] = useState<BubbleState>(CLOSED)
+  const [visible, setVisible] = useState(false)
+  const [exitKind, setExitKind] = useState<BubbleExitKind | null>(null)
   const bubbleRef = useRef(bubble)
   bubbleRef.current = bubble
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
+  const exitKindRef = useRef(exitKind)
+  exitKindRef.current = exitKind
+  const exitTimer = useRef<number | null>(null)
+
+  const clearExitTimer = useCallback(() => {
+    if (exitTimer.current !== null) {
+      window.clearTimeout(exitTimer.current)
+      exitTimer.current = null
+    }
+  }, [])
+
+  useEffect(() => clearExitTimer, [clearExitTimer])
+
+  /** 显示面板（取消进行中的退场）：mode 统一回 open。 */
+  const show = useCallback((patch: (current: BubbleState) => Partial<BubbleState>) => {
+    clearExitTimer()
+    // 关闭动画还没结束时又打开：关闭前已确认过的文件已经关掉，这里清掉它们的标签。
+    const wasClosing = exitKindRef.current === 'close'
+    setExitKind(null)
+    setVisible(true)
+    setBubble((current) => {
+      const base = wasClosing ? { ...current, files: [], activeFileId: null } : current
+      return { ...base, ...patch(base), mode: 'open' }
+    })
+  }, [clearExitTimer])
 
   const openFile = useCallback((file: OfficeFile) => {
-    setBubble((current) => ({
-      ...current,
-      mode: 'open',
+    show((current) => ({
       files: current.files.some((item) => item.id === file.id)
         ? current.files.map((item) => (item.id === file.id ? file : item))
         : [...current.files, file],
       activeFileId: file.id,
     }))
-  }, [])
+  }, [show])
 
-  /** 打开「资料与文件」浏览态：右侧面板展开、列出文件库；已打开的文件标签保留。 */
+  /** 打开「资料与文件」浏览态；已打开的文件标签保留。 */
   const openBrowser = useCallback(() => {
-    setBubble((current) => ({
-      ...current,
-      mode: 'open',
-      maximized: current.mode === 'closed' ? false : current.maximized,
-      activeFileId: null,
-    }))
-  }, [])
+    show(() => ({ activeFileId: null }))
+  }, [show])
+
+  const restore = useCallback(() => {
+    show(() => ({}))
+  }, [show])
 
   const activateFile = useCallback((fileId: string) => {
-    setBubble((current) => {
-      if (!current.files.some((item) => item.id === fileId)) return current
-      return { ...current, activeFileId: fileId, mode: current.mode === 'closed' ? 'open' : current.mode }
-    })
-  }, [])
+    if (!bubbleRef.current.files.some((item) => item.id === fileId)) return
+    show(() => ({ activeFileId: fileId }))
+  }, [show])
+
+  const beginExit = useCallback((kind: BubbleExitKind) => {
+    clearExitTimer()
+    setExitKind(kind)
+    // 注意：退场期间保留 maximized 状态——最大化面板的宽度是 CSS clamp 值，
+    // 提前改成 false 会让退场动画从 480px 起点开始跳一下。
+    setBubble((current) => ({
+      ...current,
+      mode: kind === 'minimize' ? 'minimized' : 'closed',
+    }))
+    exitTimer.current = window.setTimeout(() => {
+      exitTimer.current = null
+      // 关闭：退场动画期间保留内容，结束后再清空标签（避免文档瞬间变成文件列表）。
+      if (kind === 'close') {
+        setBubble((current) => ({ ...current, files: [], activeFileId: null, maximized: false }))
+      }
+      setVisible(false)
+      setExitKind(null)
+    }, EXIT_MS)
+  }, [clearExitTimer])
+
+  const minimize = useCallback(() => {
+    if (!visibleRef.current) return
+    beginExit('minimize')
+  }, [beginExit])
 
   const closeFile = useCallback(async (fileId: string): Promise<boolean> => {
     const file = bubbleRef.current.files.find((item) => item.id === fileId)
@@ -75,13 +132,8 @@ export function useWorkspaceBubble(tabId: string) {
       const activeFileId = current.activeFileId === fileId
         ? (files[Math.min(index, files.length - 1)]?.id ?? null)
         : current.activeFileId
-      // 关掉最后一个文件后不收起面板，回到「资料与文件」浏览态，方便继续挑文件。
-      return {
-        ...current,
-        files,
-        activeFileId,
-        mode: files.length === 0 ? 'open' : current.mode,
-      }
+      // 关掉最后一个文件后回浏览列表，面板不收起。
+      return { ...current, files, activeFileId }
     })
     return true
   }, [])
@@ -90,27 +142,13 @@ export function useWorkspaceBubble(tabId: string) {
     for (const file of [...bubbleRef.current.files]) {
       if (!(await closeOfficeFile(file))) return false
     }
-    setBubble((current) => ({
-      ...current,
-      files: [],
-      activeFileId: null,
-      mode: 'closed',
-      maximized: false,
-    }))
+    beginExit('close')
     return true
-  }, [])
+  }, [beginExit])
 
   const close = useCallback(() => {
     void closeAll()
   }, [closeAll])
-
-  const minimize = useCallback(() => {
-    setBubble((current) => ({ ...current, mode: 'minimized', maximized: false }))
-  }, [])
-
-  const restore = useCallback(() => {
-    setBubble((current) => ({ ...current, mode: 'open' }))
-  }, [])
 
   const toggleMaximize = useCallback(() => {
     setBubble((current) => ({ ...current, maximized: !current.maximized }))
@@ -124,15 +162,14 @@ export function useWorkspaceBubble(tabId: string) {
   }, [])
 
   useEffect(() => registerTabCloser(tabId, async () => {
-    if (bubbleRef.current.mode === 'closed') return true
+    if (!visibleRef.current) return true
     return closeAll()
   }), [closeAll, tabId])
 
-  // 切标签/卸载时隐藏原生视图由 NativeEditorHost 的 observer 处理；这里不销毁实例，
-  // 只有真正关闭文件或标签时才走脏关闭守卫。
-
   return {
     bubble,
+    visible,
+    exitKind,
     openBrowser,
     openFile,
     activateFile,

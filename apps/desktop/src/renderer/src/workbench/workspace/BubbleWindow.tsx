@@ -1,23 +1,20 @@
 import {
-  ChevronLeft,
   FolderOpen,
   Maximize2,
+  Minimize2,
   Minus,
-  RefreshCw,
-  Search,
-  Upload,
   X,
 } from 'lucide-react'
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { EditorView } from '@/office-proto/EditorView'
 import type { OfficeFile, RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 import { cn } from '../ui/cn'
 import { Hint, IconButton, Spinner } from '../ui/primitives'
-import { filterLibraryFiles, isArtifactFile } from './fileBrowser'
+import { isArtifactFile } from './fileBrowser'
 import { useFileLibrary } from './useFileLibrary'
-import { BUBBLE_DEFAULT_WIDTH, type BubbleState } from './useBubble'
+import { BUBBLE_DEFAULT_WIDTH, type BubbleExitKind, type BubbleState } from './useBubble'
 import './bubble.css'
 
 /**
@@ -31,18 +28,15 @@ import './bubble.css'
  * 主进程隐藏旧实例；同时分发一次 resize 事件让新宿主立刻重报矩形，避免迟到的 ZERO 把新实例也藏掉。
  */
 export function BubbleWindow({
-  bubble, closing = false, minimizing = false, onResize, onMinimize, onToggleMax, onRestore, onClose,
+  bubble, exiting = null, onResize, onMinimize, onToggleMax, onClose,
   onActivateFile, onCloseFile, onBrowse, onOpenFile, onToast,
 }: {
   bubble: BubbleState
-  /** 关闭退场动画中：DOM 保留但禁用交互，动画结束后由宿主卸载。 */
-  closing?: boolean
-  /** 收起（最小化）退场动画中：面板先收拢，再切成右缘把手。 */
-  minimizing?: boolean
+  /** 退场动画中：DOM 保留但禁用交互，动画结束后由宿主卸载（'close' 关闭 / 'minimize' 收起）。 */
+  exiting?: BubbleExitKind | null
   onResize: (width: number) => void
   onMinimize: () => void
   onToggleMax: () => void
-  onRestore: () => void
   onClose: () => void
   onActivateFile: (fileId: string) => void
   onCloseFile: (fileId: string) => void
@@ -54,6 +48,38 @@ export function BubbleWindow({
 }) {
   const [resizing, setResizing] = useState(false)
   const resizingRef = useRef(false)
+  /**
+   * 内层内容冻结宽度：
+   * 面板宽度动画（展开/收起/关闭）期间，如果让内部列表跟着逐帧重排，文字会不断换行，看起来在抖。
+   * 这里在动画期间把内层固定成动画开始时的宽度、由外层 overflow 裁剪，文字不再重排，只做平移/裁剪。
+   */
+  const sectionRef = useRef<HTMLElement>(null)
+  const [freezeWidth, setFreezeWidth] = useState<number | null>(null)
+
+  // 退场：dock 态直接用已知宽度冻结（别量，能量到动画第一帧的中间值 → 内层会跳一下）；
+  // 最大化态宽度是 clamp 值，只能量一次。
+  useLayoutEffect(() => {
+    if (!exiting) return
+    if (!bubble.maximized) {
+      setFreezeWidth(bubble.width)
+      return
+    }
+    const width = sectionRef.current?.getBoundingClientRect().width
+    if (width) setFreezeWidth(width)
+  }, [exiting, bubble.maximized, bubble.width])
+
+  // 宽度过渡（展开 / 最大化 / 还原）期间把内层冻结成「目标宽度」，
+  // 面板只做裁剪动画，列表/文字不逐帧重排，避免动画中的抖动。
+  useEffect(() => {
+    if (exiting) return
+    const parentWidth = sectionRef.current?.parentElement?.getBoundingClientRect().width ?? 0
+    const target = bubble.maximized
+      ? Math.min(1040, Math.max(320, parentWidth - 336))
+      : bubble.width
+    setFreezeWidth(target)
+    const timer = window.setTimeout(() => setFreezeWidth(null), 280)
+    return () => window.clearTimeout(timer)
+  }, [exiting, bubble.maximized, bubble.width])
 
   const startResize = (event: React.PointerEvent) => {
     if (bubble.maximized) return
@@ -88,29 +114,18 @@ export function BubbleWindow({
     window.setTimeout(() => window.dispatchEvent(new Event('resize')), 60)
   }
 
-  if (bubble.mode === 'minimized') {
-    const count = bubble.files.length
-    return (
-      <Hint label={count > 0 ? `展开资料与文件（${count} 个文件）` : '展开资料与文件'} side="left">
-        <button type="button" className="wb-bubble-handle" onClick={onRestore} aria-label="展开资料与文件">
-          <ChevronLeft size={13} />
-          {count > 0 ? <span className="wb-bubble-handle-count">{count}</span> : null}
-        </button>
-      </Hint>
-    )
-  }
-
   const browsing = bubble.activeFileId === null
   const active = bubble.files.find((file) => file.id === bubble.activeFileId) ?? null
 
   return (
     <section
+      ref={sectionRef}
       className={cn(
         'wb-bubble',
         bubble.maximized && 'is-maximized',
         resizing && 'is-resizing',
-        closing && 'is-closing',
-        minimizing && 'is-minimizing',
+        exiting === 'close' && 'is-closing',
+        exiting === 'minimize' && 'is-minimizing',
       )}
       style={bubble.maximized ? undefined : { width: bubble.width || BUBBLE_DEFAULT_WIDTH }}
       aria-label="资料与文件"
@@ -125,6 +140,10 @@ export function BubbleWindow({
         />
       ) : null}
 
+      <div
+        className="wb-bubble-inner"
+        style={freezeWidth ? { width: freezeWidth } : undefined}
+      >
       <div className="wb-bubble-head">
         <Hint label={browsing ? '当前正在浏览文件库' : '浏览资料与文件'}>
           <IconButton
@@ -171,12 +190,14 @@ export function BubbleWindow({
           <Hint label="收起">
             <IconButton label="收起" size="sm" icon={<Minus size={13} />} onClick={onMinimize} />
           </Hint>
-          <IconButton
-            label={bubble.maximized ? '还原' : '最大化'}
-            size="sm"
-            icon={<Maximize2 size={12} />}
-            onClick={onToggleMax}
-          />
+          <Hint label={bubble.maximized ? '还原' : '最大化'}>
+            <IconButton
+              label={bubble.maximized ? '还原' : '最大化'}
+              size="sm"
+              icon={bubble.maximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+              onClick={onToggleMax}
+            />
+          </Hint>
           <Hint label="关闭">
             <IconButton label="关闭" size="sm" tone="danger" icon={<X size={13} />} onClick={onClose} />
           </Hint>
@@ -185,7 +206,7 @@ export function BubbleWindow({
 
       <div className="wb-bubble-body">
         {browsing ? (
-          <BubbleBrowser onOpenFile={onOpenFile} onToast={onToast} />
+          <BubbleBrowser onOpenFile={onOpenFile} />
         ) : active ? (
           <div className="wb-bubble-doc" key={active.id}>
             <EditorView file={active} onToast={onToast} hideSideDock />
@@ -193,6 +214,7 @@ export function BubbleWindow({
         ) : (
           <div className="wb-bubble-empty">还没有打开文件</div>
         )}
+      </div>
       </div>
     </section>
   )
@@ -209,83 +231,28 @@ const SCOPES: ReadonlyArray<{ key: BrowserScope; label: string }> = [
 ]
 
 /**
- * 窄面板里的文件库列表：搜索 + 资料/产物筛选 + 点开即进气泡标签。
+ * 窄面板里的文件库列表：资料/产物筛选 + 点开即进气泡标签。
  * 文件库是全局的（后端没有 workspace 归属列），这里不伪造空间过滤，只在文案上如实说明。
  */
-function BubbleBrowser({ onOpenFile, onToast }: {
+function BubbleBrowser({ onOpenFile }: {
   onOpenFile: (file: OfficeFile) => void
-  onToast: (message: string) => void
 }) {
   const library = useFileLibrary()
-  const [query, setQuery] = useState('')
   const [scope, setScope] = useState<BrowserScope>('all')
 
-  const searched = useMemo(
-    () => filterLibraryFiles(library.items, query, 'all'),
-    [library.items, query],
-  )
   const items = useMemo(() => {
-    if (scope === 'all') return searched
-    return searched.filter((item) => isArtifactFile(item) === (scope === 'output'))
-  }, [scope, searched])
+    if (scope === 'all') return library.items
+    return library.items.filter((item) => isArtifactFile(item) === (scope === 'output'))
+  }, [library.items, scope])
 
   const counts = useMemo(() => ({
-    all: searched.length,
-    material: searched.filter((item) => !isArtifactFile(item)).length,
-    output: searched.filter((item) => isArtifactFile(item)).length,
-  }), [searched])
-
-  const importFiles = () => {
-    void library.importFiles().then((summary) => {
-      if (!summary) {
-        onToast('桌面端文件库未就绪')
-        return
-      }
-      if (summary.kind === 'cancelled') return
-      const parts = [
-        summary.imported ? `导入 ${summary.imported} 个` : null,
-        summary.failed ? `失败 ${summary.failed} 个` : null,
-        summary.skipped ? `跳过 ${summary.skipped} 个` : null,
-      ].filter(Boolean)
-      onToast(parts.length ? parts.join(' · ') : '没有可导入的文件')
-    }).catch((error: unknown) => {
-      onToast(error instanceof Error ? error.message : '导入失败')
-    })
-  }
+    all: library.items.length,
+    material: library.items.filter((item) => !isArtifactFile(item)).length,
+    output: library.items.filter((item) => isArtifactFile(item)).length,
+  }), [library.items])
 
   return (
     <div className="wb-bubble-browser">
-      <div className="wb-bubble-browser-head">
-        <label className="wb-bubble-browser-search">
-          <Search size={13} aria-hidden="true" />
-          <input
-            className="ui-input"
-            type="search"
-            value={query}
-            placeholder="搜索文件"
-            aria-label="搜索资料与文件"
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-        <Hint label="刷新文件库">
-          <IconButton
-            label="刷新文件库"
-            size="sm"
-            icon={<RefreshCw size={13} className={library.refreshing ? 'ui-spin' : undefined} />}
-            onClick={library.refresh}
-          />
-        </Hint>
-        <Hint label={library.importing ? '正在导入…' : '导入文件'}>
-          <IconButton
-            label="导入文件"
-            size="sm"
-            icon={<Upload size={13} />}
-            disabled={library.importing}
-            onClick={importFiles}
-          />
-        </Hint>
-      </div>
-
       <div className="wb-bubble-browser-scopes" role="group" aria-label="资料类型">
         {SCOPES.map((item) => (
           <button

@@ -105,10 +105,18 @@ describe('气泡窗浏览态 / 文档态', () => {
     expect(api?.bubble.activeFileId).toBeNull()
   })
 
-  it('显式关闭才真正收起并清空文件', async () => {
+  it('显式关闭：退场动画期间保留内容，动画结束才收起并清空文件', async () => {
     await renderProbe()
     await act(async () => api?.openFile(file('f1')))
     await act(async () => { await api?.closeAll() })
+    // 退场中：面板仍挂载、内容保留，避免关闭瞬间文档变成空列表。
+    expect(api?.visible).toBe(true)
+    expect(api?.exitKind).toBe('close')
+    expect(api?.bubble.files).toHaveLength(1)
+
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 280) }) })
+    expect(api?.visible).toBe(false)
+    expect(api?.exitKind).toBeNull()
     expect(api?.bubble.mode).toBe('closed')
     expect(api?.bubble.files).toHaveLength(0)
   })
