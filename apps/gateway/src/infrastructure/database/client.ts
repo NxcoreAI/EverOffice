@@ -253,6 +253,87 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
   }
 }
 
+/**
+ * 修复「跑过 dev 分支又被本分支接续升级」的混合库。
+ *
+ * dev 分支曾把 slides 分批 checkpoints 迁移编为 0083（when=1792771200000），
+ * 合并后在本分支重编号为 0092；而本分支自己的 0083–0087 时间戳比它更早
+ * （1792742x–1792749x）。在跑过 dev 的库上，游标已被 dev 的 0083 推到
+ * 1792771200000 之后，本分支的 0083–0087 会被 Drizzle 当作已应用而静默跳过，
+ * 随后 0092（时间戳最新）又会重复执行 CREATE TABLE。症状：
+ *   ① 启动即失败：`table slides_generation_checkpoints already exists`；
+ *   ② document_operations.room_id 仍 NOT NULL —— 没有归属 Room 的文档操作
+ *      （本分支已去掉 Room 维度）插入直接违反约束；
+ *   ③ Room / 采集旧表残留、文件页 (deleted_at, updated_at) 索引缺失。
+ *
+ * 判据用 schema 效果而不是迁移记录：只有「room_id 仍 NOT NULL」的混合库才补跑
+ * 0083–0087（健康库——含我们分支自己的库——完全不受影响），再把 0092 记为已应用。
+ * 0083 是重建表的脚本，必须在事务内执行（脚本注释：事务内 PRAGMA foreign_keys
+ * 为空操作，DROP 父表会级联删子表，脚本用临时表快照规避，依赖事务语义）。
+ */
+function repairMixedDevBranchMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations")) return;
+  const entries = readMigrationJournal(migrationsDir);
+  const entryFor = (tag: string) => entries.find((item) => item.tag === tag);
+  const isRecorded = (tag: string) => {
+    const when = entryFor(tag)?.when;
+    return typeof when !== "number"
+      || Boolean(sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(when));
+  };
+  const roomIdColumn = hasTable("document_operations")
+    ? (sqlite.prepare("PRAGMA table_info(document_operations)").all() as Array<{ name: string; notnull: number }>)
+      .find((row) => row.name === "room_id")
+    : undefined;
+
+  // ① 混合库：本分支 0083–0087 被跳过（room_id 仍 NOT NULL 是可靠判据）。
+  const skippedPhase2 = [
+    "0083_document_operations_room_nullable",
+    "0084_drop_memory_room_ingest_tables",
+    "0085_drop_room_tables",
+    "0086_drop_room_compat_tables",
+    "0087_file_entries_deleted_updated_idx",
+  ];
+  if (roomIdColumn && roomIdColumn.notnull === 1) {
+    // 0083 的脚本先快照四张子表再重建父表：子表缺一不可。
+    const prerequisites = [
+      "document_operation_items",
+      "document_operation_commands",
+      "document_operation_events",
+      "external_document_patch_preparations",
+    ].every(hasTable);
+    const pending = skippedPhase2.filter((tag) => !isRecorded(tag) && existsSync(join(migrationsDir, `${tag}.sql`)));
+    if (prerequisites && pending.length > 0) {
+      sqlite.transaction(() => {
+        for (const tag of pending) {
+          if (tag === "0084_drop_memory_room_ingest_tables"
+            || tag === "0085_drop_room_tables"
+            || tag === "0086_drop_room_compat_tables"
+            || tag === "0087_file_entries_deleted_updated_idx") {
+            // 删表/建索引迁移本身幂等；用带对象存在性守卫的重放，避免索引已建时撞名。
+            runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+          } else {
+            const sql = readFileSync(join(migrationsDir, `${tag}.sql`), "utf8");
+            for (const raw of sql.split(/--> statement-breakpoint/g)) {
+              const statement = raw.trim();
+              if (statement) sqlite.exec(statement);
+            }
+          }
+          recordMigration(sqlite, migrationsDir, entryFor(tag)!);
+        }
+      })();
+    }
+  }
+
+  // ② 0092（dev 的 0083）：表已存在时直接补记录，避免 Drizzle 重复建表。
+  if (hasTable("slides_generation_checkpoints")) {
+    const checkpoints = entryFor("0092_slides_generation_checkpoints");
+    if (checkpoints) recordMigration(sqlite, migrationsDir, checkpoints);
+  }
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -331,6 +412,7 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorConfigMigration(sqlite, migrationsDir);
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
+  repairMixedDevBranchMigrations(sqlite, migrationsDir);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.

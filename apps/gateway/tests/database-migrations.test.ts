@@ -1,4 +1,5 @@
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -239,5 +240,68 @@ describe("database migrations", () => {
       expect(tables).not.toContain(dropped);
     }
     db.sqlite.close();
+  });
+
+  it("repairs databases that ran the EverRoom dev branch before this branch (mixed history)", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-mixed-dev-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+
+    // 先得到一个正常迁移完的库，再把它改造成「跑过 dev 分支」的混合状态：
+    // dev 的 0083_slides_generation_checkpoints（时间戳 1792771200000）被应用过，
+    // 而本分支的 0083–0087（时间戳更早）被游标跳过，0092 也尚未记录。
+    const seeded = createDatabase(databasePath, migrationsDir);
+    seeded.sqlite.prepare(
+      "INSERT INTO slides_generation_checkpoints (key, state, updated_at) VALUES ('kept', '{\"batches\":{}}', 1)",
+    ).run();
+    seeded.sqlite.exec("PRAGMA foreign_keys = OFF");
+    const columns = seeded.sqlite.prepare("PRAGMA table_info(document_operations)").all() as Array<{
+      name: string; type: string; notnull: number; pk: number;
+    }>;
+    const definitions = columns.map((column) => {
+      const notNull = column.name === "room_id" ? 1 : column.notnull;
+      return `\`${column.name}\` ${column.type}${notNull ? " NOT NULL" : ""}${column.pk ? " PRIMARY KEY" : ""}`;
+    });
+    seeded.sqlite.exec("DROP TABLE document_operations");
+    seeded.sqlite.exec(`CREATE TABLE document_operations (${definitions.join(", ")})`);
+    seeded.sqlite.exec("CREATE TABLE IF NOT EXISTS context_rooms (id text PRIMARY KEY NOT NULL)");
+    seeded.sqlite.exec("DROP INDEX IF EXISTS file_entries_deleted_updated_idx");
+    seeded.sqlite.exec("PRAGMA foreign_keys = ON");
+    const skipWhens = [1792742457265, 1792746787000, 1792747500000, 1792748200000, 1792749000000, 1793500000000];
+    for (const when of skipWhens) {
+      seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(when);
+    }
+    // dev 的 0083 与本分支 0092 是同一份 SQL，只是编号/时间戳不同。
+    const checkpointsSql = await readFile(join(migrationsDir, "0092_slides_generation_checkpoints.sql"), "utf8");
+    seeded.sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)").run(
+      createHash("sha256").update(checkpointsSql).digest("hex"),
+      1792771200000,
+    );
+    seeded.sqlite.close();
+
+    // 第二次打开：修复逻辑应补跑被跳过的 0083–0087、把 0092 记为已应用。
+    const repaired = createDatabase(databasePath, migrationsDir);
+    const roomId = (repaired.sqlite.prepare("PRAGMA table_info(document_operations)").all() as Array<{
+      name: string; notnull: number;
+    }>).find((column) => column.name === "room_id");
+    const indexNames = (repaired.sqlite.prepare("PRAGMA index_list(file_entries)").all() as Array<{ name: string }>)
+      .map((index) => index.name);
+    const contextRooms = repaired.sqlite.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'context_rooms' LIMIT 1",
+    ).get();
+    const recorded = (when: number) => Boolean(repaired.sqlite.prepare(
+      "SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1",
+    ).get(when));
+    const keptRow = repaired.sqlite.prepare(
+      "SELECT state FROM slides_generation_checkpoints WHERE key = 'kept'",
+    ).get() as { state: string } | undefined;
+
+    expect(roomId?.notnull).toBe(0);
+    expect(indexNames).toContain("file_entries_deleted_updated_idx");
+    expect(contextRooms).toBeUndefined();
+    for (const when of skipWhens) expect(recorded(when)).toBe(true);
+    expect(keptRow?.state).toBe('{"batches":{}}');
+    repaired.sqlite.close();
   });
 });
