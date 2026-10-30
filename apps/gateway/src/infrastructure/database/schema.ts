@@ -164,265 +164,52 @@ export const externalCallAudits = sqliteTable(
   ],
 );
 
-export const connectorAccounts = sqliteTable(
-  "connector_accounts",
+export const connectorTombstones = sqliteTable(
+  "connector_tombstones",
   {
     id: text("id").primaryKey(),
     ownerId: text("owner_id").notNull(),
     service: text("service").notNull(),
     connectionName: text("connection_name").notNull(),
-    displayName: text("display_name"),
-    accountLabel: text("account_label"),
-    credentialRef: text("credential_ref"),
-    status: text("status", {
-      enum: ["active", "needs_connection", "disabled"],
-    }).notNull().default("active"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
   },
   (table) => [
-    uniqueIndex("connector_accounts_owner_service_connection_idx")
-      .on(table.ownerId, table.service, table.connectionName),
-    index("connector_accounts_owner_idx").on(table.ownerId),
-  ],
-);
-
-export const connectorRecords = sqliteTable(
-  "connector_records",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    service: text("service").notNull(),
-    dataset: text("dataset").notNull(),
-    sourceRecordId: text("source_record_id").notNull(),
-    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    sourceUpdatedAt: integer("source_updated_at", { mode: "timestamp_ms" }),
-    contentHash: text("content_hash").notNull(),
-    syncedAt: integer("synced_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    uniqueIndex("connector_records_owner_source_idx")
-      .on(table.ownerId, table.service, table.dataset, table.sourceRecordId),
-    index("connector_records_owner_dataset_idx").on(table.ownerId, table.dataset),
-    index("connector_records_synced_idx").on(table.syncedAt),
-  ],
-);
-
-const connectorDomainColumns = {
-  id: text("id").primaryKey(),
-  ownerId: text("owner_id").notNull(),
-  service: text("service").notNull(),
-  connectionName: text("connection_name"),
-  sourceRecordId: text("source_record_id").notNull(),
-  sourceUpdatedAt: integer("source_updated_at", { mode: "timestamp_ms" }),
-  syncedAt: integer("synced_at", { mode: "timestamp_ms" }).notNull(),
-  schemaVersion: integer("schema_version").notNull(),
-  promptVersion: integer("prompt_version").notNull(),
-  contentHash: text("content_hash").notNull(),
-  extensionPayload: text("extension_payload", { mode: "json" }).$type<Record<string, unknown>>(),
-  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-};
-
-export const connectorEmails = sqliteTable(
-  "connector_emails",
-  {
-    ...connectorDomainColumns,
-    messageId: text("message_id").notNull(),
-    threadId: text("thread_id"),
-    senderName: text("sender_name"),
-    senderAddress: text("sender_address"),
-    recipients: text("recipients", { mode: "json" }).$type<Array<{ name?: string; address: string }>>().notNull(),
-    subject: text("subject").notNull(),
-    sentAt: integer("sent_at", { mode: "timestamp_ms" }),
-    bodyText: text("body_text").notNull(),
-    labels: text("labels", { mode: "json" }).$type<string[]>().notNull(),
-    hasAttachments: integer("has_attachments", { mode: "boolean" }).notNull().default(false),
-  },
-  (table) => [
-    uniqueIndex("connector_emails_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_emails_owner_sent_idx").on(table.ownerId, table.sentAt),
-    index("connector_emails_owner_sender_idx").on(table.ownerId, table.senderAddress),
-    index("connector_emails_owner_message_idx").on(table.ownerId, table.messageId),
-  ],
-);
-
-export const connectorDocuments = sqliteTable(
-  "connector_documents",
-  {
-    ...connectorDomainColumns,
-    documentId: text("document_id").notNull(),
-    title: text("title").notNull(),
-    ownerName: text("owner_name"),
-    documentType: text("document_type"),
-    bodyText: text("body_text").notNull(),
-    sourceUrl: text("source_url"),
-  },
-  (table) => [
-    uniqueIndex("connector_documents_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_documents_owner_updated_idx").on(table.ownerId, table.sourceUpdatedAt),
-    index("connector_documents_owner_document_idx").on(table.ownerId, table.documentId),
-  ],
-);
-
-export const connectorCalendarEvents = sqliteTable(
-  "connector_calendar_events",
-  {
-    ...connectorDomainColumns,
-    eventId: text("event_id").notNull(),
-    title: text("title").notNull(),
-    description: text("description").notNull(),
-    organizer: text("organizer", { mode: "json" }).$type<{ name?: string; address?: string }>(),
-    attendees: text("attendees", { mode: "json" }).$type<Array<{ name?: string; address?: string; status?: string }>>().notNull(),
-    startAt: integer("start_at", { mode: "timestamp_ms" }),
-    endAt: integer("end_at", { mode: "timestamp_ms" }),
-    allDay: integer("all_day", { mode: "boolean" }).notNull().default(false),
-    status: text("status"),
-    location: text("location"),
-  },
-  (table) => [
-    uniqueIndex("connector_calendar_events_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_calendar_events_owner_start_idx").on(table.ownerId, table.startAt),
-    index("connector_calendar_events_owner_event_idx").on(table.ownerId, table.eventId),
-  ],
-);
-
-export const connectorTodos = sqliteTable(
-  "connector_todos",
-  {
-    ...connectorDomainColumns,
-    todoId: text("todo_id").notNull(),
-    title: text("title").notNull(),
-    notes: text("notes").notNull(),
-    /** null = 来源未提供（needsAction/completed 等语义由连接器 Skill 归一）。 */
-    status: text("status"),
-    dueAt: integer("due_at", { mode: "timestamp_ms" }),
-    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
-    priority: text("priority"),
-    listId: text("list_id"),
-    listName: text("list_name"),
-  },
-  (table) => [
-    uniqueIndex("connector_todos_owner_source_idx")
-      .on(table.ownerId, table.service, table.connectionName, table.sourceRecordId),
-    index("connector_todos_owner_due_idx").on(table.ownerId, table.dueAt),
-    index("connector_todos_owner_todo_idx").on(table.ownerId, table.todoId),
-  ],
-);
-
-/**
- * 格式映射体系：provider 原始格式 → canonical schema 的 JSONata 映射（缓存复用）。
- * 每 (service, record_kind) 一行；agent 首次见到该格式时后台生成，之后同步直通。
- */
-export const connectorFormatMappings = sqliteTable(
-  "connector_format_mappings",
-  {
-    id: text("id").primaryKey(),
-    service: text("service").notNull(),
-    recordKind: text("record_kind").notNull(),
-    version: integer("version").notNull().default(0),
-    status: text("status").notNull().$type<"generating" | "active" | "failed">(),
-    mappingJson: text("mapping_json", { mode: "json" }).$type<Record<string, unknown>>(),
-    samplesJson: text("samples_json", { mode: "json" }).$type<unknown[]>().notNull().default([]),
-    error: text("error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    activatedAt: integer("activated_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    uniqueIndex("connector_format_mappings_service_kind_idx").on(table.service, table.recordKind),
-  ],
-);
-
-export const connectorMarkdownArtifacts = sqliteTable(
-  "connector_markdown_artifacts",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    service: text("service").notNull(),
-    connectionName: text("connection_name").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
-    sourceRecordId: text("source_record_id").notNull(),
-    ingestSourceId: text("ingest_source_id").notNull(),
-    activePath: text("active_path").notNull(),
-    sourceContentHash: text("source_content_hash").notNull(),
-    markdownContentHash: text("markdown_content_hash"),
-    rendererVersion: text("renderer_version").notNull(),
-    version: integer("version").notNull().default(1),
-    status: text("status", { enum: ["pending", "ready", "failed", "deleted"] }).notNull().default("pending"),
-    ingestStatus: text("ingest_status", { enum: ["pending", "succeeded", "failed", "skipped"] }).notNull().default("pending"),
-    lastError: text("last_error"),
-    parsedId: text("parsed_id"),
-    ingestEventId: text("ingest_event_id"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    uniqueIndex("connector_markdown_artifacts_source_idx").on(
-      table.ownerId, table.service, table.connectionName, table.resourceType, table.sourceRecordId,
+    uniqueIndex("connector_tombstones_owner_service_connection_idx").on(
+      table.ownerId,
+      table.service,
+      table.connectionName,
     ),
-    uniqueIndex("connector_markdown_artifacts_ingest_source_idx").on(table.resourceType, table.ingestSourceId),
-    index("connector_markdown_artifacts_status_idx").on(table.status, table.ingestStatus, table.updatedAt),
+    index("connector_tombstones_owner_idx").on(table.ownerId),
   ],
 );
 
-export const connectorMarkdownOutbox = sqliteTable(
-  "connector_markdown_outbox",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    resourceType: text("resource_type", { enum: ["email", "document", "calendar", "todo", "generic"] }).notNull(),
-    ingestSourceId: text("ingest_source_id").notNull(),
-    operation: text("operation", { enum: ["upsert", "delete"] }).notNull(),
-    sourceContentHash: text("source_content_hash").notNull(),
-    status: text("status", { enum: ["pending", "processing", "done", "dead"] }).notNull().default("pending"),
-    attempts: integer("attempts").notNull().default(0),
-    availableAt: integer("available_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    leaseOwner: text("lease_owner"),
-    leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
-    lastError: text("last_error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("connector_markdown_outbox_due_idx").on(table.status, table.availableAt, table.leaseUntil),
-    index("connector_markdown_outbox_source_idx").on(table.resourceType, table.ingestSourceId, table.createdAt),
-  ],
-);
-
-export const connectorAuditEvents = sqliteTable(
-  "connector_audit_events",
-  {
-    id: text("id").primaryKey(),
-    ownerId: text("owner_id").notNull(),
-    requestId: text("request_id").notNull(),
-    actor: text("actor").notNull(),
-    operation: text("operation").notNull(),
-    effect: text("effect").notNull(),
-    result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("connector_audit_events_owner_created_idx").on(table.ownerId, table.createdAt),
-    index("connector_audit_events_request_idx").on(table.requestId),
-  ],
-);
+/** 工作区：会话的组织容器；id='default' 的默认工作区由迁移与懒初始化保证存在。 */
+export const agentWorkspaces = sqliteTable("agent_workspaces", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  /** 空间描述（概览页展示）；未填写为 NULL。 */
+  description: text("description"),
+  /** 目标列表，以 JSON 文本存放；NULL/空数组都按 [] 暴露。 */
+  goals: text("goals", { mode: "json" }).$type<string[]>(),
+  path: text("path"),
+  kind: text("kind", { enum: ["default", "custom"] }).notNull().default("custom"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  lastOpenedAt: integer("last_opened_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
 
 export const agentSessions = sqliteTable("agent_sessions", {
   id: text("id").primaryKey(),
+  /** 会话所属工作区；旧会话迁移后回填为 'default'。 */
+  workspaceId: text("workspace_id"),
   roomId: text("room_id"),
   pageLabel: text("page_label").notNull(),
   runtimeId: text("runtime_id").notNull(),

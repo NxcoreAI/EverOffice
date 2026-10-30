@@ -9,9 +9,6 @@ import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js"
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
 import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
-import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
-import type { FormatMappingService } from "../connectors/format-mapping-service.js";
-import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
@@ -23,6 +20,8 @@ export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
   externalCalls?: ExternalCallBudgetService;
+  /** 连接器 MCP 中转地址（loopback）；只在用户档 runtime 注入。 */
+  connectorMcp?: { url: string };
 }
 
 function agentDirectories(config: GatewayConfig, agentId: string) {
@@ -73,6 +72,33 @@ function withAgentDirectories(
   };
 }
 
+
+/**
+ * 把连接器 MCP 中转合并进 pi 的 mcpServers。
+ * URL/token 都是进程内动态值，不写 .mcp.json；会话变更不需要重建 runtime。
+ */
+function withConnectorMcp(
+  pi: NonNullable<GatewayConfig["pi"]>,
+  connectorMcp: { url: string } | undefined,
+): NonNullable<GatewayConfig["pi"]> {
+  if (!connectorMcp) return pi;
+  return {
+    ...pi,
+    mcp: {
+      ...pi.mcp,
+      mcpServers: {
+        ...(pi.mcp?.mcpServers ?? {}),
+        "everroom-connectors": {
+          type: "http",
+          name: "everroom-connectors",
+          url: connectorMcp.url,
+          headers: [],
+        },
+      },
+    },
+  };
+}
+
 export function createAgentRuntime(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
@@ -101,7 +127,7 @@ function createUserFacingRuntime(
   const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   const directories = agentDirectories(config, agentId);
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, agentId, pi),
+    ...withConnectorMcp(withAgentDirectories(config, agentId, pi), integrations?.connectorMcp),
     bashSandbox: {
       allowedRoots: [directories.workingDirectory],
       timeoutMs: 30_000,
@@ -118,11 +144,6 @@ function createUserFacingRuntime(
       // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
       ...createDocumentPiTools(mcpHost)
         .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),
-      // 会话门控：cliConnector 恒在场（create-server 归一化），baseUrl 空 =
-      // 登出态，不暴露 oo 工具；会话热更新后经 hotReloadAgentRuntimes 重建。
-      ...(config.cliConnector?.baseUrl
-        ? createOpenConnectorPiTools(config.cliConnector, undefined, integrations?.externalCalls)
-        : []),
       ...(config.webSearch && integrations?.agentResolver
         ? createWebSearchPiTools(integrations.agentResolver, integrations.externalCalls)
         : []),
@@ -137,14 +158,18 @@ function createUserFacingRuntime(
     },
     ...(integrations?.externalCalls
       ? {
-          executeMcpCall: (input, tool, invoke) => integrations.externalCalls!.execute("MCP", tool, {
-            source: "agent",
-            runId: input.runId,
-            correlationId: input.sessionId,
-          }, async (markDispatched) => {
-            markDispatched();
-            return invoke();
-          }),
+          executeMcpCall: (input, tool, invoke) => {
+            // 连接器 MCP 计入 CONNECTOR 预算（与普通外部 MCP 分开配额/审计）。
+            const service = tool.startsWith("everroom-connectors.") ? "CONNECTOR" : "MCP";
+            return integrations.externalCalls!.execute(service, tool, {
+              source: "agent",
+              runId: input.runId,
+              correlationId: input.sessionId,
+            }, async (markDispatched) => {
+              markDispatched();
+              return invoke();
+            });
+          },
         }
       : {}),
   });
@@ -380,45 +405,6 @@ export function registerLiteAgentIfMissing(
     false,
   ) ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.lite));
   return true;
-}
-
-export function createConnectorMapperAgentRuntime(
-  config: GatewayConfig,
-  formatMappingService: FormatMappingService,
-): AgentRuntime | null {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const { mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorMapper, {
-      ...pi,
-      includeBashTool: false,
-      builtinTools: [],
-      maxToolCallsPerRun: 32,
-      runtimeRole: "internal",
-      skillsEnabled: true,
-      skillPrompts: bundle.skillPrompts,
-    }),
-    systemPrompt: bundle.systemPrompt,
-  }, {
-    tools: [formatMappingService.createSubmitTool()],
-  });
-}
-
-export function registerConnectorMapperAgent(
-  resolver: AgentResolver,
-  config: GatewayConfig,
-  formatMappingService: FormatMappingService,
-): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
-  if (config.agentRuntime !== "fake" && !config.backgroundPi) return;
-  resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.connectorMapper,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createConnectorMapperAgentRuntime(config, formatMappingService)
-    // 未配置 AI 时注册占位：映射生成不可用，源保持 pending（不假装成功）。
-    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorMapper));
 }
 
 export function registerCursorCompletionAgent(resolver: AgentResolver, config: GatewayConfig): void {

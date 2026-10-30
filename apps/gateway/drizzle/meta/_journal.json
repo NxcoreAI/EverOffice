@@ -610,6 +610,27 @@
       "when": 1792749000000,
       "tag": "0087_file_entries_deleted_updated_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "6",
+      "when": 1793150000000,
+      "tag": "0088_connector_agent_query",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "6",
+      "when": 1793274371822,
+      "tag": "0089_agent_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "6",
+      "when": 1793339200000,
+      "tag": "0090_agent_workspace_meta",
+      "breakpoints": true
     }
   ]
 }

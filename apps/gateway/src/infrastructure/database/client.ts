@@ -233,21 +233,6 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
   ).has(column);
   const entries = readMigrationJournal(migrationsDir);
-  let connectorTodosEnsured = false;
-  // 0033_room_entity_facts / 0034_room_overviews_and_corrections 建的表已随 0084 删除，
-  // 0085 又删掉了最后 5 张 Room 表（context_rooms / room_overviews / room_doc_links /
-  // rooms / room_source_memberships），对应的形态修复（context-room-compatibility）一并删除，
-  // 因此这里不再整体重放 0033-0035，只补仍然存活的 connector_todos。
-  const ensureConnectorTodosMigration = () => {
-    if (connectorTodosEnsured) return;
-    connectorTodosEnsured = true;
-    const tag = "0035_eager_hannibal_king";
-    sqlite.transaction(() => {
-      runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
-      const entry = entries.find((item) => item.tag === tag);
-      if (entry) recordMigration(sqlite, migrationsDir, entry);
-    })();
-  };
   const record = (tag: string) => {
     const entry = entries.find((item) => item.tag === tag);
     if (!entry?.tag || typeof entry.when !== "number") return;
@@ -264,7 +249,6 @@ function adoptAlreadyAppliedLateMigrations(sqlite: Database.Database, migrations
     && hasColumn("agent_runs", "agent_id")
     && hasColumn("agent_runs", "invocation_mode")
     && hasColumn("agent_messages", "author_agent_id")) {
-    ensureConnectorTodosMigration();
     record("0039_multi_agent_conversations");
   }
 }
@@ -321,7 +305,6 @@ function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migra
       }
     }
   }
-  if (!hasObject("table", "connector_markdown_artifacts")) runMigrationStatements("0018_charming_vampiro");
   if (!hasObject("table", "subagent_definitions")) runMigrationStatements("0019_sturdy_fantastic_four");
   if (!hasObject("table", "runtime_config_store")) runMigrationStatements("0023_runtime_config_store");
   if (!hasObject("table", "agent_schedules")) runMigrationStatements("0025_greedy_the_santerians");

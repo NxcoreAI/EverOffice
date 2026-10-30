@@ -72,9 +72,8 @@ import {
   type AgentRuntimeIntegrationOptions,
 } from "../modules/agent/runtime-factory.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
-import { registerWebSearchAgentIfMissing, registerConnectorMapperAgent } from "../modules/agent/runtime-factory.js";
+import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factory.js";
 import { connectorSessionRoutes } from "../modules/connectors/session-routes.js";
-import { FormatMappingService } from "../modules/connectors/format-mapping-service.js";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
@@ -97,8 +96,14 @@ import { FilesService } from "../modules/files/service.js";
 import { createFileReadPiTool } from "../modules/files/pi-tools.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
-import { nangoConnectorRoutes } from "@nxcore/connectors-module/routes.js";
-import { purgeConnectorConnectionCascade } from "../modules/connectors/connection-purge.js";
+import { connectorRoutes } from "@nxcore/connectors-module/routes.js";
+import { ConnectorQueryService, FilteredConnectorRuntime, HttpConnectorActionRuntime } from "@nxcore/connectors-module/query/index.js";
+import { ConnectorMcpHost } from "../modules/connectors/connector-mcp-host.js";
+import { ConnectorMcpServer } from "../modules/connectors/connector-mcp-server.js";
+import { createConnectorContextResolver } from "../modules/connectors/connector-context.js";
+import { ConnectorConnectionCatalog } from "@nxcore/connectors-module/connection-runtime.js";
+import { createConnectorTombstoneStore } from "../modules/connectors/tombstone-store.js";
+import { cleanupLegacyConnectorData } from "../modules/connectors/cleanup.js";
 import { ConversationSuggestionService } from "../modules/processing/conversation-suggestion.js";
 import { processingRoutes } from "../modules/processing/routes.js";
 import { SessionTitleService } from "../modules/processing/session-title.js";
@@ -114,15 +119,7 @@ import { agentSchedulerMcpRoutes } from "../modules/agent-scheduler/mcp-routes.j
 import { auth } from "./auth.js";
 import { createGatewayLogger } from "./logger.js";
 import "./types.js";
-import { createConnectorDatabase } from "../infrastructure/connectors/client.js";
-import { ConnectorRepository } from "@nxcore/connectors-module/repository.js";
-import { ConnectorManager } from "@nxcore/connectors-module/manager.js";
-import { ConnectorDomainProjection, backfillDomainProjection } from "@nxcore/connectors-module/domain-projection.js";
-import { SYNC_PROVIDERS, assertSyncProvidersValid } from "@nxcore/connectors-module/sync-providers/index.js";
-import { SyncEngine } from "@nxcore/connectors-module/sync-engine.js";
-import { OpenConnectorSyncExecutor } from "@nxcore/connectors-module/open-connector-sync-executor.js";
 import { OpenConnectorAuthorizationService } from "@nxcore/connectors-module/open-connector-authorization.js";
-import { ConnectorDocumentStore } from "@nxcore/connectors-module/document-store.js";
 import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
@@ -133,6 +130,9 @@ import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-co
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
+import { AgentDebugService } from "../modules/agent-debug/service.js";
+import { agentDebugRoutes } from "../modules/agent-debug/routes.js";
+import { AgentDebugUsageStore } from "../modules/agent-debug/usage-store.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
 import { LocalAgentDispatchStore } from "../modules/local-agents/dispatch-store.js";
@@ -304,75 +304,46 @@ export async function createServer(config: GatewayConfig) {
     primaryConfigured: isRuntimePrimaryConfigured(initialRuntimeSnapshot.config),
     configJson: JSON.stringify(redactedRuntimeSnapshot.config),
   }, "runtime config selected");
-  const nangoConnectorConfig = config.nangoConnector ?? { enabled:false, databasePath:resolve(config.dataDir,"database","connectors.sqlite"), nangoUrl:"", nangoSecret:"", gmailConfigKey:"", outlookConfigKey:"", googleDocsConfigKey:"", notionConfigKey:"", googleCalendarConfigKey:"", googleClientId:"", googleClientSecret:"", notionClientId:"", notionClientSecret:"", outlookClientId:"", outlookClientSecret:"", pollingIntervalMs:300_000, providerConfigKeys:{} };
-  // 阶段二：注册表启动自检（补偿 union 放宽后丢失的编译期穷尽性）——违例拒启。
-  assertSyncProvidersValid();
-  const pollingIntervalMs = "pollingIntervalMs" in nangoConnectorConfig
-    ? nangoConnectorConfig.pollingIntervalMs
-    : 300_000;
-  const nangoConnectorDb = createConnectorDatabase(nangoConnectorConfig.enabled ? nangoConnectorConfig.databasePath : ":memory:");
-  // Seam 1（连接器统一 P1，P3 Nango 删除定稿）：链路A取数走 OpenConnector action。
-  // executor 恒在场（env 会话缺席时 baseUrl 留空）：登录态热更新（PUT
-  // /v1/connector-session）原地 patch 同一对象即生效，无需重启 gateway；登出态
-  // 由 SyncEngine.canServe 按 isAvailable 静默跳过（与 executor 缺席同语义）。
+  // 连接器：Agent 即席查询。没有 scope / run / 游标 / 定时同步；
+  // 连接事实源是 oo，本地只叠加「已断开」墓碑。
   config.cliConnector ??= {
     executable: "oo",
     baseUrl: "",
     configDirectory: resolve(config.dataDir, "open-connector", "oo-config"),
     dataDirectory: resolve(config.dataDir, "open-connector", "oo-data"),
   };
-  const ooSyncExecutor = new OpenConnectorSyncExecutor({ config: config.cliConnector, logger: app.log });
-  const nangoExecutor = ooSyncExecutor;
-  // 阶段三：拉取引擎（nango 代理 + direct 直连双路）；direct 凭据取连接的 credentialsRef。
-  const nangoSyncEngine = new SyncEngine(
-    nangoExecutor,
-    (connection) => connection.credentialsRef ?? null,
-  );
-  const nangoConnectorDocumentStore = nangoConnectorConfig.enabled
-    ? new ConnectorDocumentStore(resolve(config.dataDir, "connectors", "documents"))
-    : null;
-  const nangoConnectorManager = new ConnectorManager(
-    new ConnectorRepository(nangoConnectorDb.sqlite),
-    nangoExecutor,
-    nangoConnectorDocumentStore,
-    nangoSyncEngine,
-  );
-  // Nango 连接器的 agent 工具（连接发现 / 触发同步 / 只读代理请求）。
-  const nangoConnectorAuthorization = config.cliConnector?.adminToken
-    ? new OpenConnectorAuthorizationService(config.cliConnector, nangoConnectorManager)
+  const removedLegacyConnectorFiles = cleanupLegacyConnectorData(config.dataDir);
+  if (removedLegacyConnectorFiles.length > 0) {
+    app.log.info({ removed: removedLegacyConnectorFiles }, "legacy connector sync artifacts removed");
+  }
+  const connectorActionRuntime = new HttpConnectorActionRuntime(config.cliConnector);
+  const connectorTombstones = createConnectorTombstoneStore(db, "local-user");
+  const connectorRuntime = new FilteredConnectorRuntime(connectorActionRuntime, connectorTombstones);
+  const connectorQueryService = new ConnectorQueryService(connectorRuntime);
+  const connectorCatalog = new ConnectorConnectionCatalog(connectorActionRuntime, connectorTombstones);
+  const connectorAuthorization = config.cliConnector.adminToken
+    ? new OpenConnectorAuthorizationService(config.cliConnector, connectorCatalog)
     : undefined;
-  // When the configured value is a bootstrap placeholder, wait for the
-  // dashboard API key before polling. Nango rejects non-UUID secrets with a
-  // noisy 401 on every scheduled sync.
-  if (nangoConnectorConfig.enabled) {
-    // 轮询常开：引擎门控在 secret 未就绪期间跳过 OAuth 源（无 401 噪音），
-    // direct 源（WebCal 订阅）不受 Nango 冷启动影响、立即按周期同步。
-    nangoSyncEngine.setNangoReady(true); // P3：Nango 门控移除，oo executor 即绪即放行
-    nangoConnectorManager.startPolling(pollingIntervalMs);
-  }
-  // 阶段一域投影（connector-platform-refactor-plan）：Nango 拉取的邮件/日程
-  // 与 CLI 推送路径同落主库 connector_* 域表，Room 读侧单轨；启动后延迟 1s
-  // 幂等回填 connectors.sqlite 存量（唯一键 upsert，重复执行产出 unchanged）。
-  const connectorDomainOwner = "local-user";
-  nangoConnectorManager.setDomainProjection(new ConnectorDomainProjection(db, connectorDomainOwner));
-  // 格式映射体系：agent 生成的 JSONata 映射缓存直通；未就绪时同步 pending，后台生成。
-  const formatMappingService = new FormatMappingService(db, app.log);
-  nangoConnectorManager.setFormatMapper(formatMappingService);
-  if (nangoConnectorConfig.enabled) {
-    const backfillTimer = setTimeout(() => {
-      try {
-        const summary = backfillDomainProjection(db, nangoConnectorManager.repository, connectorDomainOwner);
-        if (summary.mail + summary.calendar + summary.failures > 0)
-          app.log.info({ module: "connector-domain-backfill", ...summary }, "Connector domain backfill applied");
-      } catch (error) {
-        app.log.warn(
-          { module: "connector-domain-backfill", error: error instanceof Error ? error.message : String(error) },
-          "Connector domain backfill failed; incremental sync will keep projecting new records",
-        );
-      }
-    }, 1_000);
-    backfillTimer.unref?.();
-  }
+  const connectorMcpHost = new ConnectorMcpHost({
+    query: connectorQueryService,
+    session: () =>
+      config.cliConnector?.baseUrl
+        ? {
+            baseUrl: config.cliConnector.baseUrl,
+            ...(config.cliConnector.runtimeToken ? { runtimeToken: config.cliConnector.runtimeToken } : {}),
+          }
+        : null,
+    logger: app.log,
+    disconnected: (service, connectionName) => connectorTombstones.has(service, connectionName),
+  });
+  const connectorMcpServer = new ConnectorMcpServer(connectorMcpHost, { logger: app.log });
+  const connectorMcp = await connectorMcpServer.start().catch((error: unknown) => {
+    app.log.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      "connector MCP server failed to start; connector tools stay disabled",
+    );
+    return null;
+  });
 
   // /v1/runtime-config/secrets 是唯一允许真密钥出站的端点：主进程派生托管
   // 子进程 env 用（token 鉴权，token 只在主进程）；若在此脱敏，子进程会拿
@@ -475,6 +446,8 @@ export async function createServer(config: GatewayConfig) {
       notionCli: config.notionCli ?? null,
       // 飞书导入通道（列举/正文/评论/媒体）换轨 lark-cli。
       larkCli: config.larkCli ?? null,
+      // 连接器页「关闭飞书」闸门：墓碑存在即视为关闭（lark-cli 凭据保留）。
+      isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
   const agentDocumentExportService = new AgentDocumentExportService(
@@ -486,6 +459,7 @@ export async function createServer(config: GatewayConfig) {
       logger: { info: (obj, msg) => app.log.info(obj, msg), warn: (obj, msg) => app.log.warn(obj, msg) },
       assetBridgeUrl: config.documentAssetBridgeUrl ?? null,
       notionCli: config.notionCli ?? null,
+      isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
   // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
@@ -540,10 +514,6 @@ export async function createServer(config: GatewayConfig) {
   await documentMcpHost.capabilities.recover();
   const agentResolver = createAgentResolver(config);
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
-  registerConnectorMapperAgent(agentResolver, config, formatMappingService);
-  if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
-    formatMappingService.attachAgentRuntime(agentResolver.resolve(BUILTIN_AGENT_IDS.connectorMapper));
-  }
   const subagentConfig = config.subagents ?? {
     enabled: true,
     definitionsDir: bundledAgentDefinitionsDir(),
@@ -689,6 +659,7 @@ export async function createServer(config: GatewayConfig) {
   };
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
+    ...(connectorMcp ? { connectorMcp: { url: connectorMcp.url } } : {}),
     tools: [
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
@@ -818,6 +789,7 @@ export async function createServer(config: GatewayConfig) {
     false,
     (target) => localAgentRuntimeRegistry.resolve(target),
   );
+  agentService.setConnectorContextResolver(createConnectorContextResolver(connectorRuntime));
   // 档位 runtime 解析：现取 resolver 缓存（热重载后自然换新）；配置缺席时
   // 返回 null，service 回落 primary——main-direct 未配置（AI 全空）时与
   // main 同为占位，回落行为一致。
@@ -878,12 +850,6 @@ export async function createServer(config: GatewayConfig) {
         if (!agentResolver.has(agentId)) continue;
         const { previous } = agentResolver.reload(agentId);
         await previous?.dispose();
-      }
-      // 格式映射 agent 热替换（初始 attach 见 registerConnectorMapperAgent 处）。
-      if (agentResolver.has(BUILTIN_AGENT_IDS.connectorMapper)) {
-        const mapper = agentResolver.reload(BUILTIN_AGENT_IDS.connectorMapper);
-        formatMappingService.attachAgentRuntime(mapper.current);
-        await mapper.previous?.dispose();
       }
       // 子 Agent 缓存作废（下次 acquire 以新 backgroundPi 重建）。
       await subagentRuntimeManager.invalidate();
@@ -995,12 +961,11 @@ export async function createServer(config: GatewayConfig) {
   app.addHook("onClose", async () => {
     // Stop producers while all ingest/classification dependencies are still alive.
     await filesService.dispose();
-    await nangoConnectorManager.dispose();
-    nangoConnectorDb.close();
     clearInterval(documentOperationExpiryTimer);
     await agentService.dispose();
     await localAgentRuntimeRegistry.dispose();
     await channelMcpHost.close();
+    await connectorMcpServer.close().catch(() => undefined);
     await subagentOrchestrator.dispose();
     slidesProgress.dispose();
     await documentMcpHost.close();
@@ -1013,8 +978,19 @@ export async function createServer(config: GatewayConfig) {
     sqlite.close();
     await gatewayLogger.close();
   });
-  await app.register(agentRoutes(agentService, new AgentStatusService(agentResolver, subagentOrchestrator), localAgentDispatchStore));
+  // 同一份状态快照同时服务 /v1/agent/status 与 /v1/agent-debug/*（运行态口径一致）。
+  const agentStatusService = new AgentStatusService(agentResolver, subagentOrchestrator);
+  await app.register(agentRoutes(agentService, agentStatusService, localAgentDispatchStore));
   await app.register(subagentRoutes(subagentOrchestrator));
+  // Agent 调试面板（只读）：数据来自 runtime.describe() 的实际装配 + 使用记录。
+  await app.register(agentDebugRoutes(new AgentDebugService({
+    config,
+    resolver: agentResolver,
+    statuses: agentStatusService,
+    subagents: subagentRegistry,
+    invocations: subagentOrchestrator,
+    usage: new AgentDebugUsageStore(db),
+  })));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
     await agentService.replaceRuntime(primary.current);
@@ -1223,27 +1199,7 @@ export async function createServer(config: GatewayConfig) {
   await app.register(processingRoutes(sessionTitleService, conversationSuggestionService));
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
-  await app.register(nangoConnectorRoutes(
-    nangoConnectorManager,
-    nangoConnectorConfig.enabled,
-    nangoConnectorAuthorization,
-    // 连接删除级联：先清 gateway.sqlite 下游（域表/台账/落盘文档），
-    // 再由路由内 repository.purgeConnection 收尾 connectors.sqlite。失败抛错则
-    // 连接保留（路由 500），各步幂等、重试安全。
-    async (id) => {
-      const connection = nangoConnectorManager.repository.getConnection(id);
-      if (!connection) return;
-      await purgeConnectorConnectionCascade(
-        {
-          db,
-          documentStore: nangoConnectorDocumentStore,
-          ownerId: connectorDomainOwner,
-          log: app.log,
-        },
-        connection,
-      );
-    },
-  ));
+  await app.register(connectorRoutes(connectorCatalog, connectorAuthorization));
   await app.register(connectorSessionRoutes({
     config,
     onSessionChanged: () => {
@@ -1251,16 +1207,11 @@ export async function createServer(config: GatewayConfig) {
     },
   }));
 
-  // 阶段三 M3b：REST 前缀泛化——/v1/connectors/* 为主入口。Fastify v5 路由先于
-  // onRequest（改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，
-  // 鉴权/解析全生命周期照常）；旧前缀由插件作用域钩子打弃用头。
-  // /v1/connectors/connections 是独立的通用连接入口，不参与转发。
+  // REST 前缀泛化：/v1/connectors/* 为主入口。Fastify v5 路由先于 onRequest
+  // （改写 URL 无效），别名经 404 兜底内部转发（app.inject 不走网络，鉴权/解析
+  // 全生命周期照常）；旧前缀由插件作用域钩子打弃用头。
   app.setNotFoundHandler(async (request, reply) => {
-    if (
-      request.url.startsWith("/v1/connectors/") &&
-      request.url !== "/v1/connectors/connections" &&
-      !request.url.startsWith("/v1/connectors/connections/")
-    ) {
+    if (request.url.startsWith("/v1/connectors/")) {
       const rewritten = `/v1/nango-connectors/${request.url.slice("/v1/connectors/".length)}`;
       let body: unknown;
       if (request.method !== "GET" && request.method !== "HEAD") body = request.body;
