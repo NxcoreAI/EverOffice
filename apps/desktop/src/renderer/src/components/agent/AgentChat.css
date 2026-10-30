@@ -714,6 +714,12 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   white-space: nowrap;
 }
 
+.agent-reasoning {
+  width: 100%;
+  color: #6f7784;
+  font-size: 12px;
+}
+
 .agent-reasoning summary {
   display: flex;
   width: fit-content;
@@ -735,12 +741,28 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #6c7ba8;
 }
 
+.agent-reasoning[data-active='true'] summary svg {
+  animation: agent-reasoning-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes agent-reasoning-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .agent-reasoning-content {
   margin-top: 7px;
   padding: 2px 0 2px 12px;
   border-left: 1px solid #d9dde5;
   color: #707886;
   line-height: 1.65;
+}
+
+/* 思考串随 run 无限增长：限高滚动，展开后可读完整内容而不撑爆对话区。 */
+.agent-reasoning[open] > .agent-reasoning-content {
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .agent-reasoning-content p {
@@ -3749,7 +3771,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   .agent-thinking-text::after,
   .spin,
   .agent-context-usage-pulse,
-  .agent-context-ring--compacting {
+  .agent-context-ring--compacting,
+  .agent-reasoning[data-active='true'] summary svg {
     animation: none;
   }
 

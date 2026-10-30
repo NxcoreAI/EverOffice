@@ -44,6 +44,23 @@ export function TabBar() {
 
   return (
     <div className="wb-tabbar">
+      {/* 侧栏开关放左侧（应用惯例位置）；文件标签没有侧栏时保留同宽占位，避免标签栏横跳。 */}
+      <div className="wb-tabbar-left">
+        <span className="wb-sidebar-toggle-slot">
+          {hasSidebar ? (
+            <Hint label={sidebarCollapsed ? '展开侧栏（⌘B）' : '收起侧栏（⌘B）'}>
+              <IconButton
+                label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+                icon={sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+                active={!sidebarCollapsed}
+                aria-expanded={!sidebarCollapsed}
+                onClick={() => toggleSidebar()}
+              />
+            </Hint>
+          ) : null}
+        </span>
+      </div>
+
       <button
         type="button"
         className={cn('wb-tab wb-tab--home', activeTabId === HOME_TAB_ID && 'is-active')}
@@ -112,17 +129,6 @@ export function TabBar() {
             onClick={() => window.dispatchEvent(new CustomEvent('everroom:workbench-search'))}
           />
         </Hint>
-        {hasSidebar ? (
-          <Hint label={sidebarCollapsed ? '展开侧栏（⌘B）' : '收起侧栏（⌘B）'}>
-            <IconButton
-              label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-              icon={sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-              active={!sidebarCollapsed}
-              aria-expanded={!sidebarCollapsed}
-              onClick={() => toggleSidebar()}
-            />
-          </Hint>
-        ) : null}
         <WindowControls />
       </div>
     </div>

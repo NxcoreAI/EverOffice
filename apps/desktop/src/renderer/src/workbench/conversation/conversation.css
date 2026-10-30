@@ -683,13 +683,17 @@
   font-weight: 500;
 }
 .wb-conversation .agent-thinking-text { color: var(--ui-running); }
+/* 只覆盖渐变图像本身：这里若写 `background:` 简写，会一并重置基础规则里的
+   background-size / background-position / background-clip:text，光带既不贴字
+   也不扫动，退化成一块静止色块。光带取 --ui-warm（与 --ui-running 同色系，
+   对应原版「浅蓝文字 + 浅蓝光带」的同色相关系）。 */
 .wb-conversation .agent-thinking-text::after {
-  background: linear-gradient(
+  background-image: linear-gradient(
     90deg,
     transparent 24%,
-    color-mix(in srgb, var(--ui-accent) 40%, transparent) 43%,
-    color-mix(in srgb, var(--ui-accent) 16%, var(--ui-surface)) 50%,
-    color-mix(in srgb, var(--ui-accent) 40%, transparent) 57%,
+    color-mix(in srgb, var(--ui-warm) 62%, transparent) 43%,
+    color-mix(in srgb, var(--ui-warm) 30%, var(--ui-surface)) 50%,
+    color-mix(in srgb, var(--ui-warm) 62%, transparent) 57%,
     transparent 76%
   );
 }

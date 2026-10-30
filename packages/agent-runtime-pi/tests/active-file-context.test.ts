@@ -21,9 +21,10 @@ describe("buildActiveFileContext", () => {
     expect(context).toContain("先调用 file_read");
     // 不再让模型去猜文档内核里的其他文稿。
     expect(context).toContain("不要用 document_list/document_read");
-    // 改这份 Word 用 office_edit，而不是另建一份。
-    expect(context).toContain("office_edit");
-    expect(context).toContain("不要用 office_create");
+    // 改这份 Word 用 word_agent_* 工具链（f04147ea 的新路由），而不是另建一份。
+    expect(context).toContain("word_agent_edit");
+    expect(context).toContain("word_agent_read");
+    expect(context).toContain("office_create 是另建一份新文件");
   });
 
   it("PPT 额外指向 slides_read；只读打开明确不承诺修改", () => {
@@ -44,8 +45,8 @@ describe("buildActiveFileContext", () => {
     const sheet = buildActiveFileContext({ fileId: "f1", title: "预算.xlsx", kind: "spreadsheet" });
     expect(sheet).toContain("Excel 表格");
     expect(sheet).not.toContain("slides_read");
-    expect(sheet).toContain("sheets_edit");
-    expect(sheet).toContain("sheets_read");
+    expect(sheet).toContain("sheets_agent_edit");
+    expect(sheet).toContain("sheets_agent_read");
     const pdf = buildActiveFileContext({ fileId: "f2", title: "说明.pdf", kind: "pdf" });
     expect(pdf).toContain("类型：PDF");
   });

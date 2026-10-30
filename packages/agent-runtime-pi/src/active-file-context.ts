@@ -32,10 +32,10 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
       ? "要修改或按页查看 PPT，改用 slides_read（fileId 省略即当前打开的 PPT）读取大纲与元素 id，再用 slides_edit 改。"
       : null,
     activeFile.kind === "docx"
-      ? "要修改这份 Word（改文字/加段落/删段落）用 office_edit：先用 office_read 拿段落原文（不是 file_read 的 Markdown 标记），再按原文片段构造 ops；改完立即落盘并重开预览，不要用 office_create 另建一份。"
+      ? "要修改这份 Word（改文字/格式、增删段落、插图、水印等）用 word_agent_edit：先 word_agent_read 拿块索引与 HTML/命令规则，再按块索引构造工具调用；office_create 是另建一份新文件，不是修改当前文件。"
       : null,
     activeFile.kind === "spreadsheet"
-      ? "要修改这份 Excel 用 sheets_read 看清工作表/单元格，再用 sheets_edit 按 A1 地址改；改完立即落盘并重开预览，不要用 sheets_create 另建一份。"
+      ? "要修改这份 Excel 用 sheets_agent_edit：先 sheets_agent_read 拿工作簿上下文与 propose_operations 指南；sheets_create 是另建一份新文件，不是修改当前文件。"
       : null,
     activeFile.editable === false
       ? "它是只读打开：正文可以读取，但不要承诺修改它。"

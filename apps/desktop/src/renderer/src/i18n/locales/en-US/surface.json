@@ -5,6 +5,8 @@
   "agent.thisRequestIsStillBeingProcessed": "This request is still being processed.",
   "agentChat.analyzing": "Analyzing...",
   "agentChat.callingATool": "Calling a tool...",
+  "agentChat.thinking": "Thinking…",
+  "agentChat.reasoningProcess": "Reasoning · {count} chars",
   "agentChat.cancel": "Cancel",
   "agentChat.cancelRoomSelection": "Cancel Room selection",
   "agentChat.chooseARoomForTheDocument": "Choose a Room for the document",

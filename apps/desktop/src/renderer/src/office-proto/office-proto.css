@@ -15,7 +15,8 @@
   --canvas: var(--ui-surface-alt);
 }
 .op-root * { box-sizing: border-box; }
-.op-root button { font-family: inherit; cursor: pointer; }
+/* border:0 与 .wb-root 同理：零特异性兜底复位，类名规则里的显式描边优先。 */
+:where(.op-root) button { font-family: inherit; cursor: pointer; border: 0; }
 .op-root input { font-family: inherit; }
 .op-root :focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 1px; border-radius: var(--ui-radius-xs); }
 .op-root ::-webkit-scrollbar { width: 9px; height: 9px; }

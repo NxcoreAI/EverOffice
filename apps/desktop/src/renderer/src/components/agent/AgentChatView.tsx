@@ -3,6 +3,7 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, 
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { AgentShellApproval } from './AgentShellApproval'
+import { ReasoningBlock } from './ReasoningBlock'
 import {
   SlidesProgressCard,
   selectSlidesTasks,
@@ -378,6 +379,7 @@ function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<s
         {active ? (
           <ThinkingStatus label={state.documentPending ? t('surface:agentChat.editingDocument') : getThinkingLabel(assistantMessage, state.tools, t)} />
         ) : null}
+        <ReasoningBlock active={active} content={state.reasoning} />
         {state.activity.hasTools ? (
           <AgentExecutionTimeline
             activity={state.activity}
@@ -1182,6 +1184,10 @@ export function AgentChatView({
                     />
                   )
                   : null}
+                <ReasoningBlock
+                  active={message.runId === activeRunId}
+                  content={reasoningByRun[message.runId] ?? ''}
+                />
                 {hasToolActivity && activity ? (
                   <AgentExecutionTimeline
                     activity={activity}
@@ -1234,6 +1240,7 @@ export function AgentChatView({
                 label={getThinkingLabel(undefined, latestTools, t)}
                 tail={reasoningTail(reasoningByRun[activeRunId])}
               />
+              <ReasoningBlock active content={reasoningByRun[activeRunId] ?? ''} />
               {latestActivity?.hasTools ? (
                 <AgentExecutionTimeline
                   activity={latestActivity}
@@ -1246,6 +1253,8 @@ export function AgentChatView({
           ) : null}
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
             ? (
+              // 该分支下消息循环里最后一条 assistant 消息已带 active 的
+              // ReasoningBlock（active=true），这里只补状态行，不再重复折叠块。
               <ThinkingStatus
                 label={getThinkingLabel(undefined, latestTools, t)}
                 tail={reasoningTail(reasoningByRun[activeRunId])}

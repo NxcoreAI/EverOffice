@@ -24,7 +24,11 @@
 .wb-root *::before,
 .wb-root *::after { box-sizing: border-box; }
 
-.wb-root button { font-family: inherit; cursor: pointer; }
+/* 旧全局 styles.css 的 button 复位（border:0）随迁移删除后，嵌入工作台的
+   Agent 面板按钮（会话下拉框、发送键、ghost 图标钮…）会露出 UA 默认边框。
+   用 :where() 保持零特异性，仅复位默认值；任何类名规则里的显式描边
+   （.ui-btn、快捷提示胶囊、审批按钮…）不受影响。 */
+:where(.wb-root) button { font-family: inherit; cursor: pointer; border: 0; }
 .wb-root input,
 .wb-root textarea { font-family: inherit; }
 .wb-root :focus-visible {
@@ -605,4 +609,20 @@
   align-items: center;
   gap: 8px;
   font-size: var(--ui-text-sm);
+}
+
+/* 标签栏左侧：侧栏开关（固定占位，文件标签时隐藏按钮但不改变标签位置）。 */
+.wb-tabbar-left {
+  display: flex;
+  align-items: center;
+  flex: none;
+  align-self: center;
+}
+.wb-sidebar-toggle-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
 }
