@@ -167,7 +167,8 @@ describe('文件区打开真实 pptx', () => {
     //    直接吃 window.nxcore.agent 真实桥——回归：曾装在无 preload 的 iframe 里
     //    落到脚本化 mock，无论输入什么都回同一段固定文案。
     expect(container.querySelector('.op-dock .agent-panel')).not.toBeNull()
-    expect(mocks.agentListSessions).toHaveBeenCalledWith(catalog.originalName)
+    // 会话分区键 = 文件稳定 id（不是会变的文件名）：改名/超长都不会丢历史。
+    expect(mocks.agentListSessions).toHaveBeenCalledWith(`real:${catalog.id}`)
   })
 
   it('原型 mock 文件仍走 window.desktop 桥（真实文件接入不改动 mock 路径）', async () => {

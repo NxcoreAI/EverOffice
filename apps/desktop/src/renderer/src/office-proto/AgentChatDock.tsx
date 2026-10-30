@@ -41,7 +41,9 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  const session = useAgentSession(file.name, null, [])
+  // 会话按文件稳定 id 隔离（不能用文件名：改名/同名/超长会把历史落进另一个分区，
+  // 离开标签再回来就「找不到对话记录」）；文件名只作为运行上下文的「当前页面」。
+  const session = useAgentSession(file.name, null, [], { sessionKey: file.id })
   const prompts = starterPrompts[file.kind]
 
   const submit = () => {

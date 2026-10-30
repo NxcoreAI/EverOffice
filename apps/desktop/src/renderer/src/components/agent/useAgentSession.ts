@@ -208,6 +208,12 @@ export interface UseAgentSessionOptions {
    * - string = 选中该会话
    */
   initialSessionId?: string | null
+  /**
+   * 会话分区键（缺省 = pageLabel）。停靠栏按文件隔离会话时应传文件的稳定 id：
+   * 文件重命名、同名、超长（网关 pageLabel 上限 120）都不会把历史落进另一个分区。
+   * pageLabel 只作为「当前页面」展示/运行时上下文，不参与分区。
+   */
+  sessionKey?: string
 }
 
 export function useAgentSession(
@@ -221,6 +227,8 @@ export function useAgentSession(
   const workspaceId = options.workspaceId ?? null
   const workspaceIdRef = useRef<string | null>(workspaceId)
   workspaceIdRef.current = workspaceId
+  /** 会话读写的分区键：停靠栏 = 文件稳定 id；工作台 = workspaceId（缺省回退 pageLabel）。 */
+  const sessionKey = options.sessionKey || pageLabel
   /** 只在挂载时生效：之后切会话由工作台调用 selectSessionById。 */
   const initialSessionIdRef = useRef<string | null | undefined>(options.initialSessionId)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -789,10 +797,10 @@ export function useAgentSession(
 
     if (api) {
       setLoading(true)
-      // 原型适配：会话列表按当前页面（pageLabel）过滤，停靠栏只看到本文件的
-      // 会话；工作台（workspaceId）模式下列出全部会话再按工作区过滤——工作区
-      // 是会话分区键，pageLabel 只是最后出现的界面。
-      void api.listSessions(workspaceId ? undefined : pageLabel)
+      // 停靠栏按 sessionKey（文件稳定 id）列会话，只看到本文件的会话；工作台
+      // （workspaceId）模式下列出全部会话再按工作区过滤——工作区是会话分区键，
+      // pageLabel 只是最后出现的界面。
+      void api.listSessions(workspaceId ? undefined : sessionKey)
         .then(async (listedSessions) => {
           if (!alive) return
           const scoped = workspaceId
@@ -858,7 +866,7 @@ export function useAgentSession(
       pendingEventsRef.current = []
       void api?.unsubscribe()
     }
-  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush, workspaceId])
+  }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush, sessionKey, workspaceId])
 
   // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
   // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
@@ -889,9 +897,10 @@ export function useAgentSession(
     if (activeRunId) throw new Error(t('surface:useAgentSession.stopBeforeCreating'))
     try {
       const session = await api.createSession({
-        // 分区键必须与 listSessions 一致：停靠栏按 pageLabel（= 文件名）列会话，
-        // 建会话若写死 'Agent'，它永远列不出自己刚建的会话（离开再回来即丢失）。
-        pageLabel,
+        // 分区键必须与 listSessions 一致：停靠栏按 sessionKey（文件稳定 id）列会话，
+        // 建会话若写死 'Agent' 或写成随文件改名的显示名，它永远列不出自己刚建的会话
+        // （离开再回来即丢失）。pageLabel 只用于「当前页面」上下文。
+        pageLabel: sessionKey,
         roomId: null,
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
         // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
