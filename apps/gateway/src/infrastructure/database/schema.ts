@@ -2868,6 +2868,14 @@ export const slidesPageImageSessions = sqliteTable(
   ],
 );
 
+/** Durable generation progress; identity includes content, agent revisions and model configuration. */
+export const slidesGenerationCheckpoints = sqliteTable("slides_generation_checkpoints", {
+  key: text("key").primaryKey(),
+  state: text("state", { mode: "json" })
+    .$type<import("../../modules/subagents/slides-generation-checkpoints.js").SlidesGenerationCheckpoint>().notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 /** slides 编辑层 storyboard（M1 影子模式）：按草稿 + 内容 hash 存最近一次的压缩结果与验收报告。 */
 export const slidesStoryboards = sqliteTable(
   "slides_storyboards",

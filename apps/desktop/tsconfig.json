@@ -46,6 +46,8 @@
   },
   "include": [
     "src",
+    "debug",
+    "vite.agent-debug.config.mts",
     "electron.vite.config.ts"
   ]
 }

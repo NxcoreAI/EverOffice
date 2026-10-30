@@ -45,6 +45,7 @@ import {
 import { tiptapToMarkdown } from "./tiptap-markdown.js";
 import { OpenAiCompletionAgentRuntime } from "../agent/openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS } from "../agent/resolver.js";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
 import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiDetail, type KsWikiPageItem } from "./ks-client.js";
@@ -89,14 +90,24 @@ export interface KnowledgeServiceConfig {
   roomRelationMinScore?: number;
 }
 
+/** KnowledgeService 的可选装配项。 */
+export interface KnowledgeServiceOptions {
+  /** Agent 调试页数据面：知识模块自建 resolver 的 runtime 也接入 trace。 */
+  agentDebugStore?: AgentDebugTraceStore;
+}
+
 export interface KnowledgeServiceLogger {
   info(bindings: Record<string, unknown>, message: string): void;
   warn(bindings: Record<string, unknown>, message: string): void;
   error(bindings: Record<string, unknown>, message: string): void;
 }
 
-function createKnowledgeAgentResolver(dataDir: string, llm: KnowledgeLlmConfig): AgentResolver {
-  const resolver = new AgentResolver();
+function createKnowledgeAgentResolver(
+  dataDir: string,
+  llm: KnowledgeLlmConfig,
+  agentDebugStore?: AgentDebugTraceStore,
+): AgentResolver {
+  const resolver = new AgentResolver(agentDebugStore);
   const id = BUILTIN_AGENT_IDS.knowledge;
   const bundle = loadBuiltinAgentBundle(bundledAgentDefinitionsDir(), id);
   const root = join(dataDir, "agent", "runtimes", id);
@@ -425,6 +436,8 @@ export class KnowledgeService {
   private readonly router: KnowledgeRouter;
   private llm: KnowledgeLlm | null;
   private readonly externalAgentResolver: AgentResolver | null;
+  /** Agent 调试页数据面：知识模块自建 resolver 的 runtime 也接入 trace。 */
+  private readonly agentDebugStore: AgentDebugTraceStore | undefined;
   private readonly roomContextCache = new Map<string, { key: string; value: RoomContextSummary }>();
   private ownedAgentResolver: AgentResolver | null;
   /** 字节与登记表的唯一所有者是 modules/files（U9）；此处仅编排路由/ingest。 */
@@ -468,7 +481,9 @@ export class KnowledgeService {
     private readonly config: KnowledgeServiceConfig,
     private readonly logger: KnowledgeServiceLogger,
     agentResolver?: AgentResolver,
+    options: KnowledgeServiceOptions = {},
   ) {
+    this.agentDebugStore = options.agentDebugStore;
     this.files = new FilesService(db, config.dataDir);
     this.ks = new KsAdminClient({
       baseUrl: config.baseUrl,
@@ -482,7 +497,7 @@ export class KnowledgeService {
     });
     this.relationRegistry = new RoomRelationRegistry(this.db, config.roomRelationMinScore ?? 1);
     this.ownedAgentResolver = config.llm && !agentResolver
-      ? createKnowledgeAgentResolver(config.dataDir, config.llm)
+      ? createKnowledgeAgentResolver(config.dataDir, config.llm, this.agentDebugStore)
       : null;
     this.llm = config.llm ? new KnowledgeLlm(agentResolver ?? this.ownedAgentResolver!) : null;
     this.externalAgentResolver = agentResolver ?? null;
@@ -531,7 +546,7 @@ export class KnowledgeService {
   replaceLlm(llm: KnowledgeLlmConfig | null): void {
     if (!llm) return;
     if (!this.llm && !this.ownedAgentResolver && !this.externalAgentResolver) {
-      this.ownedAgentResolver = createKnowledgeAgentResolver(this.config.dataDir, llm);
+      this.ownedAgentResolver = createKnowledgeAgentResolver(this.config.dataDir, llm, this.agentDebugStore);
     }
     this.llm = new KnowledgeLlm(this.externalAgentResolver ?? this.ownedAgentResolver!);
     this.router.replaceLlm(this.llm);

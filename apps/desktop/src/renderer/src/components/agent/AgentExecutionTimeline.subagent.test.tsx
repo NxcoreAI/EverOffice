@@ -73,12 +73,18 @@ function renderTimeline() {
   )
 }
 
-/** 子代理摘要行「名字」后面的那段小字：运行中是任务预览，终态是耗时。 */
-function summarySubText(root: TestRenderer.ReactTestInstance): string | undefined {
+/** 子代理摘要行的文字容器（名字、上下文圆环、任务预览/耗时都在这一行里）。 */
+function summaryText(root: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance {
   const row = root.findByProps({ 'data-kind': 'subagent' })
   const summary = row.find((node) => node.parent === row && node.props.className === 'agent-tool-command')
-  const text = summary.findByProps({ className: 'agent-tool-command-text' })
-  const span = text.find((node) => node.parent === text && node.type === 'span')
+  return summary.findByProps({ className: 'agent-tool-command-text' })
+}
+
+/** 子代理摘要行「名字」后面的那段小字：运行中是任务预览，终态是耗时。 */
+function summarySubText(root: TestRenderer.ReactTestInstance): string | undefined {
+  const text = summaryText(root)
+  const span = text.find((node) => node.parent === text && node.type === 'span'
+    && !String(node.props.className ?? '').includes('agent-context-ring'))
   return typeof span?.props.children === 'string' ? span.props.children : undefined
 }
 
@@ -224,4 +230,55 @@ describe('AgentExecutionTimeline subagent tool flow', () => {
     expect(rows[0]!.findByProps({ className: 'agent-subagent-tools' }).children).toHaveLength(3)
   })
 
+  it('子代理名字旁同一行显示它自己的上下文圆环，数字收在悬停 title', async () => {
+    stubContextRooms()
+    listRunSubagentInvocations.mockImplementation(async (rootRunId: string) => rootRunId === runId
+      ? [invocationNode({
+        status: 'completed',
+        completedAt: '2026-09-29T10:01:00.000Z',
+        contextUsage: { tokens: 41_200, contextWindow: 128_000, percent: 32.2 },
+      })]
+      : [])
+    listSubagentInvocationEvents.mockResolvedValue([])
+
+    const renderer = renderTimeline()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+
+    const text = summaryText(renderer.root)
+    // 圆环与名字在同一个文字容器里，且紧跟在名字之后（同一行）。
+    const ordered = text.findAll((node) => node.type === 'strong'
+      || node.props.className === 'agent-context-ring agent-context-ring--inline')
+    expect(ordered.map((node) => node.type)).toEqual(['strong', 'span'])
+    const ring = text.findByProps({ className: 'agent-context-ring agent-context-ring--inline' })
+    expect(ring.props.title).toBe('上下文 41,200 / 128,000 tokens（32%）')
+    expect(ring.props['data-level']).toBeUndefined()
+    // 仍有任务预览/耗时小字。
+    expect(summarySubText(renderer.root)).toBe('58 秒')
+  })
+
+  it('高占用换警示色；只有压缩信号时仍显示呼吸圆环', async () => {
+    stubContextRooms()
+    listRunSubagentInvocations.mockResolvedValue([invocationNode({
+      status: 'running',
+      contextUsage: { tokens: 120_000, contextWindow: 128_000, percent: 93.75 },
+    })])
+    listSubagentInvocationEvents.mockResolvedValue([])
+
+    const renderer = renderTimeline()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    const high = summaryText(renderer.root)
+      .findByProps({ className: 'agent-context-ring agent-context-ring--inline' })
+    expect(high.props['data-level']).toBe('high')
+
+    // 无用量快照但压缩中：仍显示轨道圆环并呼吸，提示沿用对话区同一文案。
+    listRunSubagentInvocations.mockResolvedValue([invocationNode({
+      status: 'running',
+      contextUsage: null,
+      contextCompacting: true,
+    })])
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_100) })
+    const compacting = summaryText(renderer.root)
+      .findByProps({ className: 'agent-context-ring agent-context-ring--compacting agent-context-ring--inline' })
+    expect(compacting.props.title).toBe('上下文压缩中…')
+  })
 })

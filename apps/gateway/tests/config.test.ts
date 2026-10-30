@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
+  it("ignores the removed content-mode switch (semantic-v3 is the only path)", () => {
+    // 配置项已删除：语义链路是唯一内容路径，残留的 env 不再影响启动也不报错。
+    const config = loadConfig(["--token", "0123456789abcdef"], { NXCORE_SLIDES_CONTENT_MODE: "legacy-v2" });
+    expect("slidesContentMode" in (config.subagents ?? {})).toBe(false);
+  });
   it("defaults to the isolated fake runtime", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {});
 
@@ -16,7 +21,12 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      maxConcurrent: 8,
+      // 全池上限 = slides 池 + default 池（16 + 4）。
+      maxConcurrent: 22,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
     });
   });
 
@@ -57,7 +67,28 @@ describe("loadConfig", () => {
       definitionsDir: resolve("./fixtures/agents"),
       runtimeDir: join(config.dataDir, "agent", "subagents"),
       defaultTimeoutMs: 45_000,
+      // 未知键不受 --flag 限制：三个池旋钮各自有独立 env（下面是它们的缺省值）。
       maxConcurrent: 7,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
+    });
+  });
+
+  it("honours the per-pool concurrency knobs", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_SUBAGENT_MAX_CONCURRENT: "24",
+      NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT: "18",
+      NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT: "6",
+      NXCORE_SLIDES_DECK_CONCURRENCY: "15",
+    });
+
+    expect(config.subagents).toMatchObject({
+      maxConcurrent: 24,
+      slidesMaxConcurrent: 18,
+      defaultMaxConcurrent: 6,
+      slidesDeckConcurrency: 15,
     });
   });
 
@@ -447,5 +478,62 @@ describe("loadConfig", () => {
       baseUrl: "https://api.deepseek.com",
       apiKey: "test-key",
     });
+  });
+
+  it("loads agent debug archive defaults and honours env overrides", () => {
+    const defaults = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(defaults.agentDebugArchive).toEqual({
+      enabled: true,
+      retentionDays: 7,
+      maxRuns: 2_000,
+      maxBytes: 1_024 * 1_024 * 1_024,
+    });
+
+    const custom = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "0",
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "30",
+      NXCORE_AGENT_DEBUG_ARCHIVE_RUNS: "50",
+      NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB: "256",
+    });
+    expect(custom.agentDebugArchive).toEqual({
+      enabled: false,
+      retentionDays: 30,
+      maxRuns: 50,
+      maxBytes: 256 * 1_024 * 1_024,
+    });
+
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "off",
+    }).agentDebugArchive?.enabled).toBe(false);
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "true",
+    }).agentDebugArchive?.enabled).toBe(true);
+  });
+
+  it("rejects invalid agent debug archive values", () => {
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE: "maybe",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "0",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_DAYS");
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "abc",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_DAYS");
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_DAYS: "3651",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_DAYS");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_RUNS: "0",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_RUNS");
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_RUNS: "100001",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_RUNS");
+
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB: "63",
+    })).toThrow("Invalid NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB");
   });
 });

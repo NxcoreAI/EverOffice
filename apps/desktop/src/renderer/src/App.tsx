@@ -710,7 +710,8 @@ export function App() {
         return
       }
       if (payload.type === 'error') {
-        showToast({ title: t('surface:agentOffice.error.title', { kind }), message: payload.message, variant: 'error' })
+        // 工具/生成失败只在对话流里就地展示（执行时间线 + PPT 进度卡），
+        // 不再弹遮挡式提示框，避免盖住用户正在看的内容。
         return
       }
       // 完成提示：只有全部页落定才会收到 done（生成期 done 已由桌面端 deferDone 推迟），
@@ -723,7 +724,6 @@ export function App() {
             applied: payload.appliedPages ?? 0,
             total: payload.totalPages ?? 0,
           }),
-          variant: 'error',
         })
       } else {
         showToast({ title: t('surface:agentOffice.done.title', { kind }), message: t('surface:agentOffice.done.message', { title: payload.title }) })

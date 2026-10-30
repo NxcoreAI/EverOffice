@@ -205,6 +205,32 @@ describe('selectSlidesTasks', () => {
     expect(selection.foldedCount).toBe(0)
   })
 
+  it('最新一张已完成时不留完整卡，直接收成一行回执', () => {
+    const selection = selectSlidesTasks([
+      entryOf({ stage: 'page_applied', title: '新 PPT', documentId: 'doc-new', fileEntryId: 'file-2', completed: true }, { id: 't2', startedAt: at(2) }),
+      entryOf({ stage: 'page_applied', title: '旧 PPT', documentId: 'doc-old', fileEntryId: 'file-1', completed: true }, { id: 't1', startedAt: at(1) }),
+    ])
+    expect(selection.primary).toBeNull()
+    expect(selection.waiting).toHaveLength(0)
+    expect(selection.receipts.map((entry) => entry.tool.id)).toEqual(['t2', 't1'])
+  })
+
+  it('失败任务也收成一行回执（带错误人话），不再留大卡片', () => {
+    const selection = selectSlidesTasks([
+      entryOf({ stage: 'failed', title: '失败的 PPT', documentId: 'doc-f', errorCode: 'slides_layout_apply_failed', retryable: true }, { id: 't1', startedAt: at(1), status: 'error' }),
+    ])
+    expect(selection.primary).toBeNull()
+    expect(selection.receipts).toHaveLength(1)
+  })
+
+  it('被取消的任务也收成回执，不再常驻完整卡', () => {
+    const selection = selectSlidesTasks([
+      entryOf({ stage: 'planning', title: '被中止的 PPT', documentId: 'doc-x' }, { id: 't1', startedAt: at(1), status: 'stopped' }),
+    ])
+    expect(selection.primary).toBeNull()
+    expect(selection.receipts).toHaveLength(1)
+  })
+
   it('不同文档的等待态并存，超过 3 张折叠计数；展开后全部返回', () => {
     const entries = [1, 2, 3, 4, 5].map((index) => entryOf(
       { stage: 'page_images_confirm', title: `deck-${index}`, documentId: `doc-${index}` },
@@ -272,9 +298,8 @@ describe('SlidesProgressCard 草稿与动作语义（P1-1/P1-2）', () => {
     const [hiddenPrompt, displayText] = onAction.mock.calls[0] as [string, string]
     expect(hiddenPrompt).toBe(`${KEY}SLIDES_CONFIRM_CONTENT_PROMPT?documentId=doc-draft-1&title=季度汇报`)
     expect(displayText).toBe(`${KEY}SLIDES_CONFIRM_CONTENT_DISPLAY`)
-    // 动作提交后卡片保留并显示「已提交」，不整卡消失。
-    expect(renderer.root.findByProps({ className: 'agent-slides-card' })).toBeTruthy()
-    expect(renderer.root.findByProps({ className: 'agent-slides-action-note' }).children).toContain(`${KEY}SLIDES_ACTION_SUBMITTED`)
+    // 明确选择后卡片立即收起：工作继续跑，但不在对话区留一张常驻卡。
+    expect(renderer.toJSON()).toBeNull()
   })
 
   it('卡片可手动关闭（× 本地状态）', () => {
@@ -509,9 +534,9 @@ describe('SlidesProgressCard 风格大图选择器（P1-3）', () => {
     const [prompt, display] = onAction.mock.calls[0] as [string, string]
     expect(prompt).toBe(`${KEY}SLIDES_STYLE_PICK_PROMPT?index=1&sessionId=style-9`)
     expect(display).toBe(`${KEY}SLIDES_STYLE_PICK_DISPLAY?index=1`)
-    // 选完关闭浮层，卡片保留。
+    // 选完浮层关闭，卡片也一起收起（选择即完成，不留常驻卡）。
     expect(renderer.root.findAllByProps({ className: 'agent-slides-style-overlay' })).toHaveLength(0)
-    expect(renderer.root.findByProps({ className: 'agent-slides-card' })).toBeTruthy()
+    expect(renderer.root.findAll((node) => node.props?.className === 'agent-slides-card')).toHaveLength(0)
   })
 
   it('「都换一批」带 regenerate=true 的 hiddenPrompt（含 documentId）', () => {
@@ -562,6 +587,29 @@ describe('SlidesProgressCard 风格大图选择器（P1-3）', () => {
     expect(details.findAllByProps({ className: 'agent-slides-style-swatch' })).toHaveLength(1)
     act(() => buttonWithText(renderer.root, `${KEY}SLIDES_STYLE_CONFIRM`).props.onClick())
     expect(onAction.mock.calls[0]![0]).toBe(`${KEY}SLIDES_STYLE_CONFIRM_PROMPT?sessionId=style-9`)
+  })
+
+  it('compact 失败回执：一行错误人话 + 「再试一次」，不再是整张大卡', () => {
+    const onAction = vi.fn()
+    const renderer = TestRenderer.create(cardFixture({
+      state: {
+        stage: 'failed',
+        title: '季度汇报',
+        errorCode: 'slides_layout_apply_failed',
+        retryable: true,
+        doneCount: 2,
+        totalPages: 8,
+      },
+      toolRunning: false,
+      compact: true,
+      onAction,
+    }))
+    expect(renderer.root.findAll((node) => node.props?.className === 'agent-slides-card')).toHaveLength(0)
+    const receipt = renderer.root.findByProps({ className: 'agent-slides-receipt' })
+    expect(receipt.props['data-tone']).toBe('failed')
+    expect(flattenText(receipt)).toContain(`${KEY}SLIDES_ERROR_LAYOUT_APPLY`)
+    act(() => buttonWithText(renderer.root, `${KEY}SLIDES_RETRY`).props.onClick())
+    expect(onAction.mock.calls[0]![0]).toContain(`${KEY}SLIDES_RETRY_PROMPT?`)
   })
 
   it('三层结构：head / body / actions 分层，长页列表在卡片内单独滚动', () => {

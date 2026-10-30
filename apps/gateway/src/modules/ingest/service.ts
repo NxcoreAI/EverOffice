@@ -788,8 +788,12 @@ export class IngestService {
     // 过滤闸（第一级）：开启且不豁免 → 记 pending 不扇出，去抖批送 agent 判定
     // A user-authored web clip is an explicit save intent. It must be normalized
     // and fan out to Memory/Knowledge even when the generic noise filter is on.
+    // 显式 roomId（Room 内上传/导入）同理：用户已经指定了归属，是明确保存意图。
+    // 无此豁免时，缺 AI 描述的图片只有占位正文，过滤器会按「空内容」整批拦下，
+    // 文件已入库却在 Room 里静默消失（2026-10-23 实证：14 张 jpg 中 9 张被误杀）。
     const filterGate = this.filter && this.filter.enabled
       && unit.origin !== "web-clipper"
+      && !input.roomId
       && !this.filter.exempt(unit.sourceKind);
     if (filterGate) {
       this.db.insert(ingestEvents).values({
