@@ -289,18 +289,56 @@ store 增删（`workbench/state/store.ts`）：
 `useAgentSession` 内部 `createSession` 把 `pageLabel` 写死成 `'Agent'`。于是停靠栏新建的
 会话没有一个能被自己列出来：首次打开下拉为空；文件标签宿主只在激活时挂载（见上文
 「原生编辑器」），切走再回来组件重挂、重新 `listSessions(file.name)`，会话从下拉里消失。
+用文件名当分区键本身也不稳：改名/同名/超长（网关 pageLabel 上限 120）都会让历史落到别的分区。
 
-修复（`components/agent/useAgentSession.ts`）：
-1. `createSession` 的 `pageLabel` 改用 hook 入参——停靠栏传文件名、工作台仍传 `'Agent'`，
-   写入与读取的分区键一致。
+修复（`components/agent/useAgentSession.ts` + `office-proto/AgentChatDock.tsx`）：
+1. `useAgentSession` 增加 `sessionKey`（会话读写的分区键，缺省回退 `pageLabel`）。停靠栏传
+   文件稳定 id（`file.id`）；`pageLabel`（文件名）只作为「当前页面」运行上下文，不参与分区。
+   `listSessions` 与 `createSession` 都用 `sessionKey`，写入/读取一致；改名、同名、超长文件名
+   都不会丢历史。
 2. 启动恢复：显式传 `initialSessionId`（工作台的会话视图）时严格按它选；未传（停靠栏）时
    若 localStorage 里全局记住的会话不属于当前分区，回落到本分区最近一条会话，不再误停在
    草稿态（改动前这里会直接丢掉列表里的历史会话）。
+3. 工作台（`workspaceId` 模式）行为不变：仍全量拉取后按工作区过滤、隐藏 AI 辅助会话。
 
-回归测试：`apps/desktop/tests/agent-session-page-scope.test.tsx`（3 例，修改前 3 红——写入的
-pageLabel 是 `'Agent'` 而非文件名；修改后绿）与 `apps/desktop/tests/agent-chat-dock-sessions.test.tsx`
+回归测试：`apps/desktop/tests/agent-session-page-scope.test.tsx`（6 例，修改前红——写入的
+pageLabel 是 `'Agent'` 而非分区键；修改后绿：含重挂恢复、改名不丢、超长文件名、跨分区回落、
+工作台模式）与 `apps/desktop/tests/agent-chat-dock-sessions.test.tsx`
 （2 例，断言真实 `AgentChatDock` 的「对话记录」下拉能看到本文件会话、重挂后仍能看到并选中）。
 注：停靠栏会话没有工作区归属，网关按默认工作区暴露，因此也会出现在默认工作区的「工作」列表里。
+
+### 2026-10-30 第三轮：过渡同步 + 精简面板控件
+
+- **打开/收起右侧文件面板时对话区同步平滑让位**：面板开合的关键帧改为「宽度 0 ↔ 目标宽度」一起动画
+  （`wb-bubble-in` / `is-closing` / `is-minimizing` 都带 width 收放），内容区不再先跳一下再等面板滑入；
+  实测面板 0→330→470→480px 的同时，对话区 1190→854→712→702px 连续变化。
+- **去掉重复按钮**：面板打开时对话区右上角的文件夹入口不再渲染（面板自己已有浏览/收起/关闭），
+  任何时刻只有一个同样的图标；关闭面板后入口自动回来。
+- **精简面板内的多余控件**：删除搜索框、刷新、上传三个控件；面板只保留「全部 / 资料 / 产物」三个过滤
+  chip + 文件列表（列表仍支持点击打开、顶部文件夹切回浏览）。
+- 截图：`docs/assets/tabs-workbench/19-chat-files-clean.png`。
+
+### 2026-10-30 第四轮：统一面板状态机（消除长条把手与闪烁）
+
+- **收起不再出现长条**：删掉右缘「最小化把手」。收起 = 面板宽度动画到 0 后卸载，
+  对话区右上角的**同一个图标按钮**重新出现；首次打开与收起后的入口外观完全一致。
+- **一套可动画状态机**：可见性 / 退场类型（close / minimize）统一在 `useWorkspaceBubble` 里管理，
+  宿主只按 `visible + exitKind` 渲染，避免「面板 ↔ 把手」两套 UI 切换导致的闪烁。
+- **最大化改为布局内展宽**（不再用 absolute 悬浮层）：宽度走 240ms 过渡，对话区逐帧同步收窄，
+  不再出现「瞬间跳一下 + 悬浮层盖上来」。
+- **抖动治理**：
+  - 宽度动画期间把面板内层冻结在目标宽度（外层 `overflow:hidden` 只做裁剪），列表文字不逐帧重排；
+  - 退场 keyframes 把宽度、右外边距、边框一起收到 0，面板卸载瞬间对话区不会再跳 8px/2px；
+  - 对话区入口按钮用固定占位（隐藏而非卸载），收起/展开完成时标题不再被挤动一下；
+  - `.wb-ws-main` / 对话区加 `contain: layout paint`，把重排限制在局部；
+  - 缓动改为 `cubic-bezier(0.4, 0, 0.6, 1)`（起止都更柔），退场 220ms、宽度过渡 240ms。
+- **关闭退场期间保留内容**：不会出现「点关闭 → 文档瞬间变成空文件列表 → 再淡出」的闪烁，
+  等 220ms 退场动画结束后才清空标签并卸载。
+- 截图：`20-panel-open.png`、`21-panel-maximized.png`、`22-panel-collapsed.png`（收起后入口仍是同一个按钮，
+  没有长条把手）。
+- **最大化态收起也走同一条动画**：`.is-maximized` 的宽度之前带 `!important`（退场 keyframes 抢不过它，
+  面板会「宽度不动、直接消失」）；现在去掉 `!important`、退场期间保留 maximized 状态（宽度起点就是
+  clamp 后的实际宽度），最大化 → 收起也能从 854px 连续收到 0，对话区 320→1190px 同步展开。
 
 ### 运行/验收提示
 
