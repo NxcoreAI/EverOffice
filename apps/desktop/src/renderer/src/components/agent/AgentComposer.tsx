@@ -24,6 +24,7 @@ import {
   slugifyAgentToken,
   type MentionedItem,
 } from './agentMentions'
+import { ContextUsageRing, formatContextPercent, formatContextTokens } from './contextUsageRing'
 
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
 const MAX_ATTACHMENTS = 5
@@ -103,20 +104,6 @@ function displayDate(
   } catch {
     return fallback
   }
-}
-
-/** token 数紧凑显示：<1000 原样，否则 K 单位（40960→"41K"，150000→"150K"）。 */
-function formatContextTokens(tokens: number): string {
-  if (tokens < 1000) return String(tokens)
-  return `${Math.round(tokens / 1000)}K`
-}
-
-/** 圆环周长（r=5.5）。 */
-const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5
-
-/** 占用构成占比：<10% 保留一位小数，否则取整。 */
-function formatContextPercent(percent: number): string {
-  return percent >= 9.95 ? `${Math.round(percent)}%` : `${percent.toFixed(1)}%`
 }
 
 export const AgentComposer = forwardRef<HTMLTextAreaElement, {
@@ -1307,11 +1294,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ) : null}
             {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
             {contextUsage?.contextWindow ? (
-              <button
-                type="button"
-                className={`agent-context-ring${contextCompacting ? ' agent-context-ring--compacting' : ''}`}
-                data-level={contextUsage.percent !== null && contextUsage.percent >= 85 ? 'high' : undefined}
-                aria-expanded={contextPanelOpen}
+              <ContextUsageRing
+                usage={contextUsage}
+                compacting={contextCompacting}
+                expanded={contextPanelOpen}
                 title={contextCompacting
                   ? t('surface:agentComposer.contextCompacting')
                   : t('surface:agentComposer.contextUsageTitle', {
@@ -1320,24 +1306,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     percent: contextUsage.percent === null ? '—' : Math.round(contextUsage.percent),
                   })}
                 onClick={() => setContextPanelOpen((open) => !open)}
-              >
-                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                  <circle className="agent-context-ring-track" cx="8" cy="8" r="5.5" fill="none" strokeWidth="2.5" />
-                  {contextUsage.percent !== null ? (
-                    <circle
-                      className="agent-context-ring-arc"
-                      cx="8"
-                      cy="8"
-                      r="5.5"
-                      fill="none"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeDasharray={`${(RING_CIRCUMFERENCE * Math.min(100, Math.max(3, contextUsage.percent))) / 100} ${RING_CIRCUMFERENCE}`}
-                      transform="rotate(-90 8 8)"
-                    />
-                  ) : null}
-                </svg>
-              </button>
+              />
             ) : contextCompacting ? (
               <span className="agent-context-usage agent-context-usage--compacting" title={t('surface:agentComposer.contextCompacting')}>
                 <span className="agent-context-usage-pulse" aria-hidden="true" />

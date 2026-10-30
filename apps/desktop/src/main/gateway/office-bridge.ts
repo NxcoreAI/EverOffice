@@ -32,6 +32,8 @@ export interface OfficeGenerateRequest {
   /** xlsx：sheets→rows 结构。 */
   sheets?: AgentSheetInput[] | null
   roomId: string | null
+  /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null
   fileName: string | null
   idempotencyKey: string
   /** pptx：true = 骨架入库阶段不广播 done，等全部页落定后由 /v1/office-complete 补发。 */
@@ -102,12 +104,16 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
 export interface OfficeReformatRequest {
   action: 'describe' | 'build'
   docxBase64: string
+  /** 模版 docx 原文件（base64）：有则按「模板骨架」装订，模版元素原位置保留。 */
+  templateBase64?: string
   formatCard?: ThesisFormatCardPayload
   bindingSpec?: ThesisBindingSpecPayload
   roomId?: string
   sourceFileName?: string
   sourceFileEntryId?: string
   idempotencyKey?: string
+  /** true = 本次勾选了「AI 补写」：产物文件名加 -ai补写版 后缀，便于和原稿区分。 */
+  aiFill?: boolean
 }
 
 /** 只渲染不入库的请求（风格演示页自校用：PageSpec → pptx 字节）。 */
@@ -436,11 +442,18 @@ export class OfficeBridgeServer {
           this.broadcast({ type: 'phase', title: sourceFileName, phase, format: 'docx' })
         }
         const generated = await generateThesisDocx(
-          { sourceBytes, formatCard: req.formatCard, bindingSpec: req.bindingSpec },
+          {
+            sourceBytes,
+            ...(req.templateBase64 ? { templateBytes: Buffer.from(req.templateBase64, 'base64') } : {}),
+            formatCard: req.formatCard,
+            bindingSpec: req.bindingSpec,
+          },
           broadcastPhase,
         )
         const baseName = sourceFileName.replace(/\.(docx|doc)$/i, '').trim() || generated.title
-        const originalName = `${baseName}-排版版.docx`
+        // 勾了 AI 补写时文件名带 -ai补写版：用户要能一眼分清「原稿排版」和「补写版」
+        const suffix = req.aiFill === true ? '-ai补写版' : '-排版版'
+        const originalName = `${baseName}${suffix}.docx`
         this.broadcast({ type: 'phase', title: baseName, phase: 'importing', format: 'docx' })
         let accepted: FileImportAcceptedDto
         try {
@@ -476,6 +489,9 @@ export class OfficeBridgeServer {
               versionDeduped: accepted.versionDeduped,
               roomRequested: Boolean(req.roomId),
               originalName,
+              // 出稿自检/骨架回落提示：面板要能让用户看到「为什么这次排版不对」，
+              // 否则只能看到成品、猜不到原因。
+              ...(generated.warnings ? { warnings: generated.warnings } : {}),
             },
           },
         }
@@ -565,6 +581,10 @@ export class OfficeBridgeServer {
    * 显式 fileEntryId 未打开时的自动打开：核实产物库条目是 Office 产物后，
    * 广播 open-edit 让渲染端以可编辑方式打开（顶栏出标签，编辑实时可见）。
    * 渲染层打开失败/文件不存在时返回 false，保持原 not_open 报错路径。
+   *
+   * 查询顺序：catalog 条目（agent 生成/导入的产物都在 file_entries）优先，
+   * `get()`（只查 legacy uploaded_files）兜底。此前只用 `get()`，导致
+   * agent 生成的 PPT 永远 file_not_found，「未打开自动打开」从未成功过。
    */
   private async requestRendererOpen(fileId: string): Promise<boolean> {
     const files = this.filesBridge()
@@ -573,15 +593,21 @@ export class OfficeBridgeServer {
       return false
     }
     try {
-      let entry: Awaited<ReturnType<FilesGatewayBridge['get']>>
+      let entry: { originalName?: unknown; displayName?: unknown } | null = null
       try {
-        entry = await files.get(fileId)
-      } catch (error) {
-        console.warn('office-bridge: open-edit 跳过（fileId 读取失败）', {
-          fileId,
-          error: error instanceof Error ? error.message : String(error),
-        })
-        return false
+        entry = await files.catalogEntry(fileId)
+      } catch (catalogError) {
+        // 旧版本上传的产物不在 catalog 里：退回 legacy 查询。
+        try {
+          entry = await files.get(fileId)
+        } catch (error) {
+          console.warn('office-bridge: open-edit 跳过（fileId 读取失败）', {
+            fileId,
+            error: error instanceof Error ? error.message : String(error),
+            catalogError: catalogError instanceof Error ? catalogError.message : String(catalogError),
+          })
+          return false
+        }
       }
       if (!entry) {
         console.warn('office-bridge: open-edit 跳过（fileId 读取为空）', { fileId })
@@ -696,6 +722,7 @@ export class OfficeBridgeServer {
           // 同 idempotencyKey 重试 → 同 sourceKey：同内容去重 / 新内容进版本链。
           sourceKey: `agent:${FORMAT_SOURCE[format]}:${parsed.idempotencyKey}`,
           ...(parsed.roomId ? { roomId: parsed.roomId } : {}),
+          ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
         })
       } catch (error) {
         // 入库失败保留临时文件供人工恢复（docx 在 defaultSaveDir，其余在系统 temp）。

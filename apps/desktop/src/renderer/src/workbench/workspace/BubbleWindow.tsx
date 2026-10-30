@@ -29,7 +29,7 @@ import './bubble.css'
  */
 export function BubbleWindow({
   bubble, exiting = null, onResize, onMinimize, onToggleMax, onClose,
-  onActivateFile, onCloseFile, onBrowse, onOpenFile, onToast,
+  onActivateFile, onCloseFile, onBrowse, onOpenFile, onToast, workspaceId,
 }: {
   bubble: BubbleState
   /** 退场动画中：DOM 保留但禁用交互，动画结束后由宿主卸载（'close' 关闭 / 'minimize' 收起）。 */
@@ -45,6 +45,8 @@ export function BubbleWindow({
   /** 从浏览列表里打开文件（加进气泡标签并切到文档态）。 */
   onOpenFile: (file: OfficeFile) => void
   onToast: (message: string) => void
+  /** 浏览列表按工作空间过滤（资料库/产物库独立）。 */
+  workspaceId?: string
 }) {
   const [resizing, setResizing] = useState(false)
   const resizingRef = useRef(false)
@@ -206,7 +208,7 @@ export function BubbleWindow({
 
       <div className="wb-bubble-body">
         {browsing ? (
-          <BubbleBrowser onOpenFile={onOpenFile} />
+          <BubbleBrowser onOpenFile={onOpenFile} workspaceId={workspaceId} />
         ) : active ? (
           <div className="wb-bubble-doc" key={active.id}>
             <EditorView file={active} onToast={onToast} hideSideDock />
@@ -232,12 +234,13 @@ const SCOPES: ReadonlyArray<{ key: BrowserScope; label: string }> = [
 
 /**
  * 窄面板里的文件库列表：资料/产物筛选 + 点开即进气泡标签。
- * 文件库是全局的（后端没有 workspace 归属列），这里不伪造空间过滤，只在文案上如实说明。
+ * workspaceId 传入时按工作空间过滤（资料库/产物库独立）；缺省拉全库。
  */
-function BubbleBrowser({ onOpenFile }: {
+function BubbleBrowser({ onOpenFile, workspaceId }: {
   onOpenFile: (file: OfficeFile) => void
+  workspaceId?: string
 }) {
-  const library = useFileLibrary()
+  const library = useFileLibrary(workspaceId)
   const [scope, setScope] = useState<BrowserScope>('all')
 
   const items = useMemo(() => {

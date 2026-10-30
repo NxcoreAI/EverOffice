@@ -311,6 +311,13 @@ export interface SubagentInvocation {
 /** 对话时间线用的调用树节点：附带 Agent 展示名（registry 缺失时回退 id）。 */
 export interface SubagentInvocationNode extends SubagentInvocation {
   agentName: string;
+  /**
+   * 本次调用最近一次上下文用量快照（来自该调用 runtime 的 context.usage 事件）。
+   * 缺省 = runtime 未透出（如非 pi 运行时），调用方不渲染用量圆环。
+   */
+  contextUsage?: AgentContextUsage | null;
+  /** 本次调用是否处于上下文压缩中（context.compaction 事件最新信号）。 */
+  contextCompacting?: boolean;
 }
 
 export interface SubagentInvocationEvent {
@@ -320,6 +327,137 @@ export interface SubagentInvocationEvent {
   type: AgentEventType;
   payload: unknown;
   occurredAt: string;
+}
+
+// ── Agent 调试页（独立浏览器调试台的只读数据契约） ──
+// Gateway 侧在 runtime 边界记录所有 Agent 的 run 事件（内存环形缓冲），
+// 通过 /v1/agent-debug/* 暴露给本地调试页。
+// run 结束后会异步写入 dataDir/agent-debug 下的磁盘归档（只读回放，不参与产品链路），
+// 桌面应用重启后仍可按会话/时间找回历史记录；运行中的 run 只在内存缓冲里。
+
+/** 调试页里 Agent 的三类来源：内置、dispatch-only 子 Agent、本机 CLI Agent。 */
+export type AgentDebugAgentKind = "builtin" | "developer" | "local";
+
+export type AgentDebugAgentState = "idle" | "running" | "error";
+
+/**
+ * run 的数据来源：
+ * - `live`：当前 Gateway 进程内存缓冲（可为 running 或刚结束）；
+ * - `archive`：磁盘归档里的历史 run（终态，事件只读回放）。
+ */
+export type AgentDebugRunOrigin = "live" | "archive";
+
+export type AgentDebugRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "timed_out";
+
+export interface AgentDebugAgent {
+  id: string;
+  name: string;
+  description: string;
+  kind: AgentDebugAgentKind;
+  state: AgentDebugAgentState;
+  activeRunCount: number;
+  /** 最近一次 run 开始/完成时间；无历史为 null（调试页展示静默 Agent）。 */
+  lastRunAt: string | null;
+}
+
+export interface AgentDebugRun {
+  runId: string;
+  agentId: string;
+  agentName: string;
+  agentKind: AgentDebugAgentKind;
+  /** runtime.id，如 pi:main / pi:subagent:slides-planner / acp:codex；未知为 null。 */
+  runtimeId: string | null;
+  sessionId: string | null;
+  pageLabel: string | null;
+  /**
+   * 会话标题（主对话取 agent_sessions.title，便于在历史里按对话区分/找回）；
+   * 无法解析（子 Agent、会话已删除）为 null。由 Gateway 查询时补全，不落归档。
+   */
+  sessionTitle?: string | null;
+  /**
+   * 数据来源；缺省按 `live` 处理（旧版 Gateway）。`archive` 表示来自磁盘归档的历史 run。
+   */
+  origin?: AgentDebugRunOrigin;
+  /**
+   * 逐页任务（如 slides-layouter 的单页布局）的页序，**1 起**；非逐页 run 不返回。
+   * Gateway 从子 Agent dispatch input 的 0 起 `pageIndex` 换算，随 run 元数据落归档，
+   * 调试页据此显示「这个布局 agent 正在负责哪一页」。
+   */
+  slidePageIndex?: number;
+  /** 逐页任务的总页数；未知（旧 run / 非逐页）不返回。 */
+  slidePageCount?: number;
+  task: string;
+  status: AgentDebugRunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  /** 缓冲中保留的事件条数。 */
+  eventCount: number;
+  /** 环形缓冲淘汰掉的事件条数（事件过多时 >0）。 */
+  droppedEvents: number;
+  toolCallCount: number;
+  /** 累计思考（reasoning.delta）字符数。 */
+  reasoningChars: number;
+  /** 最近一次事件时间，调试页按活跃度排序。 */
+  lastEventAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface AgentDebugEvent {
+  /** 该 run 内严格递增的序号，从 1 开始。 */
+  seq: number;
+  type: AgentEventType;
+  occurredAt: string;
+  payload: unknown;
+  /** payload 超过单条上限被截断时，记录原始序列化字节数。 */
+  truncatedBytes?: number;
+}
+
+/** 调试归档概况（调试页用于展示"历史记录是否可用/保留多久"）。 */
+export interface AgentDebugArchiveInfo {
+  /** 归档是否启用（`NXCORE_AGENT_DEBUG_ARCHIVE=0` 可关闭）。 */
+  enabled: boolean;
+  /** 归档保留天数；超过即清理最旧 run。 */
+  retentionDays: number;
+  /** 当前归档里的 run 条数。 */
+  runCount: number;
+  /** 归档文件总字节数。 */
+  bytes: number;
+  /** 归档里最旧一条 run 的开始时间；空归档为 null。 */
+  oldestStartedAt: string | null;
+}
+
+export interface AgentDebugSnapshot {
+  generatedAt: string;
+  agents: AgentDebugAgent[];
+  /**
+   * 最近 run：运行中的 run 永远最前，其余按 startedAt 倒序。
+   * `archived=include`（默认）时混合当前进程 run 与磁盘归档历史 run，用 `origin` 区分；
+   * `exclude` 只返回当前进程 run，`only` 只返回归档历史。
+   */
+  runs: AgentDebugRun[];
+  /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数（仅当前进程）。 */
+  droppedRuns: number;
+  /** 磁盘归档概况；归档关闭时为 `{ enabled: false, ... }`。 */
+  archive?: AgentDebugArchiveInfo;
+}
+
+export interface AgentDebugRunEvents {
+  run: AgentDebugRun;
+  /**
+   * 增量事件。除 seq > afterSeq 的事件外，可能额外带回一条 seq <= afterSeq 的
+   * 尾部可合并事件（相邻 reasoning.delta / message.delta 在服务端合并累计、seq
+   * 不变，不带回来客户端永远看不到后续 token）。客户端必须按 seq **upsert**
+   * （替换同 seq 事件），而不是只追加。
+   */
+  events: AgentDebugEvent[];
+  /** 当前缓冲内的最大 seq（客户端下次增量拉取用 afterSeq 对齐）。 */
+  latestSeq: number;
 }
 
 export interface CreateAgentSessionInput {

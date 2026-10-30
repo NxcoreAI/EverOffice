@@ -47,23 +47,26 @@ function sortByUpdatedDesc(items: readonly RealOfficeFile[]): RealOfficeFile[] {
 }
 
 /**
- * 真实文件库数据源：只读 `window.nxcore.files.list`，没有 workspace 归属列，
- * 因此拿到的就是「全局文件库」最近一页，页面不得假装按空间过滤。
+ * 真实文件库数据源：读 `window.nxcore.files.list`。
+ * workspaceId = 按工作空间过滤（资料库/产物库独立）；未传/为空拉全库
+ * （主页「所有文件」等全局入口用）。工作空间变化时自动重拉。
  */
-export function useFileLibrary(): FileLibrary {
+export function useFileLibrary(workspaceId?: string): FileLibrary {
   const [state, setState] = useState<FileLibraryState>('loading')
   const [items, setItems] = useState<RealOfficeFile[]>([])
   const [total, setTotal] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [importing, setImporting] = useState(false)
   const requestSeq = useRef(0)
+  // 以 workspaceId 为请求键：切换空间时旧响应直接作废，不回写新空间列表。
+  const scope = workspaceId?.trim() || null
 
   const load = useCallback(async (initial: boolean) => {
     const seq = requestSeq.current + 1
     requestSeq.current = seq
     if (initial) setState('loading')
     else setRefreshing(true)
-    const result = await fetchRealFiles(FILE_LIBRARY_LIMIT)
+    const result = await fetchRealFiles(FILE_LIBRARY_LIMIT, scope ? { workspaceId: scope } : undefined)
     // 并发刷新时只认最后一次请求，避免旧响应回写。
     if (seq !== requestSeq.current) return
     if (!result) {
@@ -76,7 +79,7 @@ export function useFileLibrary(): FileLibrary {
       setState('ready')
     }
     setRefreshing(false)
-  }, [])
+  }, [scope])
 
   useEffect(() => {
     void load(true)
@@ -91,7 +94,7 @@ export function useFileLibrary(): FileLibrary {
     if (!api?.pickAndImport) return null
     setImporting(true)
     try {
-      const outcomes = await api.pickAndImport()
+      const outcomes = await api.pickAndImport(scope ? { workspaceId: scope } : undefined)
       const list = Array.isArray(outcomes) ? outcomes : []
       if (list.length === 0) return { kind: 'cancelled' }
       let imported = 0
@@ -108,7 +111,7 @@ export function useFileLibrary(): FileLibrary {
     } finally {
       setImporting(false)
     }
-  }, [load])
+  }, [load, scope])
 
   return { state, items, total, refreshing, importing, refresh, importFiles }
 }

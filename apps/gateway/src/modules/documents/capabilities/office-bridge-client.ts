@@ -18,6 +18,8 @@ export interface OfficeGenerateInput {
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
   roomId: string | null;
+  /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null;
   fileName: string | null;
   idempotencyKey: string;
   /** pptx：true = 不广播 done（骨架入库阶段），由网关全部落页后经 completeDeck 补发真完成。 */
@@ -47,6 +49,8 @@ export interface OfficeGenerateResult {
   versionDeduped: boolean;
   roomRequested: boolean;
   originalName: string;
+  /** 出稿提示：模版骨架回落、自检软伤等。面板要展示给用户，不能吞。 */
+  warnings?: string[];
 }
 
 /** /v1/office-apply-bytes：把 Agent 改好的 Office 文件字节落回当前打开的实例。 */
@@ -337,12 +341,18 @@ export class OfficeBridgeClient {
   /** /v1/office-reformat build：源 docx + 格式卡 + 装订规格 → 装订版 docx 入库并广播。 */
   async reformatThesisDocx(input: {
     docxBase64: string;
+    /** 模版 docx（base64）：有则按「模板骨架」装订，模版元素按原位置保留。 */
+    templateBase64?: string;
     formatCard: unknown;
     bindingSpec: unknown;
     roomId: string;
     sourceFileName: string;
     sourceFileEntryId: string;
     idempotencyKey: string;
+    /** false = 不回填模版 Logo（规则面板勾选项）。 */
+    keepLogo?: boolean;
+    /** true = 本次勾选了「AI 补写」，产物文件名要带 -ai补写版 后缀。 */
+    aiFill?: boolean;
   }): Promise<OfficeGenerateResult> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-reformat`, {
       method: "POST",
@@ -361,6 +371,9 @@ export class OfficeBridgeClient {
     }
     const data = body.data ?? {};
     const str = (key: string) => typeof data[key] === "string" ? data[key] as string : "";
+    const warnings = Array.isArray(data.warnings)
+      ? data.warnings.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
     return {
       fileEntryId: str("fileEntryId"),
       fileVersionId: str("fileVersionId"),
@@ -370,6 +383,7 @@ export class OfficeBridgeClient {
       versionDeduped: data.versionDeduped === true,
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 

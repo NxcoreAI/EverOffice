@@ -135,6 +135,7 @@ function installNxcore({ account, snapshot, deferRuntimeConfig = false }: Nxcore
       }),
       onProgress: vi.fn().mockReturnValue(() => undefined),
       onDownloaded: vi.fn().mockReturnValue(() => undefined),
+      onError: vi.fn().mockReturnValue(() => undefined),
       checkNow: vi.fn().mockResolvedValue('no-update'),
     },
     cliConnector: {

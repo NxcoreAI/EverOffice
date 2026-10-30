@@ -177,6 +177,43 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
+  it("scopes catalog entries to their workspace and defaults missing attribution to default", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# ws", "utf8");
+    await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:ws-a", originalName: "ws-a.md",
+      buffer, workspaceId: "ws-alpha",
+    });
+    // 未显式带 workspaceId 的入库（旧客户端/旧链路）归 default。
+    await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:ws-b", originalName: "ws-b.md", buffer,
+    });
+
+    // 全库（未传 workspaceId）：两个都在，DTO 暴露归一后的归属。
+    const all = test.service.listCatalog();
+    expect(all.total).toBe(2);
+    expect(all.items.find((item) => item.originalName === "ws-a.md")).toMatchObject({ workspaceId: "ws-alpha" });
+    expect(all.items.find((item) => item.originalName === "ws-b.md")).toMatchObject({ workspaceId: "default" });
+
+    // 按空间过滤：只看到自己名下的。
+    expect(test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" })).toMatchObject({ total: 1 });
+    const alpha = test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" }).items;
+    expect(alpha.map((item) => item.originalName)).toEqual(["ws-a.md"]);
+    // default 过滤同时命中显式 default 与 NULL 归属（迁移前旧行兜底）。
+    const defaults = test.service.listCatalog(100, 0, { workspaceId: "default" }).items;
+    expect(defaults.map((item) => item.originalName)).toEqual(["ws-b.md"]);
+
+    // REST 查询参数同样生效。
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+    await app.register(filesRoutes(test.service));
+    const response = await app.inject({ method: "GET", url: "/v1/files/catalog?workspaceId=ws-alpha" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ total: 1, items: [{ originalName: "ws-a.md", workspaceId: "ws-alpha" }] });
+    await app.close();
+    await test.service.dispose();
+    test.sqlite.close();
+  });
+
 
   it("accepts artifact-imported office uploads as a first-class source kind", async () => {
     const test = await catalogForTest();

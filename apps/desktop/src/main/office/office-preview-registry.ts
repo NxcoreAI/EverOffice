@@ -6,6 +6,7 @@ import type { BrowserWindow } from 'electron'
 import { webContents } from 'electron'
 
 import type { OfficeAgentFileEvent } from '../../shared/office'
+import { describeThesisError } from '../../shared/thesis-error-message'
 import { logDesktop } from '../logging/desktop-logger'
 import {
   officePreviewKindForFileName,
@@ -117,9 +118,51 @@ interface EditSyncState {
 /** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
 export interface OfficeThesisPanelBridge {
   listCards(roomId: string): Promise<unknown[]>
-  pickAndSet(roomId: string): Promise<{ canceled: boolean; cardId: string; sourceName: string }>
+  pickAndSet(
+    roomId: string,
+    options?: { wordOnly?: boolean; overwrite?: boolean },
+  ): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[]; duplicate?: boolean }>
   removeCard(roomId: string, cardId: string): Promise<void>
-  reformat(roomId: string, fileEntryId: string, cardId?: string): Promise<{ originalName: string }>
+  /** 彻底删除模版（文件 + 格式卡）。 */
+  deleteTemplate(
+    roomId: string,
+    cardId: string,
+    options?: { keepCard?: boolean },
+  ): Promise<{ fileDeleted: boolean; hadFile: boolean; cardKept: boolean }>
+  reformat(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: {
+      keepLogo?: boolean
+      keepHeaderFooter?: boolean
+      headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      aiFill?: boolean
+    },
+  ): Promise<{ originalName: string; report?: Record<string, unknown> }>
+  /** 任务化排版：立即返回 jobId（后台执行），用 reformatJobStatus 轮询进度。 */
+  startReformatJob(
+    roomId: string,
+    fileEntryId: string,
+    cardId?: string,
+    options?: {
+      keepLogo?: boolean
+      keepHeaderFooter?: boolean
+      headingMapping?: { chapter?: number; section?: number; subsection?: number }
+    },
+  ): Promise<{ jobId: string; phase: string }>
+  /** 打开模板原文件的真预览：应用自带 Office 渲染器（多页滚动、表格/图片完整）。 */
+  previewTemplate(roomId: string, cardId: string): Promise<{ opened: boolean; reason?: string }>
+  reformatJobStatus(
+    jobId: string,
+  ): Promise<{
+    id: string
+    status: 'running' | 'completed' | 'failed'
+    phase: string
+    progress: number
+    result?: unknown
+    error?: string
+  }>
 }
 
 /** 内嵌 Office 文件扩展名 → 预览运行时分流（shared 实现，渲染端入口与 files:open-original 共用同一白名单）。 */
@@ -204,17 +247,51 @@ export class OfficePreviewRegistry {
           case 'list':
             return { ok: true as const, value: await bridge.listCards(roomId) }
           case 'pick':
-            return { ok: true as const, value: await bridge.pickAndSet(roomId) }
+            // overwrite：同名冲突后用户选「替换原文件」→ 复用上次选择的文件直接解析
+            return { ok: true as const, value: await bridge.pickAndSet(roomId, { overwrite: action.overwrite === true }) }
           case 'remove':
             await bridge.removeCard(roomId, action.cardId)
             return { ok: true as const, value: null }
+          case 'delete-template':
+            // 彻底删除：模版文件（+ 可选格式卡）。文件删不掉也继续，不阻断。
+            return {
+              ok: true as const,
+              value: await bridge.deleteTemplate(roomId, action.cardId, { keepCard: action.keepCard === true }),
+            }
           case 'reformat':
             return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
+          case 'reformat-job':
+            // 后台作业：立即返回 jobId，面板轮询进度（不再挂长请求）
+            return {
+              ok: true as const,
+              value: await bridge.startReformatJob(roomId, instance.fileId, action.cardId, action.options),
+            }
+          case 'reformat-job-status': {
+            const snapshot = await bridge.reformatJobStatus(action.jobId)
+            // 作业失败是「轮询成功、状态为 failed」，走不到下面的 catch——
+            // 错误码（thesis_source_not_docx 等）必须在这里翻译，否则面板
+            // 显示的就是一串机器码（那正是 describeThesisError 要消灭的东西）。
+            return {
+              ok: true as const,
+              value: snapshot.status === 'failed' && snapshot.error
+                ? { ...snapshot, error: describeThesisError(snapshot.error) }
+                : snapshot,
+            }
+          }
+          case 'preview-template':
+            // 真预览：宿主用自带 Office 渲染器打开模版原文件（多页、表格、图片完整）
+            return { ok: true as const, value: await bridge.previewTemplate(roomId, action.cardId) }
         }
       } catch (error) {
-        return { ok: false as const, reason: 'error' as const, message: error instanceof Error ? error.message : String(error) }
+        // 面板只显示这一行文本：内部错误码（thesis_format_card_not_found）与上游
+        // 原样报错（nginx 502 HTML）必须翻译成人话，否则用户只看到「没反应」。
+        return {
+          ok: false as const,
+          reason: 'error' as const,
+          message: describeThesisError(error instanceof Error ? error.message : String(error)),
+        }
       }
-      return { ok: false as const, reason: 'error' as const, message: 'unknown thesis panel action' }
+      return { ok: false as const, reason: 'error' as const, message: '未知的排版操作，请重启应用后重试。' }
     })
   }
 

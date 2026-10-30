@@ -25,13 +25,14 @@ import './library.css'
 type ArtifactFilter = 'all' | 'agent-generated' | 'artifact-imported'
 
 /**
- * 产物页：全局文件库里 `sourceKind ∈ {agent-generated, artifact-imported}` 的文件。
+ * 产物页：本工作空间里 `sourceKind ∈ {agent-generated, artifact-imported}` 的文件。
  *
- * 文件库没有 workspace 归属列，产物同样无法按空间过滤：页面如实标注「全局产物」，
- * 并向资料库/新建工作引导。点开走注入的 onOpenFile → 气泡窗。
+ * Agent 生成的产物在入库时带其会话所属的 workspaceId，产物导入按当前空间归属；
+ * 本页只拉 `workspace.id` 名下的产物，与资料库同一套隔离口径。
+ * 点开走注入的 onOpenFile → 气泡窗。
  */
-export function OutputsPage({ onOpenFile, onToast, onOpenPage, onNewWork }: WorkspacePageProps) {
-  const library = useFileLibrary()
+export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewWork }: WorkspacePageProps) {
+  const library = useFileLibrary(workspace.id)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ArtifactFilter>('all')
   const [view, setView] = useState<FileViewMode>('grid')
@@ -95,7 +96,7 @@ export function OutputsPage({ onOpenFile, onToast, onOpenPage, onNewWork }: Work
     onExportReveal: (item) => { void exportReveal(item) },
   }
 
-  const countLabel = library.state === 'ready' ? `全局产物 ${artifacts.length} 个` : '全局产物'
+  const countLabel = library.state === 'ready' ? `本空间产物 ${artifacts.length} 个` : '本空间产物'
   const showCapNote = library.state === 'ready' && library.total > FILE_LIBRARY_LIMIT
 
   return (
@@ -115,8 +116,8 @@ export function OutputsPage({ onOpenFile, onToast, onOpenPage, onNewWork }: Work
           </Button>
         </div>
         <p className="wb-wspage-sub">
-          来自全局文件库中由 Agent 生成（agent-generated）或作为产物导入（artifact-imported）的文件，按更新时间倒序；
-          文件库暂不记录产物归属哪个工作空间，所以这里展示全局产物，不做空间过滤。
+          「{workspace.name}」里由 Agent 生成（agent-generated）或作为产物导入（artifact-imported）的文件，按更新时间倒序；
+          Agent 产物归属其会话所在的工作空间，各空间互不可见。
         </p>
       </header>
 
@@ -136,7 +137,7 @@ export function OutputsPage({ onOpenFile, onToast, onOpenPage, onNewWork }: Work
 
       {showCapNote ? (
         <p className="wb-file-note">
-          文件库共 {library.total} 个文件；产物取自最近 {FILE_LIBRARY_LIMIT} 条中的 Agent 生成 / 产物导入文件，
+          本空间文件库共 {library.total} 个文件；产物取自最近 {FILE_LIBRARY_LIMIT} 条中的 Agent 生成 / 产物导入文件，
           更早的产物暂未加载。
         </p>
       ) : null}

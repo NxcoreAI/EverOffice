@@ -9,10 +9,17 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
-import { bundledAgentDefinitionsDir, type GatewayConfig } from "../config.js";
+import {
+  bundledAgentDefinitionsDir,
+  DEFAULT_BACKGROUND_MAX_CONCURRENT,
+  DEFAULT_DEFAULT_MAX_CONCURRENT,
+  DEFAULT_SLIDES_DECK_CONCURRENCY,
+  DEFAULT_SLIDES_MAX_CONCURRENT,
+  type GatewayConfig,
+} from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
 import { agentSessions } from "../infrastructure/database/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
@@ -80,7 +87,7 @@ import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesReviewerAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
@@ -124,6 +131,7 @@ import { SubagentRegistry } from "../modules/subagents/registry.js";
 import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js";
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
+import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
@@ -519,7 +527,11 @@ export async function createServer(config: GatewayConfig) {
     definitionsDir: bundledAgentDefinitionsDir(),
     runtimeDir: resolve(config.dataDir, "agent", "subagents"),
     defaultTimeoutMs: 300_000,
-    maxConcurrent: 4,
+    maxConcurrent: DEFAULT_SLIDES_MAX_CONCURRENT + DEFAULT_DEFAULT_MAX_CONCURRENT + DEFAULT_BACKGROUND_MAX_CONCURRENT,
+    slidesMaxConcurrent: DEFAULT_SLIDES_MAX_CONCURRENT,
+    defaultMaxConcurrent: DEFAULT_DEFAULT_MAX_CONCURRENT,
+    backgroundMaxConcurrent: DEFAULT_BACKGROUND_MAX_CONCURRENT,
+    slidesDeckConcurrency: DEFAULT_SLIDES_DECK_CONCURRENCY,
   };
   const subagentRegistry = new SubagentRegistry(
     db,
@@ -544,7 +556,8 @@ export async function createServer(config: GatewayConfig) {
       : [],
   }));
   // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
-  // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
+  // 落页；edit：slides-builder 直改）——方案代理拿只读面（无 PPT 工具、不落页；
+  // 素材检索也不在工具面，arrange 前由网关按页预取随输入下发），
   // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
     documentTools: createDocumentPiTools(documentMcpHost),
@@ -558,12 +571,10 @@ export async function createServer(config: GatewayConfig) {
   // slides-layouter（每页布局树设计代理）工具面：只有 slides_layout_validate——
   // 归一→编译→量测的确定性环，契约经 deck-contract-context 按 token 取用。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
-  // slides-reviewer（审页代理）工具面：说明书按需取（review-context 按 manualToken）+ 复用布局树校验。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentTools("slides-reviewer", () => createSlidesReviewerAgentTools());
-  // layouter/reviewer 的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
+  // 布局代理的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
   // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
+  // 审页代理已砍：布局代理写完页面用渲染图自审，不再有独立的 slides-reviewer。
   subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
-  subagentRuntimeManager.registerAgentResultValidator("slides-reviewer", createSlidesTreeResultValidator());
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -696,18 +707,30 @@ export async function createServer(config: GatewayConfig) {
               documentReadAuthority.issue(context, documentId, version, blockIds),
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
+            slidesCheckpoints: new SlidesGenerationCheckpointStore(db),
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
-            // slides 编辑层影子模式（M1）：默认开启，不改变可见产物；关闭只需在装配层不传本项。
+            // slides 语义内容链路（storyboard/v3）：内容契约装配——storyboard 落库 + 实验隔离 hash。
             slidesEditor: subagentConfig.enabled
-              ? { store: new SlidesStoryboardStore(db), active: true }
+              ? {
+                  store: new SlidesStoryboardStore(db), active: true,
+                  generationConfig: () => ({
+                    // 内容链路实际用到的模型：planner/editor 走 background，layouter 走主模型。
+                    models: [config.backgroundPi, config.pi].map(model => model ? {
+                      provider: model.provider, model: model.model, baseUrl: model.baseUrl,
+                      api: model.api, reasoning: model.reasoning, maxTokens: model.maxTokens,
+                      contextWindow: model.contextWindow, temperature: model.temperature,
+                    } : null),
+                    slidesReasoning: subagentConfig.slidesReasoning,
+                  }),
+                }
               : null,
             // 布局树落页装配（generate 尾部）：与 office-plugin 共享同一批实例；
             // readMaterialBlob 供图片 AR 解析（everroom-material:// 按 hash 回源）。
             slidesLayoutOffice: subagentConfig.enabled
               ? {
                   bridge: officeBridgeClient,
-                  visualReviewer: slidesVisualReviewer,
+                  deckConcurrency: subagentConfig.slidesDeckConcurrency ?? DEFAULT_SLIDES_DECK_CONCURRENCY,
                   readMaterialBlob: async (hash) => {
                     const content = await slideImageStore.readByHash(hash).catch(() => null);
                     return content ? new Uint8Array(content.buffer) : null;

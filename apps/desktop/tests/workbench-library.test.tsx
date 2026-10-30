@@ -146,7 +146,6 @@ function installFilesApi(items: RealOfficeFile[], total = items.length) {
   ;(window as unknown as { nxcore: unknown }).nxcore = nxcore
   return nxcore
 }
-
 function text(selector: string): string {
   return container.querySelector(selector)?.textContent ?? ''
 }
@@ -173,15 +172,24 @@ afterEach(async () => {
 })
 
 describe('资料库页', () => {
-  it('渲染真实文件库计数与全库说明，来源筛选生效', async () => {
+  it('按当前工作空间过滤拉取（list 带 workspaceId）', async () => {
+    const props = pageProps()
+    const nxcore = installFilesApi(OPENABLE_KINDS)
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+
+    expect(nxcore.files.list).toHaveBeenCalledWith(200, 0, { workspaceId: 'ws-1' })
+  })
+
+  it('渲染本空间文件库计数与隔离说明，来源筛选生效', async () => {
     const props = pageProps()
     installFilesApi(OPENABLE_KINDS)
     await act(async () => { root.render(<LibraryPage {...props} />) })
     await flush()
 
     expect(text('.wb-wspage-title')).toContain('资料库')
-    expect(text('.ui-badge')).toContain('全库 4 个文件')
-    expect(text('.wb-wspage-sub')).toContain('全局')
+    expect(text('.ui-badge')).toContain('本空间 4 个文件')
+    expect(text('.wb-wspage-sub')).toContain('按工作空间隔离')
     // 默认「全部」列表按目录分组：三条不同相对目录 + 一条根目录
     expect(allText('.wb-file-group-label')).toEqual(
       expect.arrayContaining(['设计', '排期', 'agent', '文件库根目录']),
@@ -226,7 +234,7 @@ describe('资料库页', () => {
     await act(async () => { root.render(<LibraryPage {...props} />) })
     await flush()
 
-    expect(container.textContent).toContain('文件库还没有文件')
+    expect(container.textContent).toContain('本空间还没有文件')
     expect(buttonByText('导入文件')).toBeTruthy()
     expect(container.querySelector('.wb-file-row-main')).toBeNull()
   })
@@ -287,8 +295,8 @@ describe('产物页', () => {
     expect(names).toEqual([AGENT_OUTPUT.file.name, ARTIFACT_OUTPUT.file.name])
     expect(names).not.toContain(MANUAL.file.name)
     expect(names).not.toContain(LOCAL_FOLDER.file.name)
-    expect(text('.ui-badge')).toContain('全局产物 2 个')
-    expect(container.textContent).toContain('不记录产物归属哪个工作空间')
+    expect(text('.ui-badge')).toContain('本空间产物 2 个')
+    expect(container.textContent).toContain('归属其会话所在的工作空间')
 
     const firstCard = container.querySelector<HTMLButtonElement>('.wb-file-card-main')
     await act(async () => { firstCard!.click() })

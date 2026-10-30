@@ -13,6 +13,7 @@ import { createWebSearchPiTools } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
 import type { ExternalCallBudgetService } from "../external-calls/service.js";
 
@@ -282,8 +283,8 @@ export function createConversationSuggestionRuntime(config: GatewayConfig): Agen
   });
 }
 
-export function createAgentResolver(config: GatewayConfig): AgentResolver {
-  const resolver = new AgentResolver();
+export function createAgentResolver(config: GatewayConfig, agentDebugStore?: AgentDebugTraceStore): AgentResolver {
+  const resolver = new AgentResolver(agentDebugStore);
   // 工厂闭包读「活」config（applyRuntimeConfig 原地 patch 的同一对象），
   // 而不是捕获启动时快照——AgentResolver.reload 重跑工厂时才能拿到
   // runtime config 热应用后的 webSearch。

@@ -26,14 +26,14 @@ import { useFileLibrary, FILE_LIBRARY_LIMIT } from './useFileLibrary'
 import './library.css'
 
 /**
- * 资料库页：真实文件库的全局文件管理器（搜索 / 来源筛选 / 列表·网格 / 相对目录分组）。
+ * 资料库页：本工作空间专属的文件管理器（搜索 / 来源筛选 / 列表·网格 / 相对目录分组）。
  *
- * 事实约束（见 docs/design/product-data-map.zh-CN.md §3.2）：文件库没有 workspace 列，
- * 无法按空间过滤，所以页面文案如实写「全局文件库」，不伪造本空间专属文件。
+ * 文件入库时带 workspaceId（手动导入按当前空间，Agent 产物按其会话所属空间），
+ * 本页只拉 `workspace.id` 名下的文件；存量文件迁移后归默认工作区。
  * 打开文件一律走注入的 onOpenFile → 工作空间右侧气泡窗；本页自己不挂编辑器。
  */
 export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePageProps) {
-  const library = useFileLibrary()
+  const library = useFileLibrary(workspace.id)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SourceFilterKey>('all')
   const [view, setView] = useState<FileViewMode>('list')
@@ -140,7 +140,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     setFilter('all')
   }
 
-  const countLabel = library.state === 'ready' ? `全库 ${library.total} 个文件` : '全局文件库'
+  const countLabel = library.state === 'ready' ? `本空间 ${library.total} 个文件` : '本空间文件库'
   const showCapNote = library.state === 'ready' && library.total > library.items.length
   const showToolbar = library.state === 'ready' && library.items.length > 0
 
@@ -159,7 +159,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
           <FileImportButton importing={library.importing} onClick={() => { void handleImport() }} />
         </div>
         <p className="wb-wspage-sub">
-          文件库是全局的，不按工作空间隔离；「{workspace.name}」只是入口，本页展示全库最近更新的文档并如实标注全库计数。
+          资料库按工作空间隔离：这里只展示「{workspace.name}」的文件（导入即归属本空间，Agent 产物归其会话所在空间）。
           点文件在右侧气泡窗打开，行尾菜单还有原应用打开 / 导出定位 / 删除等操作。
         </p>
       </header>
@@ -178,7 +178,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
 
       {showCapNote ? (
         <p className="wb-file-note">
-          文件库共 {library.total} 个文件；本页读取最近 {FILE_LIBRARY_LIMIT} 条里可打开为文档的 {library.items.length} 个
+          本空间共 {library.total} 个文件；本页读取最近 {FILE_LIBRARY_LIMIT} 条里可打开为文档的 {library.items.length} 个
           （zip / 图片等非文档类型不在此打开），更早的文件暂未加载。
         </p>
       ) : null}
@@ -190,10 +190,10 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         <EmptyState
           className="wb-file-state"
           icon={<FileText size={18} />}
-          title={library.total === 0 ? '文件库还没有文件' : '没有可在此打开的文件'}
+          title={library.total === 0 ? '本空间还没有文件' : '没有可在此打开的文件'}
           description={library.total === 0
-            ? '导入本地文档，或把文件拖进文件库；Agent 生成的文件也会自动出现在这里。'
-            : `文件库里有 ${library.total} 个文件，但没有 docx / xlsx / pptx / pdf / md 这类可在此打开的文档；图片、压缩包等可在主页「所有文件」里查看。`}
+            ? '导入本地文档，或把文件拖进文件库；导入即归属本空间，Agent 在本空间生成的文件也会自动出现在这里。'
+            : `本空间有 ${library.total} 个文件，但没有 docx / xlsx / pptx / pdf / md 这类可在此打开的文档；图片、压缩包等可在主页「所有文件」里查看。`}
           action={<Button variant="primary" onClick={() => { void handleImport() }} disabled={library.importing}>导入文件</Button>}
         />
       ) : null}

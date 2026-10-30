@@ -551,6 +551,8 @@ export class AgentService {
   private readonly executionContexts = new Map<string, {
     sessionId: string;
     roomId: string | null;
+    /** 会话所属工作区：Agent 产物入库带 workspaceId（资料库/产物库按空间隔离）。 */
+    workspaceId: string | null;
     availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
     /** 用户当前浏览的 Office 文件：工具（file_read）按它兜底 fileId。 */
@@ -1467,6 +1469,7 @@ export class AgentService {
       agentSessionId,
       runId,
       roomId: room,
+      workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
       ...(execution?.availableRooms ? { availableRooms: execution.availableRooms } : {}),
       ...(execution?.activeDocument ? { activeDocument: execution.activeDocument } : {}),
     });
@@ -1799,6 +1802,7 @@ export class AgentService {
     this.executionContexts.set(runId, {
       sessionId,
       roomId: runRoomId,
+      workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
       availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
       ...(activeFile ? { activeFile } : {}),
@@ -1872,6 +1876,7 @@ export class AgentService {
         ...(responseLanguage ? { responseLanguage } : {}),
         pageLabel: runPageLabel,
         roomId: runRoomId,
+        workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
         availableRooms: rooms,
         roomSelectionRequired: runRoomId === null,
         captureMemory: input.captureMemory !== false,

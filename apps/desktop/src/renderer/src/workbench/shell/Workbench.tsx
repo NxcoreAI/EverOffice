@@ -1,6 +1,7 @@
 import { Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { catalogToOfficeFile } from '@/office-proto/data'
 import { HomePageHost } from '../home/HomePageHost'
 import { useActiveTab, useWorkbenchStore } from '../state/store'
 import { cn } from '../ui/cn'
@@ -64,6 +65,34 @@ export function Workbench() {
     const openNewSpace = () => setNewSpaceOpen(true)
     window.addEventListener('everroom:workbench-new-space', openNewSpace)
     return () => window.removeEventListener('everroom:workbench-new-space', openNewSpace)
+  }, [])
+
+  // 主进程主动发起的预览（排版面板 👁 预览模版原文件等）：实例已在主进程建好，
+  // 这里开文件标签并激活。不接这条事件，原生视图会一直隐藏（「点了没反应」）。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onPreviewRequest) return
+    let disposed = false
+    const unsubscribe = office.onPreviewRequest(async (request) => {
+      try {
+        const catalog = await window.nxcore?.files?.catalogEntry(request.instanceId)
+        const entry = catalog ? catalogToOfficeFile(catalog) : null
+        if (disposed) return
+        if (entry) {
+          useWorkbenchStore.getState().openFileTab(entry.file)
+          return
+        }
+        // 查不到条目（如刚被删除）：至少把已建好的实例关掉，避免泄漏隐藏视图。
+        await window.nxcore?.office?.closeInstance(request.instanceId).catch(() => undefined)
+      } catch {
+        // 预览通知失败不打断用户：静默关掉实例即可。
+        await window.nxcore?.office?.closeInstance(request.instanceId).catch(() => undefined)
+      }
+    })
+    return () => {
+      disposed = true
+      unsubscribe()
+    }
   }, [])
 
   // 快捷键：⌘N 新建工作 / ⌘B 侧栏 / ⌘J 气泡窗（由工作空间标签自己响应）。

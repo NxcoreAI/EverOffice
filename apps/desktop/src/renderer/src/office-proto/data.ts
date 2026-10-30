@@ -600,12 +600,16 @@ export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | n
 }
 
 /** 拉取真实文件库（只取能映射到五种原型类型的）；无桥/失败返回 null（调用方回退 mock）。
- *  total 是文件库全量计数（分页语义，不受 limit 影响），供「最近」页副标题等展示。 */
-export async function fetchRealFiles(limit = 100): Promise<{ items: RealOfficeFile[]; total: number } | null> {
+ *  total 是文件库全量计数（分页语义，不受 limit 影响），供「最近」页副标题等展示。
+ *  options.workspaceId = 按工作空间过滤（资料库/产物库独立）；缺省拉全库。 */
+export async function fetchRealFiles(
+  limit = 100,
+  options?: { workspaceId?: string },
+): Promise<{ items: RealOfficeFile[]; total: number } | null> {
   const api = window.nxcore?.files
   if (!api?.list) return null
   try {
-    const { items, total } = await api.list(limit)
+    const { items, total } = await api.list(limit, 0, options)
     return {
       items: items.map(catalogToOfficeFile).filter((x): x is RealOfficeFile => x !== null),
       total,

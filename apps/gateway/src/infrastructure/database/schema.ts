@@ -1206,6 +1206,8 @@ export const fileEntries = sqliteTable(
     localItemId: text("local_item_id"),
     /** 本地文件只引用用户磁盘上的原路径，不在 EverRoom 对象库保留原始字节镜像。 */
     sourcePath: text("source_path"),
+    /** 归属工作区（资料库/产物库按空间隔离）；NULL 按服务层归一为 default。 */
+    workspaceId: text("workspace_id"),
     relativePath: text("relative_path"),
     sourceUri: text("source_uri"),
     currentVersionId: text("current_version_id"),
@@ -1221,6 +1223,7 @@ export const fileEntries = sqliteTable(
     uniqueIndex("file_entries_source_key_idx").on(table.sourceKind, table.sourceKey),
     index("file_entries_state_updated_idx").on(table.state, table.updatedAt),
     index("file_entries_local_item_idx").on(table.localSourceId, table.localItemId),
+    index("file_entries_workspace_idx").on(table.workspaceId),
     // 文件页目录分页（WHERE deleted_at IS NULL ORDER BY updated_at DESC）的覆盖索引：
     // 缺它时每页都要全表 SCAN + 临时 B-Tree 排序，桌面端一次全量刷新（17k 条目 ≈ 87 页
     // 并发）会把网关主线程占满数十秒，健康检查随之超时。见 0087 迁移。
@@ -1525,6 +1528,14 @@ export const slidesPageImageSessions = sqliteTable(
     index("slides_page_image_sessions_draft_idx").on(table.roomId, table.draftDocumentId),
   ],
 );
+
+/** Durable generation progress; identity includes content, agent revisions and model configuration. */
+export const slidesGenerationCheckpoints = sqliteTable("slides_generation_checkpoints", {
+  key: text("key").primaryKey(),
+  state: text("state", { mode: "json" })
+    .$type<import("../../modules/subagents/slides-generation-checkpoints.js").SlidesGenerationCheckpoint>().notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
 
 /** slides 编辑层 storyboard（M1 影子模式）：按草稿 + 内容 hash 存最近一次的压缩结果与验收报告。 */
 export const slidesStoryboards = sqliteTable(

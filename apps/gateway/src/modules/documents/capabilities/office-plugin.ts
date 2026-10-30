@@ -231,6 +231,7 @@ export function officePlugin(
         title,
         html,
         roomId: context.roomId,
+        workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-word", context.runId, title),
       });
@@ -288,6 +289,7 @@ export function officePlugin(
         format: "pptx",
         pages,
         roomId: context.roomId,
+        workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-slides", context.runId, title),
       });
@@ -434,6 +436,7 @@ export function officePlugin(
         format: "xlsx",
         sheets,
         roomId: context.roomId,
+        workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-sheets", context.runId, title),
       });

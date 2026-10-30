@@ -162,6 +162,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
           onBrowse={bubble.openBrowser}
           onOpenFile={bubble.openFile}
           onToast={workbenchToast}
+          workspaceId={workspace.id}
         />
       ) : null}
     </div>

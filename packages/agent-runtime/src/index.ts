@@ -30,6 +30,8 @@ export interface StartRuntimeRunInput {
   attachments?: RuntimeAttachment[];
   pageLabel: string;
   roomId: string | null;
+  /** 会话所属工作区：Agent 产物入库时带上（资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null;
   availableRooms?: AgentRoomReference[];
   roomSelectionRequired?: boolean;
   captureMemory?: boolean;

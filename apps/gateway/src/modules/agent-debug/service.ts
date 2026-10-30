@@ -166,7 +166,7 @@ function policyFromRevision(revision: LoadedSubagentRevision): AgentDebugPolicy 
     allowedCallers: [...revision.policy.allowedCallers],
     maxConcurrency: revision.policy.maxConcurrency,
     timeoutMs: revision.policy.timeoutMs,
-    maxToolCalls: revision.policy.maxToolCalls,
+    maxToolCalls: revision.policy.maxToolCalls ?? Number.MAX_SAFE_INTEGER,
     model: revision.policy.model ?? null,
   };
 }
@@ -515,7 +515,7 @@ function limitsFor(
   if (limits) return { ...limits, runContextGuard: limits.runContextGuard ? { ...limits.runContextGuard } : null };
   if (revision) {
     return {
-      maxToolCallsPerRun: revision.policy.maxToolCalls,
+      maxToolCallsPerRun: revision.policy.maxToolCalls ?? null,
       maxToolResultChars: null,
       runContextGuard: null,
     };

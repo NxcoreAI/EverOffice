@@ -9,10 +9,13 @@ import {
   FileJson,
   FileText,
   Image as ImageIcon,
+  Lightbulb,
+  ListTodo,
   LoaderCircle,
   Mail,
   Play,
   Plug,
+  Presentation,
   Search,
   Square,
   Terminal,
@@ -23,6 +26,7 @@ import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import {
   agentToolCommand,
+  agentToolKind,
   agentToolLabel,
   agentToolResultSummary,
   agentToolStageText,
@@ -31,29 +35,20 @@ import {
   dispatchedInvocationId,
   type AgentRunActivity,
   type AgentSubagentStep,
+  type AgentToolKind,
   type DisplayAgentToolCall,
   type TimelineRow,
 } from './agentRunActivity'
+import { ContextUsageRing } from './contextUsageRing'
 import { LocalAgentDispatchCard } from './LocalAgentDispatchCard'
 import { useRunSubagentInvocations } from './useRunSubagentInvocations'
 import { useSubagentInvocationTools } from './useSubagentInvocationTools'
 
-type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'schema' | 'connector' | 'action' | 'other'
+type ToolKind = AgentToolKind
 
+/** 图标分类与 agentToolLabel 共用同一张显式工具名映射表；未知工具返回 other。 */
 export function toolKind(name: string): ToolKind {
-  const normalized = name.toLowerCase()
-  if (normalized === 'connector_search') return 'search'
-  if (normalized === 'connector_schema') return 'schema'
-  if (normalized === 'connector_apps') return 'connector'
-  if (normalized === 'connector_run') return 'action'
-  if (/photo|image/.test(normalized)) return 'image'
-  if (/calendar|scheduler/.test(normalized)) return 'calendar'
-  if (/memory/.test(normalized)) return 'memory'
-  if (/email|mail/.test(normalized)) return 'email'
-  if (/search|web|fetch|browser/.test(normalized)) return 'search'
-  if (/read|write|edit|patch|glob|grep|file|document/.test(normalized)) return 'file'
-  if (/bash|command|terminal|shell/.test(normalized)) return 'command'
-  return 'other'
+  return agentToolKind(name)
 }
 
 function detailText(value: unknown): string | undefined {
@@ -98,9 +93,12 @@ function formatDuration(duration: number, t: Translate): string {
 function ToolIcon({ kind }: { kind: ToolKind }) {
   const Icon = {
     action: Play,
+    agent: Bot,
+    analysis: Lightbulb,
     calendar: CalendarDays,
     command: Terminal,
     connector: Plug,
+    document: FileText,
     email: Mail,
     file: FileText,
     image: ImageIcon,
@@ -108,6 +106,8 @@ function ToolIcon({ kind }: { kind: ToolKind }) {
     other: Wrench,
     schema: FileJson,
     search: Search,
+    slides: Presentation,
+    task: ListTodo,
   }[kind]
   return <Icon aria-hidden="true" />
 }
@@ -326,6 +326,16 @@ function SubagentRow({ sub, now, sessionId }: {
     const invocationId = dispatchedInvocationId(tool)
     return !invocationId || !childIds.has(invocationId)
   })
+  // 子代理自己的上下文圆环：数字收在 title 里，与对话区 composer 同一套文案。
+  const contextTitle = sub.contextCompacting
+    ? t('surface:agentComposer.contextCompacting')
+    : sub.contextUsage?.contextWindow
+      ? t('surface:agentComposer.contextUsageTitle', {
+        used: sub.contextUsage.tokens === null ? '—' : sub.contextUsage.tokens.toLocaleString(),
+        total: sub.contextUsage.contextWindow.toLocaleString(),
+        percent: sub.contextUsage.percent === null ? '—' : Math.round(sub.contextUsage.percent),
+      })
+      : undefined
 
   return (
     <div className="agent-tool-step" data-status={sub.status}>
@@ -344,6 +354,12 @@ function SubagentRow({ sub, now, sessionId }: {
           <span className="agent-tool-rail" aria-hidden="true"><Bot aria-hidden="true" /></span>
           <span className="agent-tool-command-text">
             <strong>{sub.label}</strong>
+            <ContextUsageRing
+              usage={sub.contextUsage}
+              compacting={sub.contextCompacting}
+              title={contextTitle}
+              inline
+            />
             {running
               ? taskPreview ? <span>{taskPreview}</span> : null
               : duration !== null ? <span>{formatDuration(duration, t)}</span> : null}
