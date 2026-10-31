@@ -297,6 +297,16 @@ export function agentRoutes(
               Type.Literal("lite"),
             ])),
             channelAgentId: Type.Optional(Type.String({ maxLength: 500 })),
+            thinkingLevel: Type.Optional(Type.Union([
+              Type.Literal("off"),
+              Type.Literal("minimal"),
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+              Type.Literal("max"),
+              Type.Null(),
+            ])),
           }),
         },
       },
@@ -414,6 +424,42 @@ export function agentRoutes(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.includes("not_found")) return reply.code(404).send({ error: "not_found", message });
+          return reply.code(400).send({ error: "invalid_request", message });
+        }
+      },
+    );
+
+    app.put(
+      "/v1/agent/sessions/:sessionId/thinking-level",
+      {
+        schema: {
+          tags: ["agent"],
+          params: SessionParams,
+          body: Type.Object({
+            level: Type.Union([
+              Type.Literal("off"),
+              Type.Literal("minimal"),
+              Type.Literal("low"),
+              Type.Literal("medium"),
+              Type.Literal("high"),
+              Type.Literal("xhigh"),
+              Type.Literal("max"),
+              Type.Null(),
+            ]),
+          }),
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await service.setSessionThinkingLevel(request.params.sessionId, request.body.level);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes("not_found")) {
+            return reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+          }
+          if (message === "agent_thinking_level_invalid") {
+            return reply.code(400).send({ error: "invalid_thinking_level", message });
+          }
           return reply.code(400).send({ error: "invalid_request", message });
         }
       },

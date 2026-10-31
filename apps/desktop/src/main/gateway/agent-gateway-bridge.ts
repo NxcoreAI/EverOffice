@@ -4,6 +4,8 @@ import type {
   AgentOpenFileContext,
   AgentPermissionMode,
   AgentPermissionModeState,
+  AgentThinkingLevel,
+  AgentThinkingLevelUpdate,
   AgentWorkspace,
   CreateAgentWorkspaceInput,
   UpdateAgentWorkspaceInput,
@@ -244,6 +246,14 @@ export class AgentGatewayBridge {
     return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
       method: 'PUT',
       data: { mode },
+    })
+  }
+
+  /** 修改会话思考档位（null=跟随模型配置）：网关落库，从下一轮 run 起生效。 */
+  setThinkingLevel(sessionId: string, level: AgentThinkingLevel | null): Promise<AgentThinkingLevelUpdate> {
+    return this.request(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/thinking-level`, {
+      method: 'PUT',
+      data: { level },
     })
   }
 

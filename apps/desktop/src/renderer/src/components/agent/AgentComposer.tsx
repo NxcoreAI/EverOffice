@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, AgentThinkingLevel, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '@/shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -25,6 +25,7 @@ import {
   type MentionedItem,
 } from './agentMentions'
 import { ContextUsageRing, formatContextPercent, formatContextTokens } from './contextUsageRing'
+import { THINKING_LEVEL_OPTIONS, thinkingLevelOption } from './agentThinkingLevel'
 
 const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
 const MAX_ATTACHMENTS = 5
@@ -142,6 +143,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** provider 可用语义档（网关按渠道过滤后的权威列表）。 */
   permissionModeAvailable?: readonly AgentPermissionMode[]
   onSelectPermissionMode?: (mode: AgentPermissionMode) => void | Promise<unknown>
+  /** 思考档位：会话已存在＝会话值（null=跟随模型配置）；草稿态＝下次新会话默认值。 */
+  thinkingLevel?: AgentThinkingLevel | null
+  /** 选择思考档位（null=跟随模型配置）；渠道会话不显示该切换钮。 */
+  onSelectThinkingLevel?: (level: AgentThinkingLevel | null) => void | Promise<unknown>
   /** 强模型未配置时提示去设置（跳应用设置页）。 */
   onOpenSettings?: () => void
   /** 空态建议（推断的下一个提问）；仅输入框为空时作为 placeholder 展示，Tab/Enter 采纳。 */
@@ -180,6 +185,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   permissionMode = null,
   permissionModeAvailable = [],
   onSelectPermissionMode,
+  thinkingLevel = null,
+  onSelectThinkingLevel,
   onOpenSettings,
   ghostSuggestion = null,
   onAcceptGhost,
@@ -224,6 +231,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** full_access 两步确认：true=弹层切到危险确认态。 */
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
   const permissionModeRef = useRef<HTMLElement | null>(null)
+  const [thinkingLevelOpen, setThinkingLevelOpen] = useState(false)
+  const thinkingLevelRef = useRef<HTMLElement | null>(null)
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
   const [primaryAvailable, setPrimaryAvailable] = useState(true)
@@ -296,11 +305,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     setContextPanelOpen(false)
     setPermissionModeOpen(false)
     setConfirmingFullAccess(false)
+    setThinkingLevelOpen(false)
     mentionHints.current.clear()
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen && !thinkingLevelOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target as Element
       if (shellRef.current?.contains(target)) {
@@ -309,6 +319,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
         if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
         if (permissionModeOpen && !permissionModeRef.current?.contains(target) && !target.closest('.agent-permission-mode-toggle')) setPermissionModeOpen(false)
+        if (thinkingLevelOpen && !thinkingLevelRef.current?.contains(target) && !target.closest('.agent-thinking-level-toggle')) setThinkingLevelOpen(false)
         return
       }
       externalRequestRef.current += 1
@@ -317,10 +328,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setModelPickerOpen(false)
       setContextPanelOpen(false)
       setPermissionModeOpen(false)
+      setThinkingLevelOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen, thinkingLevelOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
@@ -342,6 +354,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         event.preventDefault()
         setPermissionModeOpen(false)
         setConfirmingFullAccess(false)
+      }
+      return
+    }
+    if (thinkingLevelOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setThinkingLevelOpen(false)
       }
       return
     }
@@ -564,6 +583,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     if (mode !== permissionMode) void onSelectPermissionMode?.(mode)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  /** 选择思考档位：立即生效并收起弹层（后端从下一轮 run 起使用该档位）。 */
+  const chooseThinkingLevel = (level: AgentThinkingLevel | null) => {
+    setThinkingLevelOpen(false)
+    if (level !== thinkingLevel) void onSelectThinkingLevel?.(level)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
   const matchesQuery = (haystack: string) => !agentQueryNormalized || haystack.toLocaleLowerCase().includes(agentQueryNormalized)
@@ -743,7 +768,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   // 弹层引用对象为空时弹层不渲染，composer 也不抬升（menuOpen 与可见弹层保持一致）。
-  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || (agentPickerOpen && mentionOptionCount > 0)
+  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || thinkingLevelOpen || (agentPickerOpen && mentionOptionCount > 0)
   const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
@@ -756,6 +781,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     && Boolean(onSelectPermissionMode)
   const activePermissionMeta = permissionMode ? PERMISSION_MODE_META[permissionMode] : null
   const ActivePermissionIcon = activePermissionMeta?.icon ?? ShieldCheck
+  // 思考档切换钮：仅非渠道会话显示（ACP/CLI 渠道没有思考档概念）。
+  // 契约七档里 minimal/xhigh/max 归到最接近的常用档展示（thinkingLevelOption 兜底）。
+  const thinkingLevelToggleVisible = !channelActive && Boolean(onSelectThinkingLevel)
+  const activeThinkingOption = thinkingLevelOption(thinkingLevel)
   // 上下文占用构成：按占比降序，tokens 已知时补一段剩余空间。
   const contextBreakdown = contextUsage?.contextWindow
     ? {
@@ -1104,6 +1133,36 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           })}
         </section>
       ) : null}
+      {thinkingLevelOpen && thinkingLevelToggleVisible ? (
+        <section
+          ref={thinkingLevelRef}
+          className="agent-composer-popover agent-thinking-level-picker"
+          role="listbox"
+          aria-label={t('surface:agentComposer.thinkingLevelPickerTitle')}
+        >
+          {THINKING_LEVEL_OPTIONS.map((option) => {
+            const optionSelected = activeThinkingOption.value === option.value
+            return (
+              <button
+                key={option.value ?? 'default'}
+                type="button"
+                className="agent-model-option"
+                role="option"
+                aria-selected={optionSelected}
+                data-active={String(optionSelected)}
+                data-level={option.value ?? 'default'}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseThinkingLevel(option.value)}
+              >
+                <span className="agent-picker-header-icon"><Brain aria-hidden="true" /></span>
+                <span><strong>{t(option.labelKey)}</strong><small>{t(option.hintKey)}</small></span>
+                {optionSelected ? <Check aria-hidden="true" /> : null}
+              </button>
+            )
+          })}
+          <footer className="agent-model-picker-hint">{t('surface:agentComposer.thinkingLevelFooterHint')}</footer>
+        </section>
+      ) : null}
       {contextPanelOpen && contextBreakdown ? (
         <section ref={contextPanelRef} className="agent-composer-popover agent-context-breakdown" aria-label={t('surface:agentComposer.contextWindow')}>
           <header className="agent-context-breakdown-head">
@@ -1281,6 +1340,27 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             >
               <ActivePermissionIcon aria-hidden="true" />
               <span>{t(activePermissionMeta.labelKey)}</span>
+              <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+            </button>
+          ) : null}
+          {thinkingLevelToggleVisible && activeThinkingOption ? (
+            <button
+              type="button"
+              className="agent-model-tier-toggle agent-thinking-level-toggle"
+              data-level={thinkingLevel ?? 'default'}
+              aria-haspopup="listbox"
+              aria-expanded={thinkingLevelOpen}
+              title={t('surface:agentComposer.thinkingLevelPickerTitle')}
+              disabled={controlsDisabled}
+              onClick={() => {
+                // 与模型/权限弹层互斥：它们锚在同一位置，同时打开会重叠。
+                setModelPickerOpen(false)
+                setPermissionModeOpen(false)
+                setThinkingLevelOpen((open) => !open)
+              }}
+            >
+              <Brain aria-hidden="true" />
+              <span>{t(activeThinkingOption.labelKey)}</span>
               <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
             </button>
           ) : null}

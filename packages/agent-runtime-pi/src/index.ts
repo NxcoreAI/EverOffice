@@ -550,6 +550,42 @@ export class PiAgentRuntime implements AgentRuntime {
     this.sessionPermissionModes.delete(sessionId);
   }
 
+  /**
+   * 会话级思考档位覆盖（网关 sessionId 键）；null = 跟随 this.config.reasoning。
+   * 网关每轮 run 前预热，只影响 ownerSessionId 相同的缓存会话。
+   */
+  private readonly sessionThinkingLevels = new Map<string, PiReasoningLevel | null>();
+
+  /**
+   * 覆盖指定网关会话的思考档位：缓存里已有该会话时立即套用（pi 会按模型支持
+   * 档位 clamp，且幂等）；没有缓存会话时只记下，下一轮 getSession 建会话时生效。
+   * applied 表示本次是否命中缓存会话。
+   */
+  async setSessionThinkingLevel(
+    sessionId: string,
+    level: PiReasoningLevel | null,
+  ): Promise<{ applied: boolean }> {
+    this.sessionThinkingLevels.set(sessionId, level);
+    const effective = this.sessionThinkingLevel(sessionId);
+    let applied = false;
+    for (const handle of this.sessions.values()) {
+      if (handle.ownerSessionId !== sessionId) continue;
+      // pi 的 ThinkingLevel 与 PiReasoningLevel 字面量完全一致，仅类型名不同。
+      handle.session.setThinkingLevel(effective as Parameters<AgentSession["setThinkingLevel"]>[0]);
+      applied = true;
+    }
+    return { applied };
+  }
+
+  forgetSessionThinkingLevel(sessionId: string): void {
+    this.sessionThinkingLevels.delete(sessionId);
+  }
+
+  /** 当前网关会话生效的思考档位：覆盖值优先，null/缺省跟随 runtime 配置。 */
+  private sessionThinkingLevel(sessionId: string): PiReasoningLevel {
+    return this.sessionThinkingLevels.get(sessionId) ?? this.config.reasoning;
+  }
+
   /** Internal bridge used by the sandbox shell tool to surface approval state. */
   async requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
     return this.requestToolApproval({ ...request, kind: "shell", toolName: request.toolName ?? "bash" });
@@ -825,7 +861,14 @@ export class PiAgentRuntime implements AgentRuntime {
   ): Promise<PiSessionHandle> {
     if (runtimeSessionRef) {
       const cached = this.sessions.get(runtimeSessionRef);
-      if (cached) return cached;
+      if (cached) {
+        // 复用缓存会话前同步本轮生效档位：网关可能在两轮之间改过覆盖值。
+        // pi 的 setThinkingLevel 幂等（档位未变化不写 session 日志）。
+        cached.session.setThinkingLevel(
+          this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
+        );
+        return cached;
+      }
       this.assertOwnedSessionPath(runtimeSessionRef);
     }
 
@@ -1009,7 +1052,7 @@ export class PiAgentRuntime implements AgentRuntime {
       agentDir: this.config.agentDirectory,
       modelRuntime,
       model,
-      thinkingLevel: this.config.reasoning,
+      thinkingLevel: this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
       tools: [
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...builtinTools,

@@ -588,6 +588,7 @@ const api: NxcoreDesktopApi = {
     resolveApproval: (approvalId, decision, feedback) => invoke('agent:resolve-approval', approvalId, decision, feedback),
     getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
     setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
+    setThinkingLevel: (sessionId, level) => invoke('agent:set-thinking-level', sessionId, level),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {

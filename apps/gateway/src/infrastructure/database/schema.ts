@@ -220,6 +220,10 @@ export const agentSessions = sqliteTable("agent_sessions", {
   permissionMode: text("permission_mode", {
     enum: ["ask_before_write", "accept_edits", "auto", "full_access"],
   }),
+  /** 会话级思考档位覆盖；null = 跟随 runtime config 的 reasoning（现有行为）。 */
+  thinkingLevel: text("thinking_level", {
+    enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  }),
   status: text("status", {
     enum: ["idle", "running", "interrupted", "closed"],
   })

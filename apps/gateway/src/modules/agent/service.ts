@@ -19,6 +19,8 @@ import type {
   AgentSessionParticipant,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentThinkingLevel,
+  AgentThinkingLevelUpdate,
   AgentUsageRange,
   AgentUsageSnapshot,
   CreateAgentSessionLinkInput,
@@ -37,6 +39,7 @@ import {
   MODEL_PREFERENCE_AGENT_IDS,
   MODEL_TIER_AGENT_IDS,
   channelAgentIdFromAgentId,
+  isAgentThinkingLevel,
   modelPreferenceFromAgentId,
 } from "@nxcore/agent-contract";
 import type { AgentPermissionMode } from "@nxcore/agent-contract";
@@ -228,6 +231,8 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
     activeAgentId: row.activeAgentId,
     ...(modelPreference ? { modelPreference } : {}),
     ...(channelAgentId ? { channelAgentId } : {}),
+    // 会话级思考档位覆盖：NULL 暴露为 null＝跟随模型配置的 reasoning。
+    thinkingLevel: row.thinkingLevel ?? null,
     title: row.title,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
@@ -746,6 +751,45 @@ export class AgentService {
     return Boolean(result && typeof result === "object" && result.applied);
   }
 
+  /**
+   * 设置会话思考档位：写 DB（跨 run 事实源）+ 尽力转发活跃 run 的 runtime
+   * （pi 立即 setSessionThinkingLevel；run 间隙不转发——下次 startRun 从 DB 预热）。
+   * null 表示清除覆盖、回到「跟随模型配置的 reasoning」。
+   */
+  async setSessionThinkingLevel(
+    sessionId: string,
+    level: AgentThinkingLevel | null,
+  ): Promise<AgentThinkingLevelUpdate> {
+    if (level !== null && !isAgentThinkingLevel(level)) throw new Error("agent_thinking_level_invalid");
+    const updated = this.db.update(agentSessions)
+      .set({ thinkingLevel: level, updatedAt: new Date() })
+      .where(eq(agentSessions.id, sessionId))
+      .returning({ id: agentSessions.id }).get();
+    if (!updated) throw new Error("agent_session_not_found");
+    let applied = false;
+    const liveRun = this.db.select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.sessionId, sessionId), eq(agentRuns.status, "running")))
+      .get();
+    const liveRuntime = liveRun ? this.runRuntimes.get(liveRun.id) : undefined;
+    if (liveRuntime) {
+      applied = await this.applyThinkingLevelToRuntime(liveRuntime, sessionId, level);
+    }
+    return { thinkingLevel: level, applied };
+  }
+
+  private async applyThinkingLevelToRuntime(
+    runtime: AgentRuntime,
+    sessionId: string,
+    level: AgentThinkingLevel | null,
+  ): Promise<boolean> {
+    const structural = runtime as AgentRuntime & {
+      setSessionThinkingLevel?: (sessionId: string, level: AgentThinkingLevel | null) => Promise<{ applied: boolean } | void> | void;
+    };
+    const result = await structural.setSessionThinkingLevel?.(sessionId, level);
+    return Boolean(result && typeof result === "object" && result.applied);
+  }
+
   setFilesService(files: FilesService): void {
     this.filesService = files;
   }
@@ -1050,6 +1094,8 @@ export class AgentService {
       pageLabel: input.pageLabel.trim(),
       runtimeId: this.runtime.id,
       activeAgentId,
+      // 思考档位创建时写入；undefined 落库为 null＝跟随模型配置。
+      thinkingLevel: input.thinkingLevel ?? null,
       status: "idle",
       createdAt: now,
       updatedAt: now,
@@ -1214,6 +1260,7 @@ export class AgentService {
     this.bashAuthorizedSessions.delete(sessionId);
     this.editAuthorizedSessions.delete(sessionId);
     this.forgetSessionPermissionMode(this.runtime, sessionId);
+    this.forgetSessionThinkingLevel(this.runtime, sessionId);
     await this.revokeChannelSession?.(sessionId);
     return true;
   }
@@ -1224,6 +1271,14 @@ export class AgentService {
       forgetSessionPermissionMode?: (sessionId: string) => void;
     };
     structural.forgetSessionPermissionMode?.(sessionId);
+  }
+
+  /** 会话删除后清理 runtime 侧思考档位缓存（结构化可选，pi 实现）。 */
+  private forgetSessionThinkingLevel(runtime: AgentRuntime, sessionId: string): void {
+    const structural = runtime as AgentRuntime & {
+      forgetSessionThinkingLevel?: (sessionId: string) => void;
+    };
+    structural.forgetSessionThinkingLevel?.(sessionId);
   }
 
   /**
@@ -1650,6 +1705,9 @@ export class AgentService {
     if (session.permissionMode) {
       await this.applyPermissionModeToRuntime(selectedRuntime, sessionId, session.permissionMode);
     }
+    // 思考档位预热：每轮都推（runtime 热替换/进程重启后 Map 丢失），
+    // null＝清除覆盖、回到「跟随模型配置」。
+    await this.applyThinkingLevelToRuntime(selectedRuntime, sessionId, session.thinkingLevel ?? null);
     let participant = this.db.select().from(agentSessionParticipants).where(and(
       eq(agentSessionParticipants.sessionId, sessionId),
       eq(agentSessionParticipants.agentId, selectedAgentId),

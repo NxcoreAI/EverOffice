@@ -185,6 +185,8 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       permissionMode={hook.permissionMode}
       permissionModeAvailable={hook.permissionModeAvailable}
       onSelectPermissionMode={hook.setSessionPermissionMode}
+      thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
+      onSelectThinkingLevel={hook.setSessionThinkingLevel}
       contextUsage={hook.contextUsage}
       contextCompacting={hook.contextCompacting}
       ghostSuggestion={null}

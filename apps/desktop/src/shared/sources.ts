@@ -85,6 +85,8 @@ import type {
   ImportCandidateDiffView,
   AgentPermissionMode,
   AgentPermissionModeState,
+  AgentThinkingLevel,
+  AgentThinkingLevelUpdate,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
@@ -956,6 +958,8 @@ export interface NxcoreDesktopApi {
     ): Promise<{ approvalId: string; decision: string }>
     getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
     setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
+    /** 会话思考档位（null=跟随模型配置）；返回后端权威回读值。 */
+    setThinkingLevel(sessionId: string, level: AgentThinkingLevel | null): Promise<AgentThinkingLevelUpdate>
     subscribe(sessionId: string): Promise<void>
     unsubscribe(): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void

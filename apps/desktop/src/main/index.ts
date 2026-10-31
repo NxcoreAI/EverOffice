@@ -363,6 +363,7 @@ const AGENT_CHANNELS = {
   resolveApproval: 'agent:resolve-approval',
   getPermissionMode: 'agent:get-permission-mode',
   setPermissionMode: 'agent:set-permission-mode',
+  setThinkingLevel: 'agent:set-thinking-level',
   subscribe: 'agent:subscribe',
   unsubscribe: 'agent:unsubscribe',
 } as const
@@ -2229,6 +2230,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
     bridge.resolveApproval(approvalId, decision, feedback))
   handle(AGENT_CHANNELS.getPermissionMode, (_event, sessionId) => bridge.getPermissionMode(sessionId))
   handle(AGENT_CHANNELS.setPermissionMode, (_event, sessionId, mode) => bridge.setPermissionMode(sessionId, mode))
+  handle(AGENT_CHANNELS.setThinkingLevel, (_event, sessionId, level) =>
+    bridge.setThinkingLevel(sessionId, level))
   handle(AGENT_CHANNELS.subscribe, (event, sessionId) => bridge.subscribe(event.sender, sessionId))
   handle(AGENT_CHANNELS.unsubscribe, (event) => bridge.unsubscribe(event.sender.id))
 }

@@ -72,6 +72,8 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
       permissionMode={session.permissionMode}
       permissionModeAvailable={session.permissionModeAvailable}
       onSelectPermissionMode={session.setSessionPermissionMode}
+      thinkingLevel={session.sessionId ? session.currentSession?.thinkingLevel ?? null : session.thinkingLevelDefault}
+      onSelectThinkingLevel={session.setSessionThinkingLevel}
       ghostSuggestion={null}
       queuedSubmissions={session.queuedSubmissions}
       onRemoveQueuedSubmission={session.removeQueuedSubmission}

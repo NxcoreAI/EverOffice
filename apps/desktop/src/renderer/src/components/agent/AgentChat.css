@@ -3602,6 +3602,21 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
 
+/* 思考档位弹层：与模型/权限选择器同族，锚在底栏左上方。 */
+.agent-composer-popover.agent-thinking-level-picker {
+  right: auto;
+  left: 12px;
+  bottom: 52px;
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  min-width: 232px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
+}
+
 /* full_access 危险档：选项标题与当前态切换钮同用危险色。 */
 .agent-model-option[data-danger='true'] strong { color: #b42318; }
 .agent-permission-mode-toggle[data-danger='true'] { color: #b42318; font-weight: 500; }

@@ -142,6 +142,11 @@ export interface AgentSession {
   modelPreference?: AgentModelPreference;
   /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
   channelAgentId?: string;
+  /**
+   * 会话级思考档位覆盖；null/缺省＝跟随模型配置里的 reasoning（runtime config）。
+   * 可随时修改（PUT thinking-level），从下一轮 run 起生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -476,10 +481,41 @@ export interface CreateAgentSessionInput {
    * 整个会话由该 Agent 连续对话（ACP 持久会话）。设置后 modelPreference 被忽略。
    */
   channelAgentId?: string;
+  /**
+   * 会话思考档位（创建时写入；null/缺省＝跟随模型配置的 reasoning）。
+   * 与模型档位不同，它不锁定：会话内可随时 PUT 修改，从下一轮 run 生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
 }
 
 /** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
 export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 思考档位（pi thinkingLevel 七档）：off 关闭思考；null 表示跟随模型配置。 */
+export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** 七档全集（校验与 UI 展示共用；顺序＝由弱到强）。 */
+export const AGENT_THINKING_LEVELS: readonly AgentThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+export function isAgentThinkingLevel(value: unknown): value is AgentThinkingLevel {
+  return typeof value === "string" && (AGENT_THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+/** PUT /v1/agent/sessions/:id/thinking-level 的响应。 */
+export interface AgentThinkingLevelUpdate {
+  /** 当前覆盖值；null＝已清回「跟随模型配置」。 */
+  thinkingLevel: AgentThinkingLevel | null;
+  /** 是否已即时推到活跃 run 的 runtime（false＝仅落库，下一轮起生效）。 */
+  applied: boolean;
+}
 
 /** 档位 → 内置 agentId（写入 agent_sessions.activeAgentId）。 */
 export const MODEL_PREFERENCE_AGENT_IDS: Record<AgentModelPreference, string> = {

@@ -11,6 +11,7 @@ import type {
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
+  AgentThinkingLevel,
   CreateAgentSessionLinkInput,
 } from '@nxcore/agent-contract'
 import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local'
@@ -35,6 +36,7 @@ import {
 import { buildAgentRunContext } from './agentRunContext'
 import type { MentionedAgent, MentionedItem } from './agentMentions'
 import { plainTextFromMarkdown } from './agentTextUtils'
+import { persistThinkingLevel, storedThinkingLevel } from './agentThinkingLevel'
 import {
   applyShellApprovalEvent,
   reducePendingShellApprovals,
@@ -878,6 +880,16 @@ export function useAgentSession(
     persistModelPreference(tier)
   }, [])
 
+  // 全局默认思考档位：只决定「下次新建会话」的默认值（null=跟随模型配置）；
+  // 已有会话以 currentSession.thinkingLevel 为准，切换走 setSessionThinkingLevel。
+  const [thinkingLevelDefault, setThinkingLevelDefaultState] = useState<AgentThinkingLevel | null>(storedThinkingLevel)
+  const thinkingLevelRef = useRef(thinkingLevelDefault)
+  const setThinkingLevelDefault = useCallback((level: AgentThinkingLevel | null) => {
+    thinkingLevelRef.current = level
+    setThinkingLevelDefaultState(level)
+    persistThinkingLevel(level)
+  }, [])
+
   // 全局默认渠道：新会话整体锁定到某个本机 CLI Agent（ACP 持久会话连续对话）。
   const [channelAgentIdDefault, setChannelAgentIdDefaultState] = useState<string | null>(readStoredChannelAgentId)
   const channelAgentDefaultRef = useRef(channelAgentIdDefault)
@@ -907,6 +919,8 @@ export function useAgentSession(
         ...(channelAgentDefaultRef.current
           ? { channelAgentId: channelAgentDefaultRef.current }
           : { modelPreference: modelPreferenceRef.current }),
+        // 思考档位不锁定会话：显式发 null 表示「跟随模型配置」，创建后仍可 PUT 修改。
+        thinkingLevel: thinkingLevelRef.current ?? null,
       })
       setSessions((current) => [session, ...current])
       await selectSession(session, pendingMessages)
@@ -1429,6 +1443,35 @@ export function useAgentSession(
     setQueuedSubmissions((current) => current.filter((item) => item.id !== id))
   }, [])
 
+  /**
+   * 切换会话思考档位（null=跟随模型配置）。
+   * - 任何一次选择都持久化为「下次新会话默认值」；
+   * - 会话已存在：PUT 修改（网关从下一轮 run 生效），并用响应回读值更新
+   *   currentSession / sessions 列表；失败只报错，不改本地值；
+   * - 草稿态（无会话/无 API）：只改默认值，首条消息建会话时带上。
+   */
+  const setSessionThinkingLevel = useCallback(async (level: AgentThinkingLevel | null): Promise<boolean> => {
+    setThinkingLevelDefault(level)
+    const targetSessionId = sessionIdRef.current
+    if (!api || !targetSessionId) return true
+    setError(null)
+    let next: AgentThinkingLevel | null = level
+    try {
+      const result = await api.setThinkingLevel(targetSessionId, level)
+      next = result.thinkingLevel
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.thinkingLevelUpdateFailed')))
+      return false
+    }
+    setCurrentSession((current) => current && current.id === targetSessionId
+      ? { ...current, thinkingLevel: next }
+      : current)
+    setSessions((current) => current.map((session) => session.id === targetSessionId
+      ? { ...session, thinkingLevel: next }
+      : session))
+    return true
+  }, [api, setThinkingLevelDefault, t])
+
   return {
     activeRunId,
     agentIdByRun,
@@ -1446,6 +1489,9 @@ export function useAgentSession(
     messages,
     modelPreferenceDefault,
     setModelPreferenceDefault,
+    thinkingLevelDefault,
+    setThinkingLevelDefault,
+    setSessionThinkingLevel,
     channelAgentIdDefault,
     setChannelAgentIdDefault,
     pendingApprovals,
