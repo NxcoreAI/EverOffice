@@ -341,7 +341,7 @@ docParagraph/docHeading/docListItem，全文档操作只改一种算失败）。
 
 ---
 
-## 第九组：word_agent_ops 结构化操作（B1-B4，53 个 op）
+## 第九组：word_agent_ops 结构化操作（B1-B5，58 个 op）
 
 > 统一入口 `word_agent_ops {fileId, ops: [...], dryRun?}`（1-50 条、逐条隔离）。
 > 先 `word_agent_read` 读 `operationsGuide`（op 名与字段）和 `documentState`（现状），不要凭记忆编 op。
