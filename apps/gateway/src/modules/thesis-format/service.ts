@@ -391,6 +391,8 @@ export class ThesisFormatService {
       formatCard: renderCard,
       bindingSpec: spec,
       roomId,
+      // 产物是新建条目（sourceKey=agent:docx-thesis:*）：归属跟源文件走。
+      workspaceId: entry.workspaceId ?? null,
       sourceFileName: entry.originalName,
       sourceFileEntryId: fileEntryId,
       keepLogo: options?.keepLogo !== false,

@@ -311,6 +311,13 @@ export class FilesService {
           eq(fileEntries.sourceKey, input.sourceKey),
         )).get();
     if (input.fileEntryId && !entry) throw new Error("file_entry_not_found");
+    // 工作区归属：显式传入（trim 后非空）优先；未传/为空时**保留条目原有归属**，
+    // 新条目才落 default。否则编辑保存回填（office edit-sync 按 fileEntryId 重导入）、
+    // 本地夹重扫（local-file-references）等不带归属的链路，会把已有文件悄悄改归
+    // default —— 用户看到的现象就是「重启后 AI 生成的文件跑去了默认工作区」。
+    const workspaceId = input.workspaceId?.trim()
+      ?? entry?.workspaceId?.trim()
+      ?? DEFAULT_FILE_WORKSPACE_ID;
     const fileEntryId = entry?.id ?? `file-${randomUUID()}`;
     const existingVersion = entry
       ? this.db.select().from(fileVersions).where(and(

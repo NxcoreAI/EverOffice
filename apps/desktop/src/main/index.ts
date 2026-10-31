@@ -2656,6 +2656,15 @@ async function openFileInAppPreview(
   }
   const storagePath = await bridge.storagePath(fileId)
   const effectiveHash = options?.contentHash ?? await hashFileBytes(storagePath)
+  // 编辑保存回填要带条目归属工作区（否则重导入会把文件改归 default）；
+  // catalog 不可达时不带——网关侧对未传归属的重导入保留条目原值，同样安全。
+  let workspaceId: string | null = null
+  try {
+    const entry = await bridge.catalogEntry(fileId)
+    workspaceId = entry?.workspaceId?.trim() || null
+  } catch {
+    workspaceId = null
+  }
   let descriptor
   try {
     descriptor = await officePreviewRegistry.open(window, {
@@ -2665,6 +2674,7 @@ async function openFileInAppPreview(
       storagePath,
       ...(options?.editable ? { editable: true } : {}),
       ...(options?.roomId ? { roomId: options.roomId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     })
   } catch (error) {
     if (!legacy) throw error

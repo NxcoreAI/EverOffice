@@ -770,9 +770,9 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
     },
-    importArtifacts: (files: File[], roomId: string) => {
+    importArtifacts: (files: File[], roomId: string, workspaceId?: string) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
-      return invoke('files:import-artifacts', paths, roomId)
+      return invoke('files:import-artifacts', paths, roomId, workspaceId)
     },
     importAgentAttachments: (files: File[]) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)

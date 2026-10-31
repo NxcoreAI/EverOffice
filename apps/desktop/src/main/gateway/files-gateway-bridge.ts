@@ -821,7 +821,11 @@ export class FilesGatewayBridge {
    * 意图，不走统一导入的高风险审查队列。同路径重复导入命中同一 entry 走版本链。
    * 逐文件互不影响，仅回报成功项（fileId 供渲染端选中打开）。
    */
-  async importArtifactFiles(selectedPaths: string[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>> {
+  async importArtifactFiles(
+    selectedPaths: string[],
+    roomId: string,
+    workspaceId?: string,
+  ): Promise<Array<{ fileId: string; originalName: string }>> {
     if (!roomId || typeof roomId !== 'string') throw new Error('缺少目标 Room。')
     const imported: Array<{ fileId: string; originalName: string }> = []
     for (const filePath of selectedPaths) {
@@ -839,6 +843,7 @@ export class FilesGatewayBridge {
           sourceKey: `artifact:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
           originalName: filename,
           roomId,
+          ...(workspaceId ? { workspaceId } : {}),
           pipelines: { room: true, wiki: false, memory: true },
         })
         imported.push({ fileId: uploaded.fileEntryId, originalName: filename })

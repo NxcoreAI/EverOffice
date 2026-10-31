@@ -1086,8 +1086,9 @@ export interface NxcoreDesktopApi {
     importPaths(paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>
     /** 拖拽文件/目录的一次性导入；不注册数据源，也不持续监听。 */
     importDropped(files: File[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>
-    /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。 */
-    importArtifacts(files: File[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>>
+    /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。
+     *  workspaceId = 归属工作空间（产物库按空间隔离，缺省归 default）。 */
+    importArtifacts(files: File[], roomId: string, workspaceId?: string): Promise<Array<{ fileId: string; originalName: string }>>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>

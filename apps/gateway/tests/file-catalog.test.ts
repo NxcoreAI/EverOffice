@@ -214,6 +214,47 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
+  it("re-import without workspaceId keeps the entry's original workspace (edit-sync / rescan safety)", async () => {
+    const test = await catalogForTest();
+    // Agent 在 ws-alpha 会话里生成 word（office_create → file-imports 带 workspaceId）。
+    const first = await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v1")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      workspaceId: "ws-alpha",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 用户打开编辑并保存：edit-sync 按 fileEntryId 重导入，不带 workspaceId。
+    // 旧逻辑会把它默默改归 default（重启后文件「跑到」默认空间）；现在必须保留 ws-alpha。
+    const edited = await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:edit:ignored-by-fileEntryId", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      fileEntryId: first.fileEntryId,
+    });
+    expect(edited.fileEntryId).toBe(first.fileEntryId);
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 同 sourceKey 重导入（本地夹重扫路径）同样保留归属。
+    await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v3")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 显式传 workspaceId 才允许迁移归属（重新导入覆盖语义保留给显式入口）。
+    await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v4")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      workspaceId: "ws-beta",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-beta" });
+    await test.service.dispose();
+    test.sqlite.close();
+  });
 
   it("accepts artifact-imported office uploads as a first-class source kind", async () => {
     const test = await catalogForTest();
