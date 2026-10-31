@@ -14,7 +14,8 @@ export type ThesisJobPhase = "parsing" | "mapping" | "rendering";
 
 export interface ThesisJobSnapshot {
   id: string;
-  roomId: string;
+  /** 作业所属工作区（模版卡与产物归属）。 */
+  workspaceId: string;
   status: "running" | "completed" | "failed";
   phase: ThesisJobPhase | "done";
   /** 0–100 的粗粒度进度（阶段映射，不是精确百分比）。 */
@@ -38,12 +39,12 @@ const RETENTION_MS = 30 * 60 * 1000;
 export class ThesisJobRegistry {
   private readonly jobs = new Map<string, ThesisJobSnapshot>();
 
-  create(roomId: string): ThesisJobSnapshot {
+  create(workspaceId: string): ThesisJobSnapshot {
     this.sweep();
     const id = `thesis-job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const snapshot: ThesisJobSnapshot = {
       id,
-      roomId,
+      workspaceId,
       status: "running",
       phase: "parsing",
       progress: PHASE_PROGRESS.parsing,

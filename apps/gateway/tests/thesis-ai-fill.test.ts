@@ -99,7 +99,7 @@ describe("AI 补写开关", () => {
       officeBridge: bridge as never,
     });
     const row = service.cardStore().upsert({
-      roomId: "room-1",
+      workspaceId: "ws-1",
       card: CARD as never,
       sourceFileEntryId: "f1",
       sourceName: "模板.docx",
@@ -107,7 +107,7 @@ describe("AI 补写开关", () => {
     await (service as unknown as { writeTemplateCache: (id: string, bytes: Buffer) => Promise<void> })
       .writeTemplateCache(row.id, Buffer.from("PK\u0003\u0004"));
 
-    await service.reformat("room-1", "f1", row.id, { aiFill: true });
+    await service.reformat("ws-1", "f1", row.id, { aiFill: true });
 
     expect(captured.formatCard?.profile?.aiFill).toBe(true);
     expect(captured.bindingSpec?.generatedSections?.[0]?.title).toBe("七、项目总结与展望");

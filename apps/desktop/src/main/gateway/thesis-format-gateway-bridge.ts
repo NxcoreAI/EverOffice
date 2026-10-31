@@ -1,5 +1,5 @@
 /**
- * 论文格式管线的桌面→网关桥：设为论文模版（库内文件/磁盘直传 zip）、
+ * 论文格式管线的桌面→网关桥（按工作区隔离）：设为论文模版（库内文件/磁盘直传 zip）、
  * 格式卡列表/删除、一键装订。装订是长任务（子代理映射 + 本机渲染 + 入库），
  * 超时放宽；完成事件由 office:agent-file 广播（装订产物走同一入库通道）。
  */
@@ -31,15 +31,15 @@ export class ThesisFormatGatewayBridge {
   /** 解析结果里的模版事实缺口（图片抽不出、条文冲突等），UI 据此提示。 */
   static readonly EMPTY_FACT_GAPS: string[] = []
 
-  async listCards(roomId: string): Promise<ThesisFormatCardDto[]> {
-    const response = await this.request(`/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/cards`)
+  async listCards(workspaceId: string): Promise<ThesisFormatCardDto[]> {
+    const response = await this.request(`/v1/thesis-format/workspaces/${encodeURIComponent(workspaceId)}/cards`)
     if (!response.ok) throw new Error(`论文格式卡列表读取失败（${response.status}）`)
     return await response.json() as ThesisFormatCardDto[]
   }
 
   /** 资料区已有文件设为模版（docx/doc/pdf）。 */
-  async parseFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
-    return this.parse(roomId, {
+  async parseFromLibrary(workspaceId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
+    return this.parse(workspaceId, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileEntryId }),
@@ -48,7 +48,7 @@ export class ThesisFormatGatewayBridge {
 
   /** 磁盘直传模版（zip 不进文件库；docx/doc/pdf 也走此通道）。 */
   async parseFromDisk(
-    roomId: string,
+    workspaceId: string,
     filePath: string,
     fileEntryId?: string | null,
   ): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
@@ -56,20 +56,20 @@ export class ThesisFormatGatewayBridge {
     const name = basename(filePath)
     const form = new FormData()
     form.append('file', new Blob([new Uint8Array(bytes)]), name)
-    return this.parse(roomId, { method: 'POST', body: form }, fileEntryId ?? null)
+    return this.parse(workspaceId, { method: 'POST', body: form }, fileEntryId ?? null)
   }
 
   /**
-   * 彻底删除一份模版：先删模版文件（连带 Room 成员引用），再删格式卡。
+   * 彻底删除一份模版：先删模版文件，再删格式卡。
    * 文件删除失败（例如早已不存在）不阻断删卡。
    */
   async deleteTemplate(
-    roomId: string,
+    workspaceId: string,
     cardId: string,
     deleteFile: (fileEntryId: string) => Promise<{ deleted: boolean }>,
     keepCard = false,
   ): Promise<{ fileDeleted: boolean; hadFile: boolean; cardKept: boolean }> {
-    const cards = await this.listCards(roomId)
+    const cards = await this.listCards(workspaceId)
     const card = cards.find((entry) => entry.id === cardId)
     const fileEntryId = card?.sourceFileEntryId ?? null
     let fileDeleted = false
@@ -81,30 +81,30 @@ export class ThesisFormatGatewayBridge {
       }
     }
     // keepCard=true：只删模版文件，格式卡留着继续可用（用户可自选）
-    if (!keepCard) await this.removeCard(roomId, cardId)
+    if (!keepCard) await this.removeCard(workspaceId, cardId)
     return { fileDeleted, hadFile: Boolean(fileEntryId), cardKept: keepCard }
   }
 
   /** 从内存字节解析模版（工作台拖拽上传用，不落盘）。 */
   async parseFromBytes(
-    roomId: string,
+    workspaceId: string,
     name: string,
     bytes: Uint8Array,
     fileEntryId?: string | null,
   ): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const form = new FormData()
     form.append('file', new Blob([new Uint8Array(bytes)]), name)
-    return this.parse(roomId, { method: 'POST', body: form }, fileEntryId ?? null)
+    return this.parse(workspaceId, { method: 'POST', body: form }, fileEntryId ?? null)
   }
 
   /** 提交排版作业（立即返回 jobId，长任务在网关侧推进）。 */
   async startReformatJob(
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: Parameters<ThesisFormatGatewayBridge["reformat"]>[3],
   ): Promise<{ jobId: string; phase: string }> {
-    const response = await this.request(`/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/reformat-jobs`, {
+    const response = await this.request(`/v1/thesis-format/workspaces/${encodeURIComponent(workspaceId)}/reformat-jobs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileEntryId, cardId, ...(options ? { options } : {}) }),
@@ -113,6 +113,13 @@ export class ThesisFormatGatewayBridge {
       // 服务端的原因（thesis_format_card_not_found 等）比状态码有用得多：
       // 上游 describeThesisError 就靠这串码给用户可执行的提示，吞掉等于白排查。
       const body = await response.json().catch(() => ({}) as { error?: string })
+      console.warn('[thesis] 网关拒绝排版作业', {
+        workspaceId,
+        fileEntryId,
+        cardId: cardId ?? null,
+        status: response.status,
+        error: body.error ?? null,
+      })
       throw new Error(body.error || `排版作业提交失败（${response.status}）`)
     }
     return await response.json() as { jobId: string; phase: string }
@@ -139,23 +146,23 @@ export class ThesisFormatGatewayBridge {
     }
   }
 
-  async removeCard(roomId: string, cardId: string): Promise<void> {
+  async removeCard(workspaceId: string, cardId: string): Promise<void> {
     const response = await this.request(
-      `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/cards/${encodeURIComponent(cardId)}`,
+      `/v1/thesis-format/workspaces/${encodeURIComponent(workspaceId)}/cards/${encodeURIComponent(cardId)}`,
       { method: 'DELETE' },
     )
     if (!response.ok) throw new Error(`论文格式卡删除失败（${response.status}）`)
   }
 
   private async parse(
-    roomId: string,
+    workspaceId: string,
     init: RequestInit,
     fileEntryId: string | null = null,
   ): Promise<{ cardId: string; sourceName: string; factGaps: string[] }> {
     const upload = init.body instanceof FormData
     const query = fileEntryId ? `?fileEntryId=${encodeURIComponent(fileEntryId)}` : ''
     const response = await this.request(
-      `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/${upload ? 'parse-upload' : 'parse'}${query}`,
+      `/v1/thesis-format/workspaces/${encodeURIComponent(workspaceId)}/${upload ? 'parse-upload' : 'parse'}${query}`,
       init,
       // 必须大于网关侧代理超时（thesis-formatter 15 分钟）：客户端先断就等于白跑。
       20 * 60_000,
@@ -176,7 +183,7 @@ export class ThesisFormatGatewayBridge {
 
   /** 一键装订：产物为新文件（xxx-排版版.docx），完成后 office:agent-file 广播。 */
   async reformat(
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: {
@@ -187,7 +194,7 @@ export class ThesisFormatGatewayBridge {
     },
   ): Promise<ThesisReformatOutcomeDto> {
     const response = await this.request(
-      `/v1/thesis-format/rooms/${encodeURIComponent(roomId)}/reformat`,
+      `/v1/thesis-format/workspaces/${encodeURIComponent(workspaceId)}/reformat`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

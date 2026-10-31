@@ -2442,7 +2442,7 @@ async function hashFileBytes(path: string): Promise<string> {
 /** 磁盘选择模版直传（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled:true。 */
 /**
  * 上一次选择但**尚未解析**的模版（同名冲突时暂存，等用户点「替换原文件」）。
- * 只按 room 记一份：同一时刻用户不可能同时上传两份模版。
+ * 只按工作区记一份：同一时刻用户不可能在同一空间同时上传两份模版。
  */
 const pendingTemplatePick = new Map<string, string>()
 
@@ -2454,12 +2454,19 @@ const uploadedTemplateBytes = new Map<string, { name: string; bytes: Uint8Array 
 
 /** files 桥的模块级引用（模版导入资料区要用；bridge 初始化时赋值）。 */
 let filesGatewayBridgeRef: {
-  importPathsOnce: (paths: string[], options?: { roomId?: string }) => Promise<Array<{ fileId: string | null }>>
-  list?: (limit?: number, offset?: number) => Promise<{ items: unknown[]; total: number }>
+  importPathsOnce: (
+    paths: string[],
+    options?: { roomId?: string; workspaceId?: string },
+  ) => Promise<Array<{ fileId: string | null }>>
+  list?: (
+    limit?: number,
+    offset?: number,
+    options?: { workspaceId?: string },
+  ) => Promise<{ items: unknown[]; total: number }>
 } | null = null
 
 async function pickThesisTemplateFromDisk(
-  roomId: string,
+  workspaceId: string,
   options?: { wordOnly?: boolean; overwrite?: boolean },
 ): Promise<{
   canceled: boolean
@@ -2474,11 +2481,11 @@ async function pickThesisTemplateFromDisk(
 
   // 「替换原文件」：直接解析上次暂存的那份，不再弹选择框
   if (options?.overwrite) {
-    const pending = pendingTemplatePick.get(roomId)
+    const pending = pendingTemplatePick.get(workspaceId)
     if (!pending) return { canceled: true, cardId: '', sourceName: '', factGaps: [] }
-    pendingTemplatePick.delete(roomId)
-    const fileEntryId = await importTemplateFileIntoLibrary(roomId, pending)
-    return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, pending, fileEntryId) }
+    pendingTemplatePick.delete(workspaceId)
+    const fileEntryId = await importTemplateFileIntoLibrary(workspaceId, pending)
+    return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(workspaceId, pending, fileEntryId) }
   }
 
   const picked = await dialog.showOpenDialog({
@@ -2494,16 +2501,16 @@ async function pickThesisTemplateFromDisk(
 
   // 重名校验：同名模版已存在就先问用户，别直接覆盖（解析要几分钟，覆盖了没法撤回）
   const sourceName = basename(filePath)
-  const cards = await thesisBridgeForPick.listCards(roomId).catch(() => [])
+  const cards = await thesisBridgeForPick.listCards(workspaceId).catch(() => [])
   const clash = cards.find((card) => card.sourceName.trim().toLowerCase() === sourceName.trim().toLowerCase())
   if (clash) {
-    pendingTemplatePick.set(roomId, filePath)
+    pendingTemplatePick.set(workspaceId, filePath)
     return { canceled: false, cardId: clash.id, sourceName, duplicate: true }
   }
   // 先导入资料区（按内容去重）：卡片因此持有真实文件条目 —— 预览能打开原文件、
   // 删除能级联清文件、日后也能「从资料区重新解析」。
-  const fileEntryId = await importTemplateFileIntoLibrary(roomId, filePath)
-  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(roomId, filePath, fileEntryId) }
+  const fileEntryId = await importTemplateFileIntoLibrary(workspaceId, filePath)
+  return { canceled: false, ...await thesisBridgeForPick.parseFromDisk(workspaceId, filePath, fileEntryId) }
 }
 
 /**
@@ -2513,10 +2520,13 @@ async function pickThesisTemplateFromDisk(
 /**
  * 按文件名在资料区找文件（老卡片自愈用）：仅在唯一同名时采用，避免张冠李戴。
  */
-async function findLibraryFileByName(name: string | undefined): Promise<string | null> {
+async function findLibraryFileByName(
+  name: string | undefined,
+  workspaceId: string,
+): Promise<string | null> {
   if (!name) return null
   try {
-    const catalog = await filesGatewayBridgeRef?.list?.()
+    const catalog = await filesGatewayBridgeRef?.list?.(200, 0, { workspaceId })
     const items = (catalog?.items ?? []) as Array<{ id?: string; originalName?: string }>
     const hits = items.filter((item) => item.originalName === name && item.id)
     return hits.length === 1 ? (hits[0]!.id as string) : null
@@ -2526,7 +2536,7 @@ async function findLibraryFileByName(name: string | undefined): Promise<string |
 }
 
 async function importTemplateBytesIntoLibrary(
-  roomId: string,
+  workspaceId: string,
   name: string,
   bytes: Uint8Array,
 ): Promise<string | null> {
@@ -2536,16 +2546,16 @@ async function importTemplateBytesIntoLibrary(
     const safeName = name.replace(/[\\/:*?"<>|]/g, '_') || '模版.docx'
     const tempPath = join(tempDir, `${Date.now()}-${safeName}`)
     await writeFile(tempPath, bytes)
-    return await importTemplateFileIntoLibrary(roomId, tempPath)
+    return await importTemplateFileIntoLibrary(workspaceId, tempPath)
   } catch (error) {
     console.warn('模版字节导入资料区失败（不影响解析）:', error instanceof Error ? error.message : String(error))
     return null
   }
 }
 
-async function importTemplateFileIntoLibrary(roomId: string, filePath: string): Promise<string | null> {
+async function importTemplateFileIntoLibrary(workspaceId: string, filePath: string): Promise<string | null> {
   try {
-    const imported = await filesGatewayBridgeRef?.importPathsOnce([filePath], { roomId })
+    const imported = await filesGatewayBridgeRef?.importPathsOnce([filePath], { workspaceId })
     return imported?.map((entry) => entry.fileId).find((id): id is string => Boolean(id)) ?? null
   } catch (error) {
     console.warn('模版导入资料区失败（不影响解析）:', error instanceof Error ? error.message : String(error))
@@ -2564,35 +2574,36 @@ function registerThesisFormatHandlers(
     }
     registry.notifyThesisCardsChanged()
   }
-  handle(THESIS_FORMAT_CHANNELS.listCards, (_event, roomId: string) => bridge.listCards(roomId))
-  handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, roomId: string, fileEntryId: string) => {
-    const meta = await bridge.parseFromLibrary(roomId, fileEntryId)
+  handle(THESIS_FORMAT_CHANNELS.listCards, (_event, workspaceId: string) => bridge.listCards(workspaceId))
+  handle(THESIS_FORMAT_CHANNELS.parseFromLibrary, async (_event, workspaceId: string, fileEntryId: string) => {
+    const meta = await bridge.parseFromLibrary(workspaceId, fileEntryId)
     cardChanged()
     return meta
   })
   handle(THESIS_FORMAT_CHANNELS.pickAndParse, async (
     _event,
-    roomId: string,
+    workspaceId: string,
     options?: { wordOnly?: boolean; overwrite?: boolean },
   ) => {
-    const meta = await pickThesisTemplateFromDisk(roomId, options)
+    const meta = await pickThesisTemplateFromDisk(workspaceId, options)
     if (!meta.canceled) cardChanged()
     return meta
   })
-  handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, roomId: string, cardId: string) => {
-    await bridge.removeCard(roomId, cardId)
+  handle(THESIS_FORMAT_CHANNELS.removeCard, async (_event, workspaceId: string, cardId: string) => {
+    await bridge.removeCard(workspaceId, cardId)
     cardChanged()
   })
   /**
    * 彻底删除一份模版：**先删模版文件再删格式卡**。
    * 「只删卡」会把模版文件留在资料区，用户看到的就是"删了还残留"。
-   * 文件删除走 /v1/files/:id（硬删 + Room 成员引用级联），失败不阻断删卡。
+   * 文件删除走 /v1/files/:id（硬删 + 级联清理），失败不阻断删卡。
+   * 模版文件导入当前文档所属工作区：卡片与文件始终同空间，跨空间互不可见。
    */
-  handle(THESIS_FORMAT_CHANNELS.parseUpload, async (_event, roomId: string, name: string, bytes: ArrayBuffer) => {
+  handle(THESIS_FORMAT_CHANNELS.parseUpload, async (_event, workspaceId: string, name: string, bytes: ArrayBuffer) => {
     const data = new Uint8Array(bytes)
     // 先落盘导入资料区（内容去重）→ 卡片关联真实文件，预览/删除级联才成立
-    const fileEntryId = await importTemplateBytesIntoLibrary(roomId, name, data)
-    const meta = await bridge.parseFromBytes(roomId, name, data, fileEntryId)
+    const fileEntryId = await importTemplateBytesIntoLibrary(workspaceId, name, data)
+    const meta = await bridge.parseFromBytes(workspaceId, name, data, fileEntryId)
     if (meta.cardId) {
       uploadedTemplateBytes.set(meta.cardId, { name, bytes: data })
       if (uploadedTemplateBytes.size > 8) {
@@ -2603,8 +2614,8 @@ function registerThesisFormatHandlers(
     cardChanged()
     return meta
   })
-  handle(THESIS_FORMAT_CHANNELS.deleteTemplate, async (_event, roomId: string, cardId: string) => {
-    const cards = await bridge.listCards(roomId)
+  handle(THESIS_FORMAT_CHANNELS.deleteTemplate, async (_event, workspaceId: string, cardId: string) => {
+    const cards = await bridge.listCards(workspaceId)
     const card = cards.find((entry) => entry.id === cardId)
     let fileDeleted = false
     if (card?.sourceFileEntryId) {
@@ -2616,17 +2627,32 @@ function registerThesisFormatHandlers(
         console.warn('[thesis] 删除模版文件失败（继续删卡）：', error instanceof Error ? error.message : String(error))
       }
     }
-    await bridge.removeCard(roomId, cardId)
+    await bridge.removeCard(workspaceId, cardId)
     cardChanged()
     return { fileDeleted, hadFile: Boolean(card?.sourceFileEntryId) }
   })
-  handle(THESIS_FORMAT_CHANNELS.reformatStart, (
+  handle(THESIS_FORMAT_CHANNELS.reformatStart, async (
     _event,
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: Parameters<typeof bridge.reformat>[3],
-  ) => bridge.startReformatJob(roomId, fileEntryId, cardId, options))
+  ) => {
+    // 提交失败（卡片已删、跨空间、网关 4xx/超时）必须留痕：面板只会显示一行
+    // 翻译后的提示，事后无法从记录里判断卡在哪一段。
+    const startedAt = Date.now()
+    console.info('[thesis] 提交排版作业', { workspaceId, fileEntryId, cardId: cardId ?? null })
+    try {
+      return await bridge.startReformatJob(workspaceId, fileEntryId, cardId, options)
+    } catch (error) {
+      console.warn('[thesis] 排版作业提交失败', {
+        workspaceId, fileEntryId, cardId: cardId ?? null,
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  })
   handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
   /** 导出 PDF：LibreOffice 转换 → ~/Downloads/EverRoom/，并定位到文件。 */
   handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
@@ -2641,13 +2667,27 @@ function registerThesisFormatHandlers(
     shell.showItemInFolder(outcome.pdfPath)
     return { unavailable: false as const, path: outcome.pdfPath }
   })
-  handle(THESIS_FORMAT_CHANNELS.reformat, (
+  handle(THESIS_FORMAT_CHANNELS.reformat, async (
     _event,
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: Parameters<typeof bridge.reformat>[3],
-  ) => bridge.reformat(roomId, fileEntryId, cardId, options))
+  ) => {
+    const startedAt = Date.now()
+    try {
+      const result = await bridge.reformat(workspaceId, fileEntryId, cardId, options)
+      console.info('[thesis] 同步排版完成', { workspaceId, fileEntryId, elapsedMs: Date.now() - startedAt })
+      return result
+    } catch (error) {
+      console.warn('[thesis] 同步排版失败', {
+        workspaceId, fileEntryId, cardId: cardId ?? null,
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+  })
 }
 
 /**
@@ -2659,7 +2699,13 @@ async function openFileInAppPreview(
   bridge: FilesGatewayBridge,
   fileId: string,
   originalName: string,
-  options?: { contentHash?: string; editable?: boolean; roomId?: string; focusWindow?: boolean },
+  options?: {
+    contentHash?: string
+    editable?: boolean
+    roomId?: string
+    workspaceId?: string
+    focusWindow?: boolean
+  },
 ): Promise<{ openedWith: 'office' | 'external'; instanceId?: string; kind?: OfficePreviewKind; title?: string }> {
   const extension = extname(originalName).toLowerCase()
   const legacy = extension === '.doc' || extension === '.xls' || extension === '.ppt'
@@ -2677,14 +2723,17 @@ async function openFileInAppPreview(
   }
   const storagePath = await bridge.storagePath(fileId)
   const effectiveHash = options?.contentHash ?? await hashFileBytes(storagePath)
-  // 编辑保存回填要带条目归属工作区（否则重导入会把文件改归 default）；
-  // catalog 不可达时不带——网关侧对未传归属的重导入保留条目原值，同样安全。
-  let workspaceId: string | null = null
-  try {
-    const entry = await bridge.catalogEntry(fileId)
-    workspaceId = entry?.workspaceId?.trim() || null
-  } catch {
-    workspaceId = null
+  // 归属工作区：调用方显式给的优先；否则按目录条目回查（资料库/产物库入口都靠它）。
+  // 回查失败（老条目不在 catalog）→ null：编辑保存回填不带归属（网关对未传归属的
+  // 重导入保留条目原值），预览实例按默认工作区兜底，不阻断打开。
+  let workspaceId: string | null = options?.workspaceId ?? null
+  if (!workspaceId) {
+    try {
+      const entry = await bridge.catalogEntry(fileId)
+      workspaceId = entry?.workspaceId?.trim() || null
+    } catch {
+      workspaceId = null
+    }
   }
   let descriptor
   try {
@@ -2741,7 +2790,7 @@ function registerFilesHandlers(
     fileId: string,
     originalName?: string,
     contentHash?: string,
-    options?: { editable?: unknown; roomId?: unknown; focusWindow?: unknown },
+    options?: { editable?: unknown; roomId?: unknown; workspaceId?: unknown; focusWindow?: unknown },
   ) => {
     if (!originalName) {
       await bridge.openOriginal(fileId)
@@ -2751,6 +2800,7 @@ function registerFilesHandlers(
       ...(contentHash ? { contentHash } : {}),
       ...(options?.editable === true ? { editable: true } : {}),
       ...(typeof options?.roomId === 'string' && options.roomId ? { roomId: options.roomId } : {}),
+      ...(typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.focusWindow === true ? { focusWindow: true } : {}),
     })
   })
@@ -3669,6 +3719,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }
       },
     )
+    // 论文排版成品落库 → 自动打开成品标签（与「预览模版」复用同一条预览管线）。
+    // 没有这一步，排版成功后当前文档不会变、资料库也不自动刷新，用户只会看到
+    // 「进度条走完了，但什么都没发生」。
+    officeBridgeServer.setThesisProductHook(async (product) => {
+      const bridge = officeFilesBridge
+      if (!bridge) return
+      const opened = await openFileInAppPreview(bridge, product.fileEntryId, product.originalName, {
+        ...(product.workspaceId ? { workspaceId: product.workspaceId } : {}),
+        // 排版是从 docs 面板发起的：把主窗口提到前台，否则成品标签开在后面看不见。
+        focusWindow: true,
+      })
+      const request = previewRequestFromOpenResult(opened)
+      if (request) notifyPreviewRequested(request)
+    })
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
       officeBridgeServer = null
@@ -3875,33 +3939,34 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerThesisFormatHandlers(thesisFormatBridge, officePreviewRegistry, filesGatewayBridge)
     // AI 页签（docs 视图内）论文排版桥：复用同一网关实现，pick 走磁盘选择直传。
     officePreviewRegistry.setThesisPanelBridge({
-      listCards: (roomId) => thesisFormatBridge.listCards(roomId),
-      pickAndSet: (roomId, options) => pickThesisTemplateFromDisk(roomId, options),
-      removeCard: (roomId, cardId) => thesisFormatBridge.removeCard(roomId, cardId),
-      // 彻底删除：先删模版文件（连带 Room 成员引用），再删格式卡
-      deleteTemplate: (roomId, cardId, options) =>
+      listCards: (workspaceId) => thesisFormatBridge.listCards(workspaceId),
+      pickAndSet: (workspaceId, options) => pickThesisTemplateFromDisk(workspaceId, options),
+      removeCard: (workspaceId, cardId) => thesisFormatBridge.removeCard(workspaceId, cardId),
+      // 彻底删除：先删模版文件（连带级联清理），再删格式卡
+      deleteTemplate: (workspaceId, cardId, options) =>
         thesisFormatBridge.deleteTemplate(
-          roomId,
+          workspaceId,
           cardId,
           (fileEntryId) => filesGatewayBridge.delete(fileEntryId),
           options?.keepCard === true,
         ),
-      reformat: (roomId, fileEntryId, cardId, options) =>
-        thesisFormatBridge.reformat(roomId, fileEntryId, cardId, options),
+      reformat: (workspaceId, fileEntryId, cardId, options) =>
+        thesisFormatBridge.reformat(workspaceId, fileEntryId, cardId, options),
       // 任务化排版：面板提交作业后每秒轮询一次状态（网关 30 分钟保留，重启丢、报错清晰）
-      startReformatJob: (roomId, fileEntryId, cardId, options) =>
-        thesisFormatBridge.startReformatJob(roomId, fileEntryId, cardId, options),
+      startReformatJob: (workspaceId, fileEntryId, cardId, options) =>
+        thesisFormatBridge.startReformatJob(workspaceId, fileEntryId, cardId, options),
       reformatJobStatus: (jobId) => thesisFormatBridge.reformatJobStatus(jobId),
       // 真预览：直接用 files.openOriginal 的主进程实现打开模板原文件
-      previewTemplate: async (roomId, cardId) => {
-        const cards = await thesisFormatBridge.listCards(roomId)
+      previewTemplate: async (workspaceId, cardId) => {
+        const cards = await thesisFormatBridge.listCards(workspaceId)
         const card = cards.find((entry) => entry.id === cardId)
         if (!card) return { opened: false, reason: 'card_not_found' }
 
         // 打开真预览：与应用内「打开 Office 文件」同一条路径（失败会抛错，不再静默）
         const open = async (fileId: string, originalName: string) => {
           const result = await openFileInAppPreview(filesGatewayBridge, fileId, originalName, {
-            ...(roomId ? { roomId } : {}),
+            // 预览实例带着工作区：从预览页再开 AI 排版面板时仍落在同一空间。
+            workspaceId,
             // 预览标签开在主窗口：从 docs 面板点预览时要把主窗口提到前台，
             // 否则用户看着 docs 窗口会觉得「点了没反应」。
             focusWindow: true,
@@ -3923,7 +3988,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         // 老卡片（创建于「上传自动入库」之前）没有文件条目：
         //  ① 资料区里有唯一同名文件 → 直接用那份打开
         //  ② 本次运行还留着上传字节 → 落盘导入（内容去重）后打开
-        const sameName = await findLibraryFileByName(card.sourceName)
+        const sameName = await findLibraryFileByName(card.sourceName, workspaceId)
         if (sameName) return open(sameName, card.sourceName ?? '模版.docx')
 
         const cached = uploadedTemplateBytes.get(cardId)
@@ -3933,7 +3998,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         const safeName = cached.name.replace(/[\\/:*?"<>|]/g, '_') || '模版.docx'
         const tempPath = join(tempDir, `${cardId}-${safeName}`)
         await writeFile(tempPath, cached.bytes)
-        const imported = await filesGatewayBridge.importPathsOnce([tempPath], { roomId })
+        const imported = await filesGatewayBridge.importPathsOnce([tempPath], { workspaceId })
         const fileId = imported.map((entry) => entry.fileId).find((id): id is string => Boolean(id))
         if (!fileId) return { opened: false, reason: 'no_file' }
         return open(fileId, cached.name)

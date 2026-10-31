@@ -905,6 +905,8 @@ export async function createServer(config: GatewayConfig) {
     files: filesService,
     orchestrator: subagentOrchestrator,
     officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+    // 排版作业的阶段耗时/失败原因必须落网关日志：否则只能靠外部记录反推。
+    logger: { info: (obj, msg) => app.log.info(obj, msg), warn: (obj, msg) => app.log.warn(obj, msg) },
   });
   // 幻灯片图片对象库（原素材库的字节存取部分）：与 Word 配图共用上面的 slideImageStore，
   // 生图产物与文档内嵌图按内容哈希寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。

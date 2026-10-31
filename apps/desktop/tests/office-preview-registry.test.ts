@@ -225,6 +225,27 @@ describe('OfficePreviewRegistry', () => {
       expect(hook).toHaveBeenCalledTimes(1)
       expect(typeof hook.mock.calls[0]![0]).toBe('function')
     })
+
+    it('scopes the AI thesis panel to the document workspace', async () => {
+      const hook = vi.fn()
+      ;(runtime.docs as DocsWithThesisHook).setDocsThesisPanelHook = hook
+      const listCards = vi.fn(async () => [])
+      registry.setThesisPanelBridge({
+        listCards,
+        pickAndSet: vi.fn(async () => null),
+        removeCard: vi.fn(async () => undefined),
+        reformat: vi.fn(async () => null),
+      })
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-w', 'thesis.docx'), workspaceId: 'ws-9' })
+
+      const handler = hook.mock.calls[0]![0] as (wcId: number, action: unknown) => Promise<unknown>
+      const outcome = await handler(viewCalls[0]!.webContentsId, { kind: 'list' })
+
+      // 「排版」面板按工作区取模版卡：文档在哪个空间，就只列哪个空间的模版。
+      expect(listCards).toHaveBeenCalledWith('ws-9')
+      expect(outcome).toEqual({ ok: true, value: [] })
+    })
   })
 
   let registry: OfficePreviewRegistry
@@ -635,11 +656,14 @@ describe('OfficePreviewRegistry', () => {
         title: 'deck-edit.pptx',
         kind: 'slides',
         roomId: 'room-e1',
+        // 没有显式归属时按默认工作区兜底（论文排版面板按工作区取模版卡）。
+        workspaceId: 'default',
       })
       // 非 Room 打开的实例 roomId 为空（转发层据此报错引导）。
       expect(registry.findByWebContentsId(viewCalls[1]!.webContentsId)).toMatchObject({
         fileId: 'file-d1',
         roomId: null,
+        workspaceId: 'default',
       })
       expect(registry.findByWebContentsId(999_999)).toBeNull()
     })

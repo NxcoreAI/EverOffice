@@ -62,7 +62,9 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       return
     }
     try {
-      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash)
+      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
+        workspaceId: workspace.id,
+      })
       if (result.openedWith === 'office') onToast(`已在内置 Office 预览中打开「${item.file.name}」`)
       else onToast('已用系统默认应用打开')
     } catch {
@@ -128,10 +130,37 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     }
   }
 
+  /**
+   * 把本空间资料库里的 Word/PDF 设为「论文排版模版」。
+   *
+   * 排版工具按工作区隔离：在这里设一次，打开本空间任意 docx 后在 AI 面板
+   * 「排版」里就能直接选它——不必再走面板里的磁盘选择框重复上传。
+   */
+  const setThesisTemplate = async (item: RealOfficeFile) => {
+    const thesis = window.nxcore?.thesisFormat
+    if (!thesis || typeof thesis.setFromLibrary !== 'function') {
+      onToast('桌面端排版能力不可用')
+      return
+    }
+    onToast(`正在解析「${item.file.name}」为排版模版…`)
+    try {
+      const result = await thesis.setFromLibrary(workspace.id, item.catalog.id)
+      const gaps = Array.isArray(result.factGaps) ? result.factGaps.filter(Boolean) : []
+      if (gaps.length > 0) {
+        onToast(`已设为排版模版，但有信息没解析出来：${gaps.join('；')}`)
+      } else {
+        onToast(`已设为「${workspace.name}」的论文排版模版`)
+      }
+    } catch {
+      onToast('设为排版模版失败，请稍后重试')
+    }
+  }
+
   const actions: FileItemActions = {
     onOpen: (item) => onOpenFile(item.file),
     onOpenOriginal: (item) => { void openOriginal(item) },
     onExportReveal: (item) => { void exportReveal(item) },
+    onSetThesisTemplate: (item) => { void setThesisTemplate(item) },
     onDelete: (item) => setPendingDelete(item),
   }
 

@@ -101,6 +101,8 @@ export class ThesisFormatService {
     files: FilesService;
     orchestrator: SubagentOrchestrator;
     officeBridge: OfficeBridgeClient | null;
+    /** 结构化日志（create-server 注入 app.log）；缺省不记，测试无需桩。 */
+    logger?: { info: (obj: Record<string, unknown>, msg: string) => void; warn: (obj: Record<string, unknown>, msg: string) => void };
   }) {
     this.store = new ThesisFormatCardStore(deps.db);
   }
@@ -109,34 +111,42 @@ export class ThesisFormatService {
     return this.store;
   }
 
-  async parseFromLibrary(roomId: string, fileEntryId: string): Promise<ThesisParseResult> {
+  async parseFromLibrary(workspaceId: string, fileEntryId: string): Promise<ThesisParseResult> {
     const entry = this.deps.files.catalogEntry(fileEntryId);
     if (!entry) throw new Error("thesis_template_file_not_found");
+    // 工作区隔离：只能把本工作区资料库里的文件设为模版，避免跨空间把别人的
+    // 文件（或同名的另一份模版）挂到当前空间。
+    if (entry.workspaceId !== workspaceId) throw new Error("thesis_template_not_in_workspace");
     const storagePath = this.deps.files.catalogStoragePathOf(fileEntryId);
     if (!storagePath) throw new Error("thesis_template_file_not_readable");
     const bytes = await readFile(storagePath);
     const result = await this.parseBytes(bytes, entry.originalName);
-    const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId, sourceName: entry.originalName });
+    const row = this.store.upsert({ workspaceId, card: result.card, sourceFileEntryId: fileEntryId, sourceName: entry.originalName });
     if (result.templateDocx) await this.writeTemplateCache(row.id, result.templateDocx);
     return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
   async parseFromUpload(
-    roomId: string,
+    workspaceId: string,
     bytes: Buffer,
     name: string,
     fileEntryId?: string | null,
   ): Promise<ThesisParseResult> {
+    // 先校验归属再解析：解析可能要跑几十秒到几分钟，跨空间请求不该先烧掉解析。
+    if (fileEntryId) {
+      const linked = this.deps.files.catalogEntry(fileEntryId);
+      if (linked && linked.workspaceId !== workspaceId) throw new Error("thesis_template_not_in_workspace");
+    }
     const result = await this.parseBytes(bytes, name);
     // fileEntryId：桌面端上传前已把模版导入资料区，卡片直接关联该文件。
     // 关联后：预览能打开真实原文件、删除能级联清文件、也能重新从资料区解析。
-    const row = this.store.upsert({ roomId, card: result.card, sourceFileEntryId: fileEntryId ?? null, sourceName: name });
+    const row = this.store.upsert({ workspaceId, card: result.card, sourceFileEntryId: fileEntryId ?? null, sourceName: name });
     if (result.templateDocx) await this.writeTemplateCache(row.id, result.templateDocx);
     return { cardId: row.id, sourceName: result.sourceName, card: result.card, factGaps: result.factGaps };
   }
 
-  removeCard(roomId: string, cardId: string): boolean {
-    const removed = this.store.remove(roomId, cardId);
+  removeCard(workspaceId: string, cardId: string): boolean {
+    const removed = this.store.remove(workspaceId, cardId);
     // 卡没了，骨架缓存也没意义；失败不阻断（下次解析会覆盖同名文件）
     if (removed) void this.dropTemplateCache(cardId);
     return removed;
@@ -246,6 +256,14 @@ export class ThesisFormatService {
   }
 
   private readonly jobs = new ThesisJobRegistry();
+  /** 同一文档 + 同一模版 + 同一选项的进行中作业（点击防重；完成即释放）。 */
+  private readonly activeJobs = new Map<string, string>();
+  /**
+   * 章节裁决结果缓存：同一份文档用同一张卡重排时，待定章节/候选槽位完全一致，
+   * 没必要再付一次 10s 级的模型往返。内容或卡片变了 key 就变，不会串用。
+   */
+  private readonly adjudicationCache = new Map<string, SemanticDecision[]>();
+  private static readonly ADJUDICATION_CACHE_LIMIT = 200;
 
   /**
    * 任务化排版：立刻返回作业快照，重活扔到后台跑。
@@ -254,20 +272,61 @@ export class ThesisFormatService {
    * 模型不可用/超时），而是短轮询；服务端该跑多久跑多久。
    */
   startReformatJob(
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: ThesisReformatOptions,
   ): ThesisJobSnapshot {
-    const job = this.jobs.create(roomId);
+    // 点击防重：面板在长任务期间重复点击曾经会并发多个作业——互相抢
+    // thesis-formatter 的 2 个并发槽，越点越慢，还会产出重复文件。
+    // 同一「文档 + 模版 + 选项」直接复用进行中的作业。
+    const dedupeKey = JSON.stringify([workspaceId, fileEntryId, cardId ?? null, options ?? null]);
+    const runningId = this.activeJobs.get(dedupeKey);
+    if (runningId) {
+      const running = this.jobs.get(runningId);
+      if (running && running.status === "running") {
+        this.deps.logger?.info({ jobId: running.id, workspaceId, fileEntryId, ...(cardId ? { cardId } : {}) }, "thesis job reused");
+        return running;
+      }
+      this.activeJobs.delete(dedupeKey);
+    }
+    const job = this.jobs.create(workspaceId);
+    this.activeJobs.set(dedupeKey, job.id);
+    // 排版是分钟级长任务：没有这组日志就只能看到「转圈」，无法回答卡在解析、
+    // 模型裁决还是渲染入库（2026-10-30 排查一次实际耗时全靠反推）。
+    const startedAt = Date.now();
+    const context = { jobId: job.id, workspaceId, fileEntryId, ...(cardId ? { cardId } : {}) };
+    this.deps.logger?.info(context, "thesis job started");
+    let phaseStartedAt = startedAt;
     void (async () => {
       try {
-        const result = await this.reformat(roomId, fileEntryId, cardId, options, (phase) => {
+        const result = await this.reformat(workspaceId, fileEntryId, cardId, options, (phase) => {
+          const now = Date.now();
+          this.deps.logger?.info(
+            { ...context, phase, phaseMs: now - phaseStartedAt, elapsedMs: now - startedAt },
+            "thesis job phase",
+          );
+          phaseStartedAt = now;
           this.jobs.phase(job.id, phase);
         });
         this.jobs.complete(job.id, result);
+        if (this.activeJobs.get(dedupeKey) === job.id) this.activeJobs.delete(dedupeKey);
+        this.deps.logger?.info(
+          { ...context, status: "completed", elapsedMs: Date.now() - startedAt, outputFileEntryId: result.fileEntryId },
+          "thesis job finished",
+        );
       } catch (error) {
         this.jobs.fail(job.id, error);
+        if (this.activeJobs.get(dedupeKey) === job.id) this.activeJobs.delete(dedupeKey);
+        this.deps.logger?.warn(
+          {
+            ...context,
+            status: "failed",
+            elapsedMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "thesis job failed",
+        );
       }
     })();
     return job;
@@ -279,7 +338,7 @@ export class ThesisFormatService {
   }
 
   async reformat(
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: ThesisReformatOptions,
@@ -287,14 +346,14 @@ export class ThesisFormatService {
     onPhase?: (phase: "parsing" | "mapping" | "rendering") => void,
   ): Promise<ThesisReformatResult> {
     onPhase?.("parsing");
-    const row = cardId ? this.store.byId(roomId, cardId) : this.store.latest(roomId);
+    const row = cardId ? this.store.byId(workspaceId, cardId) : this.store.latest(workspaceId);
     if (!row) throw new Error("thesis_format_card_not_found");
     let card = row.card;
     // 老卡片自愈：剖面版本比当前规则旧（导入时还没有「模版优先」模式）时，
     // 用模版原文件重建一次剖面。重建失败不阻断——仍然按老逻辑排版。
     const profileVersion = Number((card.profile as { version?: number } | undefined)?.version ?? 0);
     if (profileVersion < 3) {
-      const staleProfileBytes = await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName);
+      const staleProfileBytes = await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName, workspaceId);
       if (staleProfileBytes) {
         const rebuilt = await this.rebuildTemplateProfile(card, staleProfileBytes, row.sourceName).catch((error: unknown) => {
           console.warn("[thesis] 剖面重建失败，按旧剖面排版：", error instanceof Error ? error.message : String(error));
@@ -305,7 +364,7 @@ export class ThesisFormatService {
           // 落库：下次排版直接用新剖面，不必每次重算
           try {
             this.store.upsert({
-              roomId,
+              workspaceId,
               card,
               sourceFileEntryId: row.sourceFileEntryId,
               sourceName: row.sourceName,
@@ -340,9 +399,9 @@ export class ThesisFormatService {
     onPhase?.("mapping");
     // AI 补写需要知道「模版正文里哪些小节会出现灰字提示」——先读模版字节
     const templateForFill = options?.aiFill === true
-      ? await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName).catch(() => null)
+      ? await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName, workspaceId).catch(() => null)
       : null;
-    const v2 = await this.mapWithProfile(roomId, card, described.outline, titleHint, options, templateForFill);
+    const v2 = await this.mapWithProfile(workspaceId, card, described.outline, titleHint, options, templateForFill);
     let spec: ThesisBindingSpec;
     let report: Record<string, unknown> | undefined;
     if (v2) {
@@ -378,7 +437,7 @@ export class ThesisFormatService {
     // v3 模板骨架装订：把模版原文件一起下发，渲染器以模版为底、只替换内容槽位，
     // 封面/核心信息区/表格/教师评价表/目录按模版原位置原样保留。
     // 模版读不出来（老卡片、非 docx）就不带——渲染器回落 v2 重建路径。
-    const templateBytes = await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName);
+    const templateBytes = await this.readTemplateDocx(row.id, row.sourceFileEntryId, row.sourceName, workspaceId);
     // 卡片有剖面说明用户是按「模版排版」导入的；此时拿不到模版字节，成品必然和模版不一致。
     // 必须显性告知，否则用户只会看到「表格又跑位了」却不知道是模版文件丢了。
     const missingTemplateNote = !templateBytes && card.profile
@@ -390,9 +449,8 @@ export class ThesisFormatService {
       ...(templateBytes ? { templateBase64: templateBytes.toString("base64") } : {}),
       formatCard: renderCard,
       bindingSpec: spec,
-      roomId,
-      // 产物是新建条目（sourceKey=agent:docx-thesis:*）：归属跟源文件走。
-      workspaceId: entry.workspaceId ?? null,
+      // 产物是新建条目（sourceKey=agent:docx-thesis:*）：归属跟源文件走（同一工作区）。
+      workspaceId,
       sourceFileName: entry.originalName,
       sourceFileEntryId: fileEntryId,
       keepLogo: options?.keepLogo !== false,
@@ -487,6 +545,8 @@ export class ThesisFormatService {
     cardId: string,
     fileEntryId: string | null | undefined,
     sourceName?: string,
+    /** 只在同名文件自愈时用于隔离工作区：别的空间的同名模版不参与匹配。 */
+    workspaceId?: string,
   ): Promise<Buffer | null> {
     try {
       const cached = await readFile(this.templateCachePath(cardId));
@@ -512,7 +572,8 @@ export class ThesisFormatService {
     // 老卡片自愈：id 没了但文件还在资料区里。只在同名 docx 唯一时采用，避免张冠李戴。
     if (!bytes && sourceName) {
       const hits = this.deps.files.catalogEntriesByName(sourceName)
-        .filter((entry) => extname(entry.originalName).toLowerCase() === ".docx");
+        .filter((entry) => extname(entry.originalName).toLowerCase() === ".docx")
+        .filter((entry) => !workspaceId || entry.workspaceId === workspaceId);
       if (hits.length === 1) bytes = await fromCatalog(hits[0]!.id);
     }
     // 顺手补缓存：缓存机制上线前解析的老卡片跑一次就自愈了
@@ -530,13 +591,25 @@ export class ThesisFormatService {
    * 不是必经路径。
    */
   private async adjudicateMapping(
-    roomId: string,
+    workspaceId: string,
     profile: { slots: Array<{ id: string; title: string }> },
     plan: ReturnType<typeof buildMappingPlan>,
   ): Promise<SemanticDecision[]> {
-    void roomId;
+    void workspaceId;
     const pending = plan.pendingForSemantic.slice(0, 20);
     if (pending.length === 0) return [];
+    const cacheKey = JSON.stringify([
+      profile.slots.map((slot) => [slot.id, slot.title]),
+      pending.map((entry) => [entry.chapterTraceId, entry.chapterText, entry.candidates.map((candidate) => candidate.slotId)]),
+    ]);
+    const cached = this.adjudicationCache.get(cacheKey);
+    if (cached) {
+      this.deps.logger?.info(
+        { pending: pending.length, decisions: cached.length },
+        "thesis adjudication cache hit",
+      );
+      return cached;
+    }
     try {
       const structured = await this.dispatchAgent(`裁决论文章节归属（${pending.length} 个待定）`, {
         task: "adjudicate_mapping" as const,
@@ -547,7 +620,16 @@ export class ThesisFormatService {
           candidateSlotIds: entry.candidates.map((candidate) => candidate.slotId),
         })),
       });
-      return sanitizeMappingDecisions(structured?.decisions, pending, profile.slots);
+      const decisions = sanitizeMappingDecisions(structured?.decisions, pending, profile.slots);
+      if (decisions.length > 0) {
+        this.adjudicationCache.set(cacheKey, decisions);
+        // 简单 FIFO 上限：论文排版不是热点路径，200 份文档的裁决量足够。
+        if (this.adjudicationCache.size > ThesisFormatService.ADJUDICATION_CACHE_LIMIT) {
+          const oldest = this.adjudicationCache.keys().next().value;
+          if (oldest) this.adjudicationCache.delete(oldest);
+        }
+      }
+      return decisions;
     } catch (error) {
       console.warn("[thesis] 归属裁决失败，回落顺序对齐：", error instanceof Error ? error.message : String(error));
       return [];
@@ -702,7 +784,7 @@ export class ThesisFormatService {
    * 不再派代理猜区间。返回 null = 老卡片，调用方回落原路径。
    */
   private async mapWithProfile(
-    roomId: string,
+    workspaceId: string,
     card: ThesisFormatCard,
     outline: Array<{ index: number; kind: string; level?: number; text: string }>,
     titleHint: string,
@@ -721,7 +803,7 @@ export class ThesisFormatService {
     const content = buildContentProfile(blocks);
     let plan = buildMappingPlan({ template: profile, content });
     // 低置信区间派一次代理裁决；失败/为空都回落确定性结果（不阻断排版）
-    const decisions = await this.adjudicateMapping(roomId, profile, plan);
+    const decisions = await this.adjudicateMapping(workspaceId, profile, plan);
     const adjudicated = decisions.length > 0 ? buildMappingPlan({ template: profile, content, semantic: decisions }) : plan;
     if (decisions.length > 0) plan = adjudicated;
     // 双屏对比数据（内容结构级，非像素级）：左=源文档章节，右=排版后章节归属

@@ -232,6 +232,31 @@ describe('资料库页', () => {
     expect(OPENABLE_KINDS.map((item) => item.file.name)).toContain(opened.name)
   })
 
+  it('排版产物落库后自动刷新资料库（别的空间不打扰）', async () => {
+    const props = pageProps()
+    const nxcore = installFilesApi(OPENABLE_KINDS)
+    let listener: ((event: { type: string; workspaceId?: string }) => void) | null = null
+    ;(nxcore as unknown as { office: unknown }).office = {
+      onAgentFile: (callback: (event: { type: string; workspaceId?: string }) => void) => {
+        listener = callback
+        return () => { listener = null }
+      },
+    }
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+
+    const initialCalls = nxcore.files.list.mock.calls.length
+    await act(async () => { listener?.({ type: 'done', workspaceId: 'ws-1' }) })
+    await flush()
+    expect(nxcore.files.list.mock.calls.length).toBeGreaterThan(initialCalls)
+
+    // 别的空间的成品不触发当前列表刷新。
+    const afterOwnSpace = nxcore.files.list.mock.calls.length
+    await act(async () => { listener?.({ type: 'done', workspaceId: 'ws-2' }) })
+    await flush()
+    expect(nxcore.files.list.mock.calls.length).toBe(afterOwnSpace)
+  })
+
   it('空文件库显示空态与导入入口', async () => {
     const props = pageProps()
     installFilesApi([], 0)

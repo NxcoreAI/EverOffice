@@ -1,15 +1,18 @@
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import Fastify from "fastify";
+import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
+import { describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import { SubagentRegistry } from "../src/modules/subagents/registry.js";
 import { ThesisFormatCardStore } from "../src/modules/thesis-format/card-store.js";
 import { validateThesisFormatCard } from "../src/modules/thesis-format/validate.js";
 import { extractOoxmlFactsAsync } from "../src/modules/thesis-format/ooxml-facts.js";
-import { cardForAgent, factsForAgent } from "../src/modules/thesis-format/service.js";
+import { ThesisFormatService, cardForAgent, factsForAgent } from "../src/modules/thesis-format/service.js";
 import { mergeTemplateImages } from "../src/modules/thesis-format/template-images.js";
 import { buildTemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import { buildContentProfile, flattenChapters, type ContentProfile, type OutlineBlock } from "../src/modules/thesis-format/content-profile.js";
 import { buildMappingPlan, sanitizeMappingDecisions } from "../src/modules/thesis-format/mapping-plan.js";
+import { thesisFormatRoutes } from "../src/modules/thesis-format/routes.js";
 import { planToBindingSpec } from "../src/modules/thesis-format/plan-to-spec.js";
 import type { TemplateProfile } from "../src/modules/thesis-format/template-profile.js";
 import JSZip from "jszip";
@@ -44,23 +47,144 @@ describe("thesis-formatter agent bundle", () => {
   });
 });
 
+describe("ThesisFormatService adjudication cache", () => {
+  it("reuses decisions for identical outlines (no second model round-trip)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-thesis-adjudication-cache-"));
+    try {
+      const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+      const service = new ThesisFormatService({
+        db: database.db,
+        files: {} as never,
+        orchestrator: {} as never,
+        officeBridge: null,
+      });
+      const decisions = [{ chapterTraceId: "c1", slotId: "s1", reason: "附录归附录槽位" }];
+      const dispatch = vi.fn(async () => ({ decisions }));
+      (service as unknown as { dispatchAgent: unknown }).dispatchAgent = dispatch;
+      const profile = { slots: [{ id: "s1", title: "第一章" }] };
+      const plan = {
+        pendingForSemantic: [{
+          chapterTraceId: "c1",
+          chapterText: "附录 B 组合导航滤波流程",
+          candidates: [{ slotId: "s1", score: 0.5 }],
+        }],
+      };
+      const adjudicate = (service as unknown as {
+        adjudicateMapping: (workspace: string, p: typeof profile, input: typeof plan) => Promise<unknown>;
+      }).adjudicateMapping.bind(service);
+
+      const first = await adjudicate("ws-1", profile, plan);
+      const second = await adjudicate("ws-1", profile, plan);
+
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(second).toEqual(first);
+      expect(first).toEqual([{ chapterTraceId: "c1", slotId: "s1", reason: "附录归附录槽位" }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("thesis job dedupe", () => {
+  it("reuses the running job for the same document/card/options", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-thesis-job-dedupe-"));
+    try {
+      const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+      const service = new ThesisFormatService({
+        db: database.db,
+        files: {} as never,
+        orchestrator: {} as never,
+        officeBridge: null,
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+      const reformat = vi.spyOn(service, "reformat").mockImplementation(async () => {
+        await gate;
+        return { fileEntryId: "out-1", originalName: "out.docx" };
+      });
+
+      // 连点两次：第二次必须复用同一个作业，不能再起一个抢模型并发槽。
+      const first = service.startReformatJob("ws-1", "file-1", "card-1");
+      const second = service.startReformatJob("ws-1", "file-1", "card-1");
+      expect(second.id).toBe(first.id);
+      expect(reformat).toHaveBeenCalledTimes(1);
+
+      release();
+      await gate;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+
+      // 作业完成后同参数重跑 = 新作业（用户主动重排一次）。
+      const third = service.startReformatJob("ws-1", "file-1", "card-1");
+      expect(third.id).not.toBe(first.id);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("thesis-format routes", () => {
+  it("serves cards by workspace path; the retired Room path is gone", async () => {
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+    const list = vi.fn((workspaceId: string) => [{
+      id: "card-1",
+      workspaceId,
+      sourceName: "模版.docx",
+      sourceFileEntryId: null,
+      updatedAt: new Date(),
+      card: {},
+    }]);
+    await app.register(thesisFormatRoutes({ cardStore: () => ({ list }) } as never));
+
+    const ok = await app.inject({ method: "GET", url: "/v1/thesis-format/workspaces/ws-1/cards" });
+    expect(ok.statusCode).toBe(200);
+    expect(list).toHaveBeenCalledWith("ws-1");
+    expect(ok.json()).toMatchObject([{ id: "card-1", sourceName: "模版.docx" }]);
+
+    const retired = await app.inject({ method: "GET", url: "/v1/thesis-format/rooms/room-1/cards" });
+    expect(retired.statusCode).toBe(404);
+    await app.close();
+  });
+});
+
 describe("ThesisFormatCardStore (multi-card)", () => {
-  it("upserts per (room, sourceName), lists, resolves by id and removes", async () => {
+  it("upserts per (workspace, sourceName), lists, resolves by id and removes", async () => {
     const root = await mkdtemp(join(tmpdir(), "everroom-thesis-cards-"));
     try {
       const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
       const store = new ThesisFormatCardStore(database.db);
       const card = () => validateThesisFormatCard({}, "模版.zip");
-      const a1 = store.upsert({ roomId: "r1", card: card(), sourceFileEntryId: null, sourceName: "A.docx" });
-      const b1 = store.upsert({ roomId: "r1", card: card(), sourceFileEntryId: null, sourceName: "B.docx" });
-      const a2 = store.upsert({ roomId: "r1", card: card(), sourceFileEntryId: "entry-1", sourceName: "A.docx" });
+      const a1 = store.upsert({ workspaceId: "w1", card: card(), sourceFileEntryId: null, sourceName: "A.docx" });
+      const b1 = store.upsert({ workspaceId: "w1", card: card(), sourceFileEntryId: null, sourceName: "B.docx" });
+      const a2 = store.upsert({ workspaceId: "w1", card: card(), sourceFileEntryId: "entry-1", sourceName: "A.docx" });
       expect(a2.id).toBe(a1.id);
-      expect(store.list("r1")).toHaveLength(2);
-      expect(store.latest("r1")?.id).toBe(a2.id);
-      expect(store.byId("r1", b1.id)?.sourceName).toBe("B.docx");
-      expect(store.remove("r1", b1.id)).toBe(true);
-      expect(store.remove("r1", b1.id)).toBe(false);
-      expect(store.list("r1")).toHaveLength(1);
+      expect(store.list("w1")).toHaveLength(2);
+      expect(store.latest("w1")?.id).toBe(a2.id);
+      expect(store.byId("w1", b1.id)?.sourceName).toBe("B.docx");
+      expect(store.remove("w1", b1.id)).toBe(true);
+      expect(store.remove("w1", b1.id)).toBe(false);
+      expect(store.list("w1")).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates cards by workspace (same template name in two spaces)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-thesis-card-workspaces-"));
+    try {
+      const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+      const store = new ThesisFormatCardStore(database.db);
+      const card = () => validateThesisFormatCard({}, "模版.docx");
+      const a = store.upsert({ workspaceId: "ws-a", card: card(), sourceFileEntryId: null, sourceName: "模版.docx" });
+      const b = store.upsert({ workspaceId: "ws-b", card: card(), sourceFileEntryId: null, sourceName: "模版.docx" });
+
+      // 同名模版在不同工作区互不覆盖、各自可见。
+      expect(b.id).not.toBe(a.id);
+      expect(store.list("ws-a").map((row) => row.id)).toEqual([a.id]);
+      expect(store.list("ws-b").map((row) => row.id)).toEqual([b.id]);
+      // 跨工作区按 id 取 / 删都不生效（工作区隔离）。
+      expect(store.byId("ws-b", a.id)).toBeNull();
+      expect(store.remove("ws-b", a.id)).toBe(false);
+      expect(store.list("ws-a")).toHaveLength(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

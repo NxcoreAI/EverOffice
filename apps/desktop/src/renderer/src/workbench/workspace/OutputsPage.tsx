@@ -82,7 +82,9 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
       return
     }
     try {
-      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash)
+      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
+        workspaceId: workspace.id,
+      })
       if (result.openedWith === 'office') onToast(`已在内置 Office 预览中打开「${item.file.name}」`)
       else onToast('已用系统默认应用打开')
     } catch {

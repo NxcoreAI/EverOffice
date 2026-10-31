@@ -304,4 +304,145 @@ describe("database migrations", () => {
     expect(keptRow?.state).toBe('{"batches":{}}');
     repaired.sqlite.close();
   });
+
+  it("migrates Room-scoped thesis format cards into the default workspace", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-thesis-card-workspace-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const workspaceMigrationWhen = 1793650000000;
+
+    // 退回到 0093 之前：格式卡还是 room_id 维度（0080 的表形），并补一条真实卡片。
+    const seeded = createDatabase(databasePath, migrationsDir);
+    const now = Date.now();
+    seeded.sqlite.exec("DROP INDEX thesis_format_cards_workspace_source_idx");
+    seeded.sqlite.exec("ALTER TABLE thesis_format_cards RENAME TO thesis_format_cards_workspace_new");
+    seeded.sqlite.exec(`CREATE TABLE thesis_format_cards (
+      id text PRIMARY KEY NOT NULL,
+      room_id text NOT NULL,
+      format_card text NOT NULL,
+      source_file_entry_id text,
+      source_name text DEFAULT '' NOT NULL,
+      created_at integer NOT NULL,
+      updated_at integer NOT NULL
+    )`);
+    seeded.sqlite.exec("CREATE UNIQUE INDEX thesis_format_cards_room_source_idx ON thesis_format_cards (room_id, source_name)");
+    seeded.sqlite.exec("DROP TABLE thesis_format_cards_workspace_new");
+    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(workspaceMigrationWhen);
+    seeded.sqlite.prepare(
+      "INSERT INTO thesis_format_cards (id, room_id, format_card, source_file_entry_id, source_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("card-legacy", "room-1", "{\"page\":{}}", null, "模版.docx", now, now);
+    seeded.sqlite.close();
+
+    const migrated = createDatabase(databasePath, migrationsDir);
+    const columns = (migrated.sqlite.prepare("PRAGMA table_info(thesis_format_cards)").all() as Array<{
+      name: string;
+    }>).map(({ name }) => name);
+    const card = migrated.sqlite.prepare(
+      "SELECT workspace_id, source_name FROM thesis_format_cards WHERE id = 'card-legacy'",
+    ).get() as { workspace_id: string; source_name: string } | undefined;
+    const recorded = Boolean(migrated.sqlite.prepare(
+      "SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1",
+    ).get(workspaceMigrationWhen));
+
+    // Room 与工作区没有可推断的对应关系：存量卡统一归默认工作区，且不丢卡。
+    expect(columns).toContain("workspace_id");
+    expect(columns).not.toContain("room_id");
+    expect(card).toEqual({ workspace_id: "default", source_name: "模版.docx" });
+    expect(recorded).toBe(true);
+    migrated.sqlite.close();
+  });
+
+  it("records 0094 when cards are already workspace-shaped (local preview builds)", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-thesis-cards-applied-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const workspaceMigrationWhen = 1793650000000;
+
+    const seeded = createDatabase(databasePath, migrationsDir);
+    const now = Date.now();
+    seeded.sqlite.prepare(
+      "INSERT INTO thesis_format_cards (id, workspace_id, format_card, source_file_entry_id, source_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("card-1", "default", "{}", null, "模版.docx", now, now);
+    // 模拟本地预览构建：表已经是 workspace 形态，但迁移记录里没有 0094。
+    seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(workspaceMigrationWhen);
+    seeded.sqlite.close();
+
+    // 没有兼容补记时，Drizzle 会重放 0094（RENAME 后按 room_id 复制）直接失败。
+    const reopened = createDatabase(databasePath, migrationsDir);
+    const recorded = Boolean(reopened.sqlite.prepare(
+      "SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1",
+    ).get(workspaceMigrationWhen));
+    const card = reopened.sqlite.prepare(
+      "SELECT workspace_id FROM thesis_format_cards WHERE id = 'card-1'",
+    ).get() as { workspace_id: string } | undefined;
+
+    expect(recorded).toBe(true);
+    expect(card?.workspace_id).toBe("default");
+    reopened.sqlite.close();
+  });
+
+  it("repairs dev-branch databases whose cursor jumped over 0088–0091", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-skipped-workspace-migration-test-"));
+    temporaryDirectories.push(dataDir);
+    const databasePath = join(dataDir, "gateway.sqlite");
+    const migrationsDir = resolve("drizzle");
+    const migrationWhens = [1793150000000, 1793274371822, 1793339200000, 1793420000000, 1793500000000];
+
+    // 造出「只跑过 dev、从未跑过本分支 0088–0091」的库：这四支的 schema 效果
+    // 全部撤掉，迁移记录停在 dev 的 slides 时间戳（1792771200000）。再次启动时
+    // 混合历史修复会为了复用 dev 建好的 slides 表，在 migrate 之前把 0092 记为
+    // 已应用——这一步会把游标推过 0088–0091，使它们被永久跳过。
+    const seeded = createDatabase(databasePath, migrationsDir);
+    const now = Date.now();
+    seeded.sqlite.prepare(
+      "INSERT INTO file_entries (id, source_kind, source_key, original_name, extension, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("file-1", "manual-upload", "manual:file-1", "notes.txt", "txt", "ready", now, now);
+    seeded.sqlite.prepare(
+      "INSERT INTO slides_generation_checkpoints (key, state, updated_at) VALUES ('kept', '{}', 1)",
+    ).run();
+    for (const when of migrationWhens) {
+      seeded.sqlite.prepare("DELETE FROM __drizzle_migrations WHERE created_at = ?").run(when);
+    }
+    seeded.sqlite.exec("DROP TABLE connector_tombstones");
+    seeded.sqlite.exec("DROP TABLE agent_workspaces");
+    seeded.sqlite.exec("DROP INDEX file_entries_workspace_idx");
+    seeded.sqlite.exec("ALTER TABLE file_entries DROP COLUMN workspace_id");
+    seeded.sqlite.exec("DROP INDEX agent_sessions_workspace_idx");
+    seeded.sqlite.exec("ALTER TABLE agent_sessions DROP COLUMN workspace_id");
+    // dev 分支没跑 0088：同步时代的连接器表还在。
+    seeded.sqlite.exec("CREATE TABLE connector_accounts (id text PRIMARY KEY NOT NULL)");
+    seeded.sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)").run(
+      "dev-slides-0083",
+      1792771200000,
+    );
+    seeded.sqlite.close();
+
+    const repaired = createDatabase(databasePath, migrationsDir);
+    const columnNames = (table: string) => (repaired.sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>).map(({ name }) => name);
+    const tableExists = (table: string) => Boolean(repaired.sqlite.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    ).get(table));
+    const recorded = (when: number) => Boolean(repaired.sqlite.prepare(
+      "SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1",
+    ).get(when));
+    const fileEntry = repaired.sqlite.prepare(
+      "SELECT workspace_id FROM file_entries WHERE id = 'file-1'",
+    ).get() as { workspace_id: string | null } | undefined;
+    const defaultWorkspace = repaired.sqlite.prepare(
+      "SELECT kind FROM agent_workspaces WHERE id = 'default'",
+    ).get() as { kind: string } | undefined;
+
+    expect(columnNames("file_entries")).toContain("workspace_id");
+    expect(columnNames("agent_sessions")).toContain("workspace_id");
+    expect(defaultWorkspace).toEqual({ kind: "default" });
+    expect(tableExists("connector_tombstones")).toBe(true);
+    expect(tableExists("connector_accounts")).toBe(false);
+    expect(fileEntry?.workspace_id).toBe("default");
+    for (const when of migrationWhens) expect(recorded(when)).toBe(true);
+    repaired.sqlite.close();
+  });
 });

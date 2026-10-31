@@ -41,6 +41,9 @@ import { SlidesViewManager } from './slides-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
 import { logOfficeDiag } from './office-diag'
 
+/** 默认工作区 id（与网关 files/agent 的 default 工作区同名）：归属缺失时的兜底。 */
+const DEFAULT_OFFICE_WORKSPACE_ID = 'default'
+
 export interface OfficePreviewDescriptor {
   id: string
   kind: OfficePreviewKind
@@ -57,7 +60,8 @@ export interface OfficePreviewFile {
   editable?: boolean
   /** 版本链回填的 Room 投影归属（不传则按导入落点默认决策）。 */
   roomId?: string | null
-  /** 条目归属工作区（保存回填重导入带上，避免归属被重置；不传则保留条目原值）。 */
+  /** 条目归属工作区（资料库/产物库按空间隔离；保存回填重导入带上，避免归属被重置；
+   *  论文排版面板据此取模版卡与产物落点）。 */
   workspaceId?: string | null
   /**
    * 从系统文件管理器直接打开的磁盘路径：保存后除回填版本链外，还把工作副本
@@ -83,6 +87,8 @@ interface OfficePreviewInstance {
   editable: boolean
   documentPath: string | null
   roomId: string | null
+  /** 未解析到归属时按默认工作区处理（资料库/上传/排版都能用）。 */
+  workspaceId: string
   unsubscribeSaved: (() => void) | null
 }
 
@@ -154,22 +160,22 @@ interface EditSyncState {
   lastImport?: { contentHash?: string; fileVersionId?: string } | null
 }
 
-/** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
+/** AI 页签论文排版桥（index.ts 注入网关实现；按工作区隔离）。 */
 export interface OfficeThesisPanelBridge {
-  listCards(roomId: string): Promise<unknown[]>
+  listCards(workspaceId: string): Promise<unknown[]>
   pickAndSet(
-    roomId: string,
+    workspaceId: string,
     options?: { wordOnly?: boolean; overwrite?: boolean },
   ): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[]; duplicate?: boolean }>
-  removeCard(roomId: string, cardId: string): Promise<void>
+  removeCard(workspaceId: string, cardId: string): Promise<void>
   /** 彻底删除模版（文件 + 格式卡）。 */
   deleteTemplate(
-    roomId: string,
+    workspaceId: string,
     cardId: string,
     options?: { keepCard?: boolean },
   ): Promise<{ fileDeleted: boolean; hadFile: boolean; cardKept: boolean }>
   reformat(
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: {
@@ -181,7 +187,7 @@ export interface OfficeThesisPanelBridge {
   ): Promise<{ originalName: string; report?: Record<string, unknown> }>
   /** 任务化排版：立即返回 jobId（后台执行），用 reformatJobStatus 轮询进度。 */
   startReformatJob(
-    roomId: string,
+    workspaceId: string,
     fileEntryId: string,
     cardId?: string,
     options?: {
@@ -191,7 +197,7 @@ export interface OfficeThesisPanelBridge {
     },
   ): Promise<{ jobId: string; phase: string }>
   /** 打开模板原文件的真预览：应用自带 Office 渲染器（多页滚动、表格/图片完整）。 */
-  previewTemplate(roomId: string, cardId: string): Promise<{ opened: boolean; reason?: string }>
+  previewTemplate(workspaceId: string, cardId: string): Promise<{ opened: boolean; reason?: string }>
   reformatJobStatus(
     jobId: string,
   ): Promise<{
@@ -322,31 +328,33 @@ export class OfficePreviewRegistry {
     }
     runtime.docs.setDocsThesisPanelHook(async (wcId, action) => {
       const instance = this.findByWebContentsId(wcId)
-      const roomId = instance?.roomId ?? null
-      if (!instance || !roomId) return { ok: false, reason: 'no_room' as const }
+      if (!instance) return { ok: false, reason: 'no_room' as const }
+      // 论文排版按工作区隔离：模版卡、模版文件与排版产物都归当前文档所属空间。
+      // 老库/访达直开的文件可能没有归属，按默认工作区兜底——面板始终可用。
+      const workspaceId = instance.workspaceId
       try {
         switch (action.kind) {
           case 'list':
-            return { ok: true as const, value: await bridge.listCards(roomId) }
+            return { ok: true as const, value: await bridge.listCards(workspaceId) }
           case 'pick':
             // overwrite：同名冲突后用户选「替换原文件」→ 复用上次选择的文件直接解析
-            return { ok: true as const, value: await bridge.pickAndSet(roomId, { overwrite: action.overwrite === true }) }
+            return { ok: true as const, value: await bridge.pickAndSet(workspaceId, { overwrite: action.overwrite === true }) }
           case 'remove':
-            await bridge.removeCard(roomId, action.cardId)
+            await bridge.removeCard(workspaceId, action.cardId)
             return { ok: true as const, value: null }
           case 'delete-template':
             // 彻底删除：模版文件（+ 可选格式卡）。文件删不掉也继续，不阻断。
             return {
               ok: true as const,
-              value: await bridge.deleteTemplate(roomId, action.cardId, { keepCard: action.keepCard === true }),
+              value: await bridge.deleteTemplate(workspaceId, action.cardId, { keepCard: action.keepCard === true }),
             }
           case 'reformat':
-            return { ok: true as const, value: await bridge.reformat(roomId, instance.fileId, action.cardId) }
+            return { ok: true as const, value: await bridge.reformat(workspaceId, instance.fileId, action.cardId) }
           case 'reformat-job':
             // 后台作业：立即返回 jobId，面板轮询进度（不再挂长请求）
             return {
               ok: true as const,
-              value: await bridge.startReformatJob(roomId, instance.fileId, action.cardId, action.options),
+              value: await bridge.startReformatJob(workspaceId, instance.fileId, action.cardId, action.options),
             }
           case 'reformat-job-status': {
             const snapshot = await bridge.reformatJobStatus(action.jobId)
@@ -362,15 +370,17 @@ export class OfficePreviewRegistry {
           }
           case 'preview-template':
             // 真预览：宿主用自带 Office 渲染器打开模版原文件（多页、表格、图片完整）
-            return { ok: true as const, value: await bridge.previewTemplate(roomId, action.cardId) }
+            return { ok: true as const, value: await bridge.previewTemplate(workspaceId, action.cardId) }
         }
       } catch (error) {
         // 面板只显示这一行文本：内部错误码（thesis_format_card_not_found）与上游
         // 原样报错（nginx 502 HTML）必须翻译成人话，否则用户只看到「没反应」。
+        const message = error instanceof Error ? error.message : String(error)
+        console.warn('[thesis] 面板操作失败', { kind: action.kind, workspaceId, fileId: instance.fileId, error: message })
         return {
           ok: false as const,
           reason: 'error' as const,
-          message: describeThesisError(error instanceof Error ? error.message : String(error)),
+          message: describeThesisError(message),
         }
       }
       return { ok: false as const, reason: 'error' as const, message: '未知的排版操作，请重启应用后重试。' }
@@ -394,7 +404,13 @@ export class OfficePreviewRegistry {
     const runtime = this.ensureRuntime(window)
     const editable = file.editable === true && kind !== 'pdf'
     const roomId = typeof file.roomId === 'string' && file.roomId ? file.roomId : null
-    const workspaceId = typeof file.workspaceId === 'string' && file.workspaceId ? file.workspaceId : null
+    const requestedWorkspaceId = typeof file.workspaceId === 'string' && file.workspaceId.trim()
+      ? file.workspaceId.trim()
+      : null
+    // 论文排版面板要求实例一定有归属：老库/访达直开的文件按默认工作区兜底；
+    // 但「有没有解析到归属」仍单独保留（requestedWorkspaceId），复用时不能把
+    // 已解析到的空间冲回默认。
+    const workspaceId: string = requestedWorkspaceId ?? DEFAULT_OFFICE_WORKSPACE_ID
     const writeBackPath = editable && typeof file.writeBackPath === 'string' && file.writeBackPath
       ? file.writeBackPath
       : null
@@ -410,6 +426,14 @@ export class OfficePreviewRegistry {
 
     const existing = this.instances.get(file.id)
     if (existing && existing.descriptor.contentHash === file.contentHash && existing.editable === editable) {
+      // 复用实例时刷新归属：同一个 fileId 可能先从「无归属」入口打开（访达），
+      // 再从资料库打开；排版面板要用最新解析到的工作区。只有真的解析到归属才覆盖，
+      // 免得从无归属入口重开时把已知空间冲回 default。
+      if (requestedWorkspaceId) {
+        existing.workspaceId = requestedWorkspaceId
+        const state = this.editStates.get(file.id)
+        if (state) state.workspaceId = requestedWorkspaceId
+      }
       logOfficeDiag('office.diag.open.reuse', { fileId: file.id, elapsedMs: Date.now() - startedAt, activeId: this.activeId })
       return existing.descriptor
     }
@@ -438,6 +462,7 @@ export class OfficePreviewRegistry {
       editable,
       documentPath,
       roomId,
+      workspaceId,
       unsubscribeSaved: null,
     }
     if (editable && typeof view.webContentsId === 'number') {
@@ -1048,6 +1073,7 @@ export class OfficePreviewRegistry {
     title: string
     kind: string
     roomId: string | null
+    workspaceId: string
   } | null {
     for (const [fileId, instance] of this.instances.entries()) {
       if (instance.view.webContentsId !== wcId) continue
@@ -1056,6 +1082,7 @@ export class OfficePreviewRegistry {
         title: instance.descriptor.title,
         kind: instance.descriptor.kind,
         roomId: instance.roomId ?? this.editStates.get(fileId)?.roomId ?? null,
+        workspaceId: instance.workspaceId,
       }
     }
     return null

@@ -403,9 +403,8 @@ export class OfficeBridgeClient {
     templateBase64?: string;
     formatCard: unknown;
     bindingSpec: unknown;
-    roomId: string;
-    /** 产物归属工作区（跟源文件走；资料库/产物库按空间隔离）。 */
-    workspaceId?: string | null;
+    /** 产物入库归属（工作区）：排版结果与源文件落在同一空间（资料库按空间隔离）。 */
+    workspaceId: string;
     sourceFileName: string;
     sourceFileEntryId: string;
     idempotencyKey: string;

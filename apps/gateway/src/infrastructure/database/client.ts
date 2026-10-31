@@ -66,7 +66,10 @@ function runAdditiveMigrationIdempotently(
     if (createIndex && hasObject("index", createIndex)) continue;
     const addColumn = statement.match(/^ALTER TABLE [`"]([^`"]+)[`"] ADD [`"]([^`"]+)[`"]+/);
     if (addColumn && (!hasObject("table", addColumn[1]!) || hasColumn(addColumn[1]!, addColumn[2]!))) continue;
-    sqlite.exec(statement);
+    // 种子行插入（如默认工作区）也要可重放：重复回放时命中主键就忽略，
+    // 而不是让补丁路径以 UNIQUE 冲突炸掉启动。
+    const isInsert = /^INSERT INTO\b/i.test(statement);
+    sqlite.exec(isInsert ? statement.replace(/^INSERT INTO\b/i, "INSERT OR IGNORE INTO") : statement);
   }
 }
 
@@ -347,6 +350,82 @@ function repairMixedDevBranchMigrations(sqlite: Database.Database, migrationsDir
   }
 }
 
+/**
+ * 修复「0092 快捷记录把游标推过 0088–0091」的库。
+ *
+ * dev 分支的 slides 迁移（0083_slides_generation_checkpoints，when=1792771200000）
+ * 合并后被重编号为 0092（when=1793500000000）。为了绕开 dev 已建好的表，
+ * repairMixedDevBranchMigrations 会在 migrate 之前直接把 0092 记为已应用；对
+ * 「只跑过 dev、从未跑过本分支 0088–0091」的库，这会把游标一次性推到 0092，
+ * Drizzle 于是把 0088–0091 当作已应用静默跳过。症状：
+ *   ① 启动即崩：`table file_entries has no column named workspace_id`（0091 未跑）；
+ *   ② 工作区接口报 `no such table: agent_workspaces`（0089 未跑）；
+ *   ③ connector_tombstones 缺失，连接器「已断开」状态不可见（0088 未跑）。
+ *
+ * 判据是迁移记录 + 游标位置：窗口内仍有未记录的迁移、且游标已越过窗口起点
+ * （0087）时才回放。直接从 0087 升级的健康库本来就会在原地跑这几支，提前
+ * 幂等回放再补记，结果与 Drizzle 顺序执行一致；窗口已全部记录的库不受影响。
+ */
+function repairSkippedWorkspaceMigrations(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations") || !hasTable("file_entries") || !hasTable("agent_sessions")) return;
+
+  const entries = readMigrationJournal(migrationsDir);
+  const whenFor = (tag: string) => {
+    const value = entries.find((item) => item.tag === tag)?.when;
+    return typeof value === "number" ? value : null;
+  };
+  const windowStart = whenFor("0087_file_entries_deleted_updated_idx");
+  if (windowStart === null) return;
+  const appliedCursor = Number((sqlite.prepare(
+    "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+  ).get() as { created_at?: number } | undefined)?.created_at ?? 0);
+  if (appliedCursor < windowStart) return;
+
+  const pending = [
+    "0088_connector_agent_query",
+    "0089_agent_workspaces",
+    "0090_agent_workspace_meta",
+    "0091_file_entries_workspace",
+  ].filter((tag) => {
+    const when = whenFor(tag);
+    return when !== null
+      && existsSync(join(migrationsDir, `${tag}.sql`))
+      && !sqlite.prepare("SELECT 1 FROM __drizzle_migrations WHERE created_at = ? LIMIT 1").get(when);
+  });
+  if (pending.length === 0) return;
+
+  sqlite.transaction(() => {
+    for (const tag of pending) {
+      runAdditiveMigrationIdempotently(sqlite, migrationsDir, tag);
+      recordMigration(sqlite, migrationsDir, { tag, when: whenFor(tag)! });
+    }
+  })();
+}
+
+/**
+ * 0094（论文格式卡从 Room 改按工作区）在本地预览构建里曾以旧编号 0093
+ * （when=1793590000000）执行过：这些库的 thesis_format_cards 已经是
+ * workspace_id 形态，但迁移记录里没有 0094 的时间戳。Drizzle 会把它当新迁移
+ * 重放——脚本先 RENAME 再按 room_id 复制，直接以 `no such column: room_id` 失败。
+ * 按 schema 效果（已是 workspace_id 且没有 room_id）补记录，健康库不受影响。
+ */
+function repairAppliedThesisCardsWorkspaceMigration(sqlite: Database.Database, migrationsDir: string): void {
+  const hasTable = (name: string) => Boolean(sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(name));
+  if (!hasTable("__drizzle_migrations") || !hasTable("thesis_format_cards")) return;
+  const columns = new Set((sqlite.prepare("PRAGMA table_info(thesis_format_cards)").all() as Array<{ name: string }>)
+    .map((row) => row.name));
+  if (!columns.has("workspace_id") || columns.has("room_id")) return;
+  const entry = readMigrationJournal(migrationsDir)
+    .find((item) => item.tag === "0094_thesis_format_cards_workspace");
+  if (!entry) return;
+  recordMigration(sqlite, migrationsDir, entry);
+}
+
 /** Repair installs whose migration cursor advanced across the diary/perception
  * branch without applying its schema (a transient merge produced this state). */
 function repairIncompleteUnderstandingMigration(sqlite: Database.Database, migrationsDir: string): void {
@@ -426,6 +505,11 @@ export function createDatabase(databasePath: string, migrationsDir: string): Dat
   adoptPreReleaseConnectorMarkdownMigrations(sqlite, migrationsDir);
   adoptAlreadyAppliedLateMigrations(sqlite, migrationsDir);
   repairMixedDevBranchMigrations(sqlite, migrationsDir);
+  // 0092 的快捷记录会越过 0088–0091：必须在 migrate 之前补齐，否则 Drizzle
+  // 会把这些迁移当作已应用而永久跳过（file_entries.workspace_id 等列缺失）。
+  repairSkippedWorkspaceMigrations(sqlite, migrationsDir);
+  // 本地预览构建跑过旧编号 0093 的库：格式卡已是工作区形态，补记 0094 防重放。
+  repairAppliedThesisCardsWorkspaceMigration(sqlite, migrationsDir);
   // Compatibility repairs may create file_entries from the current schema,
   // including source_path, before the canonical additive migration runs.
   // Apply/record it idempotently so Drizzle never repeats ADD COLUMN.

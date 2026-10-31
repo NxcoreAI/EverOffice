@@ -85,6 +85,20 @@ export function useFileLibrary(workspaceId?: string): FileLibrary {
     void load(true)
   }, [load])
 
+  // 新文件落库（Agent 生成、论文排版成品…）→ 自动重拉当前空间第一页。
+  // 主进程已经广播 office:agent-file；这里消费它，用户不必再手动点刷新
+  // ——排版完成后成品本来就在库里，只是列表没跟着更新，看起来像「没出效果」。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (typeof office?.onAgentFile !== 'function') return
+    return office.onAgentFile((event) => {
+      if (event.type !== 'done' && event.type !== 'edited') return
+      // 事件带归属时只刷新对应空间：别的空间的成品不该打断当前列表。
+      if (event.workspaceId && scope && event.workspaceId !== scope) return
+      void load(false)
+    })
+  }, [load, scope])
+
   const refresh = useCallback(() => {
     void load(false)
   }, [load])
