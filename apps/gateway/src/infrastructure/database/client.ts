@@ -332,6 +332,19 @@ function repairMixedDevBranchMigrations(sqlite: Database.Database, migrationsDir
     const checkpoints = entryFor("0092_slides_generation_checkpoints");
     if (checkpoints) recordMigration(sqlite, migrationsDir, checkpoints);
   }
+
+  // ③ 0093：混合库可能已由 dev/预览构建加过 thinking_level 列（② 记下 0092 后
+  // Drizzle 游标直接跳到 0093），按 schema 效果补记录，避免重复 ADD COLUMN。
+  if (hasTable("agent_sessions")) {
+    const columns = new Set(
+      (sqlite.prepare("PRAGMA table_info(agent_sessions)").all() as Array<{ name: string }>)
+        .map((row) => row.name),
+    );
+    if (columns.has("thinking_level")) {
+      const thinkingLevel = entryFor("0093_agent_thinking_level");
+      if (thinkingLevel) recordMigration(sqlite, migrationsDir, thinkingLevel);
+    }
+  }
 }
 
 /** Repair installs whose migration cursor advanced across the diary/perception
