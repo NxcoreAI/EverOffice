@@ -19,6 +19,7 @@ import { Type } from "typebox";
 import {
   AsyncEventQueue,
   type AgentRuntime,
+  type AgentRuntimeDescription,
   type ResumeRuntimeRunInput,
   type RuntimeEvent,
   type RuntimeRun,
@@ -131,8 +132,9 @@ export interface PiAgentRuntimeConfig {
    */
   maxToolResultChars?: number;
   /**
-   * run 内轮次级工具历史裁剪：上下文估算超过 triggerTokens 后，把最近
-   * keepRecentTurns 轮之外的 toolResult 正文 / assistant 工具参数替换为占位符。
+   * run 内轮次级工具历史裁剪：真实上下文 token（provider usage；拿不到时退化
+   * 为 CJK 感知估算）超过 triggerTokens 后，把最近 keepRecentTurns 轮之外的
+   * toolResult 正文 / assistant 工具参数替换为占位符。
    * 只在「发给模型的那份上下文」生效，会话落盘与事件流保持完整。缺省关闭。
    */
   runContextGuard?: RunContextGuardOptions;
@@ -443,7 +445,15 @@ function installRunContextGuard(session: AgentSession, options: RunContextGuardO
     const context = snapshot?.context ?? turn.context;
     const messages = context?.messages;
     if (!Array.isArray(messages)) return snapshot;
-    const guarded = guardRunMessages(messages, options);
+    // 阈值用 provider 真实 usage 判定：chars/4 对中文 + JSON 内容会低估一半以上，
+    // 旧口径下 128k 窗口要估到 256k 字符才触发，实际早已越过 pi 的 overflow 线。
+    let usageTokens: number | null = null;
+    try {
+      usageTokens = session.getContextUsage()?.tokens ?? null;
+    } catch {
+      // 用量拿不到时退回 CJK 感知估算，不能因此中断本轮对话。
+    }
+    const guarded = guardRunMessages(messages, options, usageTokens);
     if (guarded === messages) return snapshot;
     return {
       ...(snapshot ?? {}),
@@ -540,6 +550,42 @@ export class PiAgentRuntime implements AgentRuntime {
     this.sessionPermissionModes.delete(sessionId);
   }
 
+  /**
+   * 会话级思考档位覆盖（网关 sessionId 键）；null = 跟随 this.config.reasoning。
+   * 网关每轮 run 前预热，只影响 ownerSessionId 相同的缓存会话。
+   */
+  private readonly sessionThinkingLevels = new Map<string, PiReasoningLevel | null>();
+
+  /**
+   * 覆盖指定网关会话的思考档位：缓存里已有该会话时立即套用（pi 会按模型支持
+   * 档位 clamp，且幂等）；没有缓存会话时只记下，下一轮 getSession 建会话时生效。
+   * applied 表示本次是否命中缓存会话。
+   */
+  async setSessionThinkingLevel(
+    sessionId: string,
+    level: PiReasoningLevel | null,
+  ): Promise<{ applied: boolean }> {
+    this.sessionThinkingLevels.set(sessionId, level);
+    const effective = this.sessionThinkingLevel(sessionId);
+    let applied = false;
+    for (const handle of this.sessions.values()) {
+      if (handle.ownerSessionId !== sessionId) continue;
+      // pi 的 ThinkingLevel 与 PiReasoningLevel 字面量完全一致，仅类型名不同。
+      handle.session.setThinkingLevel(effective as Parameters<AgentSession["setThinkingLevel"]>[0]);
+      applied = true;
+    }
+    return { applied };
+  }
+
+  forgetSessionThinkingLevel(sessionId: string): void {
+    this.sessionThinkingLevels.delete(sessionId);
+  }
+
+  /** 当前网关会话生效的思考档位：覆盖值优先，null/缺省跟随 runtime 配置。 */
+  private sessionThinkingLevel(sessionId: string): PiReasoningLevel {
+    return this.sessionThinkingLevels.get(sessionId) ?? this.config.reasoning;
+  }
+
   /** Internal bridge used by the sandbox shell tool to surface approval state. */
   async requestBashApproval(request: PiBashApprovalRequest): Promise<boolean> {
     return this.requestToolApproval({ ...request, kind: "shell", toolName: request.toolName ?? "bash" });
@@ -588,6 +634,75 @@ export class PiAgentRuntime implements AgentRuntime {
       steering: true,
       resume: false,
     };
+  }
+
+  /**
+   * 调试面板数据源：只读报告本 runtime 实际装配的 systemPrompt/工具/模型参数。
+   * 全部来自构造参数与 integration（与 getSession 的装配口径一致），不读任何声明文件，
+   * 也不含 apiKey。
+   */
+  async describe(): Promise<AgentRuntimeDescription> {
+    const memoryToolNames = this.config.memory && this.memoryClient ? [...MEMORY_TOOL_NAMES] : [];
+    const knowledgeToolNames = this.config.knowledge && this.knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : [];
+    return {
+      runtimeId: this.config.runtimeId ?? this.id,
+      model: {
+        provider: this.config.provider,
+        model: this.config.model,
+        baseUrl: this.config.baseUrl,
+        api: this.config.api,
+        reasoning: this.config.reasoning,
+        temperature: this.config.temperature,
+        maxTokens: this.config.maxTokens,
+        contextWindow: this.config.contextWindow,
+      },
+      role: this.config.runtimeRole ?? null,
+      // 未配置 systemPrompt 时运行期会用默认聊天人设兜底；这里如实返回 null。
+      systemPrompt: this.config.systemPrompt ?? null,
+      skills: Object.entries(this.config.skillPrompts ?? {}).map(([name, prompt]) => ({ name, prompt })),
+      tools: [
+        ...(this.integration.tools ?? []).map((tool) => ({
+          name: tool.name,
+          label: tool.label,
+          description: tool.description,
+        })),
+        ...memoryToolNames.map((name) => ({ name })),
+        ...knowledgeToolNames.map((name) => ({ name })),
+      ],
+      builtinTools: this.enabledBuiltinTools(),
+      mcpServers: Object.keys(this.config.mcp?.mcpServers ?? {}),
+      promptGuidelines: [...(this.integration.promptGuidelines ?? [])],
+      limits: {
+        maxToolCallsPerRun: this.config.maxToolCallsPerRun ?? null,
+        maxToolResultChars: this.config.maxToolResultChars ?? null,
+        runContextGuard: this.config.runContextGuard
+          ? {
+              triggerTokens: this.config.runContextGuard.triggerTokens,
+              keepRecentTurns: this.config.runContextGuard.keepRecentTurns,
+            }
+          : null,
+      },
+      capabilities: await this.getCapabilities(),
+    };
+  }
+
+  /**
+   * 实际启用的 pi 内置工具集合：与 getSession 里 toolNames 的口径一致
+   * （白名单收窄 + bash 受 includeBashTool 控制）。describe 与运行时共用，
+   * 避免面板另抄一份 DEFAULT 列表而与实际装配漂移。
+   */
+  private enabledBuiltinTools(): PiBuiltinToolName[] {
+    const configured = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
+      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
+    ) as PiBuiltinToolName[];
+    const names: PiBuiltinToolName[] = [
+      ...(this.config.includeBashTool === false ? [] : (["bash"] as PiBuiltinToolName[])),
+      ...configured,
+    ];
+    // includeBashTool=false 是显式关闭 shell 的语义：白名单里残留的 bash 也不挂载。
+    return [
+      ...new Set(this.config.includeBashTool === false ? names.filter((name) => name !== "bash") : names),
+    ];
   }
 
   async start(input: StartRuntimeRunInput): Promise<RuntimeRun> {
@@ -693,6 +808,13 @@ export class PiAgentRuntime implements AgentRuntime {
         modelsPath: null,
         refreshOnCreate: false,
       });
+      // DeepSeek 系模型：**不传 thinking 参数时上游默认开启思考**。pi 的
+      // reasoning:"off" 只是不发 reasoning 参数（openai thinkingFormat 下结果为
+      // 什么都不发），上游仍会先写一大段 reasoning_content。实测 deepseek-v4.1-flash
+      // 对「1+1 等于几」也会先花 64 token 思考；编排/落页这类长任务因此白烧几分钟。
+      // 显式声明 deepseek thinkingFormat 后，thinkingLevel=off 会落到
+      // `thinking:{type:"disabled"}`（pi-ai openai-completions 的 deepseek 分支）。
+      const isDeepSeek = /deepseek/i.test(this.config.model) || /deepseek\.com/i.test(this.config.baseUrl);
       runtime.registerProvider(this.config.provider, {
         baseUrl: this.config.baseUrl,
         api: this.config.api,
@@ -700,7 +822,9 @@ export class PiAgentRuntime implements AgentRuntime {
         models: [{
           id: this.config.model,
           name: this.config.model,
-          reasoning: this.config.reasoning !== "off",
+          // deepseek 需保持 reasoning=true 才能命中 thinkingFormat 分支：
+          // 关闭思考靠 thinkingLevel=off 发 disabled，而不是靠 reasoning=false。
+          reasoning: isDeepSeek ? true : this.config.reasoning !== "off",
           input: ["text", "image"],
           cost: EMPTY_COST,
           contextWindow: this.config.contextWindow,
@@ -717,7 +841,12 @@ export class PiAgentRuntime implements AgentRuntime {
           // - reasoning_effort：同为 anthropic 后端不支持的参数；后台/知识
           //   工作流带 effort 调用时必 400（同环境实测）。推理本身不受影响
           //   ——GLM 系模型默认思考，thinking 照常经 reasoning_content 回传。
-          compat: { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: false },
+          compat: {
+            supportsDeveloperRole: false,
+            supportsStore: false,
+            supportsReasoningEffort: false,
+            ...(isDeepSeek ? { thinkingFormat: "deepseek" as const } : {}),
+          },
         }],
       });
       await runtime.setRuntimeApiKey(this.config.provider, this.config.apiKey);
@@ -732,7 +861,14 @@ export class PiAgentRuntime implements AgentRuntime {
   ): Promise<PiSessionHandle> {
     if (runtimeSessionRef) {
       const cached = this.sessions.get(runtimeSessionRef);
-      if (cached) return cached;
+      if (cached) {
+        // 复用缓存会话前同步本轮生效档位：网关可能在两轮之间改过覆盖值。
+        // pi 的 setThinkingLevel 幂等（档位未变化不写 session 日志）。
+        cached.session.setThinkingLevel(
+          this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
+        );
+        return cached;
+      }
       this.assertOwnedSessionPath(runtimeSessionRef);
     }
 
@@ -792,9 +928,7 @@ export class PiAgentRuntime implements AgentRuntime {
       },
     }));
     const toolNames = customTools.map((tool) => tool.name);
-    const builtinTools = (this.config.builtinTools ?? DEFAULT_PI_BUILTIN_TOOLS).filter((name) =>
-      DEFAULT_PI_BUILTIN_TOOLS.includes(name as PiBuiltinToolName),
-    ) as PiBuiltinToolName[];
+    const builtinTools = this.enabledBuiltinTools();
 
     const settingsManager = SettingsManager.inMemory({
       defaultProvider: this.config.provider,
@@ -918,7 +1052,7 @@ export class PiAgentRuntime implements AgentRuntime {
       agentDir: this.config.agentDirectory,
       modelRuntime,
       model,
-      thinkingLevel: this.config.reasoning,
+      thinkingLevel: this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
       tools: [
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...builtinTools,
@@ -1136,7 +1270,9 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active || active.terminal) return;
 
-    if (event.type === "turn_end" && event.message.role === "assistant") {
+    // Account before tools execute: structured submission can stop the consumer
+    // before turn_end, including on the very first model request.
+    if (event.type === "message_end" && event.message.role === "assistant") {
       active.stopReason = event.message.stopReason;
       const usage = (event.message as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }).usage;
       if (usage) {
@@ -1245,13 +1381,13 @@ export class PiAgentRuntime implements AgentRuntime {
   /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */
   private emitContextUsage(active: ActivePiRun): void {
     const usage = active.handle.session.getContextUsage();
-    if (!usage) return;
     active.queue.push({
       type: "context.usage",
       payload: {
-        tokens: usage.tokens,
-        contextWindow: usage.contextWindow,
-        percent: usage.percent,
+        tokens: usage?.tokens ?? null,
+        contextWindow: usage?.contextWindow ?? this.config.contextWindow,
+        percent: usage?.percent ?? null,
+        runUsage: { ...active.usage },
         segments: this.estimateContextSegments(active),
       },
     });

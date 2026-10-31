@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import { enqueueSearchIndex } from "../search/jobs.js";
@@ -44,6 +44,12 @@ export function isSupportedUploadFilename(filename: string): boolean {
 
 export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated" | "artifact-imported";
 
+/**
+ * 文件默认归属的工作区（与 agent 模块的 default 工作区同一 id，见 0089 迁移）。
+ * 未显式传 workspaceId 的入库与 NULL 归属的存量行都按它暴露。
+ */
+export const DEFAULT_FILE_WORKSPACE_ID = "default";
+
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
   sourceKey: string;
@@ -60,6 +66,8 @@ export interface FileImportInput {
   sourceModifiedAt?: Date | undefined;
   pipelines?: { room: boolean; wiki: boolean; memory: boolean } | undefined;
   roomId?: string | undefined;
+  /** 归属工作区（资料库/产物库按空间隔离）；缺省归 default。 */
+  workspaceId?: string | undefined;
   /** 钉住既有条目（新版本入链）：提供时按 fileEntries.id 定位，忽略 (sourceKind, sourceKey) 分组。 */
   fileEntryId?: string | undefined;
   /** Store a source version without starting normalization/fan-out yet. */
@@ -104,6 +112,8 @@ export interface CatalogFileDto {
   contentHash: string;
   currentVersionId: string | null;
   parsed: boolean;
+  /** 归属工作区 id（资料库/产物库按空间过滤）。 */
+  workspaceId: string;
   updatedAt: string;
 }
 
@@ -150,6 +160,14 @@ export class FilesService {
     private readonly db: GatewayDatabase,
     private readonly dataDir: string,
   ) {}
+
+  /**
+   * 服务数据根目录。旁路文件（如论文模版 docx 缓存）需要与对象库同盘，
+   * 但不属于 catalog 条目，因此单独暴露根路径给需要的模块。
+   */
+  dataDirectory(): string {
+    return this.dataDir;
+  }
 
   /** Backfill the compatibility table without changing any legacy IDs. */
   initializeCatalog(): void {
@@ -282,7 +300,6 @@ export class FilesService {
     const capability = fileFormatCapability(input.originalName)!;
     const existingBlob = this.db.select().from(fileBlobs)
       .where(eq(fileBlobs.contentHash, contentHash)).get();
-
     const now = new Date();
     let entry = input.fileEntryId
       ? this.db.select().from(fileEntries).where(eq(fileEntries.id, input.fileEntryId)).get()
@@ -291,6 +308,13 @@ export class FilesService {
           eq(fileEntries.sourceKey, input.sourceKey),
         )).get();
     if (input.fileEntryId && !entry) throw new Error("file_entry_not_found");
+    // 工作区归属：显式传入（trim 后非空）优先；未传/为空时**保留条目原有归属**，
+    // 新条目才落 default。否则编辑保存回填（office edit-sync 按 fileEntryId 重导入）、
+    // 本地夹重扫（local-file-references）等不带归属的链路，会把已有文件悄悄改归
+    // default —— 用户看到的现象就是「重启后 AI 生成的文件跑去了默认工作区」。
+    const workspaceId = input.workspaceId?.trim()
+      ?? entry?.workspaceId?.trim()
+      ?? DEFAULT_FILE_WORKSPACE_ID;
     const fileEntryId = entry?.id ?? `file-${randomUUID()}`;
     const existingVersion = entry
       ? this.db.select().from(fileVersions).where(and(
@@ -330,6 +354,8 @@ export class FilesService {
         relativePath: input.relativePath,
         sourcePath: input.sourcePath,
         sourceUri: input.sourceUri,
+        // 重新导入会覆盖归属：显式传入 workspaceId 时以最新入口为准。
+        workspaceId,
         lastSeenAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -377,6 +403,7 @@ export class FilesService {
           sourcePath: input.sourcePath,
           relativePath: input.relativePath,
           sourceUri: input.sourceUri,
+          workspaceId,
           currentVersionId: fileVersionId,
           state: "processing",
           lastSeenAt: now,
@@ -392,6 +419,7 @@ export class FilesService {
           sourcePath: input.sourcePath,
           relativePath: input.relativePath,
           sourceUri: input.sourceUri,
+          workspaceId,
           currentVersionId: fileVersionId,
           state: "processing",
           lastSeenAt: now,
@@ -477,8 +505,9 @@ export class FilesService {
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
   }
 
-  listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
-    const rows = this.db.select({
+  /** 目录查询的公共投影：listCatalog（分页）与 catalogEntry（按 id 直查）共用。 */
+  private catalogQuery() {
+    return this.db.select({
       entry: fileEntries,
       version: fileVersions,
       blob: fileBlobs,
@@ -486,10 +515,18 @@ export class FilesService {
     }).from(fileEntries)
       .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
-      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
-      .where(isNull(fileEntries.deletedAt))
-      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
-    const items = rows.map(({ entry, version, blob, classification }) => ({
+      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId));
+  }
+
+  /** 行 → CatalogFileDto（两个入口必须完全同构，否则按 id 直查的字段会与列表不一致）。 */
+  private toCatalogFileDto(row: {
+    entry: typeof fileEntries.$inferSelect;
+    version: typeof fileVersions.$inferSelect | null;
+    blob: typeof fileBlobs.$inferSelect | null;
+    classification: typeof fileClassifications.$inferSelect | null;
+  }): CatalogFileDto {
+    const { entry, version, blob, classification } = row;
+    return ({
       id: entry.id,
       originalName: entry.originalName,
       displayName: entry.displayName,
@@ -509,11 +546,84 @@ export class FilesService {
       contentHash: version?.contentHash ?? "",
       currentVersionId: version?.id ?? null,
       parsed: Boolean(version?.parsedId) || version?.status === "parsed",
+      workspaceId: entry.workspaceId ?? DEFAULT_FILE_WORKSPACE_ID,
       updatedAt: entry.updatedAt.toISOString(),
-    } satisfies CatalogFileDto));
+    } satisfies CatalogFileDto);
+  }
+
+  listCatalog(
+    limit = 100,
+    offset = 0,
+    options: { workspaceId?: string } = {},
+  ): { items: CatalogFileDto[]; total: number } {
+    // 工作区过滤：未传 = 全库（管理面/主页快照等旧调用不受影响）；
+    // 显式传 workspaceId 时，NULL 归属的旧行按 default 匹配（回填前的同语义兜底）。
+    const normalizedWorkspace = options.workspaceId === undefined
+      ? undefined
+      : options.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+    const workspaceFilter = normalizedWorkspace === undefined
+      ? undefined
+      : or(
+          eq(fileEntries.workspaceId, normalizedWorkspace),
+          and(isNull(fileEntries.workspaceId), eq(sql`${normalizedWorkspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
+        );
+    const rows = this.catalogQuery()
+      .where(and(isNull(fileEntries.deletedAt), ...(workspaceFilter ? [workspaceFilter] : [])))
+      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const items = rows.map((row) => this.toCatalogFileDto(row));
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
-      .where(isNull(fileEntries.deletedAt)).all().length;
+      .where(and(isNull(fileEntries.deletedAt), ...(workspaceFilter ? [workspaceFilter] : []))).all().length;
     return { items, total };
+  }
+
+  /**
+   * 按文件名搜索目录（file_search 工具用）：LIKE 匹配 originalName 与 displayName。
+   *
+   * 与 listCatalog 同一套工作区口径：未传 workspaceId = 全库；显式传时 NULL 归属的
+   * 存量行按 default 匹配。空 query = 按更新时间倒序列出（「最近改过的那份」场景）。
+   * 只返回 Windows/macOS 文件名子串可命中的条目，不做全文检索——正文检索走 search 模块。
+   */
+  searchCatalog(
+    query: string,
+    options: {
+      /** 扩展名过滤（.docx / docx 都接受，大小写不敏感）。 */
+      extensions?: readonly string[];
+      workspaceId?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): { items: CatalogFileDto[]; total: number } {
+    const normalizedQuery = query.trim();
+    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 100);
+    const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+    const extensions = [...new Set((options.extensions ?? [])
+      .map((extension) => extension.trim().toLowerCase())
+      .filter((extension) => extension.length > 0)
+      .map((extension) => (extension.startsWith(".") ? extension : `.${extension}`)))];
+    const normalizedWorkspace = options.workspaceId === undefined
+      ? undefined
+      : options.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+    const filters = [isNull(fileEntries.deletedAt)];
+    if (normalizedQuery) {
+      // SQLite LIKE 对 ASCII 大小写不敏感；中文按子串精确匹配。
+      const pattern = `%${normalizedQuery}%`;
+      filters.push(or(
+        like(fileEntries.originalName, pattern),
+        like(fileEntries.displayName, pattern),
+      )!);
+    }
+    if (extensions.length > 0) filters.push(inArray(fileEntries.extension, extensions));
+    if (normalizedWorkspace !== undefined) {
+      filters.push(or(
+        eq(fileEntries.workspaceId, normalizedWorkspace),
+        and(isNull(fileEntries.workspaceId), eq(sql`${normalizedWorkspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
+      )!);
+    }
+    const where = and(...filters);
+    const rows = this.catalogQuery()
+      .where(where).orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const total = this.db.select({ id: fileEntries.id }).from(fileEntries).where(where).all().length;
+    return { items: rows.map((row) => this.toCatalogFileDto(row)), total };
   }
 
   capabilities() {
@@ -548,44 +658,36 @@ export class FilesService {
     return Boolean(entry && entry.sourceKind !== "legacy-upload");
   }
 
+  /**
+   * 按原始文件名查目录条目。
+   *
+   * 用于「丢了 id 但文件还在」的自愈场景：论文模版卡片的 sourceFileEntryId 可能
+   * 是 null（上传通道拿不到），排版时需要靠文件名把模版 docx 找回来。调用方必须
+   * 只在结果唯一时才采用，避免张冠李戴。
+   */
+  catalogEntriesByName(originalName: string): CatalogFileDto[] {
+    return this.catalogQuery()
+      .where(and(eq(fileEntries.originalName, originalName), isNull(fileEntries.deletedAt)))
+      .all()
+      .map((row) => this.toCatalogFileDto(row));
+  }
+
   /** 单个 catalog 条目（@ 文件引用取当前版本 id 用）。 */
+  /**
+   * 按 id 取单个目录条目。
+   *
+   * 历史实现是 `listCatalog(200, 0).items.find(...)`——只扫「最近更新的 200 条」。
+   * 库大到 1460 个文件后，任何排名 200 之后的文档都查不到：论文排版（reformat /
+   * 资料区设为模版）会立刻以 thesis_source_file_not_found 失败，用户看到的就是
+   * 「点了排版没反应、不生成任何文件」（2026-10-27 实测：目标文档排名 211）。
+   */
   catalogEntry(fileEntryId: string): CatalogFileDto | null {
     // 直接按键查，不再从 listCatalog(200) 里线性找：目录超过 200 条后，
     // 靠后的文件会拿不到条目（@ 引用/当前文件读取都会失败）。
-    const row = this.db.select({
-      entry: fileEntries,
-      version: fileVersions,
-      blob: fileBlobs,
-      classification: fileClassifications,
-    }).from(fileEntries)
-      .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
-      .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
-      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
+    const row = this.catalogQuery()
       .where(and(eq(fileEntries.id, fileEntryId), isNull(fileEntries.deletedAt)))
       .get();
-    if (!row) return null;
-    const { entry, version, blob, classification } = row;
-    return {
-      id: entry.id,
-      originalName: entry.originalName,
-      displayName: entry.displayName,
-      sharedTitle: entry.displayName ?? entry.originalName,
-      sourceKind: entry.sourceKind,
-      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : entry.sourceKind === "artifact-imported" ? "产物导入" : "历史上传"),
-      relativePath: entry.relativePath,
-      provider: entry.provider,
-      bytes: blob?.byteSize ?? 0,
-      dataType: fileFormatCapability(entry.originalName)?.dataType ?? null,
-      agentCategory: classification?.category ?? null,
-      summary: classification?.summary ?? null,
-      tags: classification?.tags ?? [],
-      processingState: entry.state === "deleted" ? "missing" : entry.state,
-      clusterId: null,
-      contentHash: version?.contentHash ?? "",
-      currentVersionId: version?.id ?? null,
-      parsed: Boolean(version?.parsedId) || version?.status === "parsed",
-      updatedAt: entry.updatedAt.toISOString(),
-    } satisfies CatalogFileDto;
+    return row ? this.toCatalogFileDto(row) : null;
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {

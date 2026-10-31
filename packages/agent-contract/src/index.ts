@@ -87,8 +87,50 @@ export interface AgentContextCompaction {
   error?: string;
 }
 
+/**
+ * 工作区：会话的组织容器。默认工作区（id='default'）永远存在且不可删除；
+ * path 为本地目录（默认工作区为 null，表示不绑定具体目录）。
+ */
+export interface AgentWorkspace {
+  id: string;
+  name: string;
+  /** 空间描述（概览页展示）；未填写为 null，落库前 trim，最长 2000 字符。 */
+  description: string | null;
+  /** 目标列表（概览页药丸）；无目标为空数组，最多 12 条、每条 trim 后 ≤ 200 字符。 */
+  goals: string[];
+  path: string | null;
+  kind: "default" | "custom";
+  createdAt: string;
+  updatedAt: string;
+  lastOpenedAt: string;
+}
+
+export interface CreateAgentWorkspaceInput {
+  name: string;
+  path?: string | null;
+  /** 可选描述；空串/空白按 null 存。 */
+  description?: string | null;
+  /** 可选目标列表；省略等价于空数组。 */
+  goals?: string[];
+}
+
+export interface UpdateAgentWorkspaceInput {
+  name?: string;
+  path?: string | null;
+  /** 传 null 或空白串清空描述。 */
+  description?: string | null;
+  /** 传 [] 清空目标，传数组整体替换。 */
+  goals?: string[];
+  lastOpenedAt?: string;
+}
+
+/** 默认工作区 id（迁移与懒初始化共用；不可删除）。 */
+export const DEFAULT_AGENT_WORKSPACE_ID = "default" as const;
+
 export interface AgentSession {
   id: string;
+  /** 会话所属工作区；旧会话迁移后为 'default'。 */
+  workspaceId: string | null;
   /** Legacy metadata; user sessions are not Room-scoped. */
   roomId: string | null;
   /** Last/creation UI surface, never a session partition key. */
@@ -100,6 +142,11 @@ export interface AgentSession {
   modelPreference?: AgentModelPreference;
   /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
   channelAgentId?: string;
+  /**
+   * 会话级思考档位覆盖；null/缺省＝跟随模型配置里的 reasoning（runtime config）。
+   * 可随时修改（PUT thinking-level），从下一轮 run 起生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -269,6 +316,13 @@ export interface SubagentInvocation {
 /** 对话时间线用的调用树节点：附带 Agent 展示名（registry 缺失时回退 id）。 */
 export interface SubagentInvocationNode extends SubagentInvocation {
   agentName: string;
+  /**
+   * 本次调用最近一次上下文用量快照（来自该调用 runtime 的 context.usage 事件）。
+   * 缺省 = runtime 未透出（如非 pi 运行时），调用方不渲染用量圆环。
+   */
+  contextUsage?: AgentContextUsage | null;
+  /** 本次调用是否处于上下文压缩中（context.compaction 事件最新信号）。 */
+  contextCompacting?: boolean;
 }
 
 export interface SubagentInvocationEvent {
@@ -280,8 +334,141 @@ export interface SubagentInvocationEvent {
   occurredAt: string;
 }
 
+// ── Agent 调试页（独立浏览器调试台的只读数据契约） ──
+// Gateway 侧在 runtime 边界记录所有 Agent 的 run 事件（内存环形缓冲），
+// 通过 /v1/agent-debug/* 暴露给本地调试页。
+// run 结束后会异步写入 dataDir/agent-debug 下的磁盘归档（只读回放，不参与产品链路），
+// 桌面应用重启后仍可按会话/时间找回历史记录；运行中的 run 只在内存缓冲里。
+
+/** 调试页里 Agent 的三类来源：内置、dispatch-only 子 Agent、本机 CLI Agent。 */
+export type AgentDebugAgentKind = "builtin" | "developer" | "local";
+
+export type AgentDebugAgentState = "idle" | "running" | "error";
+
+/**
+ * run 的数据来源：
+ * - `live`：当前 Gateway 进程内存缓冲（可为 running 或刚结束）；
+ * - `archive`：磁盘归档里的历史 run（终态，事件只读回放）。
+ */
+export type AgentDebugRunOrigin = "live" | "archive";
+
+export type AgentDebugRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "timed_out";
+
+export interface AgentDebugAgent {
+  id: string;
+  name: string;
+  description: string;
+  kind: AgentDebugAgentKind;
+  state: AgentDebugAgentState;
+  activeRunCount: number;
+  /** 最近一次 run 开始/完成时间；无历史为 null（调试页展示静默 Agent）。 */
+  lastRunAt: string | null;
+}
+
+export interface AgentDebugRun {
+  runId: string;
+  agentId: string;
+  agentName: string;
+  agentKind: AgentDebugAgentKind;
+  /** runtime.id，如 pi:main / pi:subagent:slides-planner / acp:codex；未知为 null。 */
+  runtimeId: string | null;
+  sessionId: string | null;
+  pageLabel: string | null;
+  /**
+   * 会话标题（主对话取 agent_sessions.title，便于在历史里按对话区分/找回）；
+   * 无法解析（子 Agent、会话已删除）为 null。由 Gateway 查询时补全，不落归档。
+   */
+  sessionTitle?: string | null;
+  /**
+   * 数据来源；缺省按 `live` 处理（旧版 Gateway）。`archive` 表示来自磁盘归档的历史 run。
+   */
+  origin?: AgentDebugRunOrigin;
+  /**
+   * 逐页任务（如 slides-layouter 的单页布局）的页序，**1 起**；非逐页 run 不返回。
+   * Gateway 从子 Agent dispatch input 的 0 起 `pageIndex` 换算，随 run 元数据落归档，
+   * 调试页据此显示「这个布局 agent 正在负责哪一页」。
+   */
+  slidePageIndex?: number;
+  /** 逐页任务的总页数；未知（旧 run / 非逐页）不返回。 */
+  slidePageCount?: number;
+  task: string;
+  status: AgentDebugRunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  /** 缓冲中保留的事件条数。 */
+  eventCount: number;
+  /** 环形缓冲淘汰掉的事件条数（事件过多时 >0）。 */
+  droppedEvents: number;
+  toolCallCount: number;
+  /** 累计思考（reasoning.delta）字符数。 */
+  reasoningChars: number;
+  /** 最近一次事件时间，调试页按活跃度排序。 */
+  lastEventAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface AgentDebugEvent {
+  /** 该 run 内严格递增的序号，从 1 开始。 */
+  seq: number;
+  type: AgentEventType;
+  occurredAt: string;
+  payload: unknown;
+  /** payload 超过单条上限被截断时，记录原始序列化字节数。 */
+  truncatedBytes?: number;
+}
+
+/** 调试归档概况（调试页用于展示"历史记录是否可用/保留多久"）。 */
+export interface AgentDebugArchiveInfo {
+  /** 归档是否启用（`NXCORE_AGENT_DEBUG_ARCHIVE=0` 可关闭）。 */
+  enabled: boolean;
+  /** 归档保留天数；超过即清理最旧 run。 */
+  retentionDays: number;
+  /** 当前归档里的 run 条数。 */
+  runCount: number;
+  /** 归档文件总字节数。 */
+  bytes: number;
+  /** 归档里最旧一条 run 的开始时间；空归档为 null。 */
+  oldestStartedAt: string | null;
+}
+
+export interface AgentDebugSnapshot {
+  generatedAt: string;
+  agents: AgentDebugAgent[];
+  /**
+   * 最近 run：运行中的 run 永远最前，其余按 startedAt 倒序。
+   * `archived=include`（默认）时混合当前进程 run 与磁盘归档历史 run，用 `origin` 区分；
+   * `exclude` 只返回当前进程 run，`only` 只返回归档历史。
+   */
+  runs: AgentDebugRun[];
+  /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数（仅当前进程）。 */
+  droppedRuns: number;
+  /** 磁盘归档概况；归档关闭时为 `{ enabled: false, ... }`。 */
+  archive?: AgentDebugArchiveInfo;
+}
+
+export interface AgentDebugRunEvents {
+  run: AgentDebugRun;
+  /**
+   * 增量事件。除 seq > afterSeq 的事件外，可能额外带回一条 seq <= afterSeq 的
+   * 尾部可合并事件（相邻 reasoning.delta / message.delta 在服务端合并累计、seq
+   * 不变，不带回来客户端永远看不到后续 token）。客户端必须按 seq **upsert**
+   * （替换同 seq 事件），而不是只追加。
+   */
+  events: AgentDebugEvent[];
+  /** 当前缓冲内的最大 seq（客户端下次增量拉取用 afterSeq 对齐）。 */
+  latestSeq: number;
+}
+
 export interface CreateAgentSessionInput {
   pageLabel: string;
+  /** 会话所属工作区；缺省/非法时归入默认工作区。 */
+  workspaceId?: string | null;
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
   /**
@@ -294,10 +481,41 @@ export interface CreateAgentSessionInput {
    * 整个会话由该 Agent 连续对话（ACP 持久会话）。设置后 modelPreference 被忽略。
    */
   channelAgentId?: string;
+  /**
+   * 会话思考档位（创建时写入；null/缺省＝跟随模型配置的 reasoning）。
+   * 与模型档位不同，它不锁定：会话内可随时 PUT 修改，从下一轮 run 生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
 }
 
 /** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
 export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 思考档位（pi thinkingLevel 七档）：off 关闭思考；null 表示跟随模型配置。 */
+export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** 七档全集（校验与 UI 展示共用；顺序＝由弱到强）。 */
+export const AGENT_THINKING_LEVELS: readonly AgentThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+export function isAgentThinkingLevel(value: unknown): value is AgentThinkingLevel {
+  return typeof value === "string" && (AGENT_THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+/** PUT /v1/agent/sessions/:id/thinking-level 的响应。 */
+export interface AgentThinkingLevelUpdate {
+  /** 当前覆盖值；null＝已清回「跟随模型配置」。 */
+  thinkingLevel: AgentThinkingLevel | null;
+  /** 是否已即时推到活跃 run 的 runtime（false＝仅落库，下一轮起生效）。 */
+  applied: boolean;
+}
 
 /** 档位 → 内置 agentId（写入 agent_sessions.activeAgentId）。 */
 export const MODEL_PREFERENCE_AGENT_IDS: Record<AgentModelPreference, string> = {

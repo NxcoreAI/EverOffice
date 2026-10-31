@@ -177,6 +177,84 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
+  it("scopes catalog entries to their workspace and defaults missing attribution to default", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# ws", "utf8");
+    await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:ws-a", originalName: "ws-a.md",
+      buffer, workspaceId: "ws-alpha",
+    });
+    // 未显式带 workspaceId 的入库（旧客户端/旧链路）归 default。
+    await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:ws-b", originalName: "ws-b.md", buffer,
+    });
+
+    // 全库（未传 workspaceId）：两个都在，DTO 暴露归一后的归属。
+    const all = test.service.listCatalog();
+    expect(all.total).toBe(2);
+    expect(all.items.find((item) => item.originalName === "ws-a.md")).toMatchObject({ workspaceId: "ws-alpha" });
+    expect(all.items.find((item) => item.originalName === "ws-b.md")).toMatchObject({ workspaceId: "default" });
+
+    // 按空间过滤：只看到自己名下的。
+    expect(test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" })).toMatchObject({ total: 1 });
+    const alpha = test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" }).items;
+    expect(alpha.map((item) => item.originalName)).toEqual(["ws-a.md"]);
+    // default 过滤同时命中显式 default 与 NULL 归属（迁移前旧行兜底）。
+    const defaults = test.service.listCatalog(100, 0, { workspaceId: "default" }).items;
+    expect(defaults.map((item) => item.originalName)).toEqual(["ws-b.md"]);
+
+    // REST 查询参数同样生效。
+    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
+    await app.register(filesRoutes(test.service));
+    const response = await app.inject({ method: "GET", url: "/v1/files/catalog?workspaceId=ws-alpha" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ total: 1, items: [{ originalName: "ws-a.md", workspaceId: "ws-alpha" }] });
+    await app.close();
+    await test.service.dispose();
+    test.sqlite.close();
+  });
+
+  it("re-import without workspaceId keeps the entry's original workspace (edit-sync / rescan safety)", async () => {
+    const test = await catalogForTest();
+    // Agent 在 ws-alpha 会话里生成 word（office_create → file-imports 带 workspaceId）。
+    const first = await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v1")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      workspaceId: "ws-alpha",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 用户打开编辑并保存：edit-sync 按 fileEntryId 重导入，不带 workspaceId。
+    // 旧逻辑会把它默默改归 default（重启后文件「跑到」默认空间）；现在必须保留 ws-alpha。
+    const edited = await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:edit:ignored-by-fileEntryId", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      fileEntryId: first.fileEntryId,
+    });
+    expect(edited.fileEntryId).toBe(first.fileEntryId);
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 同 sourceKey 重导入（本地夹重扫路径）同样保留归属。
+    await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v3")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
+
+    // 显式传 workspaceId 才允许迁移归属（重新导入覆盖语义保留给显式入口）。
+    await test.service.importFileStream({
+      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
+      stream: Readable.from([Buffer.from("PK\u0003\u0004 v4")]),
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      workspaceId: "ws-beta",
+    });
+    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-beta" });
+    await test.service.dispose();
+    test.sqlite.close();
+  });
 
   it("accepts artifact-imported office uploads as a first-class source kind", async () => {
     const test = await catalogForTest();
