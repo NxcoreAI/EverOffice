@@ -12,6 +12,10 @@ const { savedListenersByWc, createCalls, slidesCalls, sheetCalls } = vi.hoisted(
   sheetCalls: { options: [] as Array<{ editable?: boolean }> },
 }))
 
+vi.mock('electron', () => ({
+  webContents: { fromId: vi.fn((id: number) => ({ id, isDestroyed: () => false })) },
+  BrowserWindow: { getAllWindows: vi.fn(() => []) },
+}))
 vi.mock('../src/main/office/office-runtime', () => ({
   loadPreparedGenOfficeRuntime: vi.fn(() => runtime),
   preparedGenOfficeFixture: vi.fn(() => '/fixtures/simple.docx'),
@@ -91,6 +95,15 @@ function makeView(kind: string): {
     }),
     webContentsId: entry.webContentsId,
     isDirty: vi.fn(async () => entry.dirty),
+    // 后台 Agent 隐藏会话需要的最小 view 面（setBounds/setVisible/close/once）。
+    setBounds: vi.fn(),
+    setVisible: vi.fn(),
+    webContents: {
+      id: entry.webContentsId,
+      isDestroyed: () => entry.disposed,
+      close: vi.fn(() => { entry.disposed = true }),
+      once: vi.fn(),
+    },
   }
 }
 
@@ -98,6 +111,16 @@ const runtime = {
   docs: {
     setDocsShellWindow: vi.fn(),
     setActiveDocsResolver: vi.fn(),
+    setDocsMenuGate: vi.fn(),
+    setDocsChromeHidden: vi.fn(),
+    registerDocsIpc: vi.fn(),
+    teardownDocsRenderer: vi.fn(),
+    createDocsView: vi.fn(() => makeView('docx')),
+    waitForAgentReady: vi.fn(async () => true),
+    describeAgentDoc: vi.fn(async () => ({ context: 'Document block list:\n0|h1|Title' })),
+    applyAgentDocTools: vi.fn(async () => ({
+      results: [{ id: 'call-1', name: 'insert_content', output: 'ok', mutated: true }],
+    })),
   },
   sheets: {
     setSheetsShellWindow: vi.fn(),
@@ -115,7 +138,7 @@ const runtime = {
 
 function makeWindow(): BrowserWindow {
   return {
-    contentView: { addChildView: vi.fn() },
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
     once: vi.fn(),
     isDestroyed: () => false,
     webContents: { isDestroyed: () => false, send: vi.fn() },
@@ -198,6 +221,81 @@ describe('OfficePreviewRegistry', () => {
     sheetCalls.options.length = 0
     savedListenersByWc.clear()
     registry = new OfficePreviewRegistry(0)
+  })
+
+  describe('后台 Word 编辑（UI 隐藏/未打开）', () => {
+    it('未打开的 docx：describe/apply 走隐藏会话，且不进可见页签清单', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'agent-doc-'))
+      const storage = join(dir, 'hidden.docx')
+      await writeFile(storage, Buffer.from('PK\u0003\u0004 not a real docx'))
+      try {
+        const window = makeWindow()
+        // 先开一份可见 docx，给 registry 一个主窗口（隐藏会话挂在它上面）。
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        registry.setAgentFileResolver(async (fileId) => ({
+          fileId,
+          originalName: 'hidden.docx',
+          storagePath: storage,
+          contentHash: 'c'.repeat(64),
+        }))
+        // 工作副本用真实文件（隐藏会话 apply 后会校验“保存是否真的落盘”）。
+        vi.mocked(prepareOfficeDocument).mockResolvedValueOnce(storage)
+
+        const described = await registry.describeDocArtifact('file-hidden')
+        expect(described.ok).toBe(true)
+        expect(runtime.docs.createDocsView).toHaveBeenCalledWith(
+          storage,
+          { hostMode: 'everroom' },
+        )
+        expect(runtime.docs.waitForAgentReady).toHaveBeenCalled()
+
+        const applied = await registry.applyDocAgentTools('file-hidden', [
+          { id: 'call-1', name: 'insert_content', input: { html: '<p>x</p>' } },
+        ])
+        expect(applied.ok).toBe(true)
+        if (applied.ok) expect(applied.results).toHaveLength(1)
+
+        // 隐藏会话不是用户页签：openFiles 里只有可见的那份。
+        expect(registry.openOfficeFiles().map((entry) => entry.fileId)).toEqual(['file-visible'])
+        await registry.disposeAll()
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('干净画布：宿主可隐藏可见 Word 实例的操作区，未命中返回 false', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-chrome', 'chrome.docx'))
+
+      expect(registry.setDocsChromeHidden('active', true)).toBe(true)
+      expect(runtime.docs.setDocsChromeHidden).toHaveBeenCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+        true,
+      )
+      expect(registry.setDocsChromeHidden('file-chrome', false)).toBe(true)
+      expect(runtime.docs.setDocsChromeHidden).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+        false,
+      )
+      expect(registry.setDocsChromeHidden('missing', true)).toBe(false)
+    })
+
+    it('已打开的只读 docx 不会被后台会话绕过（保持 not_editable）', async () => {
+      const window = makeWindow()
+      await registry.open(window, {...file('file-readonly', 'readonly.docx'), editable: false})
+      registry.setAgentFileResolver(async (fileId) => ({
+        fileId,
+        originalName: 'readonly.docx',
+        storagePath: '/tmp/never-used.docx',
+        contentHash: 'd'.repeat(64),
+      }))
+
+      const applied = await registry.applyDocAgentTools('file-readonly', [
+        { id: 'call-1', name: 'insert_content', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'not_editable' })
+      expect(runtime.docs.createDocsView).not.toHaveBeenCalled()
+    })
   })
 
   it('opens a preview per extension family without auto-activating it', async () => {

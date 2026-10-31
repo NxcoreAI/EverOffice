@@ -123,7 +123,7 @@ import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-bindin
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
-import { OfficePreviewRegistry } from './office/office-preview-registry'
+import { OfficePreviewRegistry, type AgentArtifactFailureReason } from './office/office-preview-registry'
 import { notifyPreviewRequested, previewRequestFromOpenResult } from './office/preview-request'
 import { convertOfficeFileToPdf } from './office/legacy-convert'
 import { OfficeBridge as GenofficeProtoBridge } from './genoffice/bridge'
@@ -945,6 +945,19 @@ ipcMain.handle('office:instance:close', async (event, id: unknown) => {
   if (typeof id !== 'string') return false
   // false = 可编辑实例在脏关闭守卫里被取消：渲染层保留标签不卸载。
   return officePreviewRegistry.close(id)
+})
+
+/**
+ * 干净画布：宿主侧隐藏/显示 Word 编辑器的操作区（Ribbon/状态栏/标尺/导航）。
+ * input = { fileId?, hidden? }；fileId 省略 = 当前焦点 Word 页签，hidden 省略 = 切换。
+ */
+ipcMain.handle('office:chrome-toggle', (event, input: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  const value = (input ?? {}) as { fileId?: unknown; hidden?: unknown }
+  const fileId = typeof value.fileId === 'string' && value.fileId ? value.fileId : 'active'
+  const hidden = typeof value.hidden === 'boolean' ? value.hidden : undefined
+  return officePreviewRegistry.setDocsChromeHidden(fileId, hidden)
 })
 
 // Doc 生成流程原型：渲染端把定稿 HTML 送 genoffice 管线生成 .docx 并入库。
@@ -2754,12 +2767,13 @@ function registerFilesHandlers(
   )
   handle(
     FILES_CHANNELS.importArtifacts,
-    (_event, paths: string[], roomId: string) => {
+    (_event, paths: string[], roomId: string, workspaceId?: string) => {
       if (typeof roomId !== 'string' || !roomId) throw new Error('缺少目标 Room。')
       if (!Array.isArray(paths)) throw new Error('无效的导入请求。')
       return bridge.importArtifactFiles(
         paths.filter((path: unknown): path is string => typeof path === 'string'),
         roomId,
+        ...(typeof workspaceId === 'string' && workspaceId ? [workspaceId] : []),
       )
     },
   )
@@ -3565,11 +3579,17 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       // apply = 渲染层执行 docs/sheets AI 工具调用 + 静默保存（fileSaved → 版本链回填）。
       () => async (req: OfficeAgentToolsRequest): Promise<
         | { ok: true; data: Record<string, unknown> }
-        | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved'; open?: unknown[] }
+        | {
+          ok: false
+          reason: AgentArtifactFailureReason
+          message?: string
+          open?: unknown[]
+        }
       > => {
+        const hints = { roomId: req.roomId ?? null, workspaceId: req.workspaceId ?? null }
         if (req.mode === 'read') {
           const outcome = req.kind === 'docx'
-            ? await officePreviewRegistry.describeDocArtifact(req.fileId)
+            ? await officePreviewRegistry.describeDocArtifact(req.fileId, hints)
             : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId)
           return outcome.ok
             ? { ok: true, data: { describe: outcome.describe } as unknown as Record<string, unknown> }
@@ -3581,7 +3601,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           input: call.input ?? {},
         }))
         const outcome = req.kind === 'docx'
-          ? await officePreviewRegistry.applyDocAgentTools(req.fileId, calls)
+          ? await officePreviewRegistry.applyDocAgentTools(req.fileId, calls, hints)
           : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls)
         return outcome.ok
           ? {
@@ -3589,6 +3609,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             data: {
               results: outcome.results,
               ...(outcome.error ? { error: outcome.error } : {}),
+              ...(outcome.version ? { version: outcome.version } : {}),
             } as unknown as Record<string, unknown>,
           }
           : outcome
@@ -3747,6 +3768,40 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMigrationHandlers(migrationCoordinator)
     void migrationCoordinator.restoreCherrySync()
     officeFilesBridge = filesGatewayBridge
+    // 后台 Word 编辑会话：把任意 fileId 解析成可编辑工作副本（catalog 优先、
+    // legacy 兜底；内容哈希必须与 prepareOfficeDocument 的 64-hex 契约一致）。
+    officePreviewRegistry.setAgentFileResolver(async (fileId) => {
+      try {
+        let originalName = ''
+        let contentHash = ''
+        let workspaceId: string | null = null
+        try {
+          const entry = await filesGatewayBridge.catalogEntry(fileId)
+          if (entry) {
+            originalName = entry.originalName
+            contentHash = entry.contentHash
+            workspaceId = entry.workspaceId ?? null
+          }
+        } catch {
+          /* fall through to legacy get */
+        }
+        if (!originalName) {
+          const legacy = await filesGatewayBridge.get(fileId)
+          originalName = legacy.originalName
+          workspaceId = (legacy as { workspaceId?: string | null }).workspaceId ?? null
+        }
+        if (!originalName) return null
+        const storagePath = await filesGatewayBridge.storagePath(fileId)
+        if (!contentHash) contentHash = await hashFileBytes(storagePath)
+        return { fileId, originalName, storagePath, contentHash, workspaceId }
+      } catch (error) {
+        console.warn('office: 后台 Word 会话解析文件失败', {
+          fileId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return null
+      }
+    })
     // Room 产物 docx 人手编辑：保存 → 去抖重导入（fileEntryId 钉条目走版本链）→ 广播刷新。
     officePreviewRegistry.setEditSync({
       importAgentFile: (input) => {

@@ -2,8 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import type { BrowserWindow } from 'electron'
-import { webContents } from 'electron'
+import { BrowserWindow, webContents } from 'electron'
 
 import type { OfficeAgentFileEvent } from '../../shared/office'
 import { describeThesisError } from '../../shared/thesis-error-message'
@@ -25,6 +24,12 @@ import {
   type PreparedGenOfficeRuntime,
 } from './office-runtime'
 import { OfficeViewManager, prepareOfficeDocument } from './office-view-manager'
+import {
+  AgentDocSessionManager,
+  type AgentDocFileHints,
+  type AgentDocFileMeta,
+  type AgentDocFailureReason,
+} from './office-agent-doc-session'
 import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
@@ -47,6 +52,8 @@ export interface OfficePreviewFile {
   editable?: boolean
   /** 版本链回填的 Room 投影归属（不传则按导入落点默认决策）。 */
   roomId?: string | null
+  /** 条目归属工作区（保存回填重导入带上，避免归属被重置；不传则保留条目原值）。 */
+  workspaceId?: string | null
   /**
    * 从系统文件管理器直接打开的磁盘路径：保存后除回填版本链外，还把工作副本
    * 写回这份原文件，保证 Word/WPS 等外部程序能看到编辑结果。
@@ -92,10 +99,31 @@ export interface OpenOfficeInstanceInfo {
   active: boolean
 }
 
+/**
+ * Agent 后台 Word/Excel 失败原因：not_open/not_editable/unsaved 是“现场状态”，
+ * 其余是后台打开/保存阶段的可诊断错误（任何一条都不能被谎报成成功）。
+ */
+export type AgentArtifactFailureReason =
+  | 'not_open'
+  | 'not_editable'
+  | 'unsaved'
+  | Exclude<AgentDocFailureReason, 'not_open' | 'not_editable' | 'unsaved'>
+
 /** 活 Word/Excel 宿主执行器结果：apply 的错误随行（已应用但保存失败等）。 */
 export type AgentArtifactToolsOutcome =
-  | { ok: true; results: GenOfficeAgentToolResult[]; error?: string }
-  | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved'; open?: OpenOfficeInstanceInfo[] }
+  | {
+    ok: true
+    results: GenOfficeAgentToolResult[]
+    error?: string
+    /** 后台会话在 apply 内完成版本回填后的新版本 id。 */
+    version?: string
+  }
+  | {
+    ok: false
+    reason: AgentArtifactFailureReason
+    message?: string
+    open?: OpenOfficeInstanceInfo[]
+  }
 
 export type SlidesEditArtifactOutcome =
   | { ok: true; info?: AgentSlidesDeckInfo; result?: AgentSlidesEditResult }
@@ -108,11 +136,15 @@ interface EditSyncState {
   /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets → docx/pptx/xlsx）。 */
   kind: 'docx' | 'slides' | 'spreadsheet'
   roomId: string | null
+  /** 条目归属工作区：保存回填重导入时带上，避免归属被重置（资料库按空间隔离）。 */
+  workspaceId: string | null
   /** 访达直接打开时的原文件路径：保存后写回它（库内版本照常 +1）。 */
   writeBackPath: string | null
   pending: boolean
   timer: NodeJS.Timeout | null
   runner: Promise<void> | null
+  /** 最近一次版本回填结果（后台会话 apply 后回传版本号用）。 */
+  lastImport?: { contentHash?: string; fileVersionId?: string } | null
 }
 
 /** AI 页签论文排版桥（index.ts 注入网关实现；缺省 → docs 视图报 no_room）。 */
@@ -181,6 +213,12 @@ export class OfficePreviewRegistry {
   private readonly editStates = new Map<string, EditSyncState>()
   private agentAskForward: ((event: AgentAskForwardEvent) => void) | null = null
   private thesisBridge: OfficeThesisPanelBridge | null = null
+  /** 未打开文件的后台 Word 编辑会话（独立于页签实例，不进 instances）。 */
+  private agentDocs: AgentDocSessionManager | null = null
+  /** Agent 后台编辑的文件解析端口（index.ts 注入文件库访问）。 */
+  private agentFileResolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null = null
+  /** 后台会话的保存回填订阅（fileId → unsubscribe）。 */
+  private readonly agentEditUnsubscribers = new Map<string, () => void>()
 
   /** 生成完成 → 渲染端自动打开的等待窗口；测试可传 0 关闭。 */
   constructor(
@@ -195,6 +233,7 @@ export class OfficePreviewRegistry {
       sourceKey: string
       fileEntryId?: string
       roomId?: string
+      workspaceId?: string
     }) => Promise<unknown>
     broadcast: (event: OfficeAgentFileEvent) => void
   } | null = null
@@ -207,6 +246,39 @@ export class OfficePreviewRegistry {
   /** 「AI 修改」转发出口：slides 弹层提交 → wcId 反查 Room → 注入 Room 对话框。 */
   setAgentAskForward(forward: ((event: AgentAskForwardEvent) => void) | null): void {
     this.agentAskForward = forward
+  }
+
+  /**
+   * 注入「按 fileId 解析工作副本」的端口：后台 Word 编辑会话用它把任意
+   * file_entry 变成可编辑工作副本（名称/内容哈希/存储路径/归属）。
+   */
+  setAgentFileResolver(resolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null): void {
+    this.agentFileResolver = resolver
+    this.agentDocs = null
+  }
+
+  /** 是否有正在显示的 docs 页签（应用菜单接管闸门；后台会话不算）。 */
+  hasActiveDocInstance(): boolean {
+    if (!this.activeId) return false
+    return this.instances.get(this.activeId)?.descriptor.kind === 'docx'
+  }
+
+  /**
+   * EverRoom 宿主控制「干净画布」：隐藏/显示当前 Word 编辑器的操作区
+   * （Ribbon/状态栏/标尺/导航）。hidden 省略 = 切换。返回是否命中可见实例；
+   * 渲染层自带恢复胶囊与 ⌘⇧F，隐藏后用户始终能恢复。
+   */
+  setDocsChromeHidden(fileId: string | 'active', hidden?: boolean): boolean {
+    const resolvedId = fileId === 'active' ? this.resolveActiveKind('docx') : fileId
+    const instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
+    const wcId = instance?.view.webContentsId
+    if (!instance || instance.descriptor.kind !== 'docx' || !this.runtime || typeof wcId !== 'number') {
+      return false
+    }
+    const target = webContents.fromId(wcId)
+    if (!target || target.isDestroyed()) return false
+    this.runtime.docs.setDocsChromeHidden(target, hidden)
+    return true
   }
 
   /** AI 页签论文排版桥：网关就绪后由 index.ts 注入（幂等，晚于首开也生效）。 */
@@ -312,9 +384,16 @@ export class OfficePreviewRegistry {
     const runtime = this.ensureRuntime(window)
     const editable = file.editable === true && kind !== 'pdf'
     const roomId = typeof file.roomId === 'string' && file.roomId ? file.roomId : null
+    const workspaceId = typeof file.workspaceId === 'string' && file.workspaceId ? file.workspaceId : null
     const writeBackPath = editable && typeof file.writeBackPath === 'string' && file.writeBackPath
       ? file.writeBackPath
       : null
+
+    // 同一文件存在后台 Agent 会话时先排空并关闭：可见视图与隐藏视图绝不
+    // 共用同一份工作副本（否则就是双写者）。
+    if (this.agentDocs?.has(file.id)) {
+      await this.agentDocs.dispose(file.id)
+    }
 
     const existing = this.instances.get(file.id)
     if (existing && existing.descriptor.contentHash === file.contentHash && existing.editable === editable) {
@@ -355,6 +434,7 @@ export class OfficePreviewRegistry {
         originalName: file.originalName,
         kind,
         roomId,
+        workspaceId,
         writeBackPath,
         pending: false,
         timer: null,
@@ -465,13 +545,17 @@ export class OfficePreviewRegistry {
   private async resolveAgentInstance(
     fileId: string,
     kind: 'docx' | 'spreadsheet',
+    options?: {
+      /** 显式 fileId 未打开时是否等自动打开窗口（后台 Word 会话不需要等）。 */
+      waitForOpen?: boolean
+    },
   ): Promise<
     | { ok: true; instance: OfficePreviewInstance; wcId: number }
     | { ok: false; reason: 'not_open' | 'not_editable'; open: OpenOfficeInstanceInfo[] }
   > {
     const resolvedId = fileId === 'active' ? this.resolveActiveKind(kind) : fileId
     let instance = resolvedId === null ? undefined : this.instances.get(resolvedId)
-    if (!instance && fileId !== 'active') {
+    if (!instance && fileId !== 'active' && options?.waitForOpen !== false) {
       instance = await this.waitForInstance(fileId)
     }
     const wcId = instance?.view.webContentsId
@@ -484,50 +568,182 @@ export class OfficePreviewRegistry {
     return { ok: true, instance, wcId }
   }
 
-  /** Agent 读活 Word：块列表上下文 + 工具词汇表（只读实例同样可读）。 */
-  async describeDocArtifact(
-    fileId: string,
-  ): Promise<
-    | { ok: true; describe: GenOfficeAgentDocDescription }
-    | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
-  > {
-    const resolved = await this.resolveAgentInstance(fileId, 'docx')
-    if (!resolved.ok) return resolved
-    const target = webContents.fromId(resolved.wcId)
-    if (!target || target.isDestroyed()) {
-      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
-    }
-    const described = await this.runtime!.docs.describeAgentDoc(target)
-    if ('error' in described) {
-      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
-    }
-    return { ok: true, describe: described }
+  /**
+   * 未打开的 Word 的后台编辑会话（惰性创建）。运行时缺少就绪信号或没有
+   * 主窗口/文件解析端口时返回 null，调用方保持原 not_open 路径。
+   */
+  private ensureAgentDocs(): AgentDocSessionManager | null {
+    const resolver = this.agentFileResolver
+    if (!resolver) return null
+    if (this.agentDocs) return this.agentDocs
+    const window = this.window && !this.window.isDestroyed()
+      ? this.window
+      : BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
+    if (!window) return null
+    this.bindWindow(window)
+    const runtime = this.ensureRuntime(window)
+    if (typeof runtime.docs.waitForAgentReady !== 'function') return null
+    this.agentDocs = new AgentDocSessionManager({
+      docs: runtime.docs,
+      getWindow: () => (this.window && !this.window.isDestroyed() ? this.window : null),
+      resolveFile: resolver,
+      editSync: {
+        register: (input) => this.registerAgentEditState(input),
+        drain: (fileId) => this.drainAgentEdits(fileId),
+        flush: (fileId) => this.flushAgentEdit(fileId),
+        release: (fileId) => this.releaseAgentEditState(fileId),
+      },
+    })
+    return this.agentDocs
   }
 
-  /** Agent 编辑活 Word：渲染层执行 docs AI 工具调用，变更后静默保存（fileSaved → 版本链回填）。 */
+  /** 后台会话接入既有 editStates + fileSaved 回填链（与活实例编辑同一条导入路径）。 */
+  private registerAgentEditState(input: {
+    fileId: string
+    webContentsId: number
+    filePath: string
+    originalName: string
+    roomId: string | null
+    workspaceId: string | null
+  }): () => void {
+    this.editStates.set(input.fileId, {
+      filePath: input.filePath,
+      originalName: input.originalName,
+      kind: 'docx',
+      roomId: input.roomId,
+      workspaceId: input.workspaceId,
+      writeBackPath: null,
+      pending: false,
+      timer: null,
+      runner: null,
+      lastImport: null,
+    })
+    return onOfficeFileSaved(input.webContentsId, () => this.scheduleEditSync(input.fileId))
+  }
+
+  /** 立即排空去抖中的回填（保留 editStates：后台会话后续编辑继续走同一条链）。 */
+  private async drainAgentEdits(
+    fileId: string,
+  ): Promise<{ contentHash?: string; fileVersionId?: string } | null> {
+    const state = this.editStates.get(fileId)
+    if (!state) return null
+    // 只认本次 drain 期间发生的回填：上次编辑留下的 lastImport 不能拿来冒充
+    // 本次保存成功（否则静默保存失败会被误报成成功）。
+    state.lastImport = null
+    if (state.timer) {
+      clearTimeout(state.timer)
+      state.timer = null
+    }
+    if (state.runner) await state.runner
+    if (state.pending) await this.runEditSync(fileId)
+    return state.lastImport ?? null
+  }
+
+  /** 按当前工作副本强制回填一次（同内容导入幂等）：去抖提前跑过/漏跑时兜底。 */
+  private async flushAgentEdit(
+    fileId: string,
+  ): Promise<{ contentHash?: string; fileVersionId?: string } | null> {
+    const state = this.editStates.get(fileId)
+    if (!state) return null
+    if (state.timer) {
+      clearTimeout(state.timer)
+      state.timer = null
+    }
+    if (state.runner) await state.runner
+    state.pending = false
+    state.lastImport = null
+    await this.performEditImport(fileId, state)
+    return state.lastImport ?? null
+  }
+
+  private async releaseAgentEditState(fileId: string): Promise<void> {
+    await this.flushEditSync(fileId)
+  }
+
+  /** Agent 读 Word：已打开实例优先；未打开则拉起后台编辑器（不弹页签）。 */
+  async describeDocArtifact(
+    fileId: string,
+    hints?: AgentDocFileHints,
+  ): Promise<
+    | { ok: true; describe: GenOfficeAgentDocDescription }
+    | {
+      ok: false
+      reason: AgentArtifactFailureReason
+      message?: string
+      open?: OpenOfficeInstanceInfo[]
+    }
+  > {
+    const resolved = await this.resolveAgentInstance(fileId, 'docx', { waitForOpen: false })
+    if (resolved.ok) {
+      const target = webContents.fromId(resolved.wcId)
+      if (!target || target.isDestroyed()) {
+        return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      }
+      const described = await this.runtime!.docs.describeAgentDoc(target)
+      if ('error' in described) {
+        return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      }
+      return { ok: true, describe: described }
+    }
+    if (resolved.reason === 'not_editable') return resolved
+    const headless = fileId === 'active' ? null : this.ensureAgentDocs()
+    if (!headless) return { ...resolved, open: this.listOpenOffice() }
+    const outcome = await headless.describe(fileId, hints)
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason: outcome.reason,
+        ...(outcome.message ? { message: outcome.message } : {}),
+        open: this.listOpenOffice(),
+      }
+    }
+    return { ok: true, describe: outcome.describe }
+  }
+
+  /** Agent 编辑 Word：已打开可编辑实例优先；否则后台会话执行并回填版本链。 */
   async applyDocAgentTools(
     fileId: string,
     calls: GenOfficeAgentToolCall[],
+    hints?: AgentDocFileHints,
   ): Promise<AgentArtifactToolsOutcome> {
-    const resolved = await this.resolveAgentInstance(fileId, 'docx')
-    if (!resolved.ok) return resolved
-    if (!resolved.instance.editable) {
-      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    const resolved = await this.resolveAgentInstance(fileId, 'docx', { waitForOpen: false })
+    if (resolved.ok) {
+      if (!resolved.instance.editable) {
+        return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+      }
+      const target = webContents.fromId(resolved.wcId)
+      if (!target || target.isDestroyed()) {
+        return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      }
+      if (await this.runtime!.docs.docsQueryDirty(target)) {
+        return { ok: false, reason: 'unsaved', open: this.listOpenOffice() }
+      }
+      const applied = await this.runtime!.docs.applyAgentDocTools(target, calls)
+      if (!('results' in applied)) {
+        return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+      }
+      return 'error' in applied && typeof applied.error === 'string'
+        ? { ok: true, results: applied.results, error: applied.error }
+        : { ok: true, results: applied.results }
     }
-    const target = webContents.fromId(resolved.wcId)
-    if (!target || target.isDestroyed()) {
-      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    if (resolved.reason === 'not_editable') return resolved
+    const headless = fileId === 'active' ? null : this.ensureAgentDocs()
+    if (!headless) return { ...resolved, open: this.listOpenOffice() }
+    const outcome = await headless.apply(fileId, calls, hints)
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason: outcome.reason,
+        ...(outcome.message ? { message: outcome.message } : {}),
+        open: this.listOpenOffice(),
+      }
     }
-    if (await this.runtime!.docs.docsQueryDirty(target)) {
-      return { ok: false, reason: 'unsaved', open: this.listOpenOffice() }
+    return {
+      ok: true,
+      results: outcome.results,
+      ...(outcome.version ? { version: outcome.version } : {}),
+      ...(outcome.error ? { error: outcome.error } : {}),
     }
-    const applied = await this.runtime!.docs.applyAgentDocTools(target, calls)
-    if (!('results' in applied)) {
-      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
-    }
-    return 'error' in applied && typeof applied.error === 'string'
-      ? { ok: true, results: applied.results, error: applied.error }
-      : { ok: true, results: applied.results }
   }
 
   /** Agent 读活 Excel：工作簿上下文 + 工具词汇表 + 操作指南（只读实例同样可读）。 */
@@ -807,6 +1023,11 @@ export class OfficePreviewRegistry {
     const entries = [...this.instances]
     this.instances.clear()
     this.activeId = null
+    // 后台 Agent 会话硬清理（不弹脏关闭框）：放在同步清表之后，避免
+    // bindWindow 的 `void disposeAll()` 在 await 期间把新开的实例清掉。
+    if (this.agentDocs) {
+      await this.agentDocs.disposeAll().catch(() => undefined)
+    }
     const closedIds: string[] = []
     for (const [id, instance] of entries) {
       const closed = await instance.view.dispose().catch(() => false)
@@ -860,6 +1081,7 @@ export class OfficePreviewRegistry {
       sourceKey: `agent:${kindPrefix}:edit:${fileId}`,
       fileEntryId: fileId,
       ...(state.roomId ? { roomId: state.roomId } : {}),
+      ...(state.workspaceId ? { workspaceId: state.workspaceId } : {}),
     }
     const fail = (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
@@ -873,18 +1095,20 @@ export class OfficePreviewRegistry {
         message: `文档保存已落盘，但版本回填失败：${message}。再次保存会自动重试。`,
       })
     }
+    let imported: unknown = null
     try {
-      await bindings.importAgentFile(input)
+      imported = await bindings.importAgentFile(input)
     } catch (error) {
       // 连发保存会在导入读盘时再写工作副本：稍候重试一次。
       await new Promise((resolve) => setTimeout(resolve, 300))
       try {
-        await bindings.importAgentFile(input)
+        imported = await bindings.importAgentFile(input)
       } catch (finalError) {
         fail(finalError)
         return
       }
     }
+    state.lastImport = normalizeImportResult(imported)
     // 访达直接打开的文件：库内版本已回填，再把工作副本写回磁盘原文件，
     // 否则外部程序（Word/WPS/Keynote）看到的还是编辑前的内容。
     if (state.writeBackPath) {
@@ -980,6 +1204,11 @@ export class OfficePreviewRegistry {
     this.runtime.docs.setDocsShellWindow(window)
     this.runtime.sheets.setSheetsShellWindow(window)
     this.runtime.slides.setSlidesShellWindow(window)
+    // 后台保存会 pushRecent → buildDocsMenu；只有可见 docs 页签活跃时才允许
+    // docs 接管应用菜单，否则关掉页签后的后台编辑会改掉整个应用的菜单。
+    if (typeof this.runtime.docs.setDocsMenuGate === 'function') {
+      this.runtime.docs.setDocsMenuGate(() => this.hasActiveDocInstance())
+    }
     return this.runtime
   }
 
@@ -1001,5 +1230,15 @@ export class OfficePreviewRegistry {
     runtime.sheets.stopSheetsSidecar()
     runtime.slides.setActiveSlidesWebContents(null)
     runtime.slides.setSlidesShellWindow(null)
+  }
+}
+
+/** importAgentGeneratedFile 的返回值 → 后台会话可回传的版本信息。 */
+function normalizeImportResult(value: unknown): { contentHash?: string; fileVersionId?: string } | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as { contentHash?: unknown; fileVersionId?: unknown }
+  return {
+    ...(typeof record.contentHash === 'string' ? { contentHash: record.contentHash } : {}),
+    ...(typeof record.fileVersionId === 'string' ? { fileVersionId: record.fileVersionId } : {}),
   }
 }

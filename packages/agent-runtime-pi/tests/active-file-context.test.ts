@@ -27,6 +27,24 @@ describe("buildActiveFileContext", () => {
     expect(context).toContain("office_create 是另建一份新文件");
   });
 
+  it("强调任意 docx 可按 fileId 后台编辑，不再要求用户先打开", () => {
+    const context = buildActiveFileContext({
+      fileId: "file-abc",
+      title: "软件开发合同.docx",
+      kind: "docx",
+      editable: true,
+    });
+    // 结构化操作用 word_agent_ops；找不到 fileId 时先 file_search。
+    expect(context).toContain("word_agent_ops");
+    expect(context).toContain("file_search");
+    expect(context).toContain("不要求文件已经打开");
+    // 未保存修改仍是硬闸门，但“没打开”不再是拒绝理由。
+    expect(context).toContain("FILE_UNSAVED");
+    expect(context).toContain("后台编辑器里打开它");
+    expect(context).toContain("不需要让用户先手动打开");
+    expect(context).not.toContain("请用户先以可编辑方式打开");
+  });
+
   it("PPT 额外指向 slides_read；只读打开明确不承诺修改", () => {
     const context = buildActiveFileContext({
       fileId: "file-deck",

@@ -649,6 +649,11 @@ export interface NxcoreDesktopApi {
     /** 关闭并销毁一个预览实例（标签关闭时调用）。 */
     /** 关闭预览实例；false = 可编辑实例在脏关闭守卫里被取消（保留标签）。 */
     closeInstance(id: string): Promise<boolean>
+    /**
+     * 干净画布：隐藏/显示 Word 编辑器操作区（Ribbon/状态栏/标尺/导航）。
+     * fileId 省略 = 当前焦点 Word 页签；hidden 省略 = 切换。false = 没命中可见 Word 实例。
+     */
+    toggleChrome(input?: { fileId?: string; hidden?: boolean }): Promise<boolean>
     /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
     generateDocxPrototype(input: { title: string; html: string }): Promise<{ fileEntryId: string; originalName: string }>
     setWorkspaceBounds(bounds: OfficeWorkspaceBounds): void

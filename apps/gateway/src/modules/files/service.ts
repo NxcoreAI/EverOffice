@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, or, sql } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import { enqueueSearchIndex } from "../search/jobs.js";
@@ -300,9 +300,6 @@ export class FilesService {
     const capability = fileFormatCapability(input.originalName)!;
     const existingBlob = this.db.select().from(fileBlobs)
       .where(eq(fileBlobs.contentHash, contentHash)).get();
-    // 工作区归属：trim 后为空/未传按 default（与 agent_sessions 归一口径一致）。
-    const workspaceId = input.workspaceId?.trim() || DEFAULT_FILE_WORKSPACE_ID;
-
     const now = new Date();
     let entry = input.fileEntryId
       ? this.db.select().from(fileEntries).where(eq(fileEntries.id, input.fileEntryId)).get()
@@ -577,6 +574,56 @@ export class FilesService {
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
       .where(and(isNull(fileEntries.deletedAt), ...(workspaceFilter ? [workspaceFilter] : []))).all().length;
     return { items, total };
+  }
+
+  /**
+   * 按文件名搜索目录（file_search 工具用）：LIKE 匹配 originalName 与 displayName。
+   *
+   * 与 listCatalog 同一套工作区口径：未传 workspaceId = 全库；显式传时 NULL 归属的
+   * 存量行按 default 匹配。空 query = 按更新时间倒序列出（「最近改过的那份」场景）。
+   * 只返回 Windows/macOS 文件名子串可命中的条目，不做全文检索——正文检索走 search 模块。
+   */
+  searchCatalog(
+    query: string,
+    options: {
+      /** 扩展名过滤（.docx / docx 都接受，大小写不敏感）。 */
+      extensions?: readonly string[];
+      workspaceId?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): { items: CatalogFileDto[]; total: number } {
+    const normalizedQuery = query.trim();
+    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 100);
+    const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+    const extensions = [...new Set((options.extensions ?? [])
+      .map((extension) => extension.trim().toLowerCase())
+      .filter((extension) => extension.length > 0)
+      .map((extension) => (extension.startsWith(".") ? extension : `.${extension}`)))];
+    const normalizedWorkspace = options.workspaceId === undefined
+      ? undefined
+      : options.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+    const filters = [isNull(fileEntries.deletedAt)];
+    if (normalizedQuery) {
+      // SQLite LIKE 对 ASCII 大小写不敏感；中文按子串精确匹配。
+      const pattern = `%${normalizedQuery}%`;
+      filters.push(or(
+        like(fileEntries.originalName, pattern),
+        like(fileEntries.displayName, pattern),
+      )!);
+    }
+    if (extensions.length > 0) filters.push(inArray(fileEntries.extension, extensions));
+    if (normalizedWorkspace !== undefined) {
+      filters.push(or(
+        eq(fileEntries.workspaceId, normalizedWorkspace),
+        and(isNull(fileEntries.workspaceId), eq(sql`${normalizedWorkspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
+      )!);
+    }
+    const where = and(...filters);
+    const rows = this.catalogQuery()
+      .where(where).orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const total = this.db.select({ id: fileEntries.id }).from(fileEntries).where(where).all().length;
+    return { items: rows.map((row) => this.toCatalogFileDto(row)), total };
   }
 
   capabilities() {

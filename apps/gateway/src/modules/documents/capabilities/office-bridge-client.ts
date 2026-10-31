@@ -119,12 +119,18 @@ export interface OfficeAgentArtifactDescription {
   watermark?: string | null;
   /** current page setup: orientation/paper/margins/columns/pageColor/sectionCount */
   pageSetup?: Record<string, unknown>;
+  /** Word：word_agent_ops 的 op 词汇表（按能力分组的 op 名 + 字段说明，渲染层是唯一事实源）。 */
+  operationsGuide?: string;
+  /** Word：文档对象现状（章节/页眉页脚/批注/域/引用/修订/表格等），供 ops 定位。 */
+  documentState?: Record<string, unknown>;
 }
 
 /** apply 结果：逐调用结果（isError = 该调用失败；mutated = 有落盘变更）。 */
 export interface OfficeAgentToolsResult {
   ok: boolean;
   error?: string;
+  /** 后台 Word 会话在本次 apply 内完成版本回填后的新版本 id。 */
+  version?: string;
   results?: Array<{
     id: string;
     name: string;
@@ -132,6 +138,8 @@ export interface OfficeAgentToolsResult {
     isError?: boolean;
     mutated?: boolean;
     summary?: string;
+    /** 端侧附加的逐条明细（如 word_agent_ops 的 per-op 结果），原样透传给模型。 */
+    details?: unknown;
   }>;
 }
 
@@ -244,9 +252,21 @@ export class OfficeBridgeClient {
 
   /** 活 Word/Excel describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
   async describeAgentArtifact(
-    input: { kind: "docx" | "spreadsheet"; fileId: string },
+    input: {
+      kind: "docx" | "spreadsheet";
+      fileId: string;
+      /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
+      roomId?: string | null;
+      workspaceId?: string | null;
+    },
   ): Promise<OfficeAgentArtifactDescription> {
-    const data = await this.postAgentTools({ ...input, mode: "read" });
+    const data = await this.postAgentTools({
+      kind: input.kind,
+      fileId: input.fileId,
+      mode: "read",
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    });
     const describe = (data.describe ?? {}) as Record<string, unknown>;
     const result: OfficeAgentArtifactDescription = {
       context: typeof describe.context === "string" ? describe.context : "",
@@ -263,19 +283,38 @@ export class OfficeBridgeClient {
     if (describe.pageSetup && typeof describe.pageSetup === "object") {
       result.pageSetup = describe.pageSetup as Record<string, unknown>;
     }
+    if (typeof describe.operationsGuide === "string") result.operationsGuide = describe.operationsGuide;
+    if (describe.documentState && typeof describe.documentState === "object") {
+      result.documentState = describe.documentState as Record<string, unknown>;
+    }
     return result;
   }
 
   /** 活 Word/Excel apply：渲染层执行 docs/sheets AI 工具调用（编辑实时重绘，随后静默保存）。 */
   async applyAgentArtifactTools(
-    input: { kind: "docx" | "spreadsheet"; fileId: string; calls: OfficeAgentToolCall[] },
+    input: {
+      kind: "docx" | "spreadsheet";
+      fileId: string;
+      calls: OfficeAgentToolCall[];
+      /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
+      roomId?: string | null;
+      workspaceId?: string | null;
+    },
   ): Promise<OfficeAgentToolsResult> {
-    const data = await this.postAgentTools({ ...input, mode: "apply" });
+    const data = await this.postAgentTools({
+      kind: input.kind,
+      fileId: input.fileId,
+      calls: input.calls,
+      mode: "apply",
+      ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    });
     const result: OfficeAgentToolsResult = {
       ok: true,
       results: [],
     };
     if (typeof data.error === "string") result.error = data.error;
+    if (typeof data.version === "string") result.version = data.version;
     if (Array.isArray(data.results)) result.results = data.results as NonNullable<OfficeAgentToolsResult["results"]>;
     return result;
   }
@@ -346,6 +385,8 @@ export class OfficeBridgeClient {
     formatCard: unknown;
     bindingSpec: unknown;
     roomId: string;
+    /** 产物归属工作区（跟源文件走；资料库/产物库按空间隔离）。 */
+    workspaceId?: string | null;
     sourceFileName: string;
     sourceFileEntryId: string;
     idempotencyKey: string;

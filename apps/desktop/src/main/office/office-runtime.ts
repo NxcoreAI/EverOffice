@@ -25,10 +25,14 @@ export interface GenOfficeAgentDocDescription {
   tools?: { name: string; description: string; inputSchema: Record<string, unknown> }
   /** 当前文字水印；null = 无 */
   watermark?: string | null
-  /** 当前页面设置（orientation/paper/margins/columns/pageColor） */
-  pageSetup?: Record<string, unknown>[]
+  /** 当前页面设置（orientation/paper/margins/columns/pageColor/sectionCount） */
+  pageSetup?: Record<string, unknown>
   commandsGuide?: string
   htmlRules?: string
+  /** 结构化操作词汇（apply_operations / word_agent_ops）：按域分组的 op 指南。 */
+  operationsGuide?: string
+  /** 文档现场状态：分节/页眉页脚/脚注尾注/书签/来源/保护/域/表格/修订/批注。 */
+  documentState?: Record<string, unknown>
 }
 
 export interface GenOfficeAgentWorkbookDescription {
@@ -46,6 +50,8 @@ export interface GenOfficeDocsRuntime {
   createDocsView(
     openPath?: string,
     options?: {
+      hostMode?: 'tab' | 'everroom'
+      readonly?: boolean
     },
   ): WebContentsView
   markDocsNewBlank(wcId: number): void
@@ -54,6 +60,19 @@ export interface GenOfficeDocsRuntime {
   /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
   requestDocsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   docsQueryDirty(contents: WebContents): Promise<boolean>
+  /**
+   * 文档就绪信号：渲染层在 doc/editor 装载完成后上报 filePath；true = 目标
+   * 工作副本已在编辑器里打开（身份一致），false = 超时/视图销毁/身份不符。
+   * 后台 Agent 会话必须等它才能安全 describe/apply（避免写进空白文档）。
+   */
+  waitForAgentReady(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 应用菜单接管闸门：仅当可见 docs 实例活跃时才允许 docs 菜单覆盖应用菜单。 */
+  setDocsMenuGate(gate: (() => boolean) | null): void
+  /**
+   * 干净画布（EverRoom）：隐藏/显示编辑器操作区（Ribbon/状态栏/标尺/导航）。
+   * hidden 省略 = 切换；渲染层自带恢复胶囊与 ⌘⇧F，隐藏后始终可恢复。
+   */
+  setDocsChromeHidden(contents: WebContents, hidden?: boolean): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */

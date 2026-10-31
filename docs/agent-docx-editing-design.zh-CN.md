@@ -1,7 +1,7 @@
 # Agent 对 Word 文档完整编辑方案
 
-> 状态：设计稿，未排期  
-> 日期：2026-10-17  
+> 状态：已落地（M1–M5，2026-10-30）；实现说明见 `docs/word-agent-editing-implementation.zh-CN.md`  
+> 日期：2026-10-17（设计）/ 2026-10-30（落地）  
 > 关联工程：EverRoom 主仓（网关 documents 模块、桌面 office-bridge）、genoffice 子模块（docx-engine、docs 应用）
 
 ## 1. 方案结论

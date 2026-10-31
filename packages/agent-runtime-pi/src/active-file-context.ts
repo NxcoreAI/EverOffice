@@ -32,8 +32,14 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
       ? "要修改或按页查看 PPT，改用 slides_read（fileId 省略即当前打开的 PPT）读取大纲与元素 id，再用 slides_edit 改。"
       : null,
     activeFile.kind === "docx"
-      ? "要修改这份 Word（改文字/格式、增删段落、插图、水印等）用 word_agent_edit：先 word_agent_read 拿块索引与 HTML/命令规则，再按块索引构造工具调用；office_create 是另建一份新文件，不是修改当前文件。"
+      ? "要修改这份 Word（改文字/格式、增删段落、插图、水印等）用 word_agent_edit：先 word_agent_read 拿块索引与 HTML/命令规则，再按块索引构造工具调用；"
+        + "表格/分页与页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops；office_create 是另建一份新文件，不是修改当前文件。"
       : null,
+    "改 Word 不要求文件已经打开：任何已入库 .docx 都能按 fileId 由后台编辑器读取和编辑（headless 打开、不占页签）。"
+      + "用户说的是“另一份/之前生成的那份”或没给 fileId 时，先用 file_search 按文件名找到 fileId，再 word_agent_read → word_agent_edit/word_agent_ops。",
+    "EverRoom 内嵌的 Word 编辑器可能只显示正文、操作区（Ribbon/工具栏/菜单入口）被隐藏："
+      + "用户的排版、插入、页面设置、批注、引用、审阅等操作一律由你用 word_agent_edit / word_agent_ops 直接完成；"
+      + "不要说“点工具栏/菜单”，也不要让用户自己去找按钮——隐藏操作区不影响你的能力。",
     activeFile.kind === "spreadsheet"
       ? "要修改这份 Excel 用 sheets_agent_edit：先 sheets_agent_read 拿工作簿上下文与 propose_operations 指南；sheets_create 是另建一份新文件，不是修改当前文件。"
       : null,
@@ -41,7 +47,8 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
       ? "它是只读打开：正文可以读取，但不要承诺修改它。"
       : null,
     "file_read 返回的是最近一次保存到磁盘的版本；用户提到刚改但还没保存的内容时，先请用户保存（⌘S）再读。",
-    "编辑工具会检查未保存修改：被拒绝时把“先保存再改”告诉用户，保存后重试；文件没打开时请用户先以可编辑方式打开。",
+    "编辑工具会检查未保存修改：界面里正开着这个文件且有未保存修改时会被拒绝（FILE_UNSAVED），把“先保存再改”告诉用户，保存后重试；"
+      + "文件没打开或 UI 隐藏不是问题——编辑工具会在后台编辑器里打开它，不需要让用户先手动打开或先切页签。",
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 

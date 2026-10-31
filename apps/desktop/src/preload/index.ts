@@ -235,6 +235,12 @@ const api: NxcoreDesktopApi = {
   office: {
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
+    /**
+     * 干净画布：隐藏/显示 Word 编辑器操作区（Ribbon/状态栏/标尺/导航）。
+     * fileId 省略 = 当前焦点 Word 页签；hidden 省略 = 切换。
+     */
+    toggleChrome: (input?: { fileId?: string; hidden?: boolean }) =>
+      ipcRenderer.invoke('office:chrome-toggle', input ?? {}),
     /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
     generateDocxPrototype: (input) => ipcRenderer.invoke('office:generate-docx-prototype', input),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),

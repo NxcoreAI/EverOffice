@@ -38,8 +38,11 @@ tools:
   - sheets_create
   - word_agent_read
   - word_agent_edit
+  - word_agent_ops
+  - word_agent_illustration
   - sheets_agent_read
   - sheets_agent_edit
+  - file_search
   - document_export
   - connector_query
   - connector_read

@@ -13,9 +13,11 @@
 
 | 用户意图 | 工具 | 前置 |
 | --- | --- | --- |
-| 问当前浏览的 Office 文件内容（Word/Excel/PPT/PDF） | file_read | 省略 fileId 即当前文件 |
-| 修改当前打开的 Word | word_agent_read → word_agent_edit | 先读块索引与规则 |
-| 修改当前打开的 Excel | sheets_agent_read → sheets_agent_edit | 先读工作簿上下文与操作指南 |
+| 问当前浏览的 Office 文件内容（Word/Excel/PPT/PDF） | file_read | 省略 fileId 即当前文件；文件不在打开清单里先用 file_search 定位 |
+| 不确定用户说的是哪份文件（“那份报告/之前生成的”） | file_search | 按文件名子串搜索文件库，拿到 fileId 后再用具体读写工具 |
+| 修改任意 Word（不必已经打开，UI 隐藏/没有页签也行） | word_agent_read → word_agent_edit / word_agent_ops / word_agent_illustration | 先读块索引与工具指南；表格/分页与页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops，配图用 word_agent_illustration |
+| 内嵌 Word 的 Ribbon/操作区被隐藏时用户的排版/插入/审阅请求 | word_agent_edit / word_agent_ops | 一律由你直接完成；不要引导用户点工具栏/菜单，隐藏 UI 不影响能力 |
+| 修改 Excel | sheets_agent_read → sheets_agent_edit | 先读工作簿上下文与操作指南 |
 | 查看/修改 PPT 内容 | slides_read → slides_edit | 先读大纲定位元素 |
 | word_agent_* / sheets_agent_* 不可用时做简单文本/单元格替换 | office_edit / sheets_edit | 兜底路线，能力范围见工具说明 |
 | 问已上传 Office/PDF 附件的内容 | document_analysis | 传附件给出的精确 fileEntryId/fileVersionId，等解析结果 |

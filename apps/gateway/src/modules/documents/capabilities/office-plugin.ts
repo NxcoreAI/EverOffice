@@ -4,12 +4,14 @@ import { annotations, manifest } from "./shared.js";
 import { stringArg, success, type DocumentCapabilityPlugin, type DocumentCapabilityTool, type SlidesPageProgressReporter } from "./types.js";
 import type {
   OfficeAgentToolCall,
+  OfficeAgentToolsResult,
   OfficeApplyBytesResult,
   OfficeBridgeClient,
   OfficeSheetBridgeInput,
 } from "./office-bridge-client.js";
 import { applyDocxOps, DocxEditError, readDocxParagraphs, type DocxEditOp } from "../../files/docx-edit.js";
 import { applyXlsxOps, readXlsx, XlsxEditError, type XlsxEditOp } from "../../files/xlsx-edit.js";
+import { resolveAgentImageInput, sniffImageMime, type ResolvedAgentImageInput } from "./agent-image-input.js";
 import {
   SlidesVisualReviewer,
   visualReviewToolPayload,
@@ -34,6 +36,9 @@ import {
  * Word/Excel 走 office_edit / sheets_read+sheets_edit（文本级/单元格级修改）：
  * 网关读当前版本字节 → 改字节 → 桌面端覆盖工作副本、回填版本链并重开视图。
  * 只支持用户已经以可编辑方式打开的文件；有未保存修改时拒绝写回。
+ * - Word 活文档通道（word_agent_read/edit/ops/illustration）：按 fileId 直通
+ *   桌面端的 GenOffice docs 编辑器，不需要文件已在界面上打开（主进程用隐藏
+ *   编辑器 headless 打开并静默保存）；网关只传元数据/工具调用，不搬 docx 字节。
  */
 
 const MAX_HTML_LENGTH = 400_000;
@@ -45,6 +50,8 @@ const MAX_COLS = 50;
 const MAX_CELL_LENGTH = 3000;
 /** 单次 Agent 编辑接受的源文件上限：再大就不适合走 base64 桥，直接拒绝。 */
 const MAX_EDIT_BYTES = 25 * 1024 * 1024;
+/** word_agent_ops 单次事务的 op 数上限（与 word_agent_edit 的 calls 上限一致）。 */
+const MAX_AGENT_OPS = 50;
 
 /** `office_edit`/`sheets_edit` 需要的最小文件访问面（FilesService 的结构子集）。 */
 export interface OfficeFileAccess {
@@ -56,6 +63,83 @@ export interface OfficeFileAccess {
     contentHash: string;
   } | null;
   catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null>;
+}
+
+/**
+ * 宿主生图/读图端口（word_agent_illustration 用）：生成走 ai-relay 生图中转，
+ * 字节按内容哈希进图片对象库（与 PPT 配图同一套 CAS）。未注入时工具不暴露。
+ */
+export interface DocumentIllustrationPorts {
+  generate(prompt: string): Promise<{ contentHash: string }>;
+  read(contentHash: string): Promise<{ buffer: Buffer; mime: string } | null>;
+}
+
+type OfficeAgentToolResultRow = NonNullable<OfficeAgentToolsResult["results"]>[number];
+
+/**
+ * word_agent_edit 的图片入参预处理：insert_image_base64 的 path/url 由网关
+ * 读成字节（模型只给路径/链接，不搬 base64）。单条解析失败只生成该调用的
+ * 错误结果，不拖垮同批其他调用。
+ */
+async function prepareWordAgentToolCalls(calls: OfficeAgentToolCall[]): Promise<{
+  forwarded: OfficeAgentToolCall[];
+  failures: Map<string, OfficeAgentToolResultRow>;
+}> {
+  const forwarded: OfficeAgentToolCall[] = [];
+  const failures = new Map<string, OfficeAgentToolResultRow>();
+  for (const call of calls) {
+    if (call.name !== "insert_image_base64") {
+      forwarded.push(call);
+      continue;
+    }
+    try {
+      const resolved: ResolvedAgentImageInput = await resolveAgentImageInput(call.input ?? {});
+      forwarded.push({ ...call, input: { ...resolved } });
+    } catch (error) {
+      failures.set(call.id, {
+        id: call.id,
+        name: call.name,
+        output: error instanceof Error ? error.message : String(error),
+        isError: true,
+      });
+    }
+  }
+  return { forwarded, failures };
+}
+
+/** 按原始调用顺序合并网关侧失败行与 bridge 执行结果。 */
+function mergeAgentToolResults(
+  calls: OfficeAgentToolCall[],
+  failures: Map<string, OfficeAgentToolResultRow>,
+  bridgeResults: OfficeAgentToolResultRow[],
+): OfficeAgentToolResultRow[] {
+  const byId = new Map(bridgeResults.map((row) => [row.id, row]));
+  const merged: OfficeAgentToolResultRow[] = [];
+  for (const call of calls) {
+    const failure = failures.get(call.id);
+    if (failure) {
+      merged.push(failure);
+      continue;
+    }
+    const row = byId.get(call.id);
+    if (row) merged.push(row);
+  }
+  return merged;
+}
+
+/**
+ * apply_operations 的 output 是渲染层拼好的逐条结果文本；若是 JSON，额外以结构化
+ * `result` 透传，模型不必自己解析字符串（不是 JSON 就原样只给 output）。
+ */
+function parseAgentOpsOutput(output: string | undefined): unknown {
+  if (!output) return null;
+  const text = output.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 /** slides-builder 子代理独占的 4 个 PPT 工具名：主 Agent 工具面按此剔除（单一事实源）。 */
@@ -71,6 +155,9 @@ const HTML_GUIDE = "内容用受限 HTML 片段表达，只允许这些标签：
   + "表格首行用 th，单元格只放纯文本（可用 br 分行），不支持嵌套表格和合并单元格；"
   + "代码示例用 pre，引用用 blockquote；长内容用 h2/h3 分节组织。"
   + "不要包含 html/body 标签、markdown 代码围栏或任何解释性文字。";
+
+/** Word 配图风格提示：报告内嵌示意图，扁平干净、无文字（生图模型画中文标签常出乱码）。 */
+const ILLUSTRATION_PROMPT_SUFFIX = "。画面风格：扁平化矢量示意图/插画，简洁干净，主体清晰，画面中不要出现任何文字或字母";
 
 const PAGESPEC_GUIDE = "每页是一个 JSON 对象（PageSpec）"
   +   + "spec 手写兜底形态：每一页是一个 JSON 对象（PageSpec），画布固定 1280×720 像素、坐标原点左上，x/y/w/h 用整数像素："
@@ -196,6 +283,8 @@ export function officePlugin(
   visualReviewer?: SlidesVisualReviewer | null,
   /** 文件库访问（惰性）：注入后才暴露 office_edit / sheets_read / sheets_edit。 */
   files?: () => OfficeFileAccess | null,
+  /** 宿主生图端口：注入后才暴露 word_agent_illustration。 */
+  illustration?: DocumentIllustrationPorts | null,
 ): DocumentCapabilityPlugin {
   const officeCreate: DocumentCapabilityTool = {
     name: "office_create",
@@ -549,20 +638,24 @@ export function officePlugin(
 
   // ── 改写「用户正开着的那份」Word/Excel ────────────────────────
 
-  async function resolveEditableTarget(
+  type OfficeCatalogEntry = NonNullable<ReturnType<OfficeFileAccess["catalogEntry"]>>;
+
+  /**
+   * 元数据级目标解析（不读文件字节）：word_agent_* 走桌面端隐藏编辑器，
+   * 只需要 fileId + 类型校验，把整份 docx 读进网关既慢又没必要（大文档 base64
+   * 白耗内存，且 headless 编辑根本不经过字节通道）。字节级编辑（office_edit /
+   * sheets_*）仍用下面的 resolveEditableTarget。
+   */
+  async function resolveOfficeTarget(
     args: Record<string, unknown>,
     context: { activeFile?: { fileId: string } },
-  ): Promise<{
-    fileId: string;
-    entry: NonNullable<ReturnType<OfficeFileAccess["catalogEntry"]>>;
-    buffer: Buffer;
-  }> {
+  ): Promise<{ fileId: string; entry: OfficeCatalogEntry; access: OfficeFileAccess }> {
     const access = files?.();
     if (!access) throw new Error("FILE_SERVICE_UNAVAILABLE: 文件服务尚未就绪");
     const explicit = typeof args.fileId === "string" ? args.fileId.trim() : "";
     const fileId = explicit || context.activeFile?.fileId || "";
     if (!fileId) {
-      throw new Error("NO_ACTIVE_FILE: 当前没有打开 Office 文件；请用户先打开要修改的文件，或显式传 fileId");
+      throw new Error("NO_ACTIVE_FILE: 当前没有指定文件；请显式传 fileId（可用 file_search 按文件名查找）");
     }
     const entry = access.catalogEntry(fileId);
     if (!entry) {
@@ -571,14 +664,27 @@ export function officePlugin(
     if (!entry.contentHash) {
       throw new Error(`FILE_CONTENT_UNAVAILABLE: 《${entry.displayName ?? entry.originalName}》还没有可用的文件版本`);
     }
-    const content = await access.catalogContentOf(fileId);
-    if (!content) throw new Error(`FILE_CONTENT_UNAVAILABLE: 读取《${entry.originalName}》失败`);
+    return { fileId, entry, access };
+  }
+
+  /** 字节级目标解析：读当前版本字节，供 office_edit / sheets_* 在网关侧改字节。 */
+  async function resolveEditableTarget(
+    args: Record<string, unknown>,
+    context: { activeFile?: { fileId: string } },
+  ): Promise<{
+    fileId: string;
+    entry: OfficeCatalogEntry;
+    buffer: Buffer;
+  }> {
+    const target = await resolveOfficeTarget(args, context);
+    const content = await target.access.catalogContentOf(target.fileId);
+    if (!content) throw new Error(`FILE_CONTENT_UNAVAILABLE: 读取《${target.entry.originalName}》失败`);
     if (content.buffer.byteLength > MAX_EDIT_BYTES) {
       throw new Error(
         `FILE_TOO_LARGE: 文件 ${(content.buffer.byteLength / 1024 / 1024).toFixed(1)}MB 超过单次编辑上限（25MB）`,
       );
     }
-    return { fileId, entry, buffer: content.buffer };
+    return { fileId: target.fileId, entry: target.entry, buffer: content.buffer };
   }
 
   function applyFailureMessage(title: string, result: OfficeApplyBytesResult): string {
@@ -822,11 +928,13 @@ export function officePlugin(
 
   const wordAgentRead: DocumentCapabilityTool = {
     name: "word_agent_read",
-    title: "读取当前 Word 的块结构与工具指南",
-    description: "读取用户当前浏览（或显式 fileId）的 .docx 的活文档状态：块列表（index|type|内容预览）、全文统计、"
-      + "以及可用的编辑工具词汇表（insert_content/replace_blocks/apply_commands 等）与 HTML 片段规则、命令指南。"
-      + "块索引是 word_agent_edit 的定位依据：每次编辑后索引会变，需要最新索引时重新调用本工具。"
-      + "只读打开的文件也能读。比 office_read 的段落列表更精确（含块类型/预览截断标记）。",
+    title: "读取任意 Word 的块结构与工具指南",
+    description: "按 fileId 读取任意已入库 .docx 的活文档状态（不需要文件在界面上打开，后台编辑器可 headless 打开）："
+      + "块列表（index|type|内容预览）、全文统计、文档状态（章节/页眉页脚/批注/域/引用等 documentState），"
+      + "以及可用的编辑工具词汇表（insert_content/replace_blocks/apply_commands 等）、HTML 片段规则、命令指南与结构化操作指南（operationsGuide）。"
+      + "块索引是 word_agent_edit / word_agent_ops 的定位依据：每次编辑后索引会变，需要最新索引时重新调用本工具。"
+      + "只读打开的文件也能读。比 office_read 的段落列表更精确（含块类型/预览截断标记）。"
+      + "fileId 省略 = 用户当前浏览的文件；要改的文件没打开时先用 file_search 按文件名定位 fileId。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -837,17 +945,23 @@ export function officePlugin(
     },
     annotations: annotations(true, false),
     execute: async (args, context) => {
-      const target = await resolveEditableTarget(args, context);
+      const target = await resolveOfficeTarget(args, context);
       if (!/\.docx$/i.test(target.entry.originalName)) {
         throw new Error(`INVALID_TARGET: word_agent_read 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
       }
       try {
-        const described = await bridge.describeAgentArtifact({ kind: "docx", fileId: target.fileId });
+        const described = await bridge.describeAgentArtifact({
+          kind: "docx",
+          fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+        });
         return success({
           fileId: target.fileId,
           title: target.entry.displayName ?? target.entry.originalName,
           ...described,
-          hint: "用 context 里的块索引驱动 word_agent_edit 的工具调用；replace_blocks/insert_content 的 html 遵循 htmlRules。",
+          hint: "用 context 里的块索引驱动 word_agent_edit 的工具调用；replace_blocks/insert_content 的 html 遵循 htmlRules。"
+            + "表格/页面/批注/域/引用/修订等结构化操作按 operationsGuide 构造 ops，交给 word_agent_ops。",
         });
       } catch (error) {
         throw new Error(agentToolsFailureMessage(
@@ -860,22 +974,28 @@ export function officePlugin(
 
   const wordAgentEdit: DocumentCapabilityTool = {
     name: "word_agent_edit",
-    title: "用文档 AI 工具链编辑当前 Word",
-    description: "把 GenOffice Docs 的编辑器 AI 工具调用直接作用到用户正开着的 .docx 上（编辑实时重绘，随后静默保存并更新版本）。"
+    title: "用文档 AI 工具链编辑任意 Word",
+    description: "把 GenOffice Docs 的编辑器 AI 工具调用直接作用到任意已入库 .docx 上（按 fileId；不需要文件在界面上打开，"
+      + "后台编辑器 headless 打开，编辑后静默保存并更新版本）。"
       + "先 word_agent_read 拿块索引与规则。可用工具（本环境不支持联网类工具）："
       + "get_document_context（刷新块列表）、read_blocks（读块全文）、"
-      + "insert_content（{afterIndex, html} 插入）、replace_blocks（{start, end, html} 区间替换）、"
+      + "insert_content（{afterBlockIndex?, html} 插入）、replace_blocks（{startBlockIndex, endBlockIndex, html} 区间替换）、"
       + "apply_commands（格式/结构/查找替换/批处理，命令见 word_agent_read 返回的 commandsGuide）、"
       + "read_revisions / read_comments / reply_comment / resolve_comment（修订与评论）、"
       + "insert_chart / edit_chart（图表）、set_header_footer（页眉页脚，text 里 {PAGE}/{NUMPAGES} 是页码/总页数域，\n 分行）、"
       + "set_watermark（{text} 设置文字水印如 机密/草稿，text:null 移除；当前水印见 word_agent_read 的 watermark 字段）、"
       + "set_page_setup（{orientation/paperSize/margins(单位 twip, 1cm=567)/columns/pageColor/theme} 页面设置与主题；当前值见 pageSetup 字段）、"
-      + "insert_image_base64（{base64, mime, afterIndex?, maxWidthPx?} 插图：宿主外的取图由你自己完成后传 base64 字节）、"
+      + "insert_image_base64（{path|url|base64, afterIndex?, maxWidthPx?, label?} 插图：优先传本地图片绝对路径 path（本轮自己生成/用户给的图片文件），"
+      + "或公网图片链接 url；网关直接读字节后注入，不需要也不允许把 base64 抄进工具参数）、"
       + "add_comment（{startIndex, endIndex?, text} 在块上建批注）、delete_comment（{id} 删整个批注线程）、"
       + "insert_shape（{prst, widthEmu?, heightEmu?, afterIndex?} 插入形状，prst 如 rect/roundRect/ellipse/triangle/star5/lineArrow）、"
-      + "update_toc（{} 重建目录并回填真实页码）。"
+      + "update_toc（{} 重建目录并回填真实页码）、"
+      + "set_table_width（{blockIndex, widthPercent?/autoFit?} 调整表格宽度：widthPercent 10-100 按文本栏百分比收窄，"
+      + "autoFit 'window' 撑满栏、'contents' 收缩到内容宽；用户说“表格太宽了/调窄一点”就用它）。"
       + "一次最多 50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
-      + "文件必须以可编辑方式打开且有未保存修改时会被拒绝（提示用户先保存）。",
+      + "表格/页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops（ops DSL）更稳，本工具更适合块级内容与格式命令。"
+      + "只有界面里正开着这份文档且有未保存修改时才会被拒绝（提示用户先保存）；没打开或 UI 隐藏时网关会在后台编辑器里打开它，"
+      + "不需要请用户先打开或先保存。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -904,22 +1024,31 @@ export function officePlugin(
       if (!Array.isArray(args.calls) || args.calls.length === 0) {
         throw new Error("INVALID_REQUEST: calls 必须是非空数组");
       }
-      const target = await resolveEditableTarget(args, context);
+      const target = await resolveOfficeTarget(args, context);
       if (!/\.docx$/i.test(target.entry.originalName)) {
         throw new Error(`INVALID_TARGET: word_agent_edit 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
       }
       try {
-        const applied = await bridge.applyAgentArtifactTools({
-          kind: "docx",
-          fileId: target.fileId,
-          calls: args.calls as OfficeAgentToolCall[],
-        });
+        const calls = args.calls as OfficeAgentToolCall[];
+        // insert_image_base64 的 path/url 先由网关读成字节：模型只传路径/链接。
+        const prepared = await prepareWordAgentToolCalls(calls);
+        const applied: OfficeAgentToolsResult = prepared.forwarded.length > 0
+          ? await bridge.applyAgentArtifactTools({
+            kind: "docx",
+            fileId: target.fileId,
+            roomId: context.roomId,
+            workspaceId: context.workspaceId ?? null,
+            calls: prepared.forwarded,
+          })
+          : { ok: true };
+        const results = mergeAgentToolResults(calls, prepared.failures, applied.results ?? []);
         return success({
           fileId: target.fileId,
           title: target.entry.displayName ?? target.entry.originalName,
           ...applied,
+          results,
           nextAction: "report_result",
-          hint: applied.results?.some((r) => r.isError)
+          hint: results.some((row) => row.isError)
             ? "部分调用失败：读每条 output 修正后重试失败的调用；成功条目已生效，不要重复执行。"
             : "修改已生效并保存；回复里只说明改了什么。",
         });
@@ -931,6 +1060,211 @@ export function officePlugin(
       }
     },
   };
+
+  /**
+   * 结构化操作通道：ops DSL 交给渲染层 `apply_operations` 统一执行（逐条隔离失败）。
+   * 网关只做目标校验与转发，不解析 op 语义——op 词汇表由 word_agent_read 的
+   * operationsGuide 下发（渲染层是唯一事实源，避免网关和编辑器双份定义漂移）。
+   */
+  const wordAgentOps: DocumentCapabilityTool = {
+    name: "word_agent_ops",
+    title: "对任意 Word 执行结构化操作（表格/页面/注释/域/引用/修订）",
+    description: "把一组结构化操作（ops）作用到任意已入库 .docx 上（按 fileId；不需要文件在界面上打开，"
+      + "后台编辑器 headless 打开，编辑后静默保存并更新版本）。"
+      + "先 word_agent_read 读 operationsGuide（完整 op 列表与字段）和 documentState（章节/页眉页脚/批注/脚注/域/引用/修订现状），"
+      + "按块索引定位对象。覆盖：表格（增删表格/行列/单元格、合并拆分、单元格内容与底色、列宽行高、边框、自适应）、"
+      + "分页与页面设置、脚注与尾注、页码与域、行内/对象格式、参考文献与交叉引用、修订接受/拒绝。"
+      + "ops 1-50 条，按序执行、逐条隔离（一条失败不影响其他条）；dryRun=true 只校验并返回计划，不落盘。"
+      + "高风险 op（review.accept/reject 全部修订、review.protect、review.encrypt）必须带 confirm: true，"
+      + "调用前先向用户说明影响并取得明确同意；逐条修订 id 用 read_revisions 返回的 [rN]。"
+      + "纯文字/段落/格式/插图仍可用 word_agent_edit。只有界面里正开着这份文档且有未保存修改时才会被拒绝（提示用户先保存）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        ops: {
+          type: "array",
+          minItems: 1,
+          maxItems: MAX_AGENT_OPS,
+          description: "结构化操作数组，每项 {op, ...}；op 名称与字段见 word_agent_read 返回的 operationsGuide",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["op"],
+            properties: { op: { type: "string", minLength: 1 } },
+          },
+        },
+        dryRun: { type: "boolean", description: "true 只校验并返回计划，不落盘" },
+      },
+      required: ["ops"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.ops) || args.ops.length === 0) {
+        throw new Error("INVALID_REQUEST: ops 必须是非空数组（每项一个操作对象）");
+      }
+      if (args.ops.length > MAX_AGENT_OPS) {
+        throw new Error(`INVALID_REQUEST: ops 一次最多 ${MAX_AGENT_OPS} 条，请分批执行`);
+      }
+      const invalidIndex = args.ops.findIndex((op) => !op || typeof op !== "object" || Array.isArray(op));
+      if (invalidIndex >= 0) {
+        throw new Error(
+          `INVALID_REQUEST: ops[${invalidIndex}] 不是操作对象（每项应形如 {"op":"table.insertRow", …}）`,
+        );
+      }
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_agent_ops 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      const title = target.entry.displayName ?? target.entry.originalName;
+      const dryRun = args.dryRun === true;
+      try {
+        const applied = await bridge.applyAgentArtifactTools({
+          kind: "docx",
+          fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+          calls: [{
+            id: "ops-1",
+            name: "apply_operations",
+            input: { ops: args.ops, ...(dryRun ? { dryRun: true } : {}) },
+          }],
+        });
+        const row = applied.results?.[0];
+        // 单条 apply_operations 的成败：宿主级 error 或该调用 isError 都算失败；
+        // 逐条 op 的失败明细在 output/result 里（渲染层已按 op 索引列出）。
+        const failed = row?.isError === true || applied.ok === false;
+        const failure = failed ? (row?.output || applied.error || "桌面端执行失败") : applied.error;
+        const parsed = parseAgentOpsOutput(row?.output);
+        return success({
+          fileId: target.fileId,
+          title,
+          ok: !failed,
+          ...(dryRun ? { dryRun: true } : {}),
+          // 原样透传渲染层的单条结果（id/name/output/isError/mutated/summary，以及端侧附加字段）。
+          ...(row ?? {}),
+          // output 是 JSON 时再给一份结构化结果，模型不必自己解析字符串。
+          ...(parsed !== null ? { result: parsed } : {}),
+          ...(applied.version ? { version: applied.version } : {}),
+          ...(failure ? { error: failure } : {}),
+          nextAction: failed ? "fix_and_retry" : "report_result",
+          hint: failed
+            ? "读 error/output 里的逐条失败原因（含 op 索引/op 名），只重试失败的操作；已成功的操作已生效，不要重复执行。"
+            : dryRun
+              ? "这是 dryRun 计划，尚未落盘；确认无误后同参数去掉 dryRun 再调用一次。"
+              : "操作已生效并保存；回复里只说明改了哪些对象。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(title, error instanceof Error ? error.message : String(error)));
+      }
+    },
+  };
+
+  /** 宿主生图 + 插入：prompt → ai-relay 生图中转 → 图片对象库字节 → 渲染层插入。
+   *  未注入 illustration 端口时不暴露（测试/无生图配置的部署）。 */
+  const wordAgentIllustration: DocumentCapabilityTool | null = illustration ? {
+    name: "word_agent_illustration",
+    title: "为任意 Word 生成并插入配图",
+    description: "按文字描述生成一张示意图并插入任意已入库 .docx（按 fileId；不需要文件在界面上打开，"
+      + "后台编辑器 headless 打开后写入并静默保存）。宿主完成生图与落盘："
+      + "经生图中转出图后直接写入文档，模型不需要也不允许搬运图片字节。"
+      + "先 word_agent_read 拿块索引，再用 afterIndex 指定插在哪一块之后（-1/省略 = 文末）。"
+      + "生成通常需要 60-120 秒；失败会返回可读原因，不要反复重试生图。"
+      + "已存在本地图片文件时改用 word_agent_edit 的 insert_image_base64 {path}；用户给了图片链接时用 {url}。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        prompt: {
+          type: "string",
+          minLength: 1,
+          maxLength: 1200,
+          description: "画面描述（主题/构图/风格，写给生图模型；英文通常更稳）。不要把正文长句原样丢进去。",
+        },
+        afterIndex: {
+          type: "integer",
+          minimum: -1,
+          description: "插在该块之后（块索引来自 word_agent_read）；-1/省略 = 文末",
+        },
+        maxWidthPx: {
+          type: "integer",
+          minimum: 16,
+          maximum: 1200,
+          description: "插入目标宽度（px）；默认 480，实际不超过渲染端上限 620",
+        },
+        label: { type: "string", maxLength: 80, description: "图片替代文字/标签" },
+      },
+      required: ["prompt"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      const target = await resolveOfficeTarget(args, context);
+      const title = target.entry.displayName ?? target.entry.originalName;
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_agent_illustration 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+      if (!prompt) throw new Error("INVALID_REQUEST: prompt 不能为空");
+      const afterIndexRaw = Number(args.afterIndex ?? -1);
+      const afterIndex = Number.isInteger(afterIndexRaw) ? afterIndexRaw : -1;
+      const widthRaw = Number(args.maxWidthPx ?? 480);
+      const maxWidthPx = Number.isFinite(widthRaw) ? Math.min(1200, Math.max(16, Math.trunc(widthRaw))) : 480;
+      const rawLabel = typeof args.label === "string" ? args.label.trim() : "";
+      const label = (rawLabel || "Illustration").slice(0, 80);
+
+      let generated: { contentHash: string };
+      try {
+        generated = await illustration.generate(`${prompt}${ILLUSTRATION_PROMPT_SUFFIX}`);
+      } catch (error) {
+        throw new Error(
+          `ILLUSTRATION_UNAVAILABLE: 生图失败（${error instanceof Error ? error.message : String(error)}）。`
+          + "可以改用本地图片：word_agent_edit 的 insert_image_base64 {path}（例如你自己生成/用户提供的 PNG 绝对路径），"
+          + "或请用户提供图片；不要反复重试生图。",
+        );
+      }
+      const bytes = await illustration.read(generated.contentHash);
+      if (!bytes) {
+        throw new Error("ILLUSTRATION_UNAVAILABLE: 生图产物读取失败（图片对象库未命中）；请改用本地图片 path 插入。");
+      }
+      const mime = sniffImageMime(bytes.buffer);
+      if (!mime) throw new Error("ILLUSTRATION_UNAVAILABLE: 生图返回的格式不受支持（只支持 PNG/JPEG/GIF）。");
+      try {
+        const applied = await bridge.applyAgentArtifactTools({
+          kind: "docx",
+          fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+          calls: [{
+            id: "illustration-1",
+            name: "insert_image_base64",
+            input: {
+              base64: bytes.buffer.toString("base64"),
+              mime,
+              afterIndex,
+              maxWidthPx,
+              label,
+            },
+          }],
+        });
+        const row = applied.results?.[0];
+        if (row?.isError) throw new Error(`INSERT_IMAGE_FAILED: ${row.output}`);
+        return success({
+          fileId: target.fileId,
+          title,
+          contentHash: generated.contentHash,
+          applied: true,
+          ...applied,
+          nextAction: "report_result",
+          hint: "配图已生成并插入；回复里说明插到了哪一节，不要重复生成。",
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("INSERT_IMAGE_FAILED:")) throw error;
+        throw new Error(agentToolsFailureMessage(title, error instanceof Error ? error.message : String(error)));
+      }
+    },
+  } : null;
 
   const sheetsAgentRead: DocumentCapabilityTool = {
     name: "sheets_agent_read",
@@ -1050,7 +1384,16 @@ export function officePlugin(
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
       "用户要求修改“我正开着的/这份 Word 或 Excel”时：Word 先 office_read 拿段落原文、Excel 先 sheets_read 看结构，"
       + "再用 office_edit / sheets_edit 按原文片段或单元格地址改；不要用 office_create/sheets_create 重建一份新文件。"
-      + "被 FILE_UNSAVED 拒绝时先把“先保存再改”告诉用户，保存后重试；被 FILE_NOT_OPEN 拒绝时请用户先以可编辑方式打开文件。",
+      + "office_edit 是字节级兜底（要求文件已打开）；Word 能用 word_agent_* 时优先走 headless 通道路线。"
+      + "被 FILE_UNSAVED 拒绝时先把“先保存再改”告诉用户，保存后重试；只有走 office_edit 兜底被 FILE_NOT_OPEN 拒绝时，才请用户先以可编辑方式打开。",
+      "修改任意 Word（用户提到的那份 .docx 不必已经打开，UI 里看不到页签也能改）：先 word_agent_read（要现成 fileId 就先用 file_search 按文件名找），"
+      + "再按任务选 word_agent_edit（块级内容/格式/插图/水印/页眉页脚等工具调用）或 word_agent_ops（表格/分页与页面设置/批注/脚注/域/引用/修订等结构化 ops）。"
+      + "后台编辑器会按 fileId headless 打开并静默保存，不要要求用户先打开、先另存或先切到那个页签；"
+      + "只有该文件正开着且有未保存修改时才需要用户先保存（FILE_UNSAVED）。",
+      "用户要求在 Word 里配图/插图时：先 word_agent_read 拿块索引，再调用 word_agent_illustration 生成并插入"
+      + "（prompt 只描述画面，不要把正文长句原样丢给生图模型）；不要用 bash/matplotlib 现画图再想办法把 base64 传进工具参数。"
+      + "已有本地图片（用户给的路径或你自己生成的 PNG）用 word_agent_edit 的 insert_image_base64 {path}；"
+      + "用户给了图片 URL 用 {url}。绝不要把 base64 字节写进工具参数。",
     ],
     tools: [
       officeCreate,
@@ -1060,7 +1403,8 @@ export function officePlugin(
       slidesRead,
       slidesEdit,
       ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
-      ...(files ? [wordAgentRead, wordAgentEdit, sheetsAgentRead, sheetsAgentEdit] : []),
+      ...(files ? [wordAgentRead, wordAgentEdit, wordAgentOps, sheetsAgentRead, sheetsAgentEdit] : []),
+      ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],
   };
 }

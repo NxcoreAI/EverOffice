@@ -54,6 +54,7 @@ import { createSelectionRewriteContentResolver } from "../modules/documents/capa
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
+import type { DocumentIllustrationPorts } from "../modules/documents/capabilities/office-plugin.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
@@ -100,7 +101,7 @@ import { filesRoutes } from "../modules/files/routes.js";
 import { SlideImageStore } from "../modules/slides-style/image-store.js";
 import { slideImageRoutes } from "../modules/slides-style/image-routes.js";
 import { FilesService } from "../modules/files/service.js";
-import { createFileReadPiTool } from "../modules/files/pi-tools.js";
+import { createFileReadPiTool, createFileSearchPiTool } from "../modules/files/pi-tools.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
 import { connectorRoutes } from "@nxcore/connectors-module/routes.js";
@@ -482,6 +483,17 @@ export async function createServer(config: GatewayConfig) {
   // Office 桥与视觉复检器共享单实例：office-plugin 工具与 slides-layout-tail 落页尾部共用。
   const officeBridgeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
   const slidesVisualReviewer = new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) });
+  // 图片对象库 + 生图中转：PPT 配图与 Word 配图（word_agent_illustration）共用同一实例——
+  // 生图产物按内容哈希进 CAS，读回字节再插进文档，模型不搬运 base64。
+  const slideImageStore = new SlideImageStore(db, config.dataDir);
+  const slidesStyleImageGenerator = new SlidesStyleImageGenerator(aiRelaySessions, slideImageStore);
+  const documentIllustration: DocumentIllustrationPorts = {
+    generate: async (prompt) => {
+      const generated = await slidesStyleImageGenerator.generateImage({ prompt });
+      return { contentHash: generated.contentHash };
+    },
+    read: (contentHash) => slideImageStore.readByHash(contentHash),
+  };
   // 无模版风格管线依赖 filesService/materials（晚于工具装配创建）：getter 惰性取。
   const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
@@ -503,6 +515,8 @@ export async function createServer(config: GatewayConfig) {
       slidesVisualReviewer,
       // 改“用户正开着的那份”Word/Excel：filesService 在更后面创建，惰性取。
       () => filesService,
+      // Word 配图：宿主生图（ai-relay）+ 图片对象库，一步生成并插入。
+      documentIllustration,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -680,6 +694,9 @@ export async function createServer(config: GatewayConfig) {
         files: () => filesService,
         understanding: () => documentUnderstandingService,
       }),
+      // 按文件名在文件库定位 fileId：用户只说“那份报告”/要改的文件没打开时，
+      // 先搜出 fileId 再交给 file_read / word_agent_*（同样惰性取 filesService）。
+      createFileSearchPiTool({ files: () => filesService }),
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
@@ -889,9 +906,8 @@ export async function createServer(config: GatewayConfig) {
     orchestrator: subagentOrchestrator,
     officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
   });
-  // 幻灯片图片对象库（原素材库的字节存取部分）：生图产物与文档内嵌图按内容哈希
-  // 寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。
-  const slideImageStore = new SlideImageStore(db, config.dataDir);
+  // 幻灯片图片对象库（原素材库的字节存取部分）：与 Word 配图共用上面的 slideImageStore，
+  // 生图产物与文档内嵌图按内容哈希寻址，服务 everroom-material:// 引用与 GET /v1/materials/:hash 回源。
   filesService.initializeCatalog();
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
@@ -901,7 +917,7 @@ export async function createServer(config: GatewayConfig) {
   const pageImageRunner = new SlidesPageImageRunner();
   slidesStyleDepsRef.current = {
     sessions: new SlidesStyleSessionStore(db),
-    images: new SlidesStyleImageGenerator(aiRelaySessions, slideImageStore),
+    images: slidesStyleImageGenerator,
     vlm: createVlmProvider(config),
     readMaterialBytes: (hash) => slideImageStore.readByHash(hash),
     demoRenderer: slidesStyleOfficeClient

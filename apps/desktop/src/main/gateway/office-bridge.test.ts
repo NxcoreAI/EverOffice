@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { OfficeBridgeServer } from './office-bridge'
+import { OfficeBridgeServer, type OfficeAgentToolsRequest } from './office-bridge'
 import type { OfficeAgentFileEvent } from '../../shared/office'
 import type { FilesGatewayBridge } from './files-gateway-bridge'
 import type {
@@ -209,6 +209,56 @@ describe('office-apply-bytes：Agent 改写当前打开的 Word/Excel', () => {
         }),
       })
       expect(response.status).toBe(503)
+    } finally {
+      await server.stop()
+    }
+  })
+})
+
+describe('office-agent-tools：后台 Word 会话', () => {
+  it('docx not_open 不再广播 open-edit（registry 会后台拉起隐藏编辑会话）', async () => {
+    const events: OfficeAgentFileEvent[] = []
+    const agentTools = vi.fn(async (_req: OfficeAgentToolsRequest) => ({
+      ok: false as const,
+      reason: 'not_open' as const,
+      message: '后台编辑器未就绪',
+      open: [],
+    }))
+    const fileEntryLookup = vi.fn(async () => fileEntry({ originalName: '报告.docx' }))
+    const server = new OfficeBridgeServer(
+      () => ({ get: fileEntryLookup, catalogEntry: fileEntryLookup }) as unknown as FilesGatewayBridge,
+      (event) => events.push(event),
+      () => null,
+      () => null,
+      () => null,
+      () => agentTools,
+    )
+    const { baseUrl, token } = await server.start()
+    try {
+      const response = await fetch(`${baseUrl}/v1/office-agent-tools`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'docx',
+          mode: 'read',
+          fileId: 'file-1',
+          roomId: 'room-1',
+          workspaceId: 'ws-1',
+        }),
+      })
+      expect(response.status).toBe(422)
+      const body = await response.json() as { code?: string; message?: string }
+      expect(body.code).toBe('not_open')
+      expect(body.message).toContain('后台')
+      // Word 不再走“请渲染端开可见页签”的旧兜底：只调一次，不广播 open-edit。
+      expect(agentTools).toHaveBeenCalledOnce()
+      expect(agentTools.mock.calls[0]![0]).toMatchObject({
+        kind: 'docx',
+        fileId: 'file-1',
+        roomId: 'room-1',
+        workspaceId: 'ws-1',
+      })
+      expect(events).toEqual([])
     } finally {
       await server.stop()
     }

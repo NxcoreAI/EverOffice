@@ -80,7 +80,23 @@ export interface OfficeAgentToolsRequest {
   fileId: string
   /** apply：docs/sheets AI 工具调用（id/name/input）。 */
   calls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
+  /** 后台 Word 会话回填版本链时的归属（跟当前 Run 的 Room/工作区走）。 */
+  roomId?: string | null
+  workspaceId?: string | null
 }
+
+/** 后台 Word 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
+type OfficeAgentToolsFailureReason =
+  | 'not_open'
+  | 'not_editable'
+  | 'unsaved'
+  | 'not_found'
+  | 'not_docx'
+  | 'too_large'
+  | 'encrypted'
+  | 'open_failed'
+  | 'save_failed'
+  | 'error'
 
 function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (!value || typeof value !== 'object') return false
@@ -88,6 +104,8 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (input.kind !== 'docx' && input.kind !== 'spreadsheet') return false
   if (input.mode !== 'read' && input.mode !== 'apply') return false
   if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
+  if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
+  if (input.workspaceId !== undefined && input.workspaceId !== null && typeof input.workspaceId !== 'string') return false
   if (input.calls !== undefined) {
     if (!Array.isArray(input.calls) || input.calls.length === 0 || input.calls.length > 50) return false
     if (!input.calls.every((call) => call && typeof call === 'object'
@@ -109,6 +127,8 @@ export interface OfficeReformatRequest {
   formatCard?: ThesisFormatCardPayload
   bindingSpec?: ThesisBindingSpecPayload
   roomId?: string
+  /** 产物归属工作区（跟源文件走；资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null
   sourceFileName?: string
   sourceFileEntryId?: string
   idempotencyKey?: string
@@ -194,6 +214,7 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
     if (!input.sheets.every((sheet) => sheet && typeof sheet === 'object' && Array.isArray(sheet.rows))) return false
   }
   return (input.roomId == null || typeof input.roomId === 'string')
+    && (input.workspaceId == null || typeof input.workspaceId === 'string')
     && (input.fileName == null || typeof input.fileName === 'string')
     && typeof input.idempotencyKey === 'string' && input.idempotencyKey.length >= 8
     && (input.deferDone === undefined || typeof input.deferDone === 'boolean')
@@ -267,7 +288,12 @@ export class OfficeBridgeServer {
     private readonly agentTools: () =>
       | ((req: OfficeAgentToolsRequest) => Promise<
         | { ok: true; data: Record<string, unknown> }
-        | { ok: false; reason: 'not_open' | 'not_editable' | 'unsaved'; open?: unknown[] }
+        | {
+          ok: false
+          reason: OfficeAgentToolsFailureReason
+          message?: string
+          open?: unknown[]
+        }
       >)
       | null = () => null,
   ) {}
@@ -368,9 +394,9 @@ export class OfficeBridgeServer {
     const agentTools = this.agentTools()
     if (!agentTools) return { status: 503, body: { message: 'EverRoom Office 宿主执行器尚未就绪' } }
     let outcome = await agentTools(req)
-    // 与 /v1/office-edit 同规则：重启后文件未打开时，显式 fileId 先请渲染端
-    // 以可编辑方式打开再重试（8s 内部等待 + 30s 外层兜底）。
-    if (!outcome.ok && outcome.reason === 'not_open' && req.fileId !== 'active') {
+    // Word 不走“请渲染端开一个可见页签”的旧兜底：registry 会在后台拉起隐藏
+    // 编辑器会话（不弹页签）。Excel/PPT 仍保留自动打开重试。
+    if (!outcome.ok && outcome.reason === 'not_open' && req.kind !== 'docx' && req.fileId !== 'active') {
       console.info('office-bridge: office-agent-tools 命中 not_open，尝试自动打开', { fileId: req.fileId })
       const opened = await this.requestRendererOpen(req.fileId)
       if (opened) {
@@ -383,14 +409,23 @@ export class OfficeBridgeServer {
     if (!outcome.ok) {
       const kindLabel = req.kind === 'docx' ? 'Word' : 'Excel'
       const openSummary = describeOpenInstances(outcome.open)
+      const detail = outcome.message ? `（${outcome.message}）` : ''
       const message =
         outcome.reason === 'unsaved'
           ? `该${kindLabel}文件有未保存的修改，为避免覆盖用户输入已拒绝执行。请先让用户保存（或等自动保存完成）再重试。${openSummary}`
           : outcome.reason === 'not_editable'
             ? `该${kindLabel}文件当前不是以可编辑方式打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
-            : req.fileId === 'active'
-              ? `当前没有已打开的${kindLabel}文件。若知道目标文件的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在产物库打开该文件。${openSummary}`
-              : `fileId 对应的${kindLabel}文件未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在产物库打开该文件。${openSummary}`
+            : outcome.reason === 'not_found'
+              ? `文件不在文件库中（可能仍在导入或已被删除）。${detail}`
+              : outcome.reason === 'encrypted'
+                ? `${detail || '该文件有打开密码。'}请先在编辑器里打开并输入密码后再让 Agent 修改。`
+                : outcome.reason === 'too_large'
+                  ? `${detail || '文件过大，超出后台编辑上限。'}`
+                  : outcome.reason === 'not_docx' || outcome.reason === 'open_failed'
+                    ? `无法在后台打开该${kindLabel}文件。${detail}`
+                    : req.fileId === 'active'
+                      ? `当前没有已打开的${kindLabel}文件。若知道目标文件的 fileEntryId，把它作为 fileId 传入即可后台编辑；不知道时可先用 file_search 按文件名查找。${openSummary}`
+                      : `fileId 对应的${kindLabel}文件未能打开。请核对 fileEntryId 后重试。${openSummary}${detail}`
       return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.data } }
@@ -462,6 +497,7 @@ export class OfficeBridgeServer {
             originalName,
             sourceKey: `agent:docx-thesis:${req.sourceFileEntryId}:${req.idempotencyKey}`,
             ...(req.roomId ? { roomId: req.roomId } : {}),
+            ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
           })
         } catch (error) {
           throw new Error(
