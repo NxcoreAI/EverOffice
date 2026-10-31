@@ -195,7 +195,7 @@ op 词汇表由 read 响应下发，agent 不硬编码。理由：词汇演进�
 ## 8. 不做什么
 
 1. 不给 agent 接受或拒绝修订的权限。审阅权留给用户。
-2. 不在本通道做 Excel 编辑。另立方案。
+2. 不在本通道做 Excel 编辑。Excel 的 agent 编辑已另立实现，见 `docs/xlsx-agent-editing-implementation.zh-CN.md`。
 3. 第一期不做表格结构编辑与合并单元格。
 4. 不做多人协同编辑。
 5. 不改 docs 应用现有内嵌 AI 的行为。

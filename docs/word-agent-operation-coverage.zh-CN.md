@@ -2,7 +2,7 @@
 
 > 目的：GenOffice Word 编辑器的**操作区（Ribbon/工具栏/命令入口）可以隐藏，只留正文画布**；用户需要的一切文档操作由 EverRoom agent 完成。本文逐项对照「操作区入口 → agent 能力」。
 > 相关：`docs/word-agent-editing-implementation.zh-CN.md`、`word-agent-test-prompts.md`
-> 状态：2026-10-31，`word_agent_ops` 共 **58 个 op / 9 个域** + 原有 `word_agent_edit` 工具链。
+> 状态：2026-10-31，`word_agent_ops` 共 **69 个 op / 10 个域** + `word_agent_edit` 工具链 + `word_compare` / `word_export_pdf`。
 
 ## 1. 为什么隐藏操作区不影响能力
 
@@ -28,6 +28,7 @@
 | 段落对话框的制表位/前导符 | ✅ `format.setTabStops` |
 | 样式库（正文/标题1-3） | ✅ `format.applyStyle` |
 | 字符样式卡（强调/Strong、文档字符样式） | ✅ `format.applyCharacterStyle` |
+| 从选区新建字符样式 | ✅ `format.createCharacterStyle`（仅字符样式，styles.xml 定向写回） |
 | 项目符号/编号库、自定义多级列表 | ✅ `format.applyListStyle`、`format.multilevelList` |
 | 列表重新开始/继续编号 | ✅ `format.listRestart` / `format.listContinue` |
 | 查找与替换（全部替换、忽略大小写） | ✅ `apply_commands.replaceAllText` |
@@ -39,12 +40,13 @@
 | 操作区项 | Agent 能力 |
 |---|---|
 | 插入表格（含自定义行列） | ✅ `table.insert` |
-| 图片（本地/网络/生成） | ✅ `insert_image_base64 {path\|url\|base64}`、`word_agent_illustration` |
+| 图片（文件库/本地/网络/生成） | ✅ `insert_image_base64 {fileId\|path\|url\|base64}`、`word_agent_illustration` |
 | 图表（柱/折线/饼）与改数据 | ✅ `insert_chart` / `edit_chart` |
 | 形状（预设图形/线条） | ✅ `insert_shape`、`object.shape.format` |
 | 文本框 / WordArt / 首字下沉 | ✅ `object.textbox.insert` / `object.wordArt.insert` / `object.dropCap` |
 | 公式插入 | ✅ `insert_content` 的 `<formula>` 或 `object.equation.insert` |
 | 公式再编辑 | ✅ `object.equation.update`（原位更新，不新增） |
+| 公式块级↔行内互转 | ✅ `object.equation.convert`（`to: inline|block`） |
 | 符号 / 不间断空格等 | ✅ `object.symbol.insert` |
 | 页眉页脚（文字、页码、首页不同/奇偶页） | ✅ `set_header_footer` |
 | 页码格式与起始页 | ✅ `page.numberFormat` |
@@ -52,7 +54,7 @@
 | 超链接/书签/交叉引用 | ✅ `insert_content` 的 `<a>` / `reference.bookmark.insert` / `reference.crossRef.insert` |
 | 分页符 / 空白页 / 封面 | ✅ `page.break` / `page.blank` / `page.cover` |
 | 换行符 / 分栏符 | ✅ `format.insertBreak` |
-| 页眉页脚内嵌图片 | — 明确不支持（需要宿主图片字节；后续可补） |
+| 页眉页脚内嵌图片 | ✅ `headerFooter.insertImage / removeImage / replaceImage`（默认 header/footer part；新增 media/rels/drawing 可保存读回；replaceImage 一步换图） |
 
 ### 2.3 布局（Layout）与设计（Design）
 
@@ -88,7 +90,7 @@
 | 接受/拒绝修订（单条按 `[rN]` / 全部） | ✅ `review.accept` / `review.reject`（必须 `confirm:true`） |
 | 保护文档（只读/批注/表单等） | ✅ `review.protect`（必须 `confirm:true`；密码不回显） |
 | 文档加密/取消密码 | ✅ `review.encrypt`（必须 `confirm:true`；密码不回显） |
-| 文档比较（Compare） | — 明确不支持（跨文件比较，后续单独立项） |
+| 文档比较（Compare） | ✅ `word_compare`（段落文本 LCS diff；不比格式/表格结构/图片） |
 
 ### 2.6 表格上下文 / 图片格式
 
@@ -100,16 +102,19 @@
 | AutoFit（窗口/内容/固定） | ✅ `table.autoFit` |
 | 表格排序 | — UI 本身未实现（disabled） |
 | 图片尺寸/对齐/环绕/位置/旋转/翻转/z-order | ✅ `object.image.format` |
-| 图片替换 / 裁剪 / 去背景 | — 明确不支持（需要宿主图片字节/像素编辑；先用外部工具处理再 `insert_image_base64`，或插图+删旧块） |
-| 导入形状的 z-order | ◐ 引擎限制：仅编辑器内创建的形状可重排 |
+| 图片替换 | ✅ `object.image.replace`（gateway 解析 fileId/path/url → 原图 `imageReplace` 原位换字节；新图 `genImage`） |
+| 图片裁剪 | ✅ `object.image.crop`（自然尺寸 px，或 `unit:"fraction"` 0..1 相对矩形；canvas 裁剪后走替换路径） |
+| 去背景（容差抠图） | ✅ `object.image.removeBackground`（本地容差抠图，无需 AI；自动主体分割仍不支持） |
+| 导入形状的 z-order | ✅ `object.shape.zOrder`（导入形状定向 patch `wp:anchor@relativeHeight`；inline/VML 无锚点形状明确报错） |
 
 ### 2.7 视图 / 绘图 / 文件
 
 | 操作区项 | Agent 能力 |
 |---|---|
 | 缩放、标尺、导航、深色画布、阅读模式、分屏 | — 视图设置，不属于文档内容；干净画布下本来就被隐藏 |
-| 手绘（钢笔/荧光笔/橡皮） | — 明确不支持；可插入图片替代 |
-| 打印、导出 PDF | — 宿主级能力，不在 `word_agent_ops`（EverRoom 有独立导出入口） |
+| 手绘（钢笔/荧光笔/橡皮） | ✅ `object.ink.add`（程序化笔画）与 `object.ink.mark`（按段落位置画下划线/删除线，一句话可用）；也可插图片替代 |
+| 导出 PDF | ✅ `word_export_pdf`（LibreOffice 转换 → 新 PDF 入文件库，不覆盖原 Word） |
+| 打印 | ◐ 物理打印不可由 agent 完成：agent 会先 `word_export_pdf` 再提示用户在系统里打印 |
 | 保存/另存为 | ✅ 保存由编辑器/宿主自动完成；agent 编辑后静默保存并回填版本链 |
 
 ## 3. 干净画布隐藏了哪些
@@ -120,10 +125,12 @@
 
 ## 4. 已知限制汇总
 
-1. 图片替换/裁剪/去背景、页眉页脚内嵌图片：需要宿主图片字节或像素操作，暂不支持。
-2. 文档比较、打印/导出 PDF：跨文件/宿主级能力，未做成 op。
-3. 手绘 ink：未支持，用图片替代。
-4. 字符样式：两个内置预设（强调/Strong）+ 文档已有字符样式；不支持新建字符样式定义。
+1. 自动主体分割（AI 去背景）仍不支持；只支持本地容差抠图 `object.image.removeBackground`。
+2. 物理打印不可由 agent 完成：`word_export_pdf` 导出后由用户/宿主打印。
+3. 页眉页脚图片：App 桥当前只暴露默认 header/footer part（引擎支持 first/even/per-section，但宿主状态桥未接）；按段落删除，含多图的段落会整段移除。
+4. ink 坐标按页面内容框归一化，页首附近最精确；分页相对偏移未暴露，翻页位置可能略有偏差。
+5. `format.createCharacterStyle` 只创建字符样式，不支持段落样式创建/删除/重命名。
 5. 整词替换的边界按 ASCII 字母/数字/下划线判定；CJK 没有词边界（文档内已注明）。
-6. 公式再编辑只能在块级↔块级、行内↔行内原位更新，不能互相转换。
-7. 导入形状的 z-order 不可改（原始锚点保留）。
+6. `word_compare` 只比较段落文本，不比较格式/表格结构/图片。
+7. 导入形状 z-order 要求原 XML 有 `wp:anchor@relativeHeight`；inline/VML 形状会明确报错。
+8. 公式互转要求公式有 LaTeX 源；块级→行内需要相邻段落（没有则新建一个）。

@@ -341,7 +341,7 @@ docParagraph/docHeading/docListItem，全文档操作只改一种算失败）。
 
 ---
 
-## 第九组：word_agent_ops 结构化操作（B1-B5，58 个 op）
+## 第九组：word_agent_ops 结构化操作（B1-B5+A1+A3+A4，69 个 op / 10 个域）
 
 > 统一入口 `word_agent_ops {fileId, ops: [...], dryRun?}`（1-50 条、逐条隔离）。
 > 先 `word_agent_read` 读 `operationsGuide`（op 名与字段）和 `documentState`（现状），不要凭记忆编 op。
@@ -461,6 +461,82 @@ docParagraph/docHeading/docListItem，全文档操作只改一种算失败）。
 
 - 宿主顶栏/菜单接入 `window.desktop.office.toggleChrome({ hidden })`，能隐藏/显示当前 Word 操作区。
 - 焦点在宿主界面（不在内嵌编辑器）时，宿主快捷键也能切换。
+
+---
+
+## 第十一组：图片/形状/公式/比较/导出（A1-A2）
+
+> 图片来自文件库时（“刚上传的 logo / 之前生成的图”）不需要给磁盘路径：agent 会先用 file_search 找 fileId，图片入参传 fileId。
+
+### 11.1 图片替换 / 裁剪 / 去背景
+
+```
+把“市场概况”里第一张图片换成 /tmp/scene.png；
+然后把同一张图裁成中间 60% 的区域；
+最后把它的背景（纯色底）用容差抠掉。
+```
+
+建议调用：`object.image.replace {blockIndex, path}`（agent 传 path，网关读字节）、
+`object.image.crop {blockIndex, rect}`、`object.image.removeBackground {blockIndex, tolerance}`。
+验证点：替换后位置/环绕不变、只有图片字节变；裁剪/抠图后保存重开仍生效；原图（docx 自带）也能替换。
+
+### 11.2 导入形状 z-order / 公式互转
+
+```
+把文档里那个导入的箭头形状移到最上层；把“技术趋势”的块级公式改成行内公式。
+```
+
+建议调用：`object.shape.zOrder {blockIndex, order:'front'}`、`object.equation.convert {blockIndex, to:'inline'}`。
+验证点：形状叠放顺序变化且其它锚点属性不变；公式从独占一行变成随文；反向 `to:'block'` 也能回去。
+
+### 11.3 文档比较 / 导出 PDF
+
+```
+对比《报告 v1》和《报告 v2》改了什么，列成增/删/改清单；
+再把当前文档导出成 PDF 放到文件库。
+```
+
+建议调用：`word_compare {fileId, otherFileId}`、`word_export_pdf {fileId}`。
+再补一句“打印这份文档”，预期 agent 先导出 PDF 再提示你到系统里打印。
+验证点：比较结果只含段落文本差异（说明不比格式）；导出后文件库出现同名 .pdf，原 Word 不变；
+PDF 能正常打开且页数与编辑器一致（LibreOffice 转换，复杂版式可能与屏显略有差异）。
+
+---
+
+## 第十二组：页眉页脚图片 / 手绘 / 新建字符样式（A3）
+
+```
+在页脚右侧插入一张公司 Logo（/tmp/logo.png），宽度 3cm；
+在“市场概况”第一段下面画一条红色下划线（手绘，y 位置贴该段落底部）；
+从当前选区新建一个字符样式“重点标记”（加粗、红色），并应用到“技术趋势”的标题上。
+```
+
+建议调用：`headerFooter.replaceImage {kind:'footer', fileId, align:'right'}`（文件库图片直接传 fileId；一句话换页脚图）、
+`object.ink.add {strokes:[{color:'FF0000', widthPx:2, points:[...]}]}`、
+`format.createCharacterStyle {name:'重点标记', bold:true, color:'FF0000'}`。
+验证点：页眉页脚图片保存重开仍在（引擎新建 media/rels）；ink 保存后可见；新字符样式出现在
+`word_agent_read` 的 documentState.characterStyles 里并可再次应用。
+限制：默认 header/footer part；ink 在页首附近定位最精确；新建仅支持字符样式。
+
+---
+
+## 第十三组：口语化一句话验收（A4）
+
+> 不需要给 op 名或字段，就说人话；agent 应自己 read → 选 op。
+
+```
+把刚上传的公司 logo 换到页脚右侧。
+把技术趋势的图裁成中间一半。
+在最后一段下面画一条红色下划线。
+把页脚那张图换成 /tmp/new-logo.png。
+打印这份文档。
+```
+
+验证点：
+- “刚上传的 logo” → 先 file_search 找图片 fileId，再 `headerFooter.replaceImage {fileId}`；
+- “裁中间一半” → `object.image.crop {unit:'fraction', rect:{x:0,y:0.25,w:1,h:0.5}}`；
+- “画红线” → `object.ink.mark {blockIndex, position:'bottom', color:'FF0000'}`（不需要页面坐标）；
+- “打印” → 先 `word_export_pdf` 再提示你在系统里打印，而不是只说“不支持”。
 
 ---
 
