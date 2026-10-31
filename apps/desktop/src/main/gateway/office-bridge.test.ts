@@ -264,3 +264,96 @@ describe('office-agent-tools：后台 Word 会话', () => {
     }
   })
 })
+
+describe('office-export-pdf：Word → PDF 并入库', () => {
+  it('把 fileId/归属转给桌面导出器，并回传新 PDF fileId', async () => {
+    const exportPdf = vi.fn(async (req: {
+      fileId: string
+      fileName?: string | null
+      roomId?: string | null
+      workspaceId?: string | null
+    }) => ({
+      ok: true as const,
+      fileId: 'file-pdf-1',
+      originalName: req.fileName ?? '报告.pdf',
+      contentHash: 'e'.repeat(64),
+    }))
+    const server = new OfficeBridgeServer(
+      () => null,
+      () => undefined,
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      () => exportPdf,
+    )
+    const { baseUrl, token } = await server.start()
+    try {
+      const response = await fetch(`${baseUrl}/v1/office-export-pdf`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: 'file-docx-1',
+          fileName: '季度报告.pdf',
+          roomId: 'room-1',
+          workspaceId: 'ws-1',
+        }),
+      })
+      expect(response.status).toBe(200)
+      expect(exportPdf).toHaveBeenCalledWith(expect.objectContaining({
+        fileId: 'file-docx-1',
+        fileName: '季度报告.pdf',
+        roomId: 'room-1',
+        workspaceId: 'ws-1',
+      }))
+      expect((await response.json()).data).toMatchObject({
+        ok: true,
+        fileId: 'file-pdf-1',
+        originalName: '季度报告.pdf',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('导出器报错 → 422，可读原因回传', async () => {
+    const server = new OfficeBridgeServer(
+      () => null,
+      () => undefined,
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      () => async () => ({ ok: false as const, message: '本机未安装 LibreOffice' }),
+    )
+    const { baseUrl, token } = await server.start()
+    try {
+      const response = await fetch(`${baseUrl}/v1/office-export-pdf`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId: 'file-1' }),
+      })
+      expect(response.status).toBe(422)
+      const body = await response.json() as { code?: string; message?: string }
+      expect(body.code).toBe('export_failed')
+      expect(body.message).toContain('LibreOffice')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('未注入导出能力 → 503', async () => {
+    const server = new OfficeBridgeServer(() => null, () => undefined, () => null, () => null)
+    const { baseUrl, token } = await server.start()
+    try {
+      const response = await fetch(`${baseUrl}/v1/office-export-pdf`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId: 'file-1' }),
+      })
+      expect(response.status).toBe(503)
+    } finally {
+      await server.stop()
+    }
+  })
+})

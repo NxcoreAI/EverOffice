@@ -206,6 +206,18 @@ describe("file_search pi 工具", () => {
     expect((result.details as { returned: number }).returned).toBe(1);
   });
 
+  it("extension 可传数组（用户说“刚上传的 logo/图片”时 agent 会传多个扩展名）", async () => {
+    const searchCatalog: SearchCatalogStub = vi.fn(() => ({ total: 0, items: [] }));
+    await toolWith(searchCatalog).execute(runInput(), {
+      query: "logo",
+      extension: ["png", "jpg", "jpeg"],
+    });
+    expect(searchCatalog.mock.calls[0]).toEqual([
+      "logo",
+      { extensions: ["png", "jpg", "jpeg"], workspaceId: "ws-run", limit: 10 },
+    ]);
+  });
+
   it("params.workspaceId 覆盖运行会话工作区；limit 缺省 10、越界收敛 50", async () => {
     const searchCatalog: SearchCatalogStub = vi.fn((_query: string, _options?: SearchOptions) => ({
       total: 0,

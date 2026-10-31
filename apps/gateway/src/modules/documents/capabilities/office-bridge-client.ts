@@ -70,6 +70,25 @@ export interface OfficeApplyBytesResult {
   fileVersionId?: string;
 }
 
+/** /v1/office-export-pdf：把文件库里的 .docx 导出成 PDF 并作为新文件入库。 */
+export interface OfficeExportPdfInput {
+  fileId: string;
+  /** 输出文件名（可选，默认取原文件名 .pdf）；桌面端校验 .pdf 后缀。 */
+  fileName?: string | null;
+  roomId?: string | null;
+  /** 产物归属工作区（与源文件同空间；资料库/产物库按空间隔离）。 */
+  workspaceId?: string | null;
+}
+
+export interface OfficeExportPdfResult {
+  ok: boolean;
+  /** 新 PDF 的 fileEntryId（入库后）。 */
+  fileId: string;
+  originalName: string;
+  /** PDF 内容指纹（有则透传，便于去重/引用）。 */
+  contentHash?: string;
+}
+
 /** /v1/office-edit read：活会话大纲 + op 词汇表。 */
 export interface OfficeSlidesDeckInfo {
   outline: string;
@@ -463,6 +482,46 @@ export class OfficeBridgeClient {
       ...(typeof data.version === "number" ? { version: data.version } : {}),
       ...(typeof data.fileVersionId === "string" ? { fileVersionId: data.fileVersionId } : {}),
     }
+  }
+
+  /**
+   * /v1/office-export-pdf：桌面端用 LibreOffice 把文件库里的 .docx 转成 PDF，
+   * 并作为新文件入库（返回新 fileId/文件名）。网关不搬字节，只传目标与归属。
+   */
+  async exportPdf(input: OfficeExportPdfInput): Promise<OfficeExportPdfResult> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-export-pdf`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // LibreOffice 转换 + PDF 入库整链路；大文档可到分钟级。
+      signal: AbortSignal.timeout(5 * 60_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      data?: Record<string, unknown>;
+      ok?: unknown;
+    };
+    // 桌面端成功走 { data: {...} } 信封；个别错误路径直接给扁平 { ok:false, message }。
+    const data = parsed.data ?? (parsed as Record<string, unknown>);
+    const messageOf = (fallback: string): string =>
+      typeof data.message === "string"
+        ? data.message
+        : typeof parsed.message === "string" ? parsed.message : fallback;
+    if (!response.ok) throw new Error(messageOf(`Office export-pdf failed (${response.status})`));
+    if (data.ok === false) throw new Error(messageOf("Office export-pdf failed"));
+    const fileId = typeof data.fileId === "string" ? data.fileId.trim() : "";
+    const originalName = typeof data.originalName === "string" ? data.originalName.trim() : "";
+    if (!fileId) throw new Error("OFFICE_EXPORT_FAILED: 桌面端未返回 PDF 文件条目");
+    return {
+      ok: true,
+      fileId,
+      originalName: originalName || `${fileId}.pdf`,
+      ...(typeof data.contentHash === "string" ? { contentHash: data.contentHash } : {}),
+    };
   }
 
   private async postAgentTools(body: Record<string, unknown>): Promise<Record<string, unknown>> {

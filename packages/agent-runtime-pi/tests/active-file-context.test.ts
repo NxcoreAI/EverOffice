@@ -45,6 +45,28 @@ describe("buildActiveFileContext", () => {
     expect(context).not.toContain("请用户先以可编辑方式打开");
   });
 
+  it("Excel 同样按 fileId 后台编辑：不要求用户先打开，找不到 fileId 先 file_search", () => {
+    const context = buildActiveFileContext({
+      fileId: "file-sheet",
+      title: "预算.xlsx",
+      kind: "spreadsheet",
+      editable: true,
+    });
+    // 修改走 sheets_agent_read → sheets_agent_edit 的活工作簿通道。
+    expect(context).toContain("Excel 表格");
+    expect(context).toContain("sheets_agent_read");
+    expect(context).toContain("sheets_agent_edit");
+    // 与 Word 对齐：headless 隐藏工作簿，不要求文件已经打开。
+    expect(context).toContain("不要求文件已经打开");
+    expect(context).toContain("headless");
+    expect(context).toContain("file_search");
+    // sheets_create 是另建一份新文件，不是修改当前文件。
+    expect(context).toContain("sheets_create 是另建一份新文件");
+    // “没打开”不是拒绝理由：不应退回“请用户先打开/先保存”。
+    expect(context).not.toContain("请用户先以可编辑方式打开");
+    expect(context).not.toContain("必须先打开");
+  });
+
   it("PPT 额外指向 slides_read；只读打开明确不承诺修改", () => {
     const context = buildActiveFileContext({
       fileId: "file-deck",

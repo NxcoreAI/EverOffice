@@ -35,13 +35,20 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
       ? "要修改这份 Word（改文字/格式、增删段落、插图、水印等）用 word_agent_edit：先 word_agent_read 拿块索引与 HTML/命令规则，再按块索引构造工具调用；"
         + "表格/分页与页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops；office_create 是另建一份新文件，不是修改当前文件。"
       : null,
-    "改 Word 不要求文件已经打开：任何已入库 .docx 都能按 fileId 由后台编辑器读取和编辑（headless 打开、不占页签）。"
-      + "用户说的是“另一份/之前生成的那份”或没给 fileId 时，先用 file_search 按文件名找到 fileId，再 word_agent_read → word_agent_edit/word_agent_ops。",
+    "改 Word/Excel 不要求文件已经打开：任何已入库 .docx / .xlsx 都能按 fileId 由后台编辑器读取和编辑（headless 打开、不占页签）。"
+      + "用户说的是“另一份/之前生成的那份”或没给 fileId 时，先用 file_search 按文件名找到 fileId，再 word_agent_read → word_agent_edit/word_agent_ops"
+      + "（Excel 用 sheets_agent_read → sheets_agent_edit）。",
     "EverRoom 内嵌的 Word 编辑器可能只显示正文、操作区（Ribbon/工具栏/菜单入口）被隐藏："
       + "用户的排版、插入、页面设置、批注、引用、审阅等操作一律由你用 word_agent_edit / word_agent_ops 直接完成；"
       + "不要说“点工具栏/菜单”，也不要让用户自己去找按钮——隐藏操作区不影响你的能力。",
+    "Word 里的图片/样式类口语请求：用户说“刚上传的/之前生成的图”时先用 file_search 找图片 fileId，图片入参直接传 fileId（网关取字节，不要找磁盘路径、不要内联 base64）；"
+      + "替换/裁剪/去背景用 word_agent_ops 的 object.image.replace / crop / removeBackground；页眉页脚图用 headerFooter.insertImage；"
+      + "“新建样式并应用”先用 format.createCharacterStyle 再用 format.applyCharacterStyle；局部改词/加粗优先 apply_commands.updateMatchedTextStyle，不要整段 replace_blocks。",
     activeFile.kind === "spreadsheet"
-      ? "要修改这份 Excel 用 sheets_agent_edit：先 sheets_agent_read 拿工作簿上下文与 propose_operations 指南；sheets_create 是另建一份新文件，不是修改当前文件。"
+      ? "要修改这份 Excel 用 sheets_agent_edit：先 sheets_agent_read 拿工作簿上下文与 propose_operations 指南；"
+        + "修改不要求这份表格已经打开——后台会以 headless 方式打开一份隐藏工作簿并静默保存、自动更新版本（UI 隐藏/没有页签也行），"
+        + "不要要求用户先打开或先切页签；用户说的是“另一份表格”或没给 fileId 时先用 file_search 按文件名找到 fileId。"
+        + "sheets_create 是另建一份新文件，不是修改当前文件。"
       : null,
     activeFile.editable === false
       ? "它是只读打开：正文可以读取，但不要承诺修改它。"

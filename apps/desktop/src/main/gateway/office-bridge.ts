@@ -85,13 +85,14 @@ export interface OfficeAgentToolsRequest {
   workspaceId?: string | null
 }
 
-/** 后台 Word 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
+/** 后台 Word/Excel 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
 type OfficeAgentToolsFailureReason =
   | 'not_open'
   | 'not_editable'
   | 'unsaved'
   | 'not_found'
   | 'not_docx'
+  | 'not_xlsx'
   | 'too_large'
   | 'encrypted'
   | 'open_failed'
@@ -116,6 +117,35 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   }
   if (input.mode === 'apply' && !Array.isArray(input.calls)) return false
   return true
+}
+
+/**
+ * Agent 导出 Word 为 PDF（gateway word_export_pdf → /v1/office-export-pdf）。
+ * 桌面端用 LibreOffice 把 catalog 里的 docx 转成 PDF，再作为新文件入库。
+ */
+export interface OfficeExportPdfRequest {
+  fileId: string
+  /** 输出文件名（可选，默认取原文件名 .pdf）。 */
+  fileName?: string | null
+  roomId?: string | null
+  workspaceId?: string | null
+}
+
+function validExportPdfBody(value: unknown): value is OfficeExportPdfRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeExportPdfRequest>
+  if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
+  if (input.fileName !== undefined && input.fileName !== null && typeof input.fileName !== 'string') return false
+  if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
+  if (input.workspaceId !== undefined && input.workspaceId !== null && typeof input.workspaceId !== 'string') return false
+  return true
+}
+
+export interface OfficeExportPdfResult {
+  ok: true
+  fileId: string
+  originalName: string
+  contentHash?: string
 }
 
 /** 论文装订请求（gateway thesis-format → /v1/office-reformat）。 */
@@ -304,6 +334,13 @@ export class OfficeBridgeServer {
         }
       >)
       | null = () => null,
+    /** Word → PDF 导出并入库（index.ts 注入；未注入 = 工具不可用）。 */
+    private readonly exportPdfDoc: () =>
+      | ((req: OfficeExportPdfRequest) => Promise<
+        | OfficeExportPdfResult
+        | { ok: false; message: string }
+      >)
+      | null = () => null,
   ) {}
 
   /** 排版成品落库后回调（index.ts 注入；晚于构造注入，故用 setter）。 */
@@ -361,6 +398,7 @@ export class OfficeBridgeServer {
       || request.url === '/v1/office-reformat'
       || request.url === '/v1/office-apply-bytes'
       || request.url === '/v1/office-agent-tools'
+      || request.url === '/v1/office-export-pdf'
     if (!known) {
       return { status: 404, body: { message: 'Not found' } }
     }
@@ -386,6 +424,10 @@ export class OfficeBridgeServer {
     if (request.url === '/v1/office-agent-tools') {
       if (!validAgentToolsBody(read.parsed)) return { status: 422, body: { message: 'Invalid office agent-tools request' } }
       return this.agentToolsRoute(read.parsed)
+    }
+    if (request.url === '/v1/office-export-pdf') {
+      if (!validExportPdfBody(read.parsed)) return { status: 422, body: { message: 'Invalid office export-pdf request' } }
+      return this.exportPdfRoute(read.parsed)
     }
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
@@ -413,14 +455,19 @@ export class OfficeBridgeServer {
   /**
    * 活 Word/Excel 宿主执行器入口：read = describe（上下文+工具词汇表+指南），
    * apply = 执行 docs/sheets 渲染层工具调用（编辑实时重绘在打开的视图上，
-   * 变更后静默保存触发版本链回填）。not_open 时与 office-edit 同规则重试自动打开。
+   * 变更后静默保存触发版本链回填）。
+   *
+   * Word 与 Excel 都优先走后台隐藏会话（registry 拉起隐藏编辑器/工作簿，
+   * 不弹页签）。下面的 not_open 自动打开重试只作为旧运行时的兜底：当运行时
+   * 缺少 waitForAgentReady（老 genoffice 包）时 registry 会保留原 not_open，
+   * 此时才请渲染端开一个可见实例再重试。
    */
   private async agentToolsRoute(req: OfficeAgentToolsRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const agentTools = this.agentTools()
     if (!agentTools) return { status: 503, body: { message: 'EverRoom Office 宿主执行器尚未就绪' } }
     let outcome = await agentTools(req)
-    // Word 不走“请渲染端开一个可见页签”的旧兜底：registry 会在后台拉起隐藏
-    // 编辑器会话（不弹页签）。Excel/PPT 仍保留自动打开重试。
+    // 旧运行时兜底（Word/Excel 都已经是 headless 优先）：仅当 registry 无法
+    // 拉起隐藏会话、仍返回 not_open 时，才按旧路径请渲染端自动打开页签重试。
     if (!outcome.ok && outcome.reason === 'not_open' && req.kind !== 'docx' && req.fileId !== 'active') {
       console.info('office-bridge: office-agent-tools 命中 not_open，尝试自动打开', { fileId: req.fileId })
       const opened = await this.requestRendererOpen(req.fileId)
@@ -446,7 +493,7 @@ export class OfficeBridgeServer {
                 ? `${detail || '该文件有打开密码。'}请先在编辑器里打开并输入密码后再让 Agent 修改。`
                 : outcome.reason === 'too_large'
                   ? `${detail || '文件过大，超出后台编辑上限。'}`
-                  : outcome.reason === 'not_docx' || outcome.reason === 'open_failed'
+                  : outcome.reason === 'not_docx' || outcome.reason === 'not_xlsx' || outcome.reason === 'open_failed'
                     ? `无法在后台打开该${kindLabel}文件。${detail}`
                     : req.fileId === 'active'
                       ? `当前没有已打开的${kindLabel}文件。若知道目标文件的 fileEntryId，把它作为 fileId 传入即可后台编辑；不知道时可先用 file_search 按文件名查找。${openSummary}`
@@ -454,6 +501,26 @@ export class OfficeBridgeServer {
       return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.data } }
+  }
+
+  /**
+   * /v1/office-export-pdf：任意 Word → PDF 并作为新文件入库。
+   * 桌面端做 LibreOffice 转换与文件库导入；网关只转发 fileId/归属。
+   */
+  private async exportPdfRoute(
+    req: OfficeExportPdfRequest,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const exportPdf = this.exportPdfDoc()
+    if (!exportPdf) return { status: 503, body: { message: 'EverRoom Word→PDF 导出尚未就绪' } }
+    const outcome = await exportPdf({
+      ...req,
+      fileId: req.fileId.trim(),
+      ...(typeof req.fileName === 'string' && req.fileName.trim() ? { fileName: req.fileName.trim() } : {}),
+    })
+    if (!outcome.ok) {
+      return { status: 422, body: { code: 'export_failed', message: outcome.message } }
+    }
+    return { status: 200, body: { data: outcome } }
   }
 
   private async applyBytes(req: OfficeApplyBytesRequest): Promise<{ status: number; body: Record<string, unknown> }> {

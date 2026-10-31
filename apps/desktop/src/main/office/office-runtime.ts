@@ -203,10 +203,25 @@ export interface ThesisBindingSpecPayload {
 }
 export interface GenOfficeSheetsRuntime {
   configureSheetsRuntime(config: { preloadPath: string; rendererFile: string; sidecarPath: string }): void
+  /**
+   * tab 模式建视图。claimActive=false 时不得改写全局 active 指针（后台 Agent
+   * 隐藏会话不是用户的页签）；includeAiHandlers=false 关掉自带的 AI 聊天面板 IPC。
+   */
   createSheetsView(options?: {
+    includeAiHandlers?: boolean
+    readonly?: boolean
+    claimActive?: boolean
   }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
+  /**
+   * 工作簿就绪信号：渲染层在目标工作副本装载完成后上报 filePath；true = 目标
+   * 工作副本已在编辑器里打开（身份一致），false = 超时/视图销毁/身份不符。
+   * 后台 Agent 会话必须等它才能安全 describe/apply（避免读写成空白工作簿）。
+   */
+  waitForAgentReady(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 拆除渲染端（清恢复副本/撤销写授权/让孤儿渲染器失效）；不弹对话框。 */
+  teardownSheetsRenderer(contents: WebContents): void
   /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
   requestSheetsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSheetsWebContents(contents: WebContents | null): void

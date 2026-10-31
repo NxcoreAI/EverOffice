@@ -37,6 +37,11 @@ export interface AgentImageDeps {
   fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
   lookupImpl?: (host: string) => Promise<Array<{ address: string }>>;
   maxBytes?: number;
+  /**
+   * EverRoom 文件库图片：模型说“刚上传的 logo / 之前生成的那张图”时只拿得到
+   * fileId，宿主按 fileId 取当前版本字节（非图片/不存在返回 null）。
+   */
+  readLibraryFile?: (fileId: string) => Promise<Buffer | null>;
 }
 
 export interface ResolvedAgentImageInput {
@@ -218,6 +223,7 @@ export async function resolveAgentImageInput(
   const label = (rawLabel || DEFAULT_IMAGE_LABEL).slice(0, MAX_IMAGE_LABEL_LENGTH);
   const path = typeof raw.path === "string" ? raw.path.trim() : "";
   const url = typeof raw.url === "string" ? raw.url.trim() : "";
+  const fileId = typeof raw.fileId === "string" ? raw.fileId.trim() : "";
   const base64Input = typeof raw.base64 === "string" ? raw.base64 : "";
 
   let buffer: Buffer;
@@ -228,6 +234,15 @@ export async function resolveAgentImageInput(
     buffer = await readLocalImage(path, deps, maxBytes);
   } else if (url) {
     buffer = await downloadRemoteImage(url, deps, maxBytes);
+  } else if (fileId) {
+    if (!deps.readLibraryFile) {
+      throw new Error("INVALID_REQUEST: 当前环境不支持 fileId 图片；请改用 path（本地图片绝对路径）或 url");
+    }
+    const bytes = await deps.readLibraryFile(fileId).catch(() => null);
+    if (!bytes || bytes.byteLength === 0) {
+      throw new Error(`FILE_NOT_FOUND: 文件库里没有 ${fileId} 的图片字节（可能不是图片或已删除）`);
+    }
+    buffer = bytes;
   } else if (base64Input.trim()) {
     const compact = stripDataUrlPrefix(base64Input).replace(/\s+/g, "");
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 !== 0) {
@@ -236,7 +251,7 @@ export async function resolveAgentImageInput(
     buffer = Buffer.from(compact, "base64");
   } else {
     throw new Error(
-      "INVALID_REQUEST: insert_image_base64 需要 path（本地图片绝对路径）、url（公网图片地址）或 base64 三者之一",
+      "INVALID_REQUEST: 需要图片来源之一：fileId（文件库图片）、path（本地图片绝对路径）、url（公网图片地址）或 base64",
     );
   }
 

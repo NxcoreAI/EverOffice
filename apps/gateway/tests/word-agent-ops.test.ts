@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   officePlugin,
@@ -15,6 +18,20 @@ const PNG_BYTES = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.from("fixture-png-body"),
 ]);
+const PNG_BASE64 = PNG_BYTES.toString("base64");
+
+let workDir = "";
+let pngPath = "";
+
+beforeAll(async () => {
+  workDir = await mkdtemp(join(tmpdir(), "word-agent-ops-"));
+  pngPath = join(workDir, "scene.png");
+  await writeFile(pngPath, PNG_BYTES);
+});
+
+afterAll(async () => {
+  if (workDir) await rm(workDir, { recursive: true, force: true });
+});
 
 interface FakeApplyInput {
   kind: "docx" | "spreadsheet";
@@ -312,5 +329,95 @@ describe("word_agent_read / word_agent_edit / word_agent_illustration：元数�
     );
     expect(describe).toHaveBeenCalledOnce();
     expect(result.structuredContent.fileId).toBe("fe-1");
+  });
+});
+
+describe("word_agent_ops：object.image.replace 的图片来源由网关解析", () => {
+  it("path 读盘 → 下发的 op 带 base64/mime 且不再有 path", async () => {
+    const { bridge, apply } = bridgeHarness();
+    const { access } = fileAccess();
+    const plugin = officePlugin(bridge, null, null, () => access);
+    const ops = [
+      { op: "object.image.replace", blockIndex: 7, path: pngPath, label: "场景图" },
+    ];
+    const result = await toolOf(plugin, "word_agent_ops").execute({ ops }, context());
+
+    expect(apply).toHaveBeenCalledOnce();
+    const forwardedOps = (apply.mock.calls[0]![0] as FakeApplyInput).calls[0]!.input.ops as Array<Record<string, unknown>>;
+    expect(forwardedOps).toHaveLength(1);
+    expect(forwardedOps[0]).toEqual({
+      op: "object.image.replace",
+      blockIndex: 7,
+      label: "场景图",
+      base64: PNG_BASE64,
+      mime: "image/png",
+    });
+    expect(forwardedOps[0]).not.toHaveProperty("path");
+    expect(result.structuredContent).toMatchObject({ ok: true, nextAction: "report_result" });
+  });
+
+  it("同批其它 op 原样转发；非图片 op 不会被改写成 base64", async () => {
+    const { bridge, apply } = bridgeHarness();
+    const { access } = fileAccess();
+    const plugin = officePlugin(bridge, null, null, () => access);
+    await toolOf(plugin, "word_agent_ops").execute({
+      ops: [
+        { op: "table.autoFit", blockIndex: 3 },
+        { op: "object.image.replace", blockIndex: 5, path: pngPath },
+        { op: "object.image.crop", blockIndex: 5, rect: { x: 0, y: 0, w: 0.5, h: 0.5 } },
+      ],
+    }, context());
+    const forwardedOps = (apply.mock.calls[0]![0] as FakeApplyInput).calls[0]!.input.ops as Array<Record<string, unknown>>;
+    expect(forwardedOps[0]).toEqual({ op: "table.autoFit", blockIndex: 3 });
+    expect(forwardedOps[1]).toMatchObject({ op: "object.image.replace", base64: PNG_BASE64, mime: "image/png" });
+    expect(forwardedOps[2]).toEqual({
+      op: "object.image.crop",
+      blockIndex: 5,
+      rect: { x: 0, y: 0, w: 0.5, h: 0.5 },
+    });
+  });
+
+  it("图片来源解析失败：整批不下发，返回 per-call 失败结果（fix_and_retry）", async () => {
+    const { bridge, apply } = bridgeHarness();
+    const { access } = fileAccess();
+    const plugin = officePlugin(bridge, null, null, () => access);
+    const result = await toolOf(plugin, "word_agent_ops").execute({
+      ops: [
+        { op: "table.autoFit", blockIndex: 3 },
+        { op: "object.image.replace", blockIndex: 5, path: join(workDir, "missing.png") },
+      ],
+    }, context());
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      isError: true,
+      nextAction: "fix_and_retry",
+    });
+    expect(result.structuredContent.output).toMatch(/ops\[1\] object\.image\.replace 的图片来源无法解析/);
+    expect(result.structuredContent.error).toContain("找不到图片文件");
+    // 未解析的 path 不会被转发给桌面端。
+    expect(result.structuredContent).not.toHaveProperty("result");
+  });
+
+  it("headerFooter.insertImage 的 path 也由网关解析成 base64/mime", async () => {
+    const { bridge, apply } = bridgeHarness();
+    const { access } = fileAccess();
+    const plugin = officePlugin(bridge, null, null, () => access);
+    await toolOf(plugin, "word_agent_ops").execute({
+      ops: [
+        { op: "headerFooter.insertImage", kind: "header", path: pngPath, align: "right", widthPx: 120 },
+      ],
+    }, context());
+    const forwardedOps = (apply.mock.calls[0]![0] as FakeApplyInput).calls[0]!.input.ops as Array<Record<string, unknown>>;
+    expect(forwardedOps[0]).toEqual({
+      op: "headerFooter.insertImage",
+      kind: "header",
+      align: "right",
+      widthPx: 120,
+      base64: PNG_BASE64,
+      mime: "image/png",
+    });
+    expect(forwardedOps[0]).not.toHaveProperty("path");
   });
 });

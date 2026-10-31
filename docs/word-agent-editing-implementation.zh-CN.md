@@ -1,8 +1,9 @@
 # Agent 编辑 Word：headless 会话与结构化操作（实现说明）
 
-> 状态：M1 + B1–B5 全部落地（2026-10-31），apply_operations 共 58 个 op / 9 个域；干净画布（隐藏操作区）已上线
+> 状态：M1 + B1–B5 + A1–A4 全部落地（2026-10-31），apply_operations 共 69 个 op / 10 个域；干净画布（隐藏操作区）已上线
 > 关联设计：`docs/agent-docx-editing-design.zh-CN.md`
 > 关联测试手册：`word-agent-test-prompts.md`
+> Excel 对等实现：`docs/xlsx-agent-editing-implementation.zh-CN.md`
 
 ## 1. 目标
 
@@ -85,7 +86,15 @@ Agent (gateway)
 `format.setTabStops`（制表位/前导符，保留 rel stops）、`replaceAllText` 的 `wholeWord/replaceFirstOnly`、
 `object.equation.update`（原位再编辑公式）、`format.insertBreak`（换行符/分栏符）、`format.applyListStyle`（自定义项目符号/编号库）。
 
-### 全部操作词汇（58 个）
+### 已上线（A1/A2：剩余能力）
+
+- A1（渲染层）：`object.image.replace` / `object.image.crop` / `object.image.removeBackground`（本地容差抠图）、
+  `object.shape.zOrder`（导入形状定向 patch `wp:anchor@relativeHeight`）、`object.equation.convert`（块级↔行内）。
+- A2（host/gateway）：`word_compare`（两份 docx 段落 LCS 对比）、`word_export_pdf`（LibreOffice 转 PDF → 新文件入库）。
+- A3（已完成）：`headerFooter.insertImage/removeImage/replaceImage`（扩展 docx-engine 写 media/rels/drawing，保存后可被 parseDocx 读回）、`object.ink.add / object.ink.mark`（程序化笔画/按段落位置画直线，保存栅格化）、`format.createCharacterStyle`（styles.xml 定向 upsert）。
+- A4（口语化易用性）：`object.image.crop` 支持 `unit:"fraction"`（相对自然尺寸，适合“裁中间一半”）；`object.ink.mark` 一句话画下划线/删除线；`headerFooter.replaceImage` 一步换页眉页脚图；documentState 标注 `sizeBasis:"display"`。
+
+### 全部操作词汇（63 个）
 
 | 域 | 数量 | op |
 |---|---|---|
@@ -94,10 +103,11 @@ Agent (gateway)
 | section | 2 | break / set |
 | notes | 3 | insert / update / delete |
 | field | 2 | insert / updateAll |
-| format | 12 | changeCase / clear / setBidi / hangingIndent / applyStyle / applyCharacterStyle / setTabStops / insertBreak / applyListStyle / listRestart / listContinue / multilevelList |
-| object | 9 | textbox.insert / wordArt.insert / dropCap / equation.insert / equation.update / symbol.insert / image.format / shape.format / image.unsupported |
+| format | 13 | changeCase / clear / setBidi / hangingIndent / applyStyle / applyCharacterStyle / createCharacterStyle / setTabStops / insertBreak / applyListStyle / listRestart / listContinue / multilevelList |
+| object | 16 | textbox.insert / wordArt.insert / dropCap / equation.insert / equation.update / equation.convert / symbol.insert / image.format / image.replace / image.crop / image.removeBackground / shape.format / shape.zOrder / ink.add / ink.mark / image.unsupported |
 | reference | 9 | bookmark.insert/remove / crossRef.insert / caption.insert / source.add / citation.insert / bibliography.insert / index.mark / index.insert |
 | review | 6 | trackChanges / accept / reject / protect / encrypt / findReplace |
+| headerFooter | 3 | insertImage / removeImage / replaceImage |
 
 **明确不支持（返回清晰错误，不伪造成功）**：图片替换/裁剪/去背景（需要宿主图片字节，改用 `insert_image_base64`/重插+删块）、导入形状的 z-order（原始锚点不可改）、`wholeWord`/仅替换第一处、字符样式 id。
 
@@ -136,7 +146,11 @@ Agent (gateway)
 - 后台会话默认不弹页签；用户想边看边改时自行打开文件（打开时隐藏会话会先排空并关闭，避免双写者）。
 - 只读打开是用户显式选择，agent 不绕过。
 - 加密 docx 需用户先手动输入密码；legacy `.doc` 依赖 LibreOffice 转换。
-- 手绘 ink、像素级裁剪/去背景、剪贴板、视图/缩放/打印、文档比较不在 ops 范围（用图片/等价语义或后续立项覆盖）。
+- 图片替换/裁剪/本地容差去背景、页眉页脚图片、程序化 ink、新建字符样式、形状 z-order、公式互转、文档比较、PDF 导出均已支持；
+  自动主体分割（AI 去背景）仍不支持（只用本地容差抠图）。
+- 物理打印不可由 agent 完成：`word_export_pdf` 导出后由用户/宿主打印。
+- 剪贴板、视图/缩放等非文档内容操作不在 ops 范围（用 insert/replace/move 或宿主能力覆盖）。
+- 页眉页脚图片当前只接默认 header/footer part；ink 页面相对定位在页首附近最精确；`word_compare` 只比段落文本。
 ## 9. 干净画布（隐藏操作区，只留正文）
 
 > 用户要求：GenOffice 编辑器的**操作区**（Ribbon/工具栏/命令入口）可以隐藏，正文画布保留，由 agent 承担全部操作；隐藏操作区不能降低可用能力。
