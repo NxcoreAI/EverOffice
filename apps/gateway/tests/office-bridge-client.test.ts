@@ -10,7 +10,11 @@ interface Recorded {
 }
 
 /** 本地 stub：记录请求并按状态回 JSON（桌面 office-bridge 端点契约的最小替身）。 */
-async function startStub(status = 200, data: Record<string, unknown> = {}) {
+async function startStub(
+  status = 200,
+  data: Record<string, unknown> = {},
+  rawBody?: Record<string, unknown>,
+) {
   const recorded: Recorded[] = [];
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -22,7 +26,7 @@ async function startStub(status = 200, data: Record<string, unknown> = {}) {
         body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>,
       });
       response.writeHead(status, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(status === 200 ? { data } : { message: "boom" }));
+      response.end(JSON.stringify(rawBody ?? (status === 200 ? { data } : { message: "boom" })));
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -163,6 +167,68 @@ describe("OfficeBridgeClient", () => {
       await stub.client.describeAgentArtifact({ kind: "docx", fileId: "file-1", roomId: null, workspaceId: null });
       expect(stub.recorded[0]?.body).not.toHaveProperty("roomId");
       expect(stub.recorded[0]?.body).not.toHaveProperty("workspaceId");
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("exportPdf 调 /v1/office-export-pdf 并透传 fileId/文件名/Room/工作区", async () => {
+    const stub = await startStub(200, {
+      ok: true,
+      fileId: "fe-pdf",
+      originalName: "智能家居行业调研报告.pdf",
+      contentHash: "c".repeat(64),
+    });
+    try {
+      const result = await stub.client.exportPdf({
+        fileId: "fe-1",
+        fileName: "最终版.pdf",
+        roomId: "room-9",
+        workspaceId: "ws-7",
+      });
+      expect(stub.recorded[0]?.url).toBe("/v1/office-export-pdf");
+      expect(stub.recorded[0]?.authorization).toBe("Bearer test-token");
+      expect(stub.recorded[0]?.body).toEqual({
+        fileId: "fe-1",
+        fileName: "最终版.pdf",
+        roomId: "room-9",
+        workspaceId: "ws-7",
+      });
+      expect(result).toEqual({
+        ok: true,
+        fileId: "fe-pdf",
+        originalName: "智能家居行业调研报告.pdf",
+        contentHash: "c".repeat(64),
+      });
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("exportPdf 非 2xx 时抛桌面端给出的可读 message", async () => {
+    const stub = await startStub(502);
+    try {
+      await expect(stub.client.exportPdf({ fileId: "fe-1" })).rejects.toThrow("boom");
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("exportPdf 遇到扁平 { ok:false, message }（HTTP 200）也当失败处理", async () => {
+    const stub = await startStub(200, {}, { ok: false, message: "LibreOffice 未安装，无法转换为 PDF" });
+    try {
+      await expect(stub.client.exportPdf({ fileId: "fe-1" }))
+        .rejects.toThrow("LibreOffice 未安装，无法转换为 PDF");
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("exportPdf 成功但缺 fileId 时报错（不返回空条目）", async () => {
+    const stub = await startStub(200, { ok: true, originalName: "x.pdf" });
+    try {
+      await expect(stub.client.exportPdf({ fileId: "fe-1" }))
+        .rejects.toThrow(/OFFICE_EXPORT_FAILED/);
     } finally {
       await stub.close();
     }

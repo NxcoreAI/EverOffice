@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   isPublicImageUrl,
@@ -147,5 +147,25 @@ describe("agent 图片入参：url 来源（公网 http(s)）", () => {
       { url: "https://example.com/a.png" },
       { fetchImpl: async () => imageResponse(PNG_BYTES), lookupImpl: PUBLIC_LOOKUP, maxBytes: 8 },
     )).rejects.toThrow(/超过上限/);
+  });
+});
+describe("agent 图片入参：fileId 来源（文件库图片）", () => {
+  it("按 fileId 读宿主字节并嗅探 mime（用户说“刚上传的 logo”的场景）", async () => {
+    const readLibraryFile = vi.fn(async (fileId: string) => (fileId === "file-logo" ? PNG_BYTES : null));
+    const resolved = await resolveAgentImageInput(
+      { fileId: "file-logo", maxWidthPx: 120 },
+      { readLibraryFile },
+    );
+    expect(readLibraryFile).toHaveBeenCalledWith("file-logo");
+    expect(resolved).toMatchObject({ base64: PNG_BASE64, mime: "image/png", maxWidthPx: 120 });
+  });
+
+  it("fileId 不存在 / 空字节 → FILE_NOT_FOUND；未注入端口 → INVALID_REQUEST", async () => {
+    await expect(resolveAgentImageInput(
+      { fileId: "file-missing" },
+      { readLibraryFile: async () => null },
+    )).rejects.toThrow(/FILE_NOT_FOUND/);
+    await expect(resolveAgentImageInput({ fileId: "file-x" }))
+      .rejects.toThrow(/不支持 fileId/);
   });
 });

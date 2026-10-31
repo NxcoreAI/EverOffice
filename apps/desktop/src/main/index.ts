@@ -70,7 +70,12 @@ import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
-import { OfficeBridgeServer, type OfficeAgentToolsRequest } from './gateway/office-bridge'
+import {
+  OfficeBridgeServer,
+  type OfficeAgentToolsRequest,
+  type OfficeExportPdfRequest,
+  type OfficeExportPdfResult,
+} from './gateway/office-bridge'
 import type { OfficeAgentFileEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
@@ -3613,6 +3618,55 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             } as unknown as Record<string, unknown>,
           }
           : outcome
+      },
+      // Word → PDF 导出并入库（word_export_pdf）：LibreOffice 转换 catalog 里的
+      // docx，再把 PDF 作为新文件导入文件库（不覆盖原 Word）。未注入则不暴露。
+      () => async (req: OfficeExportPdfRequest): Promise<
+        OfficeExportPdfResult | { ok: false; message: string }
+      > => {
+        const files = officeFilesBridge
+        if (!files) return { ok: false, message: '文件网关不可用，暂时无法导出 PDF。' }
+        try {
+          const catalogEntry = await files.catalogEntry(req.fileId).catch(() => null)
+          const legacyEntry = catalogEntry ? null : await files.get(req.fileId).catch(() => null)
+          const originalName = catalogEntry?.originalName ?? legacyEntry?.originalName ?? ''
+          if (!originalName) return { ok: false, message: `文件 ${req.fileId} 不在文件库中（可能已删除）。` }
+          if (!/\.docx$/i.test(originalName)) {
+            return { ok: false, message: `《${originalName}》不是 Word 文档，无法导出 PDF。` }
+          }
+          const storagePath = await files.storagePath(req.fileId)
+          const exportDirectory = join(app.getPath('userData'), 'office-exports')
+          const converted = await convertOfficeFileToPdf(storagePath, originalName, exportDirectory)
+          if ('unavailable' in converted) {
+            return { ok: false, message: '本机未安装 LibreOffice，无法导出 PDF。' }
+          }
+          const rawName = (req.fileName ?? '').trim()
+            || `${basename(originalName, extname(originalName))}.pdf`
+          const safeName = (rawName.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120) || 'document.pdf')
+          const pdfName = /\.pdf$/i.test(safeName) ? safeName : `${safeName}.pdf`
+          try {
+            const imported = await files.importAgentGeneratedFile({
+              filePath: converted.pdfPath,
+              originalName: pdfName,
+              sourceKey: `agent:word:pdf:${req.fileId}:${Date.now()}`,
+              ...(req.roomId ? { roomId: req.roomId } : {}),
+              ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+            })
+            return {
+              ok: true,
+              fileId: imported.fileEntryId,
+              originalName: pdfName,
+              ...(imported.contentHash ? { contentHash: imported.contentHash } : {}),
+            }
+          } finally {
+            await rm(converted.pdfPath, { force: true }).catch(() => undefined)
+          }
+        } catch (error) {
+          return {
+            ok: false,
+            message: `导出 PDF 失败：${error instanceof Error ? error.message : String(error)}`,
+          }
+        }
       },
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {

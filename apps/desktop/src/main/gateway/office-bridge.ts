@@ -118,6 +118,35 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   return true
 }
 
+/**
+ * Agent 导出 Word 为 PDF（gateway word_export_pdf → /v1/office-export-pdf）。
+ * 桌面端用 LibreOffice 把 catalog 里的 docx 转成 PDF，再作为新文件入库。
+ */
+export interface OfficeExportPdfRequest {
+  fileId: string
+  /** 输出文件名（可选，默认取原文件名 .pdf）。 */
+  fileName?: string | null
+  roomId?: string | null
+  workspaceId?: string | null
+}
+
+function validExportPdfBody(value: unknown): value is OfficeExportPdfRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeExportPdfRequest>
+  if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
+  if (input.fileName !== undefined && input.fileName !== null && typeof input.fileName !== 'string') return false
+  if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
+  if (input.workspaceId !== undefined && input.workspaceId !== null && typeof input.workspaceId !== 'string') return false
+  return true
+}
+
+export interface OfficeExportPdfResult {
+  ok: true
+  fileId: string
+  originalName: string
+  contentHash?: string
+}
+
 /** 论文装订请求（gateway thesis-format → /v1/office-reformat）。 */
 export interface OfficeReformatRequest {
   action: 'describe' | 'build'
@@ -296,6 +325,13 @@ export class OfficeBridgeServer {
         }
       >)
       | null = () => null,
+    /** Word → PDF 导出并入库（index.ts 注入；未注入 = 工具不可用）。 */
+    private readonly exportPdfDoc: () =>
+      | ((req: OfficeExportPdfRequest) => Promise<
+        | OfficeExportPdfResult
+        | { ok: false; message: string }
+      >)
+      | null = () => null,
   ) {}
 
   async start(): Promise<{ baseUrl: string; token: string }> {
@@ -336,6 +372,7 @@ export class OfficeBridgeServer {
       || request.url === '/v1/office-reformat'
       || request.url === '/v1/office-apply-bytes'
       || request.url === '/v1/office-agent-tools'
+      || request.url === '/v1/office-export-pdf'
     if (!known) {
       return { status: 404, body: { message: 'Not found' } }
     }
@@ -361,6 +398,10 @@ export class OfficeBridgeServer {
     if (request.url === '/v1/office-agent-tools') {
       if (!validAgentToolsBody(read.parsed)) return { status: 422, body: { message: 'Invalid office agent-tools request' } }
       return this.agentToolsRoute(read.parsed)
+    }
+    if (request.url === '/v1/office-export-pdf') {
+      if (!validExportPdfBody(read.parsed)) return { status: 422, body: { message: 'Invalid office export-pdf request' } }
+      return this.exportPdfRoute(read.parsed)
     }
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
@@ -429,6 +470,26 @@ export class OfficeBridgeServer {
       return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.data } }
+  }
+
+  /**
+   * /v1/office-export-pdf：任意 Word → PDF 并作为新文件入库。
+   * 桌面端做 LibreOffice 转换与文件库导入；网关只转发 fileId/归属。
+   */
+  private async exportPdfRoute(
+    req: OfficeExportPdfRequest,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const exportPdf = this.exportPdfDoc()
+    if (!exportPdf) return { status: 503, body: { message: 'EverRoom Word→PDF 导出尚未就绪' } }
+    const outcome = await exportPdf({
+      ...req,
+      fileId: req.fileId.trim(),
+      ...(typeof req.fileName === 'string' && req.fileName.trim() ? { fileName: req.fileName.trim() } : {}),
+    })
+    if (!outcome.ok) {
+      return { status: 422, body: { code: 'export_failed', message: outcome.message } }
+    }
+    return { status: 200, body: { data: outcome } }
   }
 
   private async applyBytes(req: OfficeApplyBytesRequest): Promise<{ status: number; body: Record<string, unknown> }> {

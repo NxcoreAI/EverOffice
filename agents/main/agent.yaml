@@ -40,6 +40,8 @@ tools:
   - word_agent_edit
   - word_agent_ops
   - word_agent_illustration
+  - word_compare
+  - word_export_pdf
   - sheets_agent_read
   - sheets_agent_edit
   - file_search

@@ -11,7 +11,17 @@ import type {
 } from "./office-bridge-client.js";
 import { applyDocxOps, DocxEditError, readDocxParagraphs, type DocxEditOp } from "../../files/docx-edit.js";
 import { applyXlsxOps, readXlsx, XlsxEditError, type XlsxEditOp } from "../../files/xlsx-edit.js";
-import { resolveAgentImageInput, sniffImageMime, type ResolvedAgentImageInput } from "./agent-image-input.js";
+import {
+  compareParagraphs,
+  summarizeParagraphCompare,
+  type ParagraphCompareEntry,
+} from "../../files/paragraph-compare.js";
+import {
+  resolveAgentImageInput,
+  sniffImageMime,
+  type AgentImageDeps,
+  type ResolvedAgentImageInput,
+} from "./agent-image-input.js";
 import {
   SlidesVisualReviewer,
   visualReviewToolPayload,
@@ -52,6 +62,13 @@ const MAX_CELL_LENGTH = 3000;
 const MAX_EDIT_BYTES = 25 * 1024 * 1024;
 /** word_agent_ops 单次事务的 op 数上限（与 word_agent_edit 的 calls 上限一致）。 */
 const MAX_AGENT_OPS = 50;
+/** word_compare：LCS 对齐单元上限（左段数 × 右段数），超出直接拒绝，别把网关内存打满。 */
+const MAX_COMPARE_CELLS = 4_000_000;
+/** word_compare 单次返回的差异条目上限与默认值。 */
+const MAX_COMPARE_ENTRIES = 500;
+const DEFAULT_COMPARE_ENTRIES = 200;
+/** 对比条目单侧文本截断（上下文预算）；summary 计数不受截断影响。 */
+const MAX_COMPARE_TEXT = 1_500;
 
 /** `office_edit`/`sheets_edit` 需要的最小文件访问面（FilesService 的结构子集）。 */
 export interface OfficeFileAccess {
@@ -81,7 +98,10 @@ type OfficeAgentToolResultRow = NonNullable<OfficeAgentToolsResult["results"]>[n
  * 读成字节（模型只给路径/链接，不搬 base64）。单条解析失败只生成该调用的
  * 错误结果，不拖垮同批其他调用。
  */
-async function prepareWordAgentToolCalls(calls: OfficeAgentToolCall[]): Promise<{
+async function prepareWordAgentToolCalls(
+  calls: OfficeAgentToolCall[],
+  imageDeps?: AgentImageDeps,
+): Promise<{
   forwarded: OfficeAgentToolCall[];
   failures: Map<string, OfficeAgentToolResultRow>;
 }> {
@@ -93,7 +113,7 @@ async function prepareWordAgentToolCalls(calls: OfficeAgentToolCall[]): Promise<
       continue;
     }
     try {
-      const resolved: ResolvedAgentImageInput = await resolveAgentImageInput(call.input ?? {});
+      const resolved: ResolvedAgentImageInput = await resolveAgentImageInput(call.input ?? {}, imageDeps);
       forwarded.push({ ...call, input: { ...resolved } });
     } catch (error) {
       failures.set(call.id, {
@@ -140,6 +160,69 @@ function parseAgentOpsOutput(output: string | undefined): unknown {
   } catch {
     return null;
   }
+}
+
+/** word_agent_ops 里需要宿主取图片字节的 op（与 word_agent_edit 的 insert_image_base64 同一取图入口）。 */
+const AGENT_OPS_IMAGE_SOURCE_OPS = new Set([
+  "object.image.replace",
+  "headerFooter.insertImage",
+]);
+
+/**
+ * word_agent_ops 的图片入参预处理：`object.image.replace` 允许模型给
+ * path（本地图片绝对路径）/ url（公网图片）/ base64，网关统一解析成渲染端契约的
+ * `{base64, mime}` 并删掉 path/url —— 模型永远不必把图片字节抄进 ops。
+ *
+ * 解析失败时返回一条 per-call 失败结果（整批不下发/不落盘），而不是把未解析的
+ * path 转发给渲染端（渲染端只认 base64）。dryRun 同样解析：坏来源在计划阶段就该暴露。
+ */
+async function prepareWordAgentOps(
+  ops: unknown[],
+  imageDeps?: AgentImageDeps,
+): Promise<{
+  forwarded: unknown[];
+  failure: OfficeAgentToolResultRow | null;
+}> {
+  const forwarded: unknown[] = [];
+  for (const [index, op] of ops.entries()) {
+    if (!op || typeof op !== "object" || Array.isArray(op)) {
+      forwarded.push(op);
+      continue;
+    }
+    const record = op as Record<string, unknown>;
+    const opName = typeof record.op === "string" ? record.op : "";
+    const carriesSource = AGENT_OPS_IMAGE_SOURCE_OPS.has(opName)
+      && (record.path !== undefined
+        || record.url !== undefined
+        || record.base64 !== undefined
+        || record.fileId !== undefined);
+    if (!carriesSource) {
+      forwarded.push(op);
+      continue;
+    }
+    const source: Record<string, unknown> = {};
+    if (record.path !== undefined) source.path = record.path;
+    if (record.url !== undefined) source.url = record.url;
+    if (record.fileId !== undefined) source.fileId = record.fileId;
+    if (record.base64 !== undefined) source.base64 = record.base64;
+    try {
+      const resolved: ResolvedAgentImageInput = await resolveAgentImageInput(source, imageDeps);
+      const { path: _path, url: _url, base64: _base64, mime: _mime, fileId: _fileId, ...rest } = record;
+      forwarded.push({ ...rest, base64: resolved.base64, mime: resolved.mime });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        forwarded: [],
+        failure: {
+          id: "ops-1",
+          name: "apply_operations",
+          output: `ops[${index}] ${opName} 的图片来源无法解析：${message}`,
+          isError: true,
+        },
+      };
+    }
+  }
+  return { forwarded, failure: null };
 }
 
 /** slides-builder 子代理独占的 4 个 PPT 工具名：主 Agent 工具面按此剔除（单一事实源）。 */
@@ -667,6 +750,14 @@ export function officePlugin(
     return { fileId, entry, access };
   }
 
+  /**
+   * 图片来源解析端口：模型说“刚上传的 logo / 之前生成的那张图”时只拿得到
+   * fileId，宿主按 fileId 取文件库当前版本字节（非图片/不存在返回 null）。
+   */
+  const agentImageDepsFor = (access: OfficeFileAccess): AgentImageDeps => ({
+    readLibraryFile: async (fileId) => (await access.catalogContentOf(fileId))?.buffer ?? null,
+  })
+
   /** 字节级目标解析：读当前版本字节，供 office_edit / sheets_* 在网关侧改字节。 */
   async function resolveEditableTarget(
     args: Record<string, unknown>,
@@ -685,6 +776,23 @@ export function officePlugin(
       );
     }
     return { fileId: target.fileId, entry: target.entry, buffer: content.buffer };
+  }
+
+  /** 对比/导出用的字节读取：只要大小上限与可读错误，不要求文件已在界面上打开。 */
+  async function readTargetBuffer(
+    access: OfficeFileAccess,
+    fileId: string,
+    entry: OfficeCatalogEntry,
+  ): Promise<Buffer> {
+    const content = await access.catalogContentOf(fileId);
+    if (!content) throw new Error(`FILE_CONTENT_UNAVAILABLE: 读取《${entry.originalName}》失败`);
+    if (content.buffer.byteLength > MAX_EDIT_BYTES) {
+      throw new Error(
+        `FILE_TOO_LARGE: 《${entry.originalName}》${(content.buffer.byteLength / 1024 / 1024).toFixed(1)}MB`
+        + " 超过处理上限（25MB）",
+      );
+    }
+    return content.buffer;
   }
 
   function applyFailureMessage(title: string, result: OfficeApplyBytesResult): string {
@@ -985,8 +1093,8 @@ export function officePlugin(
       + "insert_chart / edit_chart（图表）、set_header_footer（页眉页脚，text 里 {PAGE}/{NUMPAGES} 是页码/总页数域，\n 分行）、"
       + "set_watermark（{text} 设置文字水印如 机密/草稿，text:null 移除；当前水印见 word_agent_read 的 watermark 字段）、"
       + "set_page_setup（{orientation/paperSize/margins(单位 twip, 1cm=567)/columns/pageColor/theme} 页面设置与主题；当前值见 pageSetup 字段）、"
-      + "insert_image_base64（{path|url|base64, afterIndex?, maxWidthPx?, label?} 插图：优先传本地图片绝对路径 path（本轮自己生成/用户给的图片文件），"
-      + "或公网图片链接 url；网关直接读字节后注入，不需要也不允许把 base64 抄进工具参数）、"
+      + "insert_image_base64（{fileId|path|url|base64, afterIndex?, maxWidthPx?, label?} 插图：文件库里的图片（用户刚上传/之前生成的）传 fileId（先用 file_search 定位），"
+      + "本轮自己生成或用户给的本地文件传 path，公网图片传 url；网关直接读字节后注入，不需要也不允许把 base64 抄进工具参数）、"
       + "add_comment（{startIndex, endIndex?, text} 在块上建批注）、delete_comment（{id} 删整个批注线程）、"
       + "insert_shape（{prst, widthEmu?, heightEmu?, afterIndex?} 插入形状，prst 如 rect/roundRect/ellipse/triangle/star5/lineArrow）、"
       + "update_toc（{} 重建目录并回填真实页码）、"
@@ -1030,8 +1138,8 @@ export function officePlugin(
       }
       try {
         const calls = args.calls as OfficeAgentToolCall[];
-        // insert_image_base64 的 path/url 先由网关读成字节：模型只传路径/链接。
-        const prepared = await prepareWordAgentToolCalls(calls);
+        // insert_image_base64 的 fileId/path/url 先由网关读成字节：模型只传来源。
+        const prepared = await prepareWordAgentToolCalls(calls, agentImageDepsFor(target.access));
         const applied: OfficeAgentToolsResult = prepared.forwarded.length > 0
           ? await bridge.applyAgentArtifactTools({
             kind: "docx",
@@ -1074,7 +1182,12 @@ export function officePlugin(
       + "先 word_agent_read 读 operationsGuide（完整 op 列表与字段）和 documentState（章节/页眉页脚/批注/脚注/域/引用/修订现状），"
       + "按块索引定位对象。覆盖：表格（增删表格/行列/单元格、合并拆分、单元格内容与底色、列宽行高、边框、自适应）、"
       + "分页与页面设置、脚注与尾注、页码与域、行内/对象格式（字符样式、制表位、换行/分栏符、文本框/WordArt/公式/符号、图片环绕）、"
-      + "参考文献与交叉引用、修订接受/拒绝。op 词汇共 58 项，以 word_agent_read 的 operationsGuide 为准。"
+      + "对象操作（图片替换 object.image.replace / 裁剪 object.image.crop / 去背景 object.image.removeBackground、"
+      + "形状层级 object.shape.zOrder、公式转换 object.equation.convert）、"
+      + "页眉页脚图片（headerFooter.insertImage/removeImage/replaceImage）、程序化手绘（object.ink.add / object.ink.mark 画直线标注）、新建字符样式（format.createCharacterStyle）、"
+      + "参考文献与交叉引用、修订接受/拒绝。op 词汇共 69 项 / 10 个域，以 word_agent_read 的 operationsGuide 为准。"
+      + "图片类 op（object.image.replace / headerFooter.insertImage / replaceImage）的来源用 fileId（文件库图片，用户刚上传/之前生成的）、"
+      + "本地 path 或公网 url；网关负责取字节，不要把 base64 写进 ops。"
       + "ops 1-50 条，按序执行、逐条隔离（一条失败不影响其他条）；dryRun=true 只校验并返回计划，不落盘。"
       + "高风险 op（review.accept/reject 全部修订、review.protect、review.encrypt）必须带 confirm: true，"
       + "调用前先向用户说明影响并取得明确同意；逐条修订 id 用 read_revisions 返回的 [rN]。"
@@ -1120,6 +1233,21 @@ export function officePlugin(
       }
       const title = target.entry.displayName ?? target.entry.originalName;
       const dryRun = args.dryRun === true;
+      // op 里的图片来源（fileId/path/url/base64）先由网关解析成字节：渲染端只认 {base64, mime}。
+      const prepared = await prepareWordAgentOps(args.ops as unknown[], agentImageDepsFor(target.access));
+      if (prepared.failure) {
+        return success({
+          fileId: target.fileId,
+          title,
+          ok: false,
+          ...(dryRun ? { dryRun: true } : {}),
+          ...prepared.failure,
+          error: prepared.failure.output,
+          nextAction: "fix_and_retry",
+          hint: "ops 里有图片 op 的来源（path/url）无法读取：整批未下发也未落盘；"
+            + "改用本地图片绝对路径 path 或公网图片 url 修正该 op 后重试。",
+        });
+      }
       try {
         const applied = await bridge.applyAgentArtifactTools({
           kind: "docx",
@@ -1129,7 +1257,7 @@ export function officePlugin(
           calls: [{
             id: "ops-1",
             name: "apply_operations",
-            input: { ops: args.ops, ...(dryRun ? { dryRun: true } : {}) },
+            input: { ops: prepared.forwarded, ...(dryRun ? { dryRun: true } : {}) },
           }],
         });
         const row = applied.results?.[0];
@@ -1159,6 +1287,182 @@ export function officePlugin(
       } catch (error) {
         throw new Error(agentToolsFailureMessage(title, error instanceof Error ? error.message : String(error)));
       }
+    },
+  };
+
+  /**
+   * 段落级对比：纯网关侧读文件库当前版本（不依赖桌面端打开状态），
+   * LCS 对齐语义与 GenOffice docs 的「审阅 → 比较」一致（同一位置删+增合并成 changed）。
+   */
+  const wordCompare: DocumentCapabilityTool = {
+    name: "word_compare",
+    title: "对比两份 Word 文档的段落差异",
+    description: "逐段对比两份已入库 .docx 的当前版本（按段落纯文本做 LCS 对齐；同一位置的删除+新增合并为 changed），"
+      + "回答“这两版改了什么 / 和模板差多少”。left = fileId（省略 = 用户当前浏览的文件），right = otherFileId（必填，"
+      + "可用 file_search 按文件名查找）。不需要文件在界面上打开，也不经过桌面编辑器，纯文件库读取。"
+      + "返回 summary（same/changed/added/removed/total 条目计数）与 entries（kind + left/right 文本）；"
+      + "entries 默认最多 200 条、可调至 500，超出时 truncated=true（完整计数看 summary.total）。"
+      + "只比较段落文本，不比较表格结构/图片/格式/页眉页脚；两份都必须是 .docx。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "左侧/基准文档 id；省略 = 当前正在浏览的文件" },
+        otherFileId: { type: "string", minLength: 1, description: "右侧/对比文档 id（必填；可用 file_search 查找）" },
+        maxEntries: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_COMPARE_ENTRIES,
+          description: `最多返回多少条差异（默认 ${DEFAULT_COMPARE_ENTRIES}，上限 ${MAX_COMPARE_ENTRIES}）`,
+        },
+      },
+      required: ["otherFileId"],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const otherFileId = typeof args.otherFileId === "string" ? args.otherFileId.trim() : "";
+      if (!otherFileId) {
+        throw new Error("INVALID_REQUEST: otherFileId 必填（要对比的另一份 .docx 的 fileId，可先用 file_search 查找）");
+      }
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(
+          `INVALID_TARGET: word_compare 左侧文档只支持 .docx；《${target.entry.originalName}》不是 Word 文档`,
+        );
+      }
+      if (target.fileId === otherFileId) {
+        throw new Error("INVALID_REQUEST: fileId 与 otherFileId 是同一个文件，无法和自己对比");
+      }
+      const otherEntry = target.access.catalogEntry(otherFileId);
+      if (!otherEntry) {
+        throw new Error(`FILE_NOT_FOUND: 对比文件 ${otherFileId} 不在文件库中（可能仍在导入或已被删除）`);
+      }
+      if (!otherEntry.contentHash) {
+        throw new Error(
+          `FILE_CONTENT_UNAVAILABLE: 《${otherEntry.displayName ?? otherEntry.originalName}》还没有可用的文件版本`,
+        );
+      }
+      if (!/\.docx$/i.test(otherEntry.originalName)) {
+        throw new Error(
+          `INVALID_TARGET: word_compare 对比文档只支持 .docx；《${otherEntry.originalName}》不是 Word 文档`,
+        );
+      }
+
+      let leftTexts: string[];
+      let rightTexts: string[];
+      try {
+        const [leftBuffer, rightBuffer] = await Promise.all([
+          readTargetBuffer(target.access, target.fileId, target.entry),
+          readTargetBuffer(target.access, otherFileId, otherEntry),
+        ]);
+        const [leftParagraphs, rightParagraphs] = await Promise.all([
+          readDocxParagraphs(leftBuffer),
+          readDocxParagraphs(rightBuffer),
+        ]);
+        leftTexts = leftParagraphs.map((paragraph) => paragraph.text);
+        rightTexts = rightParagraphs.map((paragraph) => paragraph.text);
+      } catch (error) {
+        if (error instanceof DocxEditError) {
+          throw new Error(`INVALID_TARGET: word_compare 需要两份有效的 .docx（${error.message}）`);
+        }
+        throw error;
+      }
+
+      const cells = leftTexts.length * rightTexts.length;
+      if (cells > MAX_COMPARE_CELLS) {
+        throw new Error(
+          `FILE_TOO_LARGE: 两份文档段落数过多（左 ${leftTexts.length} 段 × 右 ${rightTexts.length} 段），`
+          + `超出逐段对比上限（${MAX_COMPARE_CELLS} 个对齐单元）；请先拆分章节或用 file_read 分节对比`,
+        );
+      }
+
+      const entries = compareParagraphs(leftTexts, rightTexts);
+      const summary = summarizeParagraphCompare(entries);
+      const rawMax = Number(args.maxEntries ?? DEFAULT_COMPARE_ENTRIES);
+      const maxEntries = Number.isFinite(rawMax)
+        ? Math.min(MAX_COMPARE_ENTRIES, Math.max(1, Math.trunc(rawMax)))
+        : DEFAULT_COMPARE_ENTRIES;
+      const clip = (text: string): string =>
+        text.length > MAX_COMPARE_TEXT ? `${text.slice(0, MAX_COMPARE_TEXT)}…` : text;
+      const visibleEntries = entries.slice(0, maxEntries).map((entry: ParagraphCompareEntry) => ({
+        kind: entry.kind,
+        ...(entry.left !== undefined ? { left: clip(entry.left) } : {}),
+        ...(entry.right !== undefined ? { right: clip(entry.right) } : {}),
+      }));
+      const identical = summary.changed + summary.added + summary.removed === 0;
+      return success({
+        fileId: target.fileId,
+        otherFileId,
+        title: target.entry.displayName ?? target.entry.originalName,
+        otherTitle: otherEntry.displayName ?? otherEntry.originalName,
+        summary,
+        entries: visibleEntries,
+        truncated: entries.length > visibleEntries.length,
+        identical,
+        nextAction: "report_result",
+        hint: identical
+          ? "两份文档段落文本完全一致（word_compare 只比段落文本，不比格式/表格结构/图片）。"
+          : "left = 基准文档、right = 对比文档；回复只说明关键差异（改了什么/新增/删除了什么），"
+            + "不要罗列全部 same 条目；entries 被截断时按 summary 的计数说明总量。",
+      });
+    },
+  };
+
+  /**
+   * Word → PDF：桌面端 LibreOffice 转换并入库；网关只传 fileId/命名/归属，
+   * 不搬文档字节（PDF 由桌面端 import 进文件库后返回新 fileId）。
+   */
+  const wordExportPdf: DocumentCapabilityTool = {
+    name: "word_export_pdf",
+    title: "把 Word 导出为 PDF 并加入文件库",
+    description: "把任意已入库 .docx 导出为 PDF（桌面端用 LibreOffice 转换，作为新文件加入文件库），"
+      + "适合“导出 PDF / 发我一份 PDF / 转成 PDF”这类请求。fileId 省略 = 用户当前浏览的文件；"
+      + "不需要文件已经在界面上打开。返回新 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
+      + "fileName 可选，必须以 .pdf 结尾（默认沿用原文件名）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "要导出的 Word 文件 id；省略 = 当前正在浏览的文件" },
+        fileName: {
+          type: "string",
+          minLength: 6,
+          maxLength: 120,
+          description: "可选输出文件名，必须以 .pdf 结尾（默认取原文件名）",
+        },
+      },
+      required: [],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      const target = await resolveOfficeTarget(args, context);
+      const title = target.entry.displayName ?? target.entry.originalName;
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_export_pdf 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      const fileName = optionalFileName(args, ".pdf");
+      let exported: Awaited<ReturnType<OfficeBridgeClient["exportPdf"]>>;
+      try {
+        exported = await bridge.exportPdf({
+          fileId: target.fileId,
+          ...(fileName ? { fileName } : {}),
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+        });
+      } catch (error) {
+        throw new Error(
+          `EXPORT_PDF_FAILED: 《${title}》导出 PDF 失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (!exported.fileId) throw new Error("EXPORT_PDF_FAILED: 桌面端未返回 PDF 文件条目");
+      return success({
+        fileId: exported.fileId,
+        sourceFileId: target.fileId,
+        originalName: exported.originalName,
+        ...(exported.contentHash ? { contentHash: exported.contentHash } : {}),
+        nextAction: "report_result",
+        hint: "PDF 已生成并加入文件库（原 Word 未改动）；回复里告知 PDF 文件名即可，不要重复导出。",
+      });
     },
   };
 
@@ -1404,7 +1708,9 @@ export function officePlugin(
       slidesRead,
       slidesEdit,
       ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
-      ...(files ? [wordAgentRead, wordAgentEdit, wordAgentOps, sheetsAgentRead, sheetsAgentEdit] : []),
+      ...(files
+        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit]
+        : []),
       ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],
   };
