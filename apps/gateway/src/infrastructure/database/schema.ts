@@ -1562,12 +1562,12 @@ export const slidesStoryboards = sqliteTable(
   ],
 );
 
-/** 论文格式卡（thesis-format 管线）：一 Room 多卡，同 Room 内 (room_id, source_name) 唯一，重传同名模版即覆盖。 */
+/** 论文格式卡（thesis-format 管线）：一工作区多卡，同工作区内 (workspace_id, source_name) 唯一，重传同名模版即覆盖。 */
 export const thesisFormatCards = sqliteTable(
   "thesis_format_cards",
   {
     id: text("id").primaryKey(),
-    roomId: text("room_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
     /** validate 后的 ThesisFormatCard 全量 JSON。 */
     formatCard: text("format_card", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     /** 设为模版的库内文件（parseFromDisk 直传时为空）。 */
@@ -1577,7 +1577,7 @@ export const thesisFormatCards = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
   },
   (table) => [
-    uniqueIndex("thesis_format_cards_room_source_idx").on(table.roomId, table.sourceName),
+    uniqueIndex("thesis_format_cards_workspace_source_idx").on(table.workspaceId, table.sourceName),
   ],
 );
 

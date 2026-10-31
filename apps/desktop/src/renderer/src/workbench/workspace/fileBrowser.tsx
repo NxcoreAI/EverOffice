@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   PanelRightOpen,
   Plus,
+  Stamp,
   Search,
   Trash2,
 } from 'lucide-react'
@@ -276,7 +277,14 @@ export interface FileItemActions {
   onOpen: (item: RealOfficeFile) => void
   onOpenOriginal?: (item: RealOfficeFile) => void
   onExportReveal?: (item: RealOfficeFile) => void
+  /** 把资料库文件设为当前工作区的论文排版模版（AI 面板「排版」里可见）。 */
+  onSetThesisTemplate?: (item: RealOfficeFile) => void
   onDelete?: (item: RealOfficeFile) => void
+}
+
+/** 论文模版只收 Word/PDF（与网关 thesis-format 解析入口一致）。 */
+function canBeThesisTemplate(item: RealOfficeFile): boolean {
+  return /\.(docx?|pdf)$/i.test(item.file.name)
 }
 
 function FileItemMenu({ item, actions, align = 'end' }: {
@@ -309,6 +317,11 @@ function FileItemMenu({ item, actions, align = 'end' }: {
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
             导出定位
+          </MenuItem>
+        ) : null}
+        {actions.onSetThesisTemplate && canBeThesisTemplate(item) ? (
+          <MenuItem icon={<Stamp size={14} />} onSelect={() => actions.onSetThesisTemplate?.(item)}>
+            设为论文排版模版
           </MenuItem>
         ) : null}
         {actions.onDelete ? (

@@ -763,7 +763,7 @@ const api: NxcoreDesktopApi = {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
     ) =>
       invoke('files:open-original', fileId, originalName, contentHash, options),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
@@ -807,25 +807,25 @@ const api: NxcoreDesktopApi = {
     takePendingOsOpen: () => invoke('files:take-pending-os-open'),
   },
   thesisFormat: {
-    listCards: (roomId: string): Promise<Array<{
+    listCards: (workspaceId: string): Promise<Array<{
       id: string
       sourceName: string
       sourceFileEntryId: string | null
       updatedAt: string
       card: Record<string, unknown>
-    }>> => invoke('thesis-format:cards:list', roomId),
-    setFromLibrary: (roomId: string, fileEntryId: string) =>
-      invoke('thesis-format:parse:library', roomId, fileEntryId),
-    pickAndSet: (roomId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
-      invoke('thesis-format:parse:pick', roomId, options),
+    }>> => invoke('thesis-format:cards:list', workspaceId),
+    setFromLibrary: (workspaceId: string, fileEntryId: string) =>
+      invoke('thesis-format:parse:library', workspaceId, fileEntryId),
+    pickAndSet: (workspaceId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
+      invoke('thesis-format:parse:pick', workspaceId, options),
     /** 工作台拖拽上传：直接把字节交给网关解析成格式卡（不落盘、不进文件库）。 */
-    parseUpload: (roomId: string, name: string, bytes: ArrayBuffer) =>
-      invoke('thesis-format:parse:upload', roomId, name, bytes),
-    /** 彻底删除模版：模版文件 + 格式卡（先删文件含 Room 成员引用级联，再删卡）。 */
-    deleteTemplate: (roomId: string, cardId: string) =>
-      invoke('thesis-format:template:delete', roomId, cardId),
+    parseUpload: (workspaceId: string, name: string, bytes: ArrayBuffer) =>
+      invoke('thesis-format:parse:upload', workspaceId, name, bytes),
+    /** 彻底删除模版：模版文件 + 格式卡（先删文件含级联清理，再删卡）。 */
+    deleteTemplate: (workspaceId: string, cardId: string) =>
+      invoke('thesis-format:template:delete', workspaceId, cardId),
     reformat: (
-      roomId: string,
+      workspaceId: string,
       fileEntryId: string,
       cardId?: string,
       options?: {
@@ -833,10 +833,10 @@ const api: NxcoreDesktopApi = {
         keepHeaderFooter?: boolean
         headingMapping?: { chapter?: number; section?: number; subsection?: number }
       },
-    ) => invoke('thesis-format:reformat', roomId, fileEntryId, cardId, options),
+    ) => invoke('thesis-format:reformat', workspaceId, fileEntryId, cardId, options),
     /** 任务化排版：立即返回 jobId，用 reformatStatus 轮询阶段进度。 */
     reformatStart: (
-      roomId: string,
+      workspaceId: string,
       fileEntryId: string,
       cardId?: string,
       options?: {
@@ -844,13 +844,13 @@ const api: NxcoreDesktopApi = {
         keepHeaderFooter?: boolean
         headingMapping?: { chapter?: number; section?: number; subsection?: number }
       },
-    ) => invoke('thesis-format:reformat:start', roomId, fileEntryId, cardId, options),
+    ) => invoke('thesis-format:reformat:start', workspaceId, fileEntryId, cardId, options),
     reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
     /** 导出 PDF（LibreOffice）；本机未安装时返回 { unavailable: true }。 */
-    exportPdf: (roomId: string, fileEntryId: string) =>
+    exportPdf: (workspaceId: string, fileEntryId: string) =>
       invoke('thesis-format:export:pdf', fileEntryId),
-    removeCard: (roomId: string, cardId: string) =>
-      invoke('thesis-format:cards:remove', roomId, cardId),
+    removeCard: (workspaceId: string, cardId: string) =>
+      invoke('thesis-format:cards:remove', workspaceId, cardId),
     onCardChanged: (listener: () => void) => {
       const handler = () => listener()
       ipcRenderer.on('thesis-format:card-changed', handler)

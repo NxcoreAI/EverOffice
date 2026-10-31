@@ -1080,7 +1080,7 @@ export interface NxcoreDesktopApi {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
@@ -1109,8 +1109,8 @@ export interface NxcoreDesktopApi {
     takePendingOsOpen(): Promise<OsOpenedDocument | null>
   }
   thesisFormat: {
-    /** Room 的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
-    listCards(roomId: string): Promise<Array<{
+    /** 当前工作区的论文格式卡列表（最新在前）；card 为 ThesisFormatCard 全量 JSON（样张预览数据源）。 */
+    listCards(workspaceId: string): Promise<Array<{
       id: string
       sourceName: string
       sourceFileEntryId: string | null
@@ -1118,20 +1118,20 @@ export interface NxcoreDesktopApi {
       card: Record<string, unknown>
     }>>
     /** 资料库内文件设为论文模版（docx/doc/pdf；同名模版覆盖旧卡）。factGaps 非空 = 模版部分信息未能解析（UI 必须提示，不得静默）。 */
-    setFromLibrary(roomId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    setFromLibrary(workspaceId: string, fileEntryId: string): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
     /** 系统选择框直传模版（zip/docx/doc/pdf；zip 不进文件库）。用户取消返回 canceled=true。factGaps 语义同 setFromLibrary。
      *  options.wordOnly（产物区「排版工具」用）：选择框只接受 Word .docx。 */
-    pickAndSet(roomId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }>
+    pickAndSet(workspaceId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }>
     /** 删除一张格式卡。 */
-    removeCard(roomId: string, cardId: string): Promise<void>
+    removeCard(workspaceId: string, cardId: string): Promise<void>
     /** 工作台拖拽上传：字节直传网关解析成格式卡（不落盘）。factGaps 语义同 setFromLibrary。 */
-    parseUpload(roomId: string, name: string, bytes: ArrayBuffer): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
+    parseUpload(workspaceId: string, name: string, bytes: ArrayBuffer): Promise<{ cardId: string; sourceName: string; factGaps?: string[] }>
     /** 彻底删除模版：模版文件 + 格式卡。 */
-    deleteTemplate(roomId: string, cardId: string): Promise<{ fileDeleted: boolean; hadFile: boolean }>
+    deleteTemplate(workspaceId: string, cardId: string): Promise<{ fileDeleted: boolean; hadFile: boolean }>
     /** 一键装订：按指定格式卡（缺省最新）把 docx 论文装订成 xxx-排版版.docx 新文件。
      *  report 为 v2 槽位映射报告（守恒核对/规则/未匹配块/待复核章节）。 */
     reformat(
-      roomId: string,
+      workspaceId: string,
       fileEntryId: string,
       cardId?: string,
       /** 工作台规则面板：严格/融合、Logo 与页眉页脚保留、标题层级映射。 */
@@ -1149,7 +1149,7 @@ export interface NxcoreDesktopApi {
     }>
     /** 任务化排版：提交即返回 jobId（长任务不占客户端请求槽）。 */
     reformatStart(
-      roomId: string,
+      workspaceId: string,
       fileEntryId: string,
       cardId?: string,
       options?: {
@@ -1168,7 +1168,7 @@ export interface NxcoreDesktopApi {
       error?: string
     }>
     /** 导出 PDF：本机无 LibreOffice 时 unavailable=true（UI 需给出可执行说明）。 */
-    exportPdf(roomId: string, fileEntryId: string): Promise<
+    exportPdf(workspaceId: string, fileEntryId: string): Promise<
       { unavailable: true } | { unavailable: false; path: string }
     >
     onCardChanged(listener: () => void): () => void

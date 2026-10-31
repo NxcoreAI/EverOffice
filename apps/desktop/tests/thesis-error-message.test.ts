@@ -6,8 +6,14 @@ describe('describeThesisError', () => {
     const text = describeThesisError('thesis_format_card_not_found')
     expect(text).toContain('还没有可用的论文格式卡')
     expect(text).toContain('上传论文模版')
-    // 关键：告诉用户模版与文档必须同 Room——否则用户会在别的 Room 里找不着
-    expect(text).toContain('同一个 Room')
+    // 关键：告诉用户模版与文档必须同工作区——否则用户会在别的空间里找不着
+    expect(text).toContain('同一个工作区')
+  })
+
+  it('跨工作区引用模版给出可执行引导', () => {
+    const text = describeThesisError('thesis_template_not_in_workspace')
+    expect(text).toContain('当前工作区')
+    expect(text).toContain('资料库')
   })
 
   it('上游 502 nginx 页面翻成「暂时不可用」，不把 HTML 甩给用户', () => {

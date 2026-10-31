@@ -101,14 +101,14 @@ describe("模版 docx 骨架缓存", () => {
     const { service, access, dataDir } = await serviceForTest();
     // 先落一张真卡（removeCard 只在卡存在时返回 true）
     const row = service.cardStore().upsert({
-      roomId: "room-1",
+      workspaceId: "ws-1",
       card: { cardMeta: { parsedAt: new Date().toISOString() } } as never,
       sourceFileEntryId: null,
       sourceName: "模版.docx",
     });
     await access.writeTemplateCache(row.id, DOCX_BYTES);
 
-    expect(service.removeCard("room-1", row.id)).toBe(true);
+    expect(service.removeCard("ws-1", row.id)).toBe(true);
     // dropTemplateCache 是 fire-and-forget，给它一个微任务窗口
     await new Promise((resolveWait) => setTimeout(resolveWait, 20));
     await expect(stat(join(dataDir, "thesis-templates", `${row.id}.docx`))).rejects.toThrow();

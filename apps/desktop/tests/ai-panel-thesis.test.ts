@@ -203,14 +203,15 @@ describe('AI 面板排版工具', () => {
     // 宿主侧：无文件条目返回 no_file，有则用 openOriginal 打开
     const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
     expect(main).toMatch(/opened: false, reason: .no_file./)
-    expect(main).toContain('previewTemplate: async (roomId, cardId) =>')
+    // 预览/上传都按「工作区」分派（Room 维度已下线）
+    expect(main).toContain('previewTemplate: async (workspaceId, cardId) =>')
     // 上传（选择框/拖拽）都先导入资料区再解析：卡片持有真实文件条目，
     // 预览能打开原文件、删除能级联、重复导入按内容去重
     expect(main).toContain('importTemplateFileIntoLibrary')
     expect(main).toContain('importTemplateBytesIntoLibrary')
     expect(main).toContain('importPathsOnce')
-    expect(main).toContain("parseFromDisk(roomId, filePath, fileEntryId)")
-    expect(main).toContain('parseFromBytes(roomId, name, data, fileEntryId)')
+    expect(main).toContain("parseFromDisk(workspaceId, filePath, fileEntryId)")
+    expect(main).toContain('parseFromBytes(workspaceId, name, data, fileEntryId)')
     // 老卡片自愈：资料区唯一同名文件直接打开
     expect(main).toContain('findLibraryFileByName')
     // 关键回归：预览必须真的打开实例（曾经只挂了个空 opener 钩子 → 点了没反应）
@@ -221,7 +222,7 @@ describe('AI 面板排版工具', () => {
     expect(main).toContain('window.focus()')
     // 注册表分派直接把参数交给桥，不再经回调
     const registry = readFileSync(resolve(__dirname, '../src/main/office/office-preview-registry.ts'), 'utf8')
-    expect(registry).toContain('bridge.previewTemplate(roomId, action.cardId)')
+    expect(registry).toContain('bridge.previewTemplate(workspaceId, action.cardId)')
   })
 
   it('排版走任务化：提交作业 + 轮询进度 + 20 分钟硬超时', () => {
@@ -253,6 +254,19 @@ describe('AI 面板排版工具', () => {
     expect(aiTab).toContain('reformatWith(meta.cardId)'); // 上传后自动排版
   })
 
+  it('排版完成自动打开成品，并刷新资料库', () => {
+    const main = readFileSync(resolve(__dirname, '../src/main/index.ts'), 'utf8')
+    // 成品落库 → 打开成品标签（与模版预览同一条预览管线）。
+    expect(main).toContain('setThesisProductHook')
+    expect(main).toContain('openFileInAppPreview(bridge, product.fileEntryId, product.originalName')
+    const bridge = readFileSync(resolve(__dirname, '../src/main/gateway/office-bridge.ts'), 'utf8')
+    expect(bridge).toContain('this.notifyThesisProduct({')
+    // 资料库消费主进程的 office:agent-file 事件：成品出现后列表自动重拉。
+    const library = readFileSync(resolve(__dirname, '../src/renderer/src/workbench/workspace/useFileLibrary.ts'), 'utf8')
+    expect(library).toContain('office.onAgentFile')
+    expect(library).toContain("event.type !== 'done'")
+  })
+
   it('删除结果如实反馈：文件没删掉要提示而不是假装成功', () => {
     expect(aiTab).toContain("setError(t('aiThesisDeleteFileFailed'))")
   })
@@ -274,7 +288,7 @@ describe('预览可见性：主进程建好实例后必须通知渲染端', () =
   it('排版面板预览打开成功后补发通知（否则视图永远隐藏）', () => {
     expect(main).toContain('previewRequestFromOpenResult')
     expect(main).toContain('notifyPreviewRequested')
-    const block = main.slice(main.indexOf('previewTemplate: async (roomId, cardId)'))
+    const block = main.slice(main.indexOf('previewTemplate: async (workspaceId, cardId)'))
     expect(block.slice(0, block.indexOf('if (card.sourceFileEntryId)'))).toContain('notifyPreviewRequested(request)')
   })
 

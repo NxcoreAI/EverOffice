@@ -126,9 +126,8 @@ export interface OfficeReformatRequest {
   templateBase64?: string
   formatCard?: ThesisFormatCardPayload
   bindingSpec?: ThesisBindingSpecPayload
-  roomId?: string
-  /** 产物归属工作区（跟源文件走；资料库/产物库按空间隔离）。 */
-  workspaceId?: string | null
+  /** 产物入库归属（工作区）：排版结果与源文件落在同一空间（资料库按空间隔离）。 */
+  workspaceId?: string
   sourceFileName?: string
   sourceFileEntryId?: string
   idempotencyKey?: string
@@ -264,9 +263,18 @@ function validEditBody(value: unknown): value is OfficeEditRequest {
  * 并走 file-imports 入库；/v1/office-edit 把 Agent 的编辑事务送进已打开
  * 的 slides 活会话（编辑过程实时重绘在打开的视图上）。
  */
+/** 排版产物落库后的通知（index.ts 注入：自动打开成品 + 刷新资料库）。 */
+export interface ThesisProductReady {
+  fileEntryId: string
+  originalName: string
+  workspaceId?: string
+}
+
 export class OfficeBridgeServer {
   private server: Server | null = null
   private readonly token = randomBytes(32).toString('base64url')
+  /** 论文排版成品钩子：缺省只广播事件（旧行为）。 */
+  private thesisProductHook: ((product: ThesisProductReady) => void | Promise<void>) | null = null
   /** filesGatewayBridge / slidesEdit 在 bridge 启动之后才创建：惰性取最新引用。 */
   constructor(
     private readonly filesBridge: () => FilesGatewayBridge | null,
@@ -297,6 +305,23 @@ export class OfficeBridgeServer {
       >)
       | null = () => null,
   ) {}
+
+  /** 排版成品落库后回调（index.ts 注入；晚于构造注入，故用 setter）。 */
+  setThesisProductHook(hook: ((product: ThesisProductReady) => void | Promise<void>) | null): void {
+    this.thesisProductHook = hook
+  }
+
+  private notifyThesisProduct(product: ThesisProductReady): void {
+    const hook = this.thesisProductHook
+    if (!hook) return
+    try {
+      void Promise.resolve(hook(product)).catch((error) => {
+        console.warn('[office] 排版成品自动打开失败：', error instanceof Error ? error.message : String(error))
+      })
+    } catch (error) {
+      console.warn('[office] 排版成品自动打开失败：', error instanceof Error ? error.message : String(error))
+    }
+  }
 
   async start(): Promise<{ baseUrl: string; token: string }> {
     if (this.server) throw new Error('Office bridge is already running')
@@ -496,7 +521,6 @@ export class OfficeBridgeServer {
             filePath: generated.filePath,
             originalName,
             sourceKey: `agent:docx-thesis:${req.sourceFileEntryId}:${req.idempotencyKey}`,
-            ...(req.roomId ? { roomId: req.roomId } : {}),
             ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
           })
         } catch (error) {
@@ -511,7 +535,14 @@ export class OfficeBridgeServer {
           format: 'docx',
           fileId: accepted.fileEntryId,
           originalName,
-          roomId: req.roomId,
+          ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+        })
+        // 成品已入库：自动打开给用户看（否则「排版完成」只停在面板一行字，
+        // 当前文档又不会变，用户会以为没出效果）。
+        this.notifyThesisProduct({
+          fileEntryId: accepted.fileEntryId,
+          originalName,
+          ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
         })
         return {
           status: 200,
@@ -523,7 +554,6 @@ export class OfficeBridgeServer {
               contentHash: accepted.contentHash,
               blobDeduped: accepted.blobDeduped,
               versionDeduped: accepted.versionDeduped,
-              roomRequested: Boolean(req.roomId),
               originalName,
               // 出稿自检/骨架回落提示：面板要能让用户看到「为什么这次排版不对」，
               // 否则只能看到成品、猜不到原因。
