@@ -29,6 +29,8 @@ export interface AgentActivityStep {
   tool: DisplayAgentToolCall
   beforeText: string
   afterText: string
+  /** 导致这次工具调用的思考段（reasoning.delta 在本 step 前的累计）。 */
+  reasoningBefore: string
 }
 
 export interface AgentRunActivity {
@@ -37,6 +39,11 @@ export interface AgentRunActivity {
   finalAnswer: string
   hasTools: boolean
   completed: boolean
+  /** 最后一次工具调用之后、最终答案之前的思考段（无工具时是整段思考）。 */
+  tailReasoning: string
+  /** 正在流动的未封段思考（run 活跃时）：时间线尾部以 shimmer 行实时展示，
+   *  下一个工具出现即封段成 step.reasoningBefore。run 结束后归入 tailReasoning。 */
+  liveReasoning: string
 }
 
 /** 时间线上的子代理行：label 即「谁调用了它」的链式名（如 Slides Planner → Slides Builder）。 */
@@ -679,13 +686,15 @@ export interface AgentRunActivityAccumulator {
   steps: AgentActivityStep[]
   tools: DisplayAgentToolCall[]
   pendingText: string
+  /** 尚未归入某个 step 的思考增量（reasoning.delta）：新工具出现时封段。 */
+  pendingReasoning: string
   completedContent: string
   completed: boolean
   savedAnswer: string
 }
 
 export function createAgentRunActivityAccumulator(savedAnswer = ''): AgentRunActivityAccumulator {
-  return { steps: [], tools: [], pendingText: '', completedContent: '', completed: false, savedAnswer }
+  return { steps: [], tools: [], pendingText: '', pendingReasoning: '', completedContent: '', completed: false, savedAnswer }
 }
 
 /** 折叠单个事件，返回是否有可观察变化（无变化时调用方可跳过重渲染）。 */
@@ -709,8 +718,11 @@ export function foldAgentRunActivityEvent(acc: AgentRunActivityAccumulator, even
         tool,
         beforeText: text && !acc.steps.length ? filterActivityText(text, tool) : '',
         afterText: '',
+        // 思考按工具调用决策分段：新工具出现时，把之前的思考封进这个 step。
+        reasoningBefore: acc.pendingReasoning,
       })
       acc.pendingText = ''
+      acc.pendingReasoning = ''
     } else {
       acc.steps[index] = { ...acc.steps[index]!, tool }
     }
@@ -719,9 +731,25 @@ export function foldAgentRunActivityEvent(acc: AgentRunActivityAccumulator, even
   }
 
   if (event.type === 'message.started') {
-    // pi 自动重试重启消息体（#199）：丢弃上一波半截正文，从零重新累计
-    if (!acc.pendingText) return false
-    acc.pendingText = ''
+    // pi 自动重试重启消息体（#199）：丢弃上一波半截正文，从零重新累计。
+    // 思考段同理清空——重启后重新流的 reasoning 会重新分段。
+    let changed = false
+    if (acc.pendingText) {
+      acc.pendingText = ''
+      changed = true
+    }
+    if (acc.pendingReasoning) {
+      acc.pendingReasoning = ''
+      changed = true
+    }
+    return changed
+  }
+
+  if (event.type === 'reasoning.delta') {
+    // 思考增量归入当前段：有 step 后落在 tail（答案前思考），否则等首个工具封段。
+    const delta = (event.payload as { delta?: unknown }).delta
+    if (typeof delta !== 'string' || !delta) return false
+    acc.pendingReasoning += delta
     return true
   }
 
@@ -787,6 +815,9 @@ export function snapshotAgentRunActivity(acc: AgentRunActivityAccumulator): Agen
       finalAnswer: (acc.completedContent || acc.savedAnswer).trim(),
       hasTools,
       completed: acc.completed,
+      // 没有工具调用：整段思考都是 tail（ReasoningBlock 整块展示）。
+      tailReasoning: acc.pendingReasoning,
+      liveReasoning: acc.completed ? '' : acc.pendingReasoning,
     }
   }
 
@@ -801,6 +832,8 @@ export function snapshotAgentRunActivity(acc: AgentRunActivityAccumulator): Agen
     finalAnswer,
     hasTools,
     completed: acc.completed,
+    tailReasoning: acc.pendingReasoning,
+    liveReasoning: acc.completed ? '' : acc.pendingReasoning,
   }
 }
 

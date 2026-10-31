@@ -6,7 +6,7 @@
   "agentChat.analyzing": "正在分析问题...",
   "agentChat.callingATool": "正在调用工具...",
   "agentChat.thinking": "思考中…",
-  "agentChat.reasoningProcess": "思考过程 · {count} 字",
+  "agentChat.reasoningProcess": "思考过程",
   "agentChat.cancel": "取消",
   "agentChat.cancelRoomSelection": "取消选择 Room",
   "agentChat.chooseARoomForTheDocument": "选择文档所在 Room",

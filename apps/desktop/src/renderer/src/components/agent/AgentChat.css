@@ -765,6 +765,74 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   overscroll-behavior: contain;
 }
 
+/* 时间线内嵌段：紧凑、缩进对齐工具行，「思考 → 执行」节奏的竖直阅读序。 */
+.agent-reasoning-segment {
+  margin: 2px 0 2px 6px;
+  font-size: 11px;
+}
+
+.agent-reasoning-segment summary {
+  min-height: 20px;
+  font-weight: 450;
+}
+
+.agent-reasoning-segment summary svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 封段小节的摘要：直接显示思考首行文本（不再显示「思考」字样/字数）。 */
+.agent-reasoning-summary-text {
+  overflow: hidden;
+  color: #656d79;
+  font-weight: 450;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.agent-reasoning-segment[open] > .agent-reasoning-content {
+  max-height: 180px;
+  margin-top: 4px;
+  padding-left: 10px;
+  line-height: 1.55;
+}
+
+/* 流动思考行（时间线尾部）：与「正在整理结果」状态行同款 shimmer + tail 预览。 */
+.agent-reasoning-live {
+  margin: 2px 0 0 6px;
+  font-size: 12px;
+}
+
+.agent-reasoning-live summary {
+  min-height: 22px;
+  color: #4664c8;
+  font-weight: 540;
+}
+
+.agent-reasoning-live summary svg {
+  width: 13px;
+  height: 13px;
+  color: #6c7ba8;
+}
+
+.agent-reasoning-live-tail {
+  margin-left: 8px;
+  max-width: 320px;
+  overflow: hidden;
+  color: #6f7784;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-reasoning-live[open] > .agent-reasoning-content {
+  max-height: 180px;
+  margin-top: 4px;
+  padding-left: 10px;
+  line-height: 1.55;
+}
+
 .agent-reasoning-content p {
   margin: 0;
   overflow-wrap: anywhere;

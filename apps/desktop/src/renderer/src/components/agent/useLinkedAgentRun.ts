@@ -21,6 +21,7 @@ export interface LinkedAgentRunState {
   status: AgentRunStatus | null
   messages: DisplayAgentMessage[]
   activity: AgentRunActivity
+  /** @deprecated 思考过程已按工具调用分段：用 activity.steps[].reasoningBefore + activity.tailReasoning。 */
   reasoning: string
   tools: DisplayAgentToolCall[]
   startedAt?: string
@@ -34,7 +35,7 @@ const EMPTY_STATE: LinkedAgentRunState = {
   sessionId: null,
   status: null,
   messages: [],
-  activity: { steps: [], pendingAnswer: '', finalAnswer: '', hasTools: false, completed: false },
+  activity: { steps: [], pendingAnswer: '', finalAnswer: '', hasTools: false, completed: false, tailReasoning: '', liveReasoning: '' },
   reasoning: '',
   tools: [],
   error: null,

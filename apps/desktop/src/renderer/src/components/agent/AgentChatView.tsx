@@ -379,7 +379,10 @@ function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<s
         {active ? (
           <ThinkingStatus label={state.documentPending ? t('surface:agentChat.editingDocument') : getThinkingLabel(assistantMessage, state.tools, t)} />
         ) : null}
-        <ReasoningBlock active={active} content={state.reasoning} />
+        {/* 思考已按工具分段进时间线：有工具活动时不再重复顶部总块；无工具时整段展示。 */}
+        {!state.activity.hasTools ? (
+          <ReasoningBlock active={active} content={state.reasoning} />
+        ) : null}
         {state.activity.hasTools ? (
           <AgentExecutionTimeline
             activity={state.activity}
@@ -1178,16 +1181,21 @@ export function AgentChatView({
                   ? (
                     <ThinkingStatus
                       label={getThinkingLabel(message, tools, t)}
-                      tail={!hasLiveTool(tools) && !rawFinalContent.trim()
+                      // 时间线已带流动思考行（live）时，状态行不再重复 tail 预览。
+                      tail={!hasToolActivity && !hasLiveTool(tools) && !rawFinalContent.trim()
                         ? reasoningTail(reasoningByRun[message.runId])
                         : undefined}
                     />
                   )
                   : null}
-                <ReasoningBlock
-                  active={message.runId === activeRunId}
-                  content={reasoningByRun[message.runId] ?? ''}
-                />
+                {/* 思考已按工具分段进时间线（segment + live 行）：有工具活动时
+                    不再在顶部渲染总块，避免同一段思考两处重复。 */}
+                {!hasToolActivity ? (
+                  <ReasoningBlock
+                    active={message.runId === activeRunId}
+                    content={reasoningByRun[message.runId] ?? ''}
+                  />
+                ) : null}
                 {hasToolActivity && activity ? (
                   <AgentExecutionTimeline
                     activity={activity}
@@ -1238,9 +1246,13 @@ export function AgentChatView({
               <AgentResponseByline agentId={agentIdByRun[activeRunId]} names={agentNamesById} />
               <ThinkingStatus
                 label={getThinkingLabel(undefined, latestTools, t)}
-                tail={reasoningTail(reasoningByRun[activeRunId])}
+                // 时间线已带流动思考行（live）时，状态行不再重复 tail 预览。
+                tail={latestActivity?.hasTools ? undefined : reasoningTail(reasoningByRun[activeRunId])}
               />
-              <ReasoningBlock active content={reasoningByRun[activeRunId] ?? ''} />
+              {/* 思考已按工具分段进时间线：有工具活动时不再重复顶部总块。 */}
+              {!latestActivity?.hasTools ? (
+                <ReasoningBlock active content={reasoningByRun[activeRunId] ?? ''} />
+              ) : null}
               {latestActivity?.hasTools ? (
                 <AgentExecutionTimeline
                   activity={latestActivity}
@@ -1260,8 +1272,7 @@ export function AgentChatView({
                 tail={reasoningTail(reasoningByRun[activeRunId])}
               />
             )
-            : null}
-          {composerNotice}
+            : null}          {composerNotice}
           {slidesTaskCards.length > 0 ? (
             <div className="agent-slides-task-stack">
               {slidesTaskCards.map(({ entry, compact }) => (
