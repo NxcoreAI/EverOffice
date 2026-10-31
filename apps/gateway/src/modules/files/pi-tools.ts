@@ -198,9 +198,10 @@ const SEARCH_KIND_BY_EXTENSION: Record<string, string> = {
 /**
  * `file_search`：按文件名在文件库里定位条目，拿到 fileId。
  *
- * 为什么需要：Word 编辑已经支持「任意已入库 docx 按 fileId 后台编辑」，但模型手里
- * 往往只有「那份调研报告」这种模糊指代——file_read / word_agent_* 都只认 fileId。
- * 本工具把「用户说的是哪份文件」变成确定 id，用户不必先把文件打开或在页签里翻。
+ * 为什么需要：Word/Excel 编辑已经支持「任意已入库 docx/xlsx 按 fileId 后台编辑」，
+ * 但模型手里往往只有「那份调研报告」这种模糊指代——file_read / word_agent_* /
+ * sheets_agent_* 都只认 fileId。本工具把「用户说的是哪份文件」变成确定 id，
+ * 用户不必先把文件打开或在页签里翻。
  */
 export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntimeTool {
   return {
@@ -208,9 +209,10 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
     label: "按文件名搜索文件库",
     description:
       "在文件库里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
-      + "query 同时匹配原始文件名和显示名（不区分大小写，中文按子串），可按扩展名过滤。"
+      + "query 同时匹配原始文件名和显示名（不区分大小写，中文按子串）；extension 可以是单个扩展名或数组。"
       + "用户说“那份/之前生成的/叫 XX 的报告”但没给 fileId、或者要改的文件当前没打开时，先用本工具定位 fileId，"
-      + "再把 fileId 传给 file_read / word_agent_read / word_agent_edit / word_agent_ops / slides_read / sheets_agent_read。"
+      + "再把 fileId 传给 file_read / word_agent_read / word_agent_edit / word_agent_ops / slides_read / sheets_agent_read / sheets_agent_edit。"
+      + "用户提到“刚上传的 logo / 之前生成的那张图”时也先用本工具（extension 传 [\"png\",\"jpg\",\"jpeg\"]）找图片 fileId，再作为图片入参的 fileId。"
       + "query 省略 = 按最近更新时间倒序列出（可在 extension 过滤后浏览）。",
     parameters: Type.Object({
       query: Type.Optional(Type.String({
@@ -218,10 +220,11 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
         maxLength: 200,
         description: "文件名关键词（子串匹配原始文件名/显示名）；省略 = 最近更新的文件",
       })),
-      extension: Type.Optional(Type.String({
-        minLength: 2,
-        maxLength: 12,
-        description: "扩展名过滤，如 docx / .xlsx / pptx / pdf（大小写不敏感）",
+      extension: Type.Optional(Type.Union([
+        Type.String({ minLength: 2, maxLength: 12 }),
+        Type.Array(Type.String({ minLength: 2, maxLength: 12 }), { minItems: 1, maxItems: 8 }),
+      ], {
+        description: "扩展名过滤，如 docx / .xlsx / pptx / pdf；也可以传数组（[\"png\",\"jpg\"] 找图片）。大小写不敏感",
       })),
       workspaceId: Type.Optional(Type.String({
         minLength: 1,
@@ -237,18 +240,27 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
     executionMode: "sequential",
     promptSnippet: "按文件名搜索文件库、定位 fileId",
     promptGuidelines: [
-      "用户提到的文件没有 fileId（“那份调研报告”“之前生成的那个 Word”）或不在打开清单里时，先用 file_search 定位 fileId，再交给 file_read / word_agent_* 读取或修改；不要要求用户先去打开/保存文件。",
+      "用户提到的文件没有 fileId（“那份调研报告”“之前生成的那个 Word/Excel”）或不在打开清单里时，先用 file_search 定位 fileId，再交给 file_read / word_agent_* / sheets_agent_* 读取或修改；不要要求用户先去打开/保存文件。",
     ],
     execute: async (input: StartRuntimeRunInput, params: Record<string, unknown>) => {
       const files = deps.files();
       if (!files) throw new Error("FILE_SERVICE_UNAVAILABLE: 文件服务尚未就绪");
       const query = typeof params.query === "string" ? params.query.trim() : "";
-      const extension = typeof params.extension === "string" ? params.extension.trim() : "";
+      const rawExtensions = Array.isArray(params.extension)
+        ? params.extension
+        : typeof params.extension === "string"
+          ? [params.extension]
+          : [];
+      const extensions = rawExtensions
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 8);
       const requestedWorkspace = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
       const workspaceId = requestedWorkspace || input.workspaceId?.trim() || undefined;
       const limit = positiveInt(params.limit, FILE_SEARCH_DEFAULT_LIMIT, FILE_SEARCH_MAX_LIMIT);
       const found = files.searchCatalog(query, {
-        ...(extension ? { extensions: [extension] } : {}),
+        ...(extensions.length > 0 ? { extensions } : {}),
         ...(workspaceId ? { workspaceId } : {}),
         limit,
       });
@@ -269,7 +281,7 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
       });
       const payload = {
         query,
-        ...(extension ? { extension } : {}),
+        ...(extensions.length > 0 ? { extension: extensions.length === 1 ? extensions[0] : extensions } : {}),
         ...(workspaceId ? { workspaceId } : {}),
         total: found.total,
         returned: items.length,

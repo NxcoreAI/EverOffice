@@ -3595,7 +3595,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         if (req.mode === 'read') {
           const outcome = req.kind === 'docx'
             ? await officePreviewRegistry.describeDocArtifact(req.fileId, hints)
-            : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId)
+            : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId, hints)
           return outcome.ok
             ? { ok: true, data: { describe: outcome.describe } as unknown as Record<string, unknown> }
             : outcome
@@ -3607,7 +3607,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         }))
         const outcome = req.kind === 'docx'
           ? await officePreviewRegistry.applyDocAgentTools(req.fileId, calls, hints)
-          : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls)
+          : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls, hints)
         return outcome.ok
           ? {
             ok: true,
@@ -3822,8 +3822,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     registerMigrationHandlers(migrationCoordinator)
     void migrationCoordinator.restoreCherrySync()
     officeFilesBridge = filesGatewayBridge
-    // 后台 Word 编辑会话：把任意 fileId 解析成可编辑工作副本（catalog 优先、
-    // legacy 兜底；内容哈希必须与 prepareOfficeDocument 的 64-hex 契约一致）。
+    // 后台 Office（Word/Excel）编辑会话：把任意 fileId 解析成可编辑工作副本
+    // （catalog 优先、legacy 兜底；内容哈希必须与 prepareOfficeDocument /
+    // prepareSpreadsheet 的 64-hex 契约一致）。
     officePreviewRegistry.setAgentFileResolver(async (fileId) => {
       try {
         let originalName = ''
@@ -3849,7 +3850,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         if (!contentHash) contentHash = await hashFileBytes(storagePath)
         return { fileId, originalName, storagePath, contentHash, workspaceId }
       } catch (error) {
-        console.warn('office: 后台 Word 会话解析文件失败', {
+        console.warn('office: 后台 Office 会话解析文件失败', {
           fileId,
           error: error instanceof Error ? error.message : String(error),
         })

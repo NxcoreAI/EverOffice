@@ -59,10 +59,12 @@ vi.mock('../src/main/office/spreadsheet-view-manager', () => ({
       return { ...makeView('spreadsheet'), documentPath: '/tmp/workdir/book.xlsx' }
     }),
   },
+  prepareSpreadsheet: vi.fn(async () => '/tmp/workdir/book.xlsx'),
 }))
 
 import { OfficePreviewRegistry, officePreviewKindFor } from '../src/main/office/office-preview-registry'
 import { prepareOfficeDocument } from '../src/main/office/office-view-manager'
+import { prepareSpreadsheet } from '../src/main/office/spreadsheet-view-manager'
 
 /** 每个视图实例的 mock：记录 setActive/dispose 调用；disposeNextCancel 控制下一次返回。 */
 interface ViewRecord {
@@ -126,6 +128,20 @@ const runtime = {
     setSheetsShellWindow: vi.fn(),
     setActiveSheetsWebContents: vi.fn(),
     stopSheetsSidecar: vi.fn(),
+    registerSheetsIpc: vi.fn(),
+    // 后台 Excel 隐藏会话的面：建视图 / 排队工作簿 / 就绪闸门 / 描述 / 应用 / 拆除。
+    createSheetsView: vi.fn(() => makeView('sheets-hidden')),
+    queueWorkbookForView: vi.fn(),
+    waitForAgentReady: vi.fn(async () => true),
+    teardownSheetsRenderer: vi.fn(),
+    sheetsPendingEditCount: vi.fn(() => 0),
+    describeAgentWorkbook: vi.fn(async () => ({
+      context: 'Workbook sheets:\n0|Sheet1|A1:D20',
+      guides: { writing: 'propose_operations' },
+    })),
+    applyAgentWorkbookTools: vi.fn(async () => ({
+      results: [{ id: 'call-1', name: 'propose_operations', output: 'ok', mutated: true }],
+    })),
   },
   slides: {
     setSlidesShellWindow: vi.fn(),
@@ -295,6 +311,135 @@ describe('OfficePreviewRegistry', () => {
       ])
       expect(applied).toMatchObject({ ok: false, reason: 'not_editable' })
       expect(runtime.docs.createDocsView).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('后台 Excel 编辑（未打开/隐藏）', () => {
+    async function withStorageBytes(
+      name: string,
+      bytes: Buffer,
+      run: (storage: string) => Promise<void>,
+    ): Promise<void> {
+      const dir = await mkdtemp(join(tmpdir(), 'agent-sheet-'))
+      const storage = join(dir, name)
+      await writeFile(storage, bytes)
+      try {
+        await run(storage)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+
+    function hiddenSheetMeta(storage: string) {
+      return {
+        fileId: 'file-hidden-sheet',
+        originalName: 'hidden.xlsx',
+        storagePath: storage,
+        contentHash: 'c'.repeat(64),
+      }
+    }
+
+    it('未打开的 xlsx：describe/apply 走隐藏会话，且不进可见页签清单', async () => {
+      await withStorageBytes('hidden.xlsx', Buffer.from('PK\u0003\u0004 not a real xlsx'), async (storage) => {
+        const window = makeWindow()
+        // 先开一份可见文件，给 registry 一个主窗口（隐藏会话挂在它上面）。
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        const importAgentFile = vi.fn(async () => ({ fileVersionId: 'file-version-2' }))
+        registry.setEditSync({ importAgentFile, broadcast: vi.fn() })
+        registry.setAgentFileResolver(async (fileId) => ({ ...hiddenSheetMeta(storage), fileId }))
+        // 工作副本用真实文件（隐藏会话 apply 后会校验“保存是否真的落盘”）。
+        vi.mocked(prepareSpreadsheet).mockResolvedValueOnce(storage)
+
+        const described = await registry.describeSpreadsheetArtifact('file-hidden-sheet', { roomId: 'room-s1' })
+        expect(described.ok).toBe(true)
+        if (described.ok) expect(described.describe.context).toContain('Workbook sheets')
+        expect(runtime.sheets.createSheetsView).toHaveBeenCalledWith({
+          includeAiHandlers: false,
+          readonly: false,
+          claimActive: false,
+        })
+        expect(runtime.sheets.waitForAgentReady).toHaveBeenCalled()
+
+        const applied = await registry.applySpreadsheetAgentTools('file-hidden-sheet', [
+          { id: 'call-1', name: 'propose_operations', input: {} },
+        ])
+        expect(applied.ok).toBe(true)
+        if (applied.ok) {
+          expect(applied.results).toHaveLength(1)
+          // 版本回填走与活实例同一条 sheets sourceKey / xlsx 广播链。
+          expect(applied.version).toBe('file-version-2')
+        }
+        expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileEntryId: 'file-hidden-sheet',
+          sourceKey: 'agent:sheets:edit:file-hidden-sheet',
+          filePath: storage,
+          roomId: 'room-s1',
+          originalName: 'hidden.xlsx',
+        }))
+
+        // 隐藏会话不是用户页签：openFiles 里只有可见的那份。
+        expect(registry.openOfficeFiles().map((entry) => entry.fileId)).toEqual(['file-visible'])
+        expect(registry.has('file-hidden-sheet')).toBe(false)
+        await registry.disposeAll()
+      })
+    })
+
+    it('已打开的只读 xlsx：读走可见会话（只读可读），写保持 not_editable、不绕过用户现场', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-ro', 'readonly.xlsx'), editable: false })
+      const resolver = vi.fn(async (fileId: string) => ({ ...hiddenSheetMeta('/tmp/never-used.xlsx'), fileId }))
+      registry.setAgentFileResolver(resolver)
+      // 只读渲染器允许 describe（工作簿上下文/指南是只读信息），写仍由 desktop
+      // 的 not_editable 闸门拒绝；registry 绝不偷偷开一份可编辑隐藏工作簿顶替。
+      const read = await registry.describeSpreadsheetArtifact('file-ro')
+      expect(read.ok).toBe(true)
+      if (read.ok) expect(read.describe.context).toContain('Workbook sheets')
+      expect(runtime.sheets.describeAgentWorkbook).toHaveBeenCalledWith(
+        expect.objectContaining({ id: viewCalls[0]!.webContentsId }),
+      )
+
+      const applied = await registry.applySpreadsheetAgentTools('file-ro', [
+        { id: 'call-1', name: 'propose_operations', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'not_editable' })
+      expect(runtime.sheets.applyAgentWorkbookTools).not.toHaveBeenCalled()
+      expect(runtime.sheets.createSheetsView).not.toHaveBeenCalled()
+      expect(resolver).not.toHaveBeenCalled()
+    })
+
+    it('隐藏工作簿会话存活时不停止 sheets sidecar（关闭最后一个可见实例后）', async () => {
+      await withStorageBytes('hidden.xlsx', Buffer.from('PK\u0003\u0004 not a real xlsx'), async (storage) => {
+        const window = makeWindow()
+        await registry.open(window, file('file-visible', 'visible.docx'))
+        registry.setAgentFileResolver(async (fileId) => ({ ...hiddenSheetMeta(storage), fileId }))
+        vi.mocked(prepareSpreadsheet).mockResolvedValueOnce(storage)
+
+        const described = await registry.describeSpreadsheetArtifact('file-hidden-sheet')
+        expect(described.ok).toBe(true)
+
+        await registry.close('file-visible')
+        // teardownIfIdle 会跑，但隐藏会话还活着（它持有 live sidecar 会话）：不能停。
+        expect(runtime.sheets.stopSheetsSidecar).not.toHaveBeenCalled()
+        expect(runtime.sheets.setActiveSheetsWebContents).not.toHaveBeenCalledWith(null)
+
+        await registry.disposeAll()
+        expect(runtime.sheets.stopSheetsSidecar).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    it('已打开可编辑 xlsx 有未保存修改 → unsaved（写闸门保留，不走后台会话）', async () => {
+      const window = makeWindow()
+      await registry.open(window, { ...file('file-x1', '预算表.xlsx'), editable: true })
+      const resolver = vi.fn(async (fileId: string) => ({ ...hiddenSheetMeta('/tmp/never-used.xlsx'), fileId }))
+      registry.setAgentFileResolver(resolver)
+      runtime.sheets.sheetsPendingEditCount.mockReturnValueOnce(1)
+
+      const applied = await registry.applySpreadsheetAgentTools('file-x1', [
+        { id: 'call-1', name: 'propose_operations', input: {} },
+      ])
+      expect(applied).toMatchObject({ ok: false, reason: 'unsaved' })
+      expect(runtime.sheets.applyAgentWorkbookTools).not.toHaveBeenCalled()
+      expect(runtime.sheets.createSheetsView).not.toHaveBeenCalled()
     })
   })
 

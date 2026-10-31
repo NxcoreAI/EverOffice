@@ -49,6 +49,9 @@ import {
  * - Word 活文档通道（word_agent_read/edit/ops/illustration）：按 fileId 直通
  *   桌面端的 GenOffice docs 编辑器，不需要文件已在界面上打开（主进程用隐藏
  *   编辑器 headless 打开并静默保存）；网关只传元数据/工具调用，不搬 docx 字节。
+ * - Excel 活工作簿通道（sheets_agent_read/edit）：同样按 fileId 直通桌面端的
+ *   GenOffice sheets 编辑器，不需要文件已在界面上打开（桌面端用隐藏工作簿
+ *   headless 打开并静默保存）；网关只传元数据/工具调用，不搬 xlsx 字节。
  */
 
 const MAX_HTML_LENGTH = 400_000;
@@ -1573,32 +1576,40 @@ export function officePlugin(
 
   const sheetsAgentRead: DocumentCapabilityTool = {
     name: "sheets_agent_read",
-    title: "读取当前 Excel 的工作簿上下文与操作指南",
-    description: "读取用户当前浏览（或显式 fileId）的 .xlsx 的活工作簿状态：工作表清单（id/名称/数据范围）、当前选区、"
-      + "已知非空单元格，以及 propose_operations DSL 的工具词汇表与全部操作指南（writing/formatting/layout/structure/charts/…）。"
+    title: "读取任意 Excel 的工作簿上下文与操作指南",
+    description: "按 fileId 读取任意已入库 .xlsx 的活工作簿状态（不需要文件在界面上打开，后台编辑器可 headless 打开）："
+      + "工作表清单（sheetId/名称/数据范围）、当前选区、已知非空单元格，"
+      + "以及 propose_operations DSL 的工具词汇表与全部操作指南（writing/formatting/layout/structure/charts/…）。"
       + "sheetId 是 sheets_agent_edit 里操作的定位依据（不是工作表名）。"
-      + "只读打开的文件也能读。比 sheets_read 更适合作为 propose_operations 的前置。",
+      + "只读打开的文件也能读。fileId 省略 = 用户当前浏览的文件；要改的表格没打开时先用 file_search 按文件名定位 fileId。"
+      + "比 sheets_read 更适合作为 propose_operations 的前置。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件（可用 file_search 查找）" },
       },
       required: [],
     },
     annotations: annotations(true, false),
     execute: async (args, context) => {
-      const target = await resolveEditableTarget(args, context);
+      const target = await resolveOfficeTarget(args, context);
       if (!/\.xlsx$/i.test(target.entry.originalName)) {
         throw new Error(`INVALID_TARGET: sheets_agent_read 只支持 .xlsx；《${target.entry.originalName}》不是 Excel 表格`);
       }
       try {
-        const described = await bridge.describeAgentArtifact({ kind: "spreadsheet", fileId: target.fileId });
+        const described = await bridge.describeAgentArtifact({
+          kind: "spreadsheet",
+          fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
+        });
         return success({
           fileId: target.fileId,
           title: target.entry.displayName ?? target.entry.originalName,
           ...described,
-          hint: "读单元格用 read_range/read_cells；写改动用 propose_operations（op 字段定义在 guides 里，先查再写）。",
+          hint: "读单元格用 read_range/read_cells；写改动用 propose_operations（op 字段定义在 guides 里，先查再写）。"
+            + "修改不需要这份表格已经打开：后台会 headless 打开一份隐藏工作簿，编辑静默保存并更新版本。",
         });
       } catch (error) {
         throw new Error(agentToolsFailureMessage(
@@ -1611,21 +1622,24 @@ export function officePlugin(
 
   const sheetsAgentEdit: DocumentCapabilityTool = {
     name: "sheets_agent_edit",
-    title: "用表格 AI 工具链编辑当前 Excel",
-    description: "把 GenOffice Sheets 的编辑器 AI 工具调用直接作用到用户正开着的 .xlsx 上（编辑实时重绘，随后静默保存并更新版本）。"
+    title: "用表格 AI 工具链编辑任意 Excel",
+    description: "把 GenOffice Sheets 的编辑器 AI 工具调用直接作用到任意已入库 .xlsx 上（按 fileId；不需要文件在界面上打开，"
+      + "桌面端在后台以隐藏工作簿 headless 打开，编辑自动保存并更新文件版本）。"
       + "先 sheets_agent_read 拿工作簿上下文与指南。常用工具："
       + "read_range / read_cells（读值与公式）、find_cells（全簿搜索）、select_range（选区定位）、"
       + "aggregate_range（大批量统计）、propose_operations（{operations, summary} 唯一的写路径，op 定义见指南）、"
       + "trace_precedents / trace_dependents（公式审计）。"
       + "打印控制走 set_page_setup（含 printArea/printTitles/header/footer（&P 页码 &N 总页数 &D 日期 &A 表名）/rowBreaks/colBreaks）、"
       + "条件格式支持 iconSet 图标集。"
-      + "一次最多 50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
-      + "文件必须以可编辑方式打开且有未保存修改时会被拒绝（提示用户先保存）。",
+      + "calls 1-50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
+      + "本环境不支持 dry-run：不要传 dryRun，也不要说“先生成预览再执行”。"
+      + "只有界面里正开着这份表格且有未保存修改时才会被拒绝（FILE_UNSAVED：请用户先保存再重试）；"
+      + "没打开或 UI 隐藏（没有页签）时网关会在后台 headless 打开它，不需要请用户先打开、先另存或先切页签。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件（可用 file_search 查找）" },
         calls: {
           type: "array",
           minItems: 1,
@@ -1649,7 +1663,7 @@ export function officePlugin(
       if (!Array.isArray(args.calls) || args.calls.length === 0) {
         throw new Error("INVALID_REQUEST: calls 必须是非空数组");
       }
-      const target = await resolveEditableTarget(args, context);
+      const target = await resolveOfficeTarget(args, context);
       if (!/\.xlsx$/i.test(target.entry.originalName)) {
         throw new Error(`INVALID_TARGET: sheets_agent_edit 只支持 .xlsx；《${target.entry.originalName}》不是 Excel 表格`);
       }
@@ -1657,6 +1671,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "spreadsheet",
           fileId: target.fileId,
+          roomId: context.roomId,
+          workspaceId: context.workspaceId ?? null,
           calls: args.calls as OfficeAgentToolCall[],
         });
         return success({
@@ -1666,7 +1682,7 @@ export function officePlugin(
           nextAction: "report_result",
           hint: applied.results?.some((r) => r.isError)
             ? "部分调用失败：读每条 output 修正后重试失败的调用；成功条目已生效，不要重复执行。"
-            : "修改已生效并保存；回复里只说明改了哪些单元格/工作表。",
+            : "修改已生效并保存（文件版本 +1）；回复里只说明改了哪些单元格/工作表。",
         });
       } catch (error) {
         throw new Error(agentToolsFailureMessage(
@@ -1689,16 +1705,29 @@ export function officePlugin(
       "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
       "用户要求修改“我正开着的/这份 Word 或 Excel”时：Word 先 office_read 拿段落原文、Excel 先 sheets_read 看结构，"
       + "再用 office_edit / sheets_edit 按原文片段或单元格地址改；不要用 office_create/sheets_create 重建一份新文件。"
-      + "office_edit 是字节级兜底（要求文件已打开）；Word 能用 word_agent_* 时优先走 headless 通道路线。"
+      + "office_edit 是字节级兜底（要求文件已打开）；Word/Excel 能用 word_agent_* / sheets_agent_* 时优先走 headless 通道路线。"
       + "被 FILE_UNSAVED 拒绝时先把“先保存再改”告诉用户，保存后重试；只有走 office_edit 兜底被 FILE_NOT_OPEN 拒绝时，才请用户先以可编辑方式打开。",
       "修改任意 Word（用户提到的那份 .docx 不必已经打开，UI 里看不到页签也能改）：先 word_agent_read（要现成 fileId 就先用 file_search 按文件名找），"
       + "再按任务选 word_agent_edit（块级内容/格式/插图/水印/页眉页脚等工具调用）或 word_agent_ops（表格/分页与页面设置/批注/脚注/域/引用/修订等结构化 ops）。"
       + "后台编辑器会按 fileId headless 打开并静默保存，不要要求用户先打开、先另存或先切到那个页签；"
       + "只有该文件正开着且有未保存修改时才需要用户先保存（FILE_UNSAVED）。",
+      "修改任意 Excel（用户提到的那份 .xlsx 不必已经打开，UI 里看不到页签也能改）：先 sheets_agent_read"
+      + "（要现成 fileId 就先用 file_search 按文件名找），再用 sheets_agent_edit 下发 read_range/propose_operations 等工具调用；"
+      + "propose_operations 是唯一写路径，一次 1-50 条，本环境不支持 dry-run（不要传 dryRun、不要说“先生成预览”）。"
+      + "后台会按 fileId headless 打开一份隐藏工作簿并静默保存（文件版本 +1），不要要求用户先打开、先另存或先切到那个页签，"
+      + "也不要用 sheets_create 重建一份；只有该文件正开着且有未保存修改时才需要用户先保存（FILE_UNSAVED）。",
       "用户要求在 Word 里配图/插图时：先 word_agent_read 拿块索引，再调用 word_agent_illustration 生成并插入"
       + "（prompt 只描述画面，不要把正文长句原样丢给生图模型）；不要用 bash/matplotlib 现画图再想办法把 base64 传进工具参数。"
       + "已有本地图片（用户给的路径或你自己生成的 PNG）用 word_agent_edit 的 insert_image_base64 {path}；"
       + "用户给了图片 URL 用 {url}。绝不要把 base64 字节写进工具参数。",
+      "用户问“这两份 / 两个版本 / 和模板比改了什么”时用 word_compare："
+      + "left 用 fileId（省略 = 当前文件），right 用 otherFileId（没给 fileId 就用 file_search 按文件名找）；"
+      + "回复只讲关键差异（改了什么/新增/删除了什么），不要罗列 same 条目，entries 截断时以 summary 计数说明总量。"
+      + "只比段落文本；格式/表格结构差异要如实说明该工具看不到。",
+      "用户要把 Word 转成 PDF（“导出 PDF / 给我一份 PDF”）时用 word_export_pdf（先 file_search 拿 fileId，省略 fileId 即当前文件）；"
+      + "导出后告知新 PDF 文件名即可，不要用 office_create 重建一份、也不要假装改动原 .docx。",
+      "word_agent_ops 的 object.image.replace 图片来源只写本地图片绝对路径 path 或公网图片 url"
+      + "（网关读字节后注入 base64/mime，模型不必也不许把 base64 抄进 ops）；来源解析失败会整批拒绝，先修正 path/url 再重试。",
     ],
     tools: [
       officeCreate,

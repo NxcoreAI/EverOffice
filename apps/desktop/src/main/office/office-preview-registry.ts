@@ -30,6 +30,11 @@ import {
   type AgentDocFileMeta,
   type AgentDocFailureReason,
 } from './office-agent-doc-session'
+import {
+  AgentSheetSessionManager,
+  type AgentSheetFileHints,
+  type AgentSheetFailureReason,
+} from './office-agent-sheet-session'
 import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
@@ -102,12 +107,14 @@ export interface OpenOfficeInstanceInfo {
 /**
  * Agent 后台 Word/Excel 失败原因：not_open/not_editable/unsaved 是“现场状态”，
  * 其余是后台打开/保存阶段的可诊断错误（任何一条都不能被谎报成成功）。
+ * Excel 后台会话额外区分 not_xlsx（不是 OOXML 工作簿）。
  */
 export type AgentArtifactFailureReason =
   | 'not_open'
   | 'not_editable'
   | 'unsaved'
   | Exclude<AgentDocFailureReason, 'not_open' | 'not_editable' | 'unsaved'>
+  | Exclude<AgentSheetFailureReason, 'not_open' | 'not_editable' | 'unsaved'>
 
 /** 活 Word/Excel 宿主执行器结果：apply 的错误随行（已应用但保存失败等）。 */
 export type AgentArtifactToolsOutcome =
@@ -215,6 +222,8 @@ export class OfficePreviewRegistry {
   private thesisBridge: OfficeThesisPanelBridge | null = null
   /** 未打开文件的后台 Word 编辑会话（独立于页签实例，不进 instances）。 */
   private agentDocs: AgentDocSessionManager | null = null
+  /** 未打开文件的后台 Excel 编辑会话（同上；持有自己的 sidecar 会话）。 */
+  private agentSheets: AgentSheetSessionManager | null = null
   /** Agent 后台编辑的文件解析端口（index.ts 注入文件库访问）。 */
   private agentFileResolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null = null
   /** 后台会话的保存回填订阅（fileId → unsubscribe）。 */
@@ -249,12 +258,13 @@ export class OfficePreviewRegistry {
   }
 
   /**
-   * 注入「按 fileId 解析工作副本」的端口：后台 Word 编辑会话用它把任意
+   * 注入「按 fileId 解析工作副本」的端口：后台 Word/Excel 编辑会话用它把任意
    * file_entry 变成可编辑工作副本（名称/内容哈希/存储路径/归属）。
    */
   setAgentFileResolver(resolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null): void {
     this.agentFileResolver = resolver
     this.agentDocs = null
+    this.agentSheets = null
   }
 
   /** 是否有正在显示的 docs 页签（应用菜单接管闸门；后台会话不算）。 */
@@ -389,10 +399,13 @@ export class OfficePreviewRegistry {
       ? file.writeBackPath
       : null
 
-    // 同一文件存在后台 Agent 会话时先排空并关闭：可见视图与隐藏视图绝不
-    // 共用同一份工作副本（否则就是双写者）。
+    // 同一文件存在后台 Agent 会话（Word 或 Excel）时先排空并关闭：可见视图与
+    // 隐藏视图绝不共用同一份工作副本（否则就是双写者）。
     if (this.agentDocs?.has(file.id)) {
       await this.agentDocs.dispose(file.id)
+    }
+    if (this.agentSheets?.has(file.id)) {
+      await this.agentSheets.dispose(file.id)
     }
 
     const existing = this.instances.get(file.id)
@@ -588,13 +601,45 @@ export class OfficePreviewRegistry {
       getWindow: () => (this.window && !this.window.isDestroyed() ? this.window : null),
       resolveFile: resolver,
       editSync: {
-        register: (input) => this.registerAgentEditState(input),
+        register: (input) => this.registerAgentEditState({ ...input, kind: 'docx' }),
         drain: (fileId) => this.drainAgentEdits(fileId),
         flush: (fileId) => this.flushAgentEdit(fileId),
         release: (fileId) => this.releaseAgentEditState(fileId),
       },
     })
     return this.agentDocs
+  }
+
+  /**
+   * 未打开的 Excel 的后台编辑会话（惰性创建）。运行时缺少 createSheetsView /
+   * 就绪信号或没有主窗口/文件解析端口时返回 null，调用方保持原 not_open 路径
+   * （office-bridge 只在此时才走旧版“请渲染端自动打开”兜底）。
+   */
+  private ensureAgentSheets(): AgentSheetSessionManager | null {
+    const resolver = this.agentFileResolver
+    if (!resolver) return null
+    if (this.agentSheets) return this.agentSheets
+    const window = this.window && !this.window.isDestroyed()
+      ? this.window
+      : BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
+    if (!window) return null
+    this.bindWindow(window)
+    const runtime = this.ensureRuntime(window)
+    if (typeof runtime.sheets.createSheetsView !== 'function') return null
+    if (typeof runtime.sheets.waitForAgentReady !== 'function') return null
+    if (typeof runtime.sheets.teardownSheetsRenderer !== 'function') return null
+    this.agentSheets = new AgentSheetSessionManager({
+      sheets: runtime.sheets,
+      getWindow: () => (this.window && !this.window.isDestroyed() ? this.window : null),
+      resolveFile: resolver,
+      editSync: {
+        register: (input) => this.registerAgentEditState({ ...input, kind: 'spreadsheet' }),
+        drain: (fileId) => this.drainAgentEdits(fileId),
+        flush: (fileId) => this.flushAgentEdit(fileId),
+        release: (fileId) => this.releaseAgentEditState(fileId),
+      },
+    })
+    return this.agentSheets
   }
 
   /** 后台会话接入既有 editStates + fileSaved 回填链（与活实例编辑同一条导入路径）。 */
@@ -605,11 +650,13 @@ export class OfficePreviewRegistry {
     originalName: string
     roomId: string | null
     workspaceId: string | null
+    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel（xlsx）。 */
+    kind: 'docx' | 'spreadsheet'
   }): () => void {
     this.editStates.set(input.fileId, {
       filePath: input.filePath,
       originalName: input.originalName,
-      kind: 'docx',
+      kind: input.kind,
       roomId: input.roomId,
       workspaceId: input.workspaceId,
       writeBackPath: null,
@@ -746,50 +793,99 @@ export class OfficePreviewRegistry {
     }
   }
 
-  /** Agent 读活 Excel：工作簿上下文 + 工具词汇表 + 操作指南（只读实例同样可读）。 */
+  /**
+   * Agent 读 Excel：已打开实例优先（读也走用户现场的会话，不拿隐藏工作簿顶替）；
+   * 未打开（或 UI 没有页签）则拉起后台隐藏工作簿会话。可见但不是表格、或
+   * fileId 'active' 解析不到可见实例时保持原 not_open/not_editable 语义。
+   */
   async describeSpreadsheetArtifact(
     fileId: string,
+    hints?: AgentSheetFileHints,
   ): Promise<
     | { ok: true; describe: GenOfficeAgentWorkbookDescription }
-    | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
+    | {
+      ok: false
+      reason: AgentArtifactFailureReason
+      message?: string
+      open?: OpenOfficeInstanceInfo[]
+    }
   > {
-    const resolved = await this.resolveAgentInstance(fileId, 'spreadsheet')
-    if (!resolved.ok) return resolved
-    const target = webContents.fromId(resolved.wcId)
-    if (!target || target.isDestroyed()) {
-      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    const resolved = await this.resolveAgentInstance(fileId, 'spreadsheet', { waitForOpen: false })
+    if (resolved.ok) {
+      const target = webContents.fromId(resolved.wcId)
+      if (!target || target.isDestroyed()) {
+        return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      }
+      const described = await this.runtime!.sheets.describeAgentWorkbook(target)
+      if ('error' in described) {
+        return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      }
+      return { ok: true, describe: described }
     }
-    const described = await this.runtime!.sheets.describeAgentWorkbook(target)
-    if ('error' in described) {
-      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    // 有可见实例但不是表格：不能拿隐藏工作簿顶替用户眼前的那份。
+    if (resolved.reason === 'not_editable') return resolved
+    const headless = fileId === 'active' ? null : this.ensureAgentSheets()
+    if (!headless) return { ...resolved, open: this.listOpenOffice() }
+    const outcome = await headless.describe(fileId, hints)
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason: outcome.reason,
+        ...(outcome.message ? { message: outcome.message } : {}),
+        open: this.listOpenOffice(),
+      }
     }
-    return { ok: true, describe: described }
+    return { ok: true, describe: outcome.describe }
   }
 
-  /** Agent 编辑活 Excel：渲染层执行 workbook 工具调用（含 propose_operations），变更后静默保存。 */
+  /**
+   * Agent 编辑 Excel：已打开可编辑实例优先（保留未保存修改闸门）；未打开则
+   * 后台隐藏会话执行并回填版本链。已打开但只读的实例绝不绕过（not_editable）。
+   */
   async applySpreadsheetAgentTools(
     fileId: string,
     calls: GenOfficeAgentToolCall[],
+    hints?: AgentSheetFileHints,
   ): Promise<AgentArtifactToolsOutcome> {
-    const resolved = await this.resolveAgentInstance(fileId, 'spreadsheet')
-    if (!resolved.ok) return resolved
-    if (!resolved.instance.editable) {
-      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+    const resolved = await this.resolveAgentInstance(fileId, 'spreadsheet', { waitForOpen: false })
+    if (resolved.ok) {
+      if (!resolved.instance.editable) {
+        return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+      }
+      const target = webContents.fromId(resolved.wcId)
+      if (!target || target.isDestroyed()) {
+        return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+      }
+      // 可编辑活实例仍是唯一写者：有未保存修改时一律拒绝覆盖用户输入。
+      if (this.runtime!.sheets.sheetsPendingEditCount(resolved.wcId) > 0) {
+        return { ok: false, reason: 'unsaved', open: this.listOpenOffice() }
+      }
+      const applied = await this.runtime!.sheets.applyAgentWorkbookTools(target, calls)
+      if (!('results' in applied)) {
+        return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
+      }
+      return 'error' in applied && typeof applied.error === 'string'
+        ? { ok: true, results: applied.results, error: applied.error }
+        : { ok: true, results: applied.results }
     }
-    const target = webContents.fromId(resolved.wcId)
-    if (!target || target.isDestroyed()) {
-      return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
+    if (resolved.reason === 'not_editable') return resolved
+    const headless = fileId === 'active' ? null : this.ensureAgentSheets()
+    if (!headless) return { ...resolved, open: this.listOpenOffice() }
+    const outcome = await headless.apply(fileId, calls, hints)
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        reason: outcome.reason,
+        ...(outcome.message ? { message: outcome.message } : {}),
+        open: this.listOpenOffice(),
+      }
     }
-    if (this.runtime!.sheets.sheetsPendingEditCount(resolved.wcId) > 0) {
-      return { ok: false, reason: 'unsaved', open: this.listOpenOffice() }
+    return {
+      ok: true,
+      results: outcome.results,
+      ...(outcome.version ? { version: outcome.version } : {}),
+      ...(outcome.error ? { error: outcome.error } : {}),
     }
-    const applied = await this.runtime!.sheets.applyAgentWorkbookTools(target, calls)
-    if (!('results' in applied)) {
-      return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
-    }
-    return 'error' in applied && typeof applied.error === 'string'
-      ? { ok: true, results: applied.results, error: applied.error }
-      : { ok: true, results: applied.results }
   }
 
   private async waitForInstance(
@@ -1028,6 +1124,9 @@ export class OfficePreviewRegistry {
     if (this.agentDocs) {
       await this.agentDocs.disposeAll().catch(() => undefined)
     }
+    if (this.agentSheets) {
+      await this.agentSheets.disposeAll().catch(() => undefined)
+    }
     const closedIds: string[] = []
     for (const [id, instance] of entries) {
       const closed = await instance.view.dispose().catch(() => false)
@@ -1216,8 +1315,12 @@ export class OfficePreviewRegistry {
   private teardownIfIdle(): void {
     const runtime = this.runtime
     if (!runtime) return
+    // 隐藏工作簿会话持有自己的 sidecar 会话与渲染器（它不在 instances 里）：
+    // 它活着时停 sidecar，下一次后台 apply 就会静默保存失败。
+    const hiddenSheetsAlive = this.agentSheets?.hasAny() === true
     if (this.instances.size > 0) {
-      if (![...this.instances.values()].some((instance) => instance.descriptor.kind === 'spreadsheet')) {
+      if (!hiddenSheetsAlive
+        && ![...this.instances.values()].some((instance) => instance.descriptor.kind === 'spreadsheet')) {
         runtime.sheets.setActiveSheetsWebContents(null)
         runtime.sheets.stopSheetsSidecar()
       }
@@ -1225,9 +1328,11 @@ export class OfficePreviewRegistry {
     }
     runtime.docs.setActiveDocsResolver(null)
     runtime.docs.setDocsShellWindow(null)
-    runtime.sheets.setActiveSheetsWebContents(null)
-    runtime.sheets.setSheetsShellWindow(null)
-    runtime.sheets.stopSheetsSidecar()
+    if (!hiddenSheetsAlive) {
+      runtime.sheets.setActiveSheetsWebContents(null)
+      runtime.sheets.setSheetsShellWindow(null)
+      runtime.sheets.stopSheetsSidecar()
+    }
     runtime.slides.setActiveSlidesWebContents(null)
     runtime.slides.setSlidesShellWindow(null)
   }
