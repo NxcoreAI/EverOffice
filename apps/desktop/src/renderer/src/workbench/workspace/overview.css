@@ -121,16 +121,6 @@
   min-width: 0;
 }
 
-.wb-ov-goals-label {
-  flex: none;
-  padding-right: 10px;
-  border-right: 1px solid var(--ui-border);
-  font-size: var(--ui-text-2xs);
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: var(--ui-text-3);
-}
-
 .wb-ov-goal {
   display: inline-flex;
   align-items: center;
@@ -261,11 +251,6 @@
   color: var(--ui-text);
 }
 
-.wb-ov-card-hint {
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
-}
-
 .wb-ov-card-action {
   margin-left: auto;
   flex: none;
@@ -282,12 +267,6 @@
   font-size: var(--ui-text-2xs);
   font-weight: 650;
   letter-spacing: 0.04em;
-}
-
-.wb-ov-insight-source {
-  margin-left: auto;
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
 }
 
 .wb-ov-insight-text {
@@ -309,7 +288,6 @@
   font-size: var(--ui-text-sm);
   line-height: var(--ui-leading-normal);
 }
-.wb-ov-insight-state.is-empty { color: var(--ui-text-3); }
 
 /* ───────────── 动态时间线 ───────────── */
 
@@ -413,7 +391,6 @@
   }
   .wb-ov-card { padding: 14px 14px; }
   .wb-ov-title-input { font-size: var(--ui-text-lg); }
-  .wb-ov-insight-source { margin-left: 0; }
 }
 
 /* 概览没有任何依赖动画的表达；下面只兜底系统级减弱动效偏好。 */

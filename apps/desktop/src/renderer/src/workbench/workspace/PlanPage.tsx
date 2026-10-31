@@ -14,11 +14,7 @@ import type { WorkspacePageProps } from './contracts'
 import './tools.css'
 
 /** 看板三列（与 session.status 的映射：closed/interrupted → 已结束）。 */
-export const PLAN_COLUMNS: ReadonlyArray<{ key: WorkSessionStatus; empty: string }> = [
-  { key: 'running', empty: '暂无进行中的工作' },
-  { key: 'idle', empty: '暂无待开始的工作' },
-  { key: 'done', empty: '暂无已结束的工作' },
-]
+export const PLAN_COLUMNS: readonly WorkSessionStatus[] = ['running', 'idle', 'done']
 
 /**
  * 把本空间会话按看板状态分列。
@@ -44,9 +40,7 @@ export function PlanPage({ sessions, onOpenSession, onNewWork }: WorkspacePagePr
   return (
     <div className="wb-wspage wb-tools-page wb-plan-page">
       <PageHeader
-        eyebrow="计划"
         title="计划"
-        subtitle="按状态查看本空间的工作。看板是只读视图：状态由 Agent 运行自动推进，不能拖拽修改。"
         actions={(
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={onNewWork}>
             新建工作
@@ -55,43 +49,32 @@ export function PlanPage({ sessions, onOpenSession, onNewWork }: WorkspacePagePr
       />
 
       <div className="wb-plan-board wb-plan-board--tools">
-        {PLAN_COLUMNS.map((column) => {
-          const items = groups[column.key]
+        {PLAN_COLUMNS.map((key) => {
+          const items = groups[key]
           return (
-            <section key={column.key} className={`wb-plan-col wb-plan-col--${column.key}`}>
+            <section key={key} className={`wb-plan-col wb-plan-col--${key}`}>
               <header className="wb-plan-col-head">
-                <span className={`wb-status-dot is-${column.key}`} aria-hidden="true" />
-                <strong>{WORK_SESSION_STATUS_META[column.key].label}</strong>
+                <span className={`wb-status-dot is-${key}`} aria-hidden="true" />
+                <strong>{WORK_SESSION_STATUS_META[key].label}</strong>
                 <span className="wb-plan-col-count">{items.length}</span>
               </header>
               <div className="wb-plan-col-body">
-                {items.length === 0 ? (
-                  <div className="wb-plan-none">{column.empty}</div>
-                ) : (
-                  items.map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      className="wb-plan-card"
-                      onClick={() => onOpenSession(session.id)}
-                    >
-                      <span className="wb-plan-card-title">{sessionDisplayTitle(session)}</span>
-                      <span className="wb-plan-card-meta">
-                        <span className={`wb-status-dot is-${column.key}`} aria-hidden="true" />
-                        <span className="wb-plan-card-time">{relativeTimeLabel(session.updatedAt)}</span>
-                      </span>
-                    </button>
-                  ))
-                )}
+                {items.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    className="wb-plan-card"
+                    onClick={() => onOpenSession(session.id)}
+                  >
+                    <span className="wb-plan-card-title">{sessionDisplayTitle(session)}</span>
+                    <span className="wb-plan-card-time">{relativeTimeLabel(session.updatedAt)}</span>
+                  </button>
+                ))}
               </div>
             </section>
           )
         })}
       </div>
-
-      <p className="wb-plan-footnote">
-        状态由网关里的 Agent 运行结果决定；要改状态请进入对应工作会话继续推进，而不是拖卡片。
-      </p>
     </div>
   )
 }

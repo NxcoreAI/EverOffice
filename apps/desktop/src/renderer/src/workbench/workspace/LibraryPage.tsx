@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import type { RealOfficeFile } from '@/office-proto/data'
 
 import { ConfirmModal } from '../ui/modal'
-import { Badge, Button, EmptyState, IconButton } from '../ui/primitives'
+import { EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
 import {
   FileGrid,
@@ -22,7 +22,7 @@ import {
   type FileViewMode,
   type SourceFilterKey,
 } from './fileBrowser'
-import { useFileLibrary, FILE_LIBRARY_LIMIT } from './useFileLibrary'
+import { useFileLibrary } from './useFileLibrary'
 import './library.css'
 
 /**
@@ -140,15 +140,12 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     setFilter('all')
   }
 
-  const countLabel = library.state === 'ready' ? `本空间 ${library.total} 个文件` : '本空间文件库'
-  const showCapNote = library.state === 'ready' && library.total > library.items.length
   const showToolbar = library.state === 'ready' && library.items.length > 0
 
   return (
     <div className="wb-wspage wb-library-page">
       <header className="wb-wspage-head">
         <h1 className="wb-wspage-title">资料库</h1>
-        <Badge tone="neutral">{countLabel}</Badge>
         <div className="wb-file-head-actions">
           <IconButton
             label="刷新文件库"
@@ -158,10 +155,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
           />
           <FileImportButton importing={library.importing} onClick={() => { void handleImport() }} />
         </div>
-        <p className="wb-wspage-sub">
-          资料库按工作空间隔离：这里只展示「{workspace.name}」的文件（导入即归属本空间，Agent 产物归其会话所在空间）。
-          点文件在右侧气泡窗打开，行尾菜单还有原应用打开 / 导出定位 / 删除等操作。
-        </p>
       </header>
 
       {showToolbar ? (
@@ -176,13 +169,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         />
       ) : null}
 
-      {showCapNote ? (
-        <p className="wb-file-note">
-          本空间共 {library.total} 个文件；本页读取最近 {FILE_LIBRARY_LIMIT} 条里可打开为文档的 {library.items.length} 个
-          （zip / 图片等非文档类型不在此打开），更早的文件暂未加载。
-        </p>
-      ) : null}
-
       {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
 
@@ -191,10 +177,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
           className="wb-file-state"
           icon={<FileText size={18} />}
           title={library.total === 0 ? '本空间还没有文件' : '没有可在此打开的文件'}
-          description={library.total === 0
-            ? '导入本地文档，或把文件拖进文件库；导入即归属本空间，Agent 在本空间生成的文件也会自动出现在这里。'
-            : `本空间有 ${library.total} 个文件，但没有 docx / xlsx / pptx / pdf / md 这类可在此打开的文档；图片、压缩包等可在主页「所有文件」里查看。`}
-          action={<Button variant="primary" onClick={() => { void handleImport() }} disabled={library.importing}>导入文件</Button>}
         />
       ) : null}
 
@@ -208,10 +190,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         ) : (
           <FileGrid items={filtered} actions={actions} />
         )
-      ) : null}
-
-      {library.state === 'ready' && library.items.length > 0 ? (
-        <p className="wb-file-footnote">显示 {filtered.length} / {library.items.length} 个已加载文件</p>
       ) : null}
 
       <ConfirmModal

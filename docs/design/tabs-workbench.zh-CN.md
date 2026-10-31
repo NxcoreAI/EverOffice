@@ -17,7 +17,7 @@
 │            │                                                                  │
 │ 主页标签:   │ 主页标签内容：最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置       │
 │  品牌       │                                                                  │
-│  最近       │ 工作空间标签内容：概览 / 资料库 / 产物 / 智能体 / 计划 / 工作会话     │
+│  最近       │ 工作空间标签内容：概览 / 资料库 / 产物 / 计划 / 工作会话          │
 │  项目空间   │   （右侧可拖拽「气泡窗」打开文件，参与 flex 挤压内容栏）               │
 │  所有文件   │                                                                  │
 │  Agent      │ 文件标签内容：全宽编辑器（含 Agent 停靠栏）                          │
@@ -30,7 +30,6 @@
 │  新建工作   │                                                                  │
 │  资料库     │                                                                  │
 │  产物       │                                                                  │
-│  智能体     │                                                                  │
 │  计划       │                                                                  │
 │  ── 工作 N ─│                                                                  │
 │  会话列表   │                                                                  │
@@ -55,7 +54,7 @@
 ```ts
 // workbench/types.ts
 export type HomePageKey = 'recent' | 'spaces' | 'files' | 'agent' | 'connectors' | 'settings'
-export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'agents' | 'plan'
+export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'plan'
 
 export type WorkspaceTabView =
   | { kind: 'page'; page: WorkspacePageKey }
@@ -88,7 +87,7 @@ store 增删（`workbench/state/store.ts`）：
 | 区域 | 内容 | 行为 |
 | --- | --- | --- |
 | 全局侧栏（240px） | 品牌区（app 图标 + EverRoom / 副标题）；一级入口：最近 / 项目空间 / 所有文件 / Agent / 连接器；底部账户行（头像/名称/套餐，齿轮进设置） | 点入口 = 激活主页标签并切页；选中态用白卡浮起；账户行打开设置页 |
-| 工作空间侧栏（248px） | 空间名（可点开重命名）；菜单：概览 / 新建工作 / 资料库 / 产物 / 智能体 / 计划；「工作 N」列表（= 该空间 sessions，运行中状态点 + 标题 + 相对时间，行悬停菜单：重命名/删除）；底部「在 <空间> 新建工作」按钮 | 点菜单切 `view`；点工作切到该 session；新建工作进草稿会话；列表 hover 出操作菜单 |
+| 工作空间侧栏（248px） | 空间名（可点开重命名）；菜单：概览 / 新建工作 / 资料库 / 产物 / 计划；「工作 N」列表（= 该空间 sessions，运行中状态点 + 标题 + 相对时间，行悬停菜单：重命名/删除）；底部「在 <空间> 新建工作」按钮 | 点菜单切 `view`；点工作切到该 session；新建工作进草稿会话；列表 hover 出操作菜单 |
 | 文件标签 | 无侧栏 | — |
 
 窗口控制：macOS 继续 `hiddenInset`，标签栏左侧留红绿灯位并整条可拖拽；Windows 自绘按钮固定在
@@ -116,15 +115,14 @@ store 增删（`workbench/state/store.ts`）：
 | 工作会话 | 会话（`useAgentSession` + AgentChatView/Composer） | 沿用 `conversation/ConversationPane`，放在工作空间标签内容区 |
 | 资料库 | 文件库全量（**无法按空间过滤**：`file_entries` 没有 workspace 归属列、catalog 也不带 sourcePath，见 product-data-map；页面文案如实标「全局文件库」） | 文件管理器：搜索、来源筛选、上传、按相对目录分组/路径列、行操作（气泡窗打开/系统应用打开/导出定位）、点开进气泡窗 |
 | 产物 | `sourceKind ∈ {agent-generated, artifact-imported}` 的文件（同上，全局范围） | 卡片/列表、按时间倒序、预览、导出定位 |
-| 智能体 | `agent.discoverLocalAgents` + 主 Agent + 本空间启用列表（localStorage 持久化） | 卡片：名称/渠道/状态/技能入口；「添加智能体」弹窗；经验便签 |
 | 计划 | sessions（按 status 分列：进行中 running / 待开始 idle / 已结束 closed·interrupted） | 看板三列，卡片点开对应工作会话；新建工作入口 |
 | 新建工作 | `agent.createSession` | 打开草稿会话；首条消息建会话并落进工作列表 |
 
 新建流程：
 1. 主页/项目空间页「新建项目空间」→ 弹窗：名称、描述、目标（药丸增删）、本地目录（`workspace.pickDirectory`），
    调 `workspace.create`（含 description/goals）。
-2. 创建成功开工作空间标签，并弹三步引导：①上传资料（`files.pickAndImport`）②添加智能体（本机 Agent 多选）
-   ③添加工作（新建会话并命名，指派给 Agent 或自己）；每步可跳过。
+2. 创建成功开工作空间标签，并弹两步引导：①上传资料（`files.pickAndImport`）
+   ②添加工作（新建会话并命名）；每步可跳过。
 
 气泡窗：
 - 打开：资料库/产物/动态/会话文件提及 → 以 `{ files[], activeFileId, width, maximized }` 状态挂在
@@ -143,7 +141,6 @@ store 增删（`workbench/state/store.ts`）：
 | 工作状态 | `session.status`（running/idle/interrupted/closed） | 已有，映射为进行中/待开始/已结束 |
 | 资料库文件 | `window.nxcore.files`（`files.list` / `pickAndImport` / `openOriginal`） | 已有 |
 | 产物 | 文件库 `sourceKind=agent-generated/artifact-imported` | 已有 |
-| 智能体 | `agent.discoverLocalAgents` / `agent.getStatus` / 本地 ACP Agent | 已有；「空间内启用列表」本地持久化 |
 | 计划看板 | sessions 按 status 分行 | 已有（只读排序；不伪造拖拽改状态） |
 | 洞察 | 最近会话最后一条 assistant 文本（`agent.getSession/getEvents`） | 已有 API，渲染层派生（不要用已失效的 `writingStyle.*`） |
 | 动态 | sessions + 文件库条目按时间合并 | 渲染层派生 |
@@ -169,7 +166,7 @@ store 增删（`workbench/state/store.ts`）：
 | `workbench/workspace/OverviewPage.tsx`、`activity.ts`、`workspace-overview.css` | 概览 + 派生数据 hooks | Overview owner |
 | `workbench/workspace/LibraryPage.tsx`、`OutputsPage.tsx`、`library.css` | 资料库/产物 | Files owner |
 | `workbench/workspace/BubbleWindow.tsx`、`useBubble.ts`、`bubble.css` | 气泡窗（原生宿主时序敏感） | Lead |
-| `workbench/workspace/AgentsPage.tsx`、`PlanPage.tsx`、`CreateWorkspaceDialog.tsx`、`SetupWizard.tsx`、`workspace-*.css` | 智能体/计划/新建流程 | Workspace-tools owner |
+| `workbench/workspace/PlanPage.tsx`、`CreateWorkspaceDialog.tsx`、`SetupWizard.tsx`、`setupData.ts`、`tools.css` | 计划/新建流程 | Workspace-tools owner |
 | `workbench/conversation/*` | 会话 pane（复用，小改） | Lead |
 | `packages/agent-contract`、`apps/gateway`（workspace 元数据）、`src/main`/`src/preload` | 后端字段 | Backend owner |
 | `workbench/artifacts/*` | 删除 | Lead |
@@ -201,6 +198,9 @@ store 增删（`workbench/state/store.ts`）：
 | 文件标签（窗口级） | ⌘K 命令面板 |
 | --- | --- |
 | ![文件标签](assets/tabs-workbench/13-file-tab.png) | ![命令面板](assets/tabs-workbench/14-command-palette.png) |
+
+> 注：09（工作空间 · 智能体）与 12（新建空间三步引导）是当时的留档；「智能体」页已于同日移除、
+> 引导改为两步，见 §12。
 
 ## 11. 实施记录（2026-10-30）
 
@@ -353,3 +353,25 @@ pageLabel 是 `'Agent'` 而非分区键；修改后绿：含重挂恢复、改�
 - 新迁移与新字段需要**重启 dev 的 gateway 进程**后生效（`pnpm --filter @nxcore/desktop dev` 会拉起）。
 - `vite.browser.config.mts` 的 mock 已补 workspace/session/文件/MCP/用量数据，供无后端预览；
   设置页在旧 mock 下会因缺 MCP/用量形状白屏，现已补齐入口且外壳有错误边界兜底。
+
+## 12. 变更：移除工作空间「智能体」页（2026-10-30）
+
+工作空间标签不再有「智能体」页面（主页侧栏的「Agent」页保留，全局 Agent 状态仍在那里看）。
+
+- **入口/路由**：`WORKSPACE_PAGES` 去掉 `agents`（侧栏只剩 概览 / 新建工作 / 资料库 / 产物 / 计划），
+  `WorkspacePageKey` 收窄为 `overview | library | outputs | plan`；`WorkspaceTabHost` 删除路由分支。
+- **页面与数据层**：删除 `workspace/AgentsPage.tsx` 与 `workspace/agentCatalog.ts`（主 Agent 状态 /
+  本机 Agent / MCP / 本空间启用列表 / 经验便签）。仅引导还需要的导入结果归一、本地 id、错误文案
+  迁到 `workspace/setupData.ts`。
+- **新建空间引导**：由三步改为**两步**（上传资料 / 添加工作）——「添加智能体」步骤与工作表单里的
+  「指派给」下拉一并移除（启用列表原本只在该页展示，留着会写进无处可见的本机偏好）。
+  localStorage 键 `everroom:workspace:agents:*`、`everroom:workspace:agent-notes:*` 不再读写；
+  旧数据留在浏览器本地，不做迁移/清理。
+- **样式**：`tools.css` 删除 `wb-main-agent-*`、`wb-agent-*`、`wb-switch*`、`wb-mcp-*`、`wb-note-*`、
+  `wb-tool-section* / wb-tool-scope / wb-tool-count / wb-tool-hint / wb-tool-loading` 等只服务该页的规则，
+  保留计划看板与引导仍用的部分。
+- **测试**：`tests/workbench-workspace-tools.test.tsx` 删除智能体页用例，引导用例按两步重写
+  （含「最后一步跳过不丢已导入资料」回归）。
+- **不受影响**：legacy 外壳 `office-proto/pages/AgentView.tsx`（只读原型，未挂在产品路由上）、
+  `agent.discoverLocalAgents / getStatus / getUsage`、`mcp.listServers` 桥接口，
+  以及主页「Agent」页。

@@ -316,6 +316,15 @@
 
 /* ───────────────── 弹窗 ───────────────── */
 
+/* Radix 用 Portal 把弹窗挂到 document.body，落在 .wb-root 之外，拿不到外壳的
+ * `* { box-sizing: border-box }`。缺这条复位时，`width: 100%` 的 input/textarea
+ * 会在内容宽之外再叠左右 padding 与 1px 描边（合计 +22px），把表单顶到弹窗右缘，
+ * 形成左留白 20px、右留白 0 的不对称。这里给弹窗子树补上复位。 */
+.ui-modal,
+.ui-modal *,
+.ui-modal *::before,
+.ui-modal *::after { box-sizing: border-box; }
+
 .ui-modal-overlay {
   position: fixed;
   inset: 0;

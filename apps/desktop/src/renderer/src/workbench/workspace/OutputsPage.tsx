@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
 
-import { Badge, Button, EmptyState, IconButton } from '../ui/primitives'
+import { Button, EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
 import {
   FileGrid,
@@ -19,7 +19,7 @@ import {
   type FileViewMode,
   type FileFilterOption,
 } from './fileBrowser'
-import { useFileLibrary, FILE_LIBRARY_LIMIT } from './useFileLibrary'
+import { useFileLibrary } from './useFileLibrary'
 import './library.css'
 
 type ArtifactFilter = 'all' | 'agent-generated' | 'artifact-imported'
@@ -96,14 +96,10 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     onExportReveal: (item) => { void exportReveal(item) },
   }
 
-  const countLabel = library.state === 'ready' ? `本空间产物 ${artifacts.length} 个` : '本空间产物'
-  const showCapNote = library.state === 'ready' && library.total > FILE_LIBRARY_LIMIT
-
   return (
     <div className="wb-wspage wb-outputs-page">
       <header className="wb-wspage-head">
         <h1 className="wb-wspage-title">产物</h1>
-        <Badge tone="neutral">{countLabel}</Badge>
         <div className="wb-file-head-actions">
           <IconButton
             label="刷新产物"
@@ -115,10 +111,6 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
             去资料库
           </Button>
         </div>
-        <p className="wb-wspage-sub">
-          「{workspace.name}」里由 Agent 生成（agent-generated）或作为产物导入（artifact-imported）的文件，按更新时间倒序；
-          Agent 产物归属其会话所在的工作空间，各空间互不可见。
-        </p>
       </header>
 
       {library.state === 'ready' && artifacts.length > 0 ? (
@@ -130,19 +122,12 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
           onFilterChange={setFilter}
           view={view}
           onViewChange={setView}
-          searchPlaceholder="搜索产物名称或路径"
+          searchPlaceholder="搜索产物"
           filterAriaLabel="产物来源筛选"
         />
       ) : null}
 
-      {showCapNote ? (
-        <p className="wb-file-note">
-          本空间文件库共 {library.total} 个文件；产物取自最近 {FILE_LIBRARY_LIMIT} 条中的 Agent 生成 / 产物导入文件，
-          更早的产物暂未加载。
-        </p>
-      ) : null}
-
-      {library.state === 'loading' ? <FileLibraryLoading label="正在读取产物…" /> : null}
+      {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
 
       {library.state === 'ready' && artifacts.length === 0 ? (
@@ -150,13 +135,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
           className="wb-file-state"
           icon={<PackageOpen size={18} />}
           title="还没有产物"
-          description="Agent 生成或作为产物导入的文件会出现在这里。也可以先去资料库整理/导入文件，或新建一个工作让 Agent 产出。"
-          action={(
-            <div className="wb-file-empty-actions">
-              <Button variant="primary" icon={<FolderOpen size={15} />} onClick={() => onOpenPage('library')}>去资料库</Button>
-              <Button variant="ghost" onClick={onNewWork}>新建工作</Button>
-            </div>
-          )}
+          action={<Button variant="ghost" onClick={onNewWork}>新建工作</Button>}
         />
       ) : null}
 
@@ -170,10 +149,6 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
         ) : (
           <FileGrid items={filtered} actions={actions} />
         )
-      ) : null}
-
-      {library.state === 'ready' && artifacts.length > 0 ? (
-        <p className="wb-file-footnote">显示 {filtered.length} / {artifacts.length} 个产物</p>
       ) : null}
     </div>
   )

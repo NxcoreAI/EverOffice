@@ -113,7 +113,6 @@
   font-size: var(--ui-text-xs);
   box-shadow: var(--ui-shadow-sm);
 }
-.wb-conversation-status-hint { color: var(--ui-text-3); }
 .wb-conversation-status-retry {
   height: 22px;
   padding: 0 8px;
@@ -224,13 +223,6 @@
   letter-spacing: var(--ui-tracking-tight);
   line-height: var(--ui-leading-tight);
 }
-.wb-hero-sub {
-  margin: 14px 0 0;
-  max-width: 480px;
-  color: var(--ui-text-2);
-  font-size: var(--ui-text-md);
-  line-height: 1.7;
-}
 
 /* 大输入框：白底 + 1px 细线，聚焦青绿 ring（与 AgentComposer 同一语言）。 */
 .wb-hero-input {
@@ -283,11 +275,10 @@
 .wb-hero-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   padding: 0 1px;
 }
-.wb-hero-hint { color: var(--ui-text-3); font-size: var(--ui-text-xs); }
 .wb-hero-send {
   display: inline-flex;
   width: 34px;
@@ -363,12 +354,6 @@
 .wb-hero-chip:active:not(:disabled) { transform: translateY(0); }
 .wb-hero-chip:disabled { opacity: 0.5; cursor: default; }
 .wb-hero-chip:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
-
-.wb-hero-note {
-  margin: 20px 0 0;
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-xs);
-}
 
 /* ───────────── 会话态：AgentChatView 大画布适配 ───────────── */
 

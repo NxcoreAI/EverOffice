@@ -181,15 +181,19 @@ describe('资料库页', () => {
     expect(nxcore.files.list).toHaveBeenCalledWith(200, 0, { workspaceId: 'ws-1' })
   })
 
-  it('渲染本空间文件库计数与隔离说明，来源筛选生效', async () => {
+  it('渲染文件列表与 chip 计数（页头不再重复计数），来源筛选生效', async () => {
     const props = pageProps()
     installFilesApi(OPENABLE_KINDS)
     await act(async () => { root.render(<LibraryPage {...props} />) })
     await flush()
 
     expect(text('.wb-wspage-title')).toContain('资料库')
-    expect(text('.ui-badge')).toContain('本空间 4 个文件')
-    expect(text('.wb-wspage-sub')).toContain('按工作空间隔离')
+    // 页头说明段与 badge 计数已删；计数只出现在可交互的筛选 chip 上
+    expect(container.querySelector('.wb-wspage-sub')).toBeNull()
+    expect(container.querySelector('.ui-badge')).toBeNull()
+    const allChip = [...container.querySelectorAll<HTMLButtonElement>('.wb-file-chip')]
+      .find((chip) => (chip.textContent ?? '').includes('全部'))
+    expect(allChip!.textContent).toContain('4')
     // 默认「全部」列表按目录分组：三条不同相对目录 + 一条根目录
     expect(allText('.wb-file-group-label')).toEqual(
       expect.arrayContaining(['设计', '排期', 'agent', '文件库根目录']),
@@ -235,6 +239,11 @@ describe('资料库页', () => {
     await flush()
 
     expect(container.textContent).toContain('本空间还没有文件')
+    // 空态只留标题：说明删掉，导入按钮不重复页头
+    expect(container.querySelector('.ui-empty-desc')).toBeNull()
+    expect(
+      [...container.querySelectorAll('button')].filter((button) => (button.textContent ?? '').includes('导入文件')),
+    ).toHaveLength(1)
     expect(buttonByText('导入文件')).toBeTruthy()
     expect(container.querySelector('.wb-file-row-main')).toBeNull()
   })
@@ -280,6 +289,8 @@ describe('资料库页', () => {
     await flush()
 
     expect(container.textContent).toContain('文件库暂不可用')
+    // 不可用态只留一句事实 + 重试按钮，不再展开解释
+    expect(container.querySelector('.ui-empty-desc')).toBeNull()
     expect(container.querySelector('.wb-file-row-main')).toBeNull()
   })
 })
@@ -295,8 +306,12 @@ describe('产物页', () => {
     expect(names).toEqual([AGENT_OUTPUT.file.name, ARTIFACT_OUTPUT.file.name])
     expect(names).not.toContain(MANUAL.file.name)
     expect(names).not.toContain(LOCAL_FOLDER.file.name)
-    expect(text('.ui-badge')).toContain('本空间产物 2 个')
-    expect(container.textContent).toContain('归属其会话所在的工作空间')
+    // 页头说明段与 badge 计数已删；计数只在筛选 chip 上
+    expect(container.querySelector('.wb-wspage-sub')).toBeNull()
+    expect(container.querySelector('.ui-badge')).toBeNull()
+    const allChip = [...container.querySelectorAll<HTMLButtonElement>('.wb-file-chip')]
+      .find((chip) => (chip.textContent ?? '').includes('全部产物'))
+    expect(allChip!.textContent).toContain('2')
 
     const firstCard = container.querySelector<HTMLButtonElement>('.wb-file-card-main')
     await act(async () => { firstCard!.click() })
@@ -305,16 +320,19 @@ describe('产物页', () => {
     expect(opened.name).toBe(AGENT_OUTPUT.file.name)
   })
 
-  it('没有产物时空态引导去资料库 / 新建工作', async () => {
+  it('没有产物时：页头「去资料库」只出现一次，空态只留「新建工作」', async () => {
     const props = pageProps()
     installFilesApi([MANUAL], 1)
     await act(async () => { root.render(<OutputsPage {...props} />) })
     await flush()
 
     expect(container.textContent).toContain('还没有产物')
-    const libraryButton = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => (button.textContent ?? '').trim().includes('去资料库'))
-    await act(async () => { libraryButton!.click() })
+    expect(container.querySelector('.ui-empty-desc')).toBeNull()
+    // 空态不再重复页头的「去资料库」
+    const libraryButtons = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .filter((button) => (button.textContent ?? '').trim().includes('去资料库'))
+    expect(libraryButtons).toHaveLength(1)
+    await act(async () => { libraryButtons[0].click() })
     expect(props.onOpenPage).toHaveBeenCalledWith('library')
 
     const newWorkButton = buttonByText('新建工作')

@@ -70,8 +70,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
 }) {
   const hook = useAgentSession('Agent', null, [], { workspaceId, initialSessionId: sessionId })
   const syncTabSession = useWorkbenchStore((state) => state.syncTabSession)
-  const workspaceName = useWorkbenchStore((state) =>
-    state.workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? null)
 
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
@@ -252,7 +250,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             <div className="wb-conversation-status" role="status">
               <LoaderCircle className="wb-spin" size={13} aria-hidden="true" />
               <span>正在连接会话…</span>
-              <span className="wb-conversation-status-hint">后台任务会继续运行</span>
               <button type="button" className="wb-conversation-status-retry" onClick={() => hook.reload()}>
                 重试
               </button>
@@ -306,7 +303,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         <ConversationEmpty
           draft={draft}
           disabled={!canSend || hook.loading}
-          workspaceName={workspaceName}
           onDraftChange={setDraft}
           onSubmit={send}
         />

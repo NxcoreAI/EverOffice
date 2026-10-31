@@ -13,8 +13,6 @@ export interface ConversationEmptyProps {
   draft: string
   /** 连接中/未就绪时禁用发送。 */
   disabled: boolean
-  /** 建议 chips：点击填入输入框（不直接发送，给用户改一改的机会）。 */
-  workspaceName: string | null
   onDraftChange: (value: string) => void
   onSubmit: () => void
 }
@@ -32,14 +30,13 @@ const HERO_SUGGESTIONS: HeroSuggestion[] = [
   { label: '整理会议纪要', prompt: '帮我整理会议纪要，提炼结论和待办事项', Icon: ClipboardList },
 ]
 
-const HERO_PLACEHOLDER = '今天帮你做些什么？@ 添加上下文，/ 调用技能与指令'
+const HERO_PLACEHOLDER = '今天帮你做些什么？'
 const TEXTAREA_MIN_HEIGHT = 76
 const TEXTAREA_MAX_HEIGHT = 200
 
 export function ConversationEmpty({
   draft,
   disabled,
-  workspaceName,
   onDraftChange,
   onSubmit,
 }: ConversationEmptyProps) {
@@ -80,7 +77,6 @@ export function ConversationEmpty({
         </div>
 
         <h1 className="wb-hero-title">EverRoom，我帮你</h1>
-        <p className="wb-hero-sub">写文档、查资料、分析数据、做演示——把任务交给我，我一步步做完。</p>
 
         <div className="wb-hero-input" data-disabled={disabled ? 'true' : undefined}>
           <textarea
@@ -94,7 +90,6 @@ export function ConversationEmpty({
             onKeyDown={onKeyDown}
           />
           <div className="wb-hero-actions">
-            <span className="wb-hero-hint">Enter 发送 · Shift + Enter 换行</span>
             <button
               type="button"
               className="wb-hero-send"
@@ -125,11 +120,6 @@ export function ConversationEmpty({
             </button>
           ))}
         </div>
-
-        <p className="wb-hero-note">
-          {workspaceName ? `会话会自动保存到「${workspaceName}」` : '会话会自动保存'}
-          {' · 可随时在左侧切换会话'}
-        </p>
       </div>
     </div>
   )

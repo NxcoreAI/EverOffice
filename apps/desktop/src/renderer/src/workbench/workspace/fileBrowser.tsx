@@ -172,7 +172,7 @@ export type FileViewMode = 'list' | 'grid'
 
 export function FileToolbar<K extends string>({
   query, onQueryChange, filters, filter, onFilterChange, view, onViewChange,
-  searchPlaceholder = '搜索文件名或路径', filterAriaLabel = '来源筛选',
+  searchPlaceholder = '搜索文件', filterAriaLabel = '来源筛选',
 }: {
   query: string
   onQueryChange: (query: string) => void
@@ -238,7 +238,7 @@ export function FileToolbar<K extends string>({
 
 /* ───────────────── 加载 / 不可用 / 空态 ───────────────── */
 
-export function FileLibraryLoading({ label = '正在读取文件库…' }: { label?: string }) {
+export function FileLibraryLoading({ label = '读取中…' }: { label?: string }) {
   return (
     <div className="wb-file-loading" role="status">
       <Spinner size={16} />
@@ -253,7 +253,6 @@ export function FileLibraryUnavailable({ onRetry }: { onRetry?: () => void }) {
       className="wb-file-state is-unavailable"
       icon={<AlertTriangle size={18} />}
       title="文件库暂不可用"
-      description="桌面端没有连上文件库（或当前是浏览器预览环境）。检查网关连接后重试，导入/打开文件都需要真实文件库。"
       action={onRetry ? <Button variant="secondary" onClick={onRetry}>重试</Button> : null}
     />
   )
@@ -265,7 +264,6 @@ export function FileNoMatches({ onClear }: { onClear: () => void }) {
       className="wb-file-state"
       icon={<Search size={18} />}
       title="没有匹配的文件"
-      description="换个关键词，或把来源筛选切回「全部」。"
       action={<Button variant="secondary" onClick={onClear}>清除搜索与筛选</Button>}
     />
   )

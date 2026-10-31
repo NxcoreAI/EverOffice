@@ -274,7 +274,6 @@
   font-size: var(--ui-text-xs);
   text-align: center;
 }
-.wb-bubble-browser-state span { font-size: var(--ui-text-2xs); max-width: 260px; line-height: var(--ui-leading-normal); }
 .wb-bubble-browser-note {
   flex: none;
   padding: 2px 4px 0;

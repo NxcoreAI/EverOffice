@@ -488,7 +488,6 @@
 .wb-ws-work-row.is-draft .wb-ws-work-title { font-style: italic; }
 .wb-ws-work-row.is-renaming { padding: 2px 4px; }
 .wb-ws-work-rename { height: 28px; font-size: var(--ui-text-xs); }
-.wb-ws-work-foot { flex: none; padding-top: 8px; }
 
 /* ───────────────── 文件标签 ───────────────── */
 
@@ -503,21 +502,36 @@
 /* ───────────────── 新建空间弹窗表单 ───────────────── */
 
 .wb-newspace-form { display: flex; flex-direction: column; gap: 16px; }
+
+/* 描述框固定三行：弹窗里不提供手动拖拽，右侧不留 resize 手柄。 */
+.wb-newspace-form .ui-textarea { resize: none; }
+
+/* 目标药丸与「添加目标」同高（28px）、同圆角，避免相邻胶囊一高一低。 */
 .wb-newspace-goals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .wb-newspace-goal {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px 4px 11px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 5px 0 11px;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-full);
   background: var(--ui-surface);
   font-size: var(--ui-text-xs);
   font-weight: 550;
+  line-height: 1;
+}
+.wb-newspace-goal-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .wb-newspace-goal button {
   display: grid;
   place-items: center;
+  flex: none;
   width: 17px;
   height: 17px;
   border: 0;
@@ -530,7 +544,8 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 11px;
+  height: 28px;
+  padding: 0 11px;
   border: 1px dashed var(--ui-border-strong);
   border-radius: var(--ui-radius-full);
   color: var(--ui-text-3);
@@ -539,6 +554,8 @@
 .wb-newspace-goal-add:focus-within { border-color: var(--ui-accent); color: var(--ui-accent-strong); }
 .wb-newspace-goal-add input {
   width: 150px;
+  height: 18px;
+  padding: 0;
   border: 0;
   outline: none;
   background: transparent;
@@ -546,19 +563,28 @@
   font: inherit;
   font-size: var(--ui-text-xs);
 }
+
+/* 目录行三项（值 / 清除 / 选择）与输入框同高 32px，垂直居中对齐。 */
 .wb-newspace-path { display: flex; align-items: center; gap: 8px; }
 .wb-newspace-path-value {
+  display: flex;
+  align-items: center;
   flex: 1;
+  min-width: 0;
+  height: 32px;
+  overflow: hidden;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-alt);
+  font-size: var(--ui-text-sm);
+  color: var(--ui-text);
+}
+.wb-newspace-path-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 7px 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-surface-alt);
-  font-size: var(--ui-text-xs);
-  color: var(--ui-text);
 }
 .wb-newspace-path-value.is-empty { color: var(--ui-text-3); }
 

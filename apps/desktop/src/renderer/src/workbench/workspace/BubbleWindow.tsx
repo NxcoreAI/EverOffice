@@ -273,19 +273,13 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
 
       <div className="wb-bubble-browser-list" role="list">
         {library.state === 'loading' ? (
-          <div className="wb-bubble-browser-state"><Spinner size={13} /> 正在读取文件库…</div>
+          <div className="wb-bubble-browser-state"><Spinner size={13} /></div>
         ) : null}
         {library.state === 'unavailable' ? (
-          <div className="wb-bubble-browser-state">
-            文件库暂不可用
-            <span>桌面端文件服务未就绪，稍后重试。</span>
-          </div>
+          <div className="wb-bubble-browser-state">文件库暂不可用</div>
         ) : null}
         {library.state === 'ready' && items.length === 0 ? (
-          <div className="wb-bubble-browser-state">
-            没有匹配的文件
-            <span>换个关键词或类型，或点右上角「导入」。</span>
-          </div>
+          <div className="wb-bubble-browser-state">没有匹配的文件</div>
         ) : null}
         {library.state === 'ready' ? items.map((item) => (
           <BubbleBrowserRow key={item.file.id} item={item} onOpen={onOpenFile} />
@@ -294,11 +288,9 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
 
       {library.state === 'ready' && library.total > library.items.length ? (
         <div className="wb-bubble-browser-note">
-          仅加载最近 {library.items.length} 个文件（文件库共 {library.total} 个）
+          最近 {library.items.length} / 共 {library.total} 个
         </div>
-      ) : (
-        <div className="wb-bubble-browser-note">文件库为全局库，不按工作空间隔离</div>
-      )}
+      ) : null}
     </div>
   )
 }

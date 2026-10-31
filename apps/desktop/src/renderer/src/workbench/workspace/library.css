@@ -12,10 +12,6 @@
   container-type: inline-size;
 }
 
-.wb-wspage-head > .ui-badge {
-  margin-bottom: 3px;
-}
-
 .wb-file-head-actions {
   display: flex;
   align-items: center;
@@ -130,20 +126,6 @@
   outline-offset: 2px;
 }
 
-.wb-file-note {
-  margin: 0;
-  font-size: var(--ui-text-xs);
-  line-height: var(--ui-leading-normal);
-  color: var(--ui-text-3);
-}
-
-.wb-file-footnote {
-  margin: 0;
-  padding-top: 2px;
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
-}
-
 /* ───────────────── 加载 / 空 / 不可用 ───────────────── */
 
 .wb-file-loading {
@@ -164,13 +146,6 @@
 .wb-file-state.is-unavailable .ui-empty-icon {
   background: var(--ui-warning-soft);
   color: var(--ui-warning);
-}
-.wb-file-empty-actions {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 /* ───────────────── 列表 ───────────────── */

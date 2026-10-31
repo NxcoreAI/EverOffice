@@ -3,12 +3,10 @@ import {
   ChevronRight,
   FolderOpen,
   LayoutDashboard,
-  LayoutGrid,
   Loader2,
   MoreHorizontal,
   Package,
   Pencil,
-  Plus,
   PlusCircle,
   Trash2,
 } from 'lucide-react'
@@ -25,7 +23,7 @@ import {
   workSessionStatus,
 } from '../types'
 import { useWorkbenchStore, useWorkspace, useWorkspaceSessions } from '../state/store'
-import { Button, Hint, IconButton } from '../ui/primitives'
+import { Hint, IconButton } from '../ui/primitives'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 import { ConfirmModal } from '../ui/modal'
 import { cn } from '../ui/cn'
@@ -34,7 +32,6 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
   overview: <LayoutDashboard size={16} strokeWidth={1.8} />,
   library: <FolderOpen size={16} strokeWidth={1.8} />,
   outputs: <Package size={16} strokeWidth={1.8} />,
-  agents: <LayoutGrid size={16} strokeWidth={1.8} />,
   plan: <CalendarDays size={16} strokeWidth={1.8} />,
 }
 
@@ -45,7 +42,6 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
   const workspace = useWorkspace(tab.workspaceId)
   const sessions = useWorkspaceSessions(tab.workspaceId)
   const setWorkspaceView = useWorkbenchStore((state) => state.setWorkspaceView)
-  const createSession = useWorkbenchStore((state) => state.createSession)
   const renameWorkspace = useWorkbenchStore((state) => state.renameWorkspace)
   const deleteWorkspace = useWorkbenchStore((state) => state.deleteWorkspace)
   const renameSession = useWorkbenchStore((state) => state.renameSession)
@@ -170,7 +166,7 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
             </div>
           ) : null}
           {sessions.length === 0 && tab.view.kind !== 'draft' ? (
-            <div className="wb-ws-work-empty">还没有工作 · 点「新建工作」开始</div>
+            <div className="wb-ws-work-empty">还没有工作</div>
           ) : null}
           {sessions.map((session) => (
             <WorkRow
@@ -186,23 +182,13 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
             />
           ))}
         </div>
-        <div className="wb-ws-work-foot">
-          <Button
-            variant="soft"
-            block
-            icon={<Plus size={14} />}
-            onClick={() => { void createSession(workspace.id) }}
-          >
-            新建工作
-          </Button>
-        </div>
       </div>
 
       <ConfirmModal
         open={deleteTarget?.kind === 'workspace'}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="删除这个工作空间？"
-        description={deleteTarget ? `「${deleteTarget.title}」下的工作会一并从空间移除；默认空间不可删除。` : undefined}
+        description={deleteTarget ? `「${deleteTarget.title}」及其工作会一并移除。` : undefined}
         confirmLabel="删除空间"
         busy={busy}
         onConfirm={() => { void confirmDelete() }}
@@ -211,7 +197,7 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
         open={deleteTarget?.kind === 'session'}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="删除这个工作？"
-        description={deleteTarget ? `「${deleteTarget.title}」的对话记录会被删除，且不可恢复。` : undefined}
+        description={deleteTarget ? `「${deleteTarget.title}」的对话记录不可恢复。` : undefined}
         confirmLabel="删除工作"
         busy={busy}
         onConfirm={() => { void confirmDelete() }}

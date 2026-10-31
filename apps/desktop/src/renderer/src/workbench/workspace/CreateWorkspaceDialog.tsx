@@ -77,7 +77,6 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
       open={open}
       onOpenChange={onOpenChange}
       title="新建项目空间"
-      description="一个空间装一个项目的资料、工作与产物；创建后进入三步引导。"
       size="md"
       dismissible={!busy}
       footer={(
@@ -102,22 +101,21 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
           />
         </Field>
 
-        <Field label="描述（可选）" htmlFor="wb-newspace-desc" hint="一句话说清这个项目要做什么，会显示在概览页。">
+        <Field label="描述（可选）" htmlFor="wb-newspace-desc">
           <TextArea
             id="wb-newspace-desc"
             value={description}
-            placeholder="例如：统一 EverRoom 与飞书的连接器品牌、命名与排期。"
             maxLength={2000}
             rows={3}
             onChange={(event) => setDescription(event.target.value)}
           />
         </Field>
 
-        <Field label="目标（可选）" hint="1–3 条纯文本目标即可；最多 12 条。">
+        <Field label="目标（可选）">
           <div className="wb-newspace-goals">
             {goals.map((goal) => (
-              <span key={goal} className="wb-newspace-goal">
-                {goal}
+              <span key={goal} className="wb-newspace-goal" title={goal}>
+                <span className="wb-newspace-goal-text">{goal}</span>
                 <button
                   type="button"
                   aria-label={`移除目标 ${goal}`}
@@ -131,7 +129,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
               <Plus size={12} aria-hidden="true" />
               <input
                 value={goalDraft}
-                placeholder="添加目标后回车"
+                placeholder="新目标"
                 aria-label="添加目标"
                 onChange={(event) => setGoalDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -146,15 +144,15 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
           </div>
         </Field>
 
-        <Field label="本地目录（可选）" hint="绑定目录后，Agent 会以它为工作目录；不绑定则使用应用托管空间。">
+        <Field label="本地目录（可选）">
           <div className="wb-newspace-path">
             <span className={cn('wb-newspace-path-value', !path && 'is-empty')} title={path ?? undefined}>
-              {path ?? '未选择目录'}
+              <span className="wb-newspace-path-text">{path ?? '未选择目录'}</span>
             </span>
             {path ? (
               <IconButton label="清除目录" size="sm" icon={<X size={13} />} onClick={() => setPath(null)} />
             ) : null}
-            <Button variant="secondary" size="sm" icon={<FolderOpen size={14} />} onClick={() => { void pickDirectory() }}>
+            <Button variant="secondary" icon={<FolderOpen size={14} />} onClick={() => { void pickDirectory() }}>
               选择
             </Button>
           </div>

@@ -73,24 +73,7 @@
   font-weight: 700;
   letter-spacing: var(--ui-tracking-tight);
 }
-.wb-wspage-sub {
-  margin: 0;
-  flex: 1 1 100%;
-  font-size: var(--ui-text-sm);
-  color: var(--ui-text-2);
-}
 .wb-wspage-head > .ui-btn { margin-left: auto; }
-
-.wb-wspage-placeholder {
-  display: grid;
-  place-items: center;
-  min-height: 220px;
-  border: 1px dashed var(--ui-border-strong);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-alt);
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-sm);
-}
 
 /* 状态点 */
 .wb-status-dot {
@@ -155,14 +138,6 @@
   font-size: var(--ui-text-sm);
   line-height: var(--ui-leading-snug);
 }
-.wb-plan-none {
-  padding: 16px;
-  border: 1px dashed var(--ui-border-strong);
-  border-radius: var(--ui-radius-md);
-  text-align: center;
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-xs);
-}
 
 /* ───────────── 新建空间三步引导 ───────────── */
 
@@ -195,7 +170,6 @@
 .wb-setup-steps li.is-done { color: var(--ui-text-2); }
 .wb-setup-step-icon { display: inline-flex; flex: none; }
 .wb-setup-body { display: flex; flex-direction: column; gap: 10px; }
-.wb-setup-hint { margin: 0; font-size: var(--ui-text-sm); font-weight: 600; }
 
 /* ───────────── 工作会话：对话区头部（右上角「资料与文件」入口） ───────────── */
 

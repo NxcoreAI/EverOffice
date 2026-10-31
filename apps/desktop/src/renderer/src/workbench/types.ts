@@ -19,19 +19,18 @@ export const HOME_PAGES: ReadonlyArray<{ key: HomePageKey; label: string }> = [
 /* ───────────────── 工作空间标签 ───────────────── */
 
 /** 工作空间侧栏的功能菜单（「新建工作」是即开的会话，不是页面）。 */
-export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'agents' | 'plan'
+export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'plan'
 
 export const WORKSPACE_PAGES: ReadonlyArray<{ key: WorkspacePageKey; label: string }> = [
   { key: 'overview', label: '概览' },
   { key: 'library', label: '资料库' },
   { key: 'outputs', label: '产物' },
-  { key: 'agents', label: '智能体' },
   { key: 'plan', label: '计划' },
 ]
 
 /**
  * 工作空间标签内的视图：
- * - page：功能页（概览/资料库/产物/智能体/计划）
+ * - page：功能页（概览/资料库/产物/计划）
  * - session：某个工作会话（= 一个 AgentSession）
  * - draft：新建工作草稿；首条消息发出后落成会话，视图切到 session
  */

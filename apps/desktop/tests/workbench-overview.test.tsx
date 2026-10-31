@@ -3,7 +3,7 @@
  * 工作空间「概览」页回归：
  *
  * 1) 派生数据（纯函数）：动态合并排序 / 8→20 折叠、洞察文本提取（消息与 run 事件两种来源）；
- * 2) 页面无数据空态：项目描述占位、目标空态、洞察空态、动态空态；
+ * 2) 页面无数据空态：项目描述占位、目标空态、洞察无内容时整卡不渲染、动态空态；
  * 3) 页面真实数据：洞察来自 `agent.getSession` 的 assistant 消息，动态点击分别跳会话/气泡打开文件；
  * 4) 降级：洞察/文件库请求失败时静默降级，不影响剩余内容；
  * 5) 项目描述行内编辑（失焦或 ⌘Enter）写回 `updateWorkspaceMeta`。
@@ -409,7 +409,7 @@ afterEach(async () => {
 })
 
 describe('概览页无数据空态', () => {
-  it('没有描述/目标/工作/文件库时给出引导性空态', async () => {
+  it('空态只留标题与状态，说明性文案不再出现', async () => {
     // 无 preload 桥（浏览器预览/失败）时也不能崩。
     delete (window as unknown as { nxcore?: unknown }).nxcore
     await renderPage(pageProps())
@@ -419,13 +419,25 @@ describe('概览页无数据空态', () => {
     expect(textOf('.wb-ov-desc')).toBe('补充项目描述…')
     expect(textOf('.wb-ov-goals')).toContain('＋ 添加目标')
     expect(textOf('.wb-ov-meta')).toContain('开始')
-    expect(textOf('.wb-ov-meta')).toContain('0 项工作')
+    // 工作总数在侧栏分组头，概览 meta 行只留开始日期。
+    expect(textOf('.wb-ov-meta')).not.toContain('项工作')
 
-    expect(container.textContent).toContain('暂无洞察 · Agent 执行中会自动产生')
+    // 洞察无内容时整卡不渲染，不留空态说明。
+    expect(container.querySelector('.wb-ov-insight-badge')).toBeNull()
+    expect(container.textContent).not.toContain('暂无洞察')
     expect(container.textContent).toContain('还没有动态')
 
-    // 文件库不可用时给出说明，而不是静默消失。
-    expect(container.textContent).toContain('文件库暂不可用，暂时只显示工作动态')
+    // 文件库不可用时只留一句事实。
+    expect(container.textContent).toContain('文件库暂不可用')
+    expect(container.textContent).not.toContain('暂时只显示工作动态')
+
+    // 已删除的说明性/重复文案不得回流。
+    expect(container.textContent).not.toContain('最多 12 条目标')
+    expect(container.textContent).not.toContain('小 E')
+    expect(container.textContent).not.toContain('正在整理最近工作')
+    expect(container.textContent).not.toContain('正在读取最近动态')
+    expect(container.textContent).not.toContain('工作与文件名可点击')
+    expect(container.textContent).not.toContain('新建一项工作或添加材料')
   })
 })
 
@@ -470,13 +482,15 @@ describe('概览页真实数据', () => {
 
     // 洞察
     expect(textOf('.wb-ov-insight-text')).toContain('映射表收口 60%')
-    expect(container.textContent).toContain('小 E · 基于最近工作')
+    expect(textOf('.wb-ov-insight-badge')).toContain('洞察')
+    expect(container.textContent).not.toContain('小 E')
     expect(nxcore.agent.getSession).toHaveBeenCalledWith('s-run')
 
-    // 项目头
-    expect(textOf('.wb-ov-head-top')).toContain('进行中')
-    expect(textOf('.wb-ov-meta')).toContain('1 项工作')
-    expect(textOf('.wb-ov-meta')).toContain('1 项进行中')
+    // 项目头：进行中数量只出现在页头 badge。
+    expect(textOf('.wb-ov-head-top')).toContain('进行中 1')
+    expect(textOf('.wb-ov-meta')).toContain('开始')
+    expect(textOf('.wb-ov-meta')).not.toContain('项工作')
+    expect(textOf('.wb-ov-meta')).not.toContain('项进行中')
     expect(textOf('.wb-ov-goals')).toContain('阶段一收口')
 
     // 动态：会话最新 → 排第一；文件生成为第二
@@ -509,9 +523,12 @@ describe('概览页真实数据', () => {
     // getSession 默认 reject（未登记的会话）。
     await renderPage(pageProps({ sessions: [closed] }))
 
-    expect(container.textContent).toContain('暂无洞察 · Agent 执行中会自动产生')
+    // 洞察无内容时整卡不渲染，不挡工作动态。
+    expect(container.querySelector('.wb-ov-insight-badge')).toBeNull()
+    expect(container.textContent).not.toContain('暂无洞察')
     expect(container.textContent).toContain('结束了工作《周报整理》')
-    expect(container.textContent).toContain('文件库暂不可用，暂时只显示工作动态')
+    expect(container.textContent).toContain('文件库暂不可用')
+    expect(container.textContent).not.toContain('暂时只显示工作动态')
   })
 })
 

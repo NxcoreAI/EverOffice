@@ -13,7 +13,6 @@ import {
   sessionDisplayTitle,
 } from '../types'
 import { Hint, IconButton } from '../ui/primitives'
-import { AgentsPage } from '../workspace/AgentsPage'
 import { SetupWizard } from '../workspace/SetupWizard'
 import { BubbleWindow } from '../workspace/BubbleWindow'
 import { LibraryPage } from '../workspace/LibraryPage'
@@ -27,7 +26,7 @@ import '../workspace/workspace.css'
 
 /**
  * 工作空间标签的内容宿主：
- * - 功能页（概览/资料库/产物/智能体/计划）与工作会话二选一显示；
+ * - 功能页（概览/资料库/产物/计划）与工作会话二选一显示；
  * - 会话只在该标签激活时挂载（网关同一时刻只维护一个 agent 订阅），切标签会重新拉快照；
  * - 右侧文件气泡窗由本组件持有，跨页面切换保留。
  */
@@ -88,7 +87,6 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
       case 'overview': return <OverviewPage {...pageProps} />
       case 'library': return <LibraryPage {...pageProps} />
       case 'outputs': return <OutputsPage {...pageProps} />
-      case 'agents': return <AgentsPage {...pageProps} />
       case 'plan': return <PlanPage {...pageProps} />
       default: return null
     }
@@ -140,7 +138,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
         ) : null}
         {!active && (view.kind === 'session' || view.kind === 'draft') ? (
           <div className="wb-ws-inactive-hint">
-            {view.kind === 'draft' ? '新工作草稿' : '工作会话'} · 切回此标签继续
+            {view.kind === 'draft' ? '新工作草稿' : '工作会话'}
           </div>
         ) : null}
       </div>

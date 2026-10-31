@@ -185,10 +185,8 @@ export function OverviewPage({
     setGoalDraft('')
   }
 
-  /* ── 项目头 meta 行 ── */
+  /* ── 项目头 meta 行（工作总数在侧栏分组头，进行中聚合状态在页头 badge，这里只留开始日期） ── */
   const startedLabel = shortDateLabel(workspace.createdAt) || '—'
-  const metaParts = [`${startedLabel} 开始`, `${sessions.length} 项工作`]
-  if (runningCount > 0) metaParts.push(`${runningCount} 项进行中`)
   const hasDescription = Boolean(workspace.description?.trim())
 
   function openActivity(item: ActivityItem): void {
@@ -201,7 +199,7 @@ export function OverviewPage({
       <header className="wb-ov-head">
         <div className="wb-ov-head-top">
           <Badge tone={runningCount > 0 ? 'running' : 'neutral'} dot>
-            {runningCount > 0 ? '进行中' : '待开始'}
+            {runningCount > 0 ? `进行中 ${runningCount}` : '待开始'}
           </Badge>
           <Button variant="primary" icon={<Plus size={15} />} onClick={onNewWork}>
             新建工作
@@ -270,8 +268,7 @@ export function OverviewPage({
           </button>
         )}
 
-        <div className="wb-ov-goals">
-          <span className="wb-ov-goals-label">目标</span>
+        <div className="wb-ov-goals" role="group" aria-label="目标">
           {goals.map((goal) => (
             <span key={goal} className="wb-ov-goal">
               <Crosshair size={12} aria-hidden="true" />
@@ -294,7 +291,7 @@ export function OverviewPage({
               ref={goalInputRef}
               className="wb-ov-goal-input"
               aria-label="新目标"
-              placeholder="输入目标后回车"
+              placeholder="输入目标"
               maxLength={200}
               value={goalDraft}
               onChange={(event) => setGoalDraft(event.target.value)}
@@ -316,46 +313,36 @@ export function OverviewPage({
                 }
               }}
             />
-          ) : goals.length === 0 ? (
-            <button type="button" className="wb-ov-goal-add" onClick={startGoalAdd}>
-              ＋ 添加目标
-            </button>
           ) : goals.length < MAX_GOALS ? (
             <button type="button" className="wb-ov-goal-add" onClick={startGoalAdd} disabled={savingGoals}>
               ＋ 添加目标
             </button>
-          ) : (
-            <span className="wb-ov-note">最多 12 条目标</span>
-          )}
+          ) : null}
           {savingGoals ? <Spinner size={12} className="wb-ov-goals-spinner" /> : null}
         </div>
 
-        <p className="wb-ov-meta">{metaParts.join(' · ')}</p>
+        <p className="wb-ov-meta">{startedLabel} 开始</p>
       </header>
 
-      <section className="wb-ov-card" aria-labelledby="wb-ov-insight-heading">
-        <header className="wb-ov-card-head">
-          <span className="wb-ov-insight-badge">
-            <Sparkles size={13} aria-hidden="true" />
-            <span id="wb-ov-insight-heading">洞察</span>
-          </span>
-          <span className="wb-ov-insight-source">小 E · 基于最近工作</span>
-        </header>
-        {insight.status === 'loading' ? (
-          <p className="wb-ov-insight-state"><Spinner size={13} /> 正在整理最近工作…</p>
-        ) : null}
-        {insight.status !== 'loading' && insight.text ? (
-          <p className="wb-ov-insight-text">{insight.text}</p>
-        ) : null}
-        {insight.status !== 'loading' && !insight.text ? (
-          <p className="wb-ov-insight-state is-empty">暂无洞察 · Agent 执行中会自动产生</p>
-        ) : null}
-      </section>
+      {insight.status === 'loading' || insight.text ? (
+        <section className="wb-ov-card" aria-labelledby="wb-ov-insight-heading">
+          <header className="wb-ov-card-head">
+            <span className="wb-ov-insight-badge">
+              <Sparkles size={13} aria-hidden="true" />
+              <span id="wb-ov-insight-heading">洞察</span>
+            </span>
+          </header>
+          {insight.status === 'loading' ? (
+            <p className="wb-ov-insight-state"><Spinner size={13} /></p>
+          ) : insight.text ? (
+            <p className="wb-ov-insight-text">{insight.text}</p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="wb-ov-card" aria-labelledby="wb-ov-activity-heading">
         <header className="wb-ov-card-head">
           <h2 id="wb-ov-activity-heading">动态</h2>
-          <span className="wb-ov-card-hint">工作与文件名可点击</span>
           <button
             type="button"
             className="ui-btn ui-btn--ghost ui-btn--sm wb-ov-card-action"
@@ -366,7 +353,7 @@ export function OverviewPage({
         </header>
 
         {files.status === 'loading' && activities.length === 0 ? (
-          <p className="wb-ov-insight-state"><Spinner size={13} /> 正在读取最近动态…</p>
+          <p className="wb-ov-insight-state"><Spinner size={13} /></p>
         ) : null}
 
         {files.status !== 'loading' && activities.length === 0 ? (
@@ -374,12 +361,6 @@ export function OverviewPage({
             className="wb-ov-empty"
             icon={<History size={18} />}
             title="还没有动态"
-            description="新建一项工作或添加材料后，这里会按时间排开。"
-            action={(
-              <Button size="sm" icon={<Plus size={14} />} onClick={onNewWork}>
-                新建工作
-              </Button>
-            )}
           />
         ) : null}
 
@@ -410,7 +391,7 @@ export function OverviewPage({
         ) : null}
 
         {files.status === 'unavailable' ? (
-          <p className="wb-ov-note">文件库暂不可用，暂时只显示工作动态</p>
+          <p className="wb-ov-note">文件库暂不可用</p>
         ) : null}
       </section>
     </div>
