@@ -1,6 +1,6 @@
 # Agent 编辑 Excel：headless 会话与工作簿工具链（实现说明）
 
-> 状态：已落地（2026-10-31）；`sheets_agent_read` / `sheets_agent_edit` 双工具 + 12 个表格 AI 工具 + `propose_operations` 工作簿 DSL（67 个 op / 11 份指南）
+> 状态：已落地（2026-10-31）；`sheets_agent_read` / `sheets_agent_edit` 双工具 + 12 个表格 AI 工具 + `propose_operations` 工作簿 DSL（68 个 op / 11 份指南）
 > 关联：`docs/xlsx-agent-operation-coverage.zh-CN.md`、`xlsx-agent-test-prompts.md`、Word 对等实现 `docs/word-agent-editing-implementation.zh-CN.md`
 
 ## 1. 目标
@@ -102,7 +102,7 @@ Agent (gateway)
 
 ### 4.1 Batch 1 新增能力（2026-10-31）
 
-在原 55 个 op 之上分两轮补齐 12 个 op，DSL 共 **67 个 op**：
+在原 55 个 op 之上分三轮补齐 13 个 op，DSL 共 **68 个 op**：
 
 | 能力 | op | 说明 |
 |---|---|---|
@@ -127,9 +127,18 @@ Agent (gateway)
 | 保护工作簿 | `protect_workbook {protected}` | 仅结构锁、无密码；带密码文件双向拒绝；与工作表保护独立 |
 | 允许编辑区域 | `allow_edit_ranges {sheetId, ranges[]}` | 整体替换、`[]` 清空；带密码的既有区域拒绝改写；导入 xlsx 必需 |
 
+### 4.3 Batch 3 新增能力（数据汇总与图表进阶，2026-10-31）
+
+| 能力 | op / 扩展 | 说明 |
+|---|---|---|
+| 分类汇总 | `subtotal {range, groupColumn, valueColumn, function}` | 按 groupColumn 的连续相同值分组；11 种 SUBTOTAL 函数（sum/average/count/counta/max/min/product/stdev/stdevp/var/varp）；组小计行 + 总计行；结构类独立成批；≤200 组；仅导入 xlsx，需先 read_range |
+| 图表逐点配色 | `edit_chart.pointColors` | series→point→#hex，饼图/圆环图逐切片配色 |
+| 图表数据标签 | `edit_chart.dataLabelPosition` / `dataLabelFormat` | 标签位置（center/inside-end/outside-end）与数字格式；设置后自动开启数值标签 |
+| 图表网格线 / 数值轴 | `edit_chart.gridlines` / `valueAxis` | 数值轴主网格线开关；min/max（null 恢复自动）；轴类图表专用 |
+
 ## 9. 验证
 
-- GenOffice sheets：`npm run typecheck -w @genoffice/sheets`；`npm run build -w @genoffice/sheets`（embed 构建，`out/main/embed.js` 含 `waitForAgentReady` / `teardownSheetsRenderer`，main/preload 含 `workbook:agent-ready`）；全量 `npx vitest run` 1907/1908 通过（唯一失败是依赖本机 LibreOffice 的 `pivot-roundtrip.e2e`，环境问题）；Batch 1/2 专项测试 `agent-ops-batch1`（42 例）与 `agent-ops-batch2`（25 例）全过。
+- GenOffice sheets：`npm run typecheck -w @genoffice/sheets`；`npm run build -w @genoffice/sheets`（embed 构建，`out/main/embed.js` 含 `waitForAgentReady` / `teardownSheetsRenderer`，main/preload 含 `workbook:agent-ready`）；全量 `npx vitest run` 1938/1939 通过（唯一失败是依赖本机 LibreOffice 的 `pivot-roundtrip.e2e`，环境问题）；Batch 1/2/3 专项测试 `agent-ops-batch1`（42 例）、`agent-ops-batch2`（25 例）、`agent-ops-batch3`（31 例）全过。
 - Desktop：`tsc --noEmit` 通过；`office-agent-sheet-session.test.ts`（10 例：隐藏视图参数/就绪/版本回填/指纹重建/就绪超时/加密/not_xlsx/保存失败/串行/disposeAll）、`office-preview-registry.test.ts`（含 4 例 headless Excel 与 sidecar 存活）、Word 会话与 office 既有测试无回归。
 - Gateway：`sheets-agent-tools.test.ts`（14 例：元数据通道/roomId+workspaceId 透传/类型校验/多调用顺序/版本与 error 透传/无 dry-run/描述契约）、`office-bridge-client.test.ts`、`word-agent-ops.test.ts`；`packages/agent-runtime-pi` 的 `active-file-context.test.ts`（10 例）。
 - Runtime：`node scripts/prepare-genoffice-runtime.mjs` 重建后，`build/genoffice-runtime/sheets/main/embed.js` 导出新增 API，renderer bundle 含 `workbook:agent-ready`。

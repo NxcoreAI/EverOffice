@@ -536,3 +536,45 @@
 ```
 
 验证点：演示工作簿明确报「需要导入的 xlsx」；超 2 万单元格报清晰上限错误且不改动任何格式；不谎报成功。
+
+## 第十三组：Batch 3 分类汇总与图表进阶
+
+### 13.1 分类汇总
+
+```
+把"销售明细"按区域做分类汇总：每个区域的销售额小计，最后加总计。
+```
+
+验证点：先 `read_range`（按区域排序好）；`subtotal {groupColumn:'B', valueColumn:'F', function:'sum'}` 单独成批；每组一行"XX Total"+ 一条 `=SUBTOTAL(9,...)`；末尾 Grand Total；其他列内容不被破坏；≤200 组。
+
+### 13.2 图表逐点配色
+
+```
+把区域占比饼图的每个扇区换成不同颜色。
+```
+
+验证点：`edit_chart.pointColors`（series 0 → point 0..n）；保存后 Excel 里扇区颜色正确；整组 `seriesColors` 与逐点配色不冲突。
+
+### 13.3 数据标签格式
+
+```
+给柱状图加数值标签，放在柱子外侧，数字显示千分位。
+```
+
+验证点：`edit_chart.dataLabelPosition:'outside-end'` + `dataLabelFormat:'#,##0'`；标签自动开启；保存后 Excel 里位置/格式一致。
+
+### 13.4 网格线与数值轴范围
+
+```
+把折线图的纵向网格线关掉，Y 轴固定 0–100。
+```
+
+验证点：`edit_chart.gridlines:false` + `valueAxis:{min:0,max:100}`；保存后 Excel 里网格线关闭、轴范围固定；饼图调用 gridlines 会明确报错（无数值轴）。
+
+### 13.5 边界
+
+```
+对没有数值轴的饼图设置 gridlines；对未加载的大表直接做分类汇总。
+```
+
+验证点：饼图 gridlines 报"没有数值轴"；未 read_range 的大表报"range is not fully loaded，先 read_range"；不谎报成功。
