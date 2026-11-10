@@ -280,7 +280,12 @@
    完全一致。卡片语言（白底细线/圆角/聚焦 ring）由会话态的 .agent-prompt
    覆盖规则统一提供，这里只把停靠栏的 absolute 吸底 shell 还原成 hero 的
    静态卡片，并给一个更挺拔的最小高度。 */
-.wb-hero-input > .agent-composer-shell {
+/* 用带 data-state 的高特异性选择器：下面会话态的
+   `.wb-conversation .agent-composer-shell { padding: 12px var(--wb-gutter) 18px }`
+   与旧的 `.wb-hero-input > .agent-composer-shell` 特异性相同（都是 2 个类）且位置
+   更靠后，会把这里的 padding: 0 覆盖掉——hero 里输入框卡片因此被整体内缩一个
+   gutter，左边缘自然和上方「N 条注释」徽章对不齐。 */
+.wb-conversation[data-state='empty'] .wb-hero-input > .agent-composer-shell {
   position: static;
   width: 100%;
   min-height: 0;
