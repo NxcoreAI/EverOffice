@@ -15,6 +15,8 @@ const ftThemes: Record<FileKind, { from: string; to: string; letters: string }> 
   pptx: { from: '#ffb340', to: '#ef7d0e', letters: 'P' },
   pdf: { from: '#ff6f61', to: '#e0362a', letters: 'PDF' },
   md: { from: '#b9bbc2', to: '#83868f', letters: 'MD' },
+  // 云文档（documents 表）伪文件：淡紫「云」色，与本地文件区分。
+  'cloud-doc': { from: '#b79bf7', to: '#7d5bd6', letters: '云' },
 }
 
 /** office 五类之外、材料库等处用到的扩展类型主题（原型同款）。 */

@@ -1,0 +1,70 @@
+/**
+ * 工作空间云文档编辑器（旧 Tiptap 云文稿编辑器）宿主的外壳样式。
+ *
+ * 旧编辑器根节点 `.context-room-tiptap-editor` 原本铺满整个云文档标签页；放进
+ * 气泡窗文档态（`.wb-bubble-doc` 是 flex 容器）后，由这里把剩余高度吃满。
+ * 加载/错误/缺失三态与侧栏 Markdown 文件编辑器（`sidebarDocumentEditor.css`）
+ * 保持同一套视觉，避免同一面板里两种加载态不一致。
+ */
+.cloud-doc-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cloud-doc-editor > .context-room-tiptap-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cloud-doc-editor-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  color: var(--ui-text-2, #6b7280);
+  font-size: 13px;
+  text-align: center;
+}
+
+.cloud-doc-editor-state p {
+  margin: 0;
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+.cloud-doc-editor-state.is-error {
+  color: var(--ui-danger, #dc2626);
+}
+
+.cloud-doc-editor-state-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--ui-border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cloud-doc-editor-state-action:hover {
+  background: var(--ui-surface-2, rgba(0, 0, 0, 0.04));
+}
+
+.cloud-doc-editor-spin {
+  animation: cloud-doc-editor-spin 0.9s linear infinite;
+}
+
+@keyframes cloud-doc-editor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

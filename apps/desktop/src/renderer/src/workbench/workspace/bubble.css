@@ -338,6 +338,49 @@
   font-size: var(--ui-text-2xs);
 }
 
+/* ── 云文档分组（documents 表）：单列在文件库列表上方 ─────────── */
+
+.wb-bubble-cloud-docs {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 1px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+.wb-bubble-cloud-docs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 6px 2px;
+}
+.wb-bubble-cloud-docs-title {
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.wb-bubble-cloud-docs-count {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+}
+.wb-bubble-cloud-docs-state {
+  padding: 2px 6px 4px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  line-height: 1.55;
+}
+.wb-bubble-cloud-docs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* 云文档很多时自己滚动：文件库列表仍要露在下面，浏览态不能被一组占满。 */
+  max-height: 190px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 /* ── 减少动效 ─────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

@@ -51,6 +51,7 @@ import { DocumentCommentService } from "../modules/documents/comments.js";
 import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
 import { documentOverviewRoutes } from "../modules/documents/overview-routes.js";
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
+import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
@@ -84,6 +85,8 @@ import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factor
 import { connectorSessionRoutes } from "../modules/connectors/session-routes.js";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
+import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
+import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createAgentCardTools } from "../modules/agent/agent-card-tools.js";
@@ -167,7 +170,10 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
-import { createSubagentPiTools } from "../modules/subagents/tools.js";
+import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
+import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
+import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
+import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentSkillStateStore } from "../modules/skills/state-store.js";
@@ -507,6 +513,10 @@ export async function createServer(config: GatewayConfig) {
       isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
+  // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
+  // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
+  // 注入 host，避免 host 内部自建私有实例。
+  const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
   const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
   // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
@@ -532,6 +542,12 @@ export async function createServer(config: GatewayConfig) {
     documentService,
     undefined,
     createBuiltinDocumentCapabilityRegistry(
+      documentService,
+      undefined,
+      documentOperationService,
+      documentReadAuthority,
+      documentCommentService,
+      (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
       officeBridgeClient,
       // PPT 逐页进度上报：set_page 成功落页即广播快照。
@@ -626,6 +642,20 @@ export async function createServer(config: GatewayConfig) {
   });
   // 子 Agent 的技能读取工具按闸门过滤（被停用的技能不给读）。
   subagentRuntimeManager.setSkillGate(skillService);
+  // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
+  // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
+  // doc-writer 研究工具面（用户决策：与主 Agent 同等的工具使用）——检索/读取/
+  // 分析类全给，写入/调度/通知类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
+  subagentRuntimeManager.registerAgentTools("doc-writer", () => createDocWriterAgentTools({
+    documentTools: createDocumentPiTools(documentMcpHost),
+    analysisTools: subagentConfig.enabled
+      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator)
+      : [],
+    webSearchTools: config.webSearch
+      ? createWebSearchPiTools(agentResolver, externalCalls)
+      : [],
+  }));
   // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
   // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
   // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
@@ -664,6 +694,8 @@ export async function createServer(config: GatewayConfig) {
     subagentRuntimeManager,
     app.log,
   );
+  // doc-writer 的 rewrite task 派发器：唯一消费方是 POST /v1/documents/selection-rewrite。
+  const docWriterDispatcher = new DocWriterAgentDispatcher(subagentOrchestrator);
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
@@ -673,6 +705,25 @@ export async function createServer(config: GatewayConfig) {
   // let + 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让速览/
   // 章节预览在首次登录后一直 503（下方 onChange 重建）。
   let documentOverviewRuntime = createDocumentOverviewRuntime(config);
+  // 改写信任收口（agent-architecture-optimization-plan §3）：documents 插件经
+  // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
+  // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
+  // subagents / context-rooms，模块边界只在此装配点跨越。
+  // M2：内容生产者已迁至 doc-writer，授权判定随迁（isSelectionRewriteInvocationAuthorized
+  // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
+  documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
+    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
+    isInvocationAuthorized: (invocation) => isSelectionRewriteInvocationAuthorized(
+      invocation,
+      { capabilityId: "document.selection-rewrite" },
+    ),
+    getDocument: (documentId) => documentService.get(documentId),
+  });
+  // 引用透传（doc-writer-subagent-plan M3/V2）：write_append / patch_hunk 的
+  // invocationId → 草稿内容解析；授权绑定本 run 的 document_draft 派发。
+  documentService.resolveDocWriterDraft = createDocWriterDraftResolver({
+    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
+  });
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
   let resolveFileCurrentVersionId: ((fileEntryId: string) => string | null) | undefined;
   let resolveAgentConversation: ((threadId: string, query: string) => Promise<string | null>) | undefined;
@@ -864,6 +915,24 @@ export async function createServer(config: GatewayConfig) {
             // slides_draft 的草稿读写数据源：读权威文档快照（sourceDocumentIds 预取
             // 与 generate 阶段读回用户确认的草稿）。
             resolveDocumentForDraft: (documentId) => documentService.readDocumentForAgent(documentId),
+            // dispatch 期软租约：agent 修改中文档只读（编辑器 writing 态 + 保存
+            // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
+            setDocumentModificationLease: (documentId, value) =>
+              documentService.setAgentModificationLease(documentId, value),
+            inferMaterialSources: (runId, material) => inferMaterialSourcesFromReads(
+              documentReadAuthority,
+              (documentId) => {
+                try {
+                  return documentService.readDocumentForAgent(documentId);
+                } catch {
+                  return null;
+                }
+              },
+              runId,
+              material,
+            ),
+            issueDraftReadReceipt: (context, documentId, version, blockIds) =>
+              documentReadAuthority.issue(context, documentId, version, blockIds),
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
             // PPT 生成检查点必须挂 DB：regenerateDeck 复用凭据与批次断点跨重启才不丢
@@ -1342,6 +1411,9 @@ export async function createServer(config: GatewayConfig) {
     documentService,
     () => versionSummaryRuntime,
     indexBackfillReadTrigger,
+    // 划词改写（Phase 2i-2）：documents 路由只收派发函数，doc-writer 的
+    // subagent 依赖仍留在装配点这一处。
+    (taskInput) => docWriterDispatcher.dispatchDetached({ task: "rewrite", taskInput }),
   ));
   await app.register(documentCommentRoutes(documentCommentService));
   await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
@@ -1349,7 +1421,19 @@ export async function createServer(config: GatewayConfig) {
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
-    (context) => agentService.validateDocumentOperationContext(context),
+    (context) => {
+      // dispatch 子 Agent（doc-writer 划词改写，M2 迁移）溯源：按 completed Invocation 校验。
+      if (context.invocationId) {
+        if (!isSelectionRewriteInvocationAuthorized(
+          subagentOrchestrator.getInvocation(context.invocationId),
+          { capabilityId: context.capabilityId },
+        )) {
+          throw new Error("agent_operation_context_invalid");
+        }
+        return;
+      }
+      agentService.validateDocumentOperationContext(context);
+    },
   ));
   await app.register(externalDocumentProjectionRoutes(
     externalDocumentProjectionService,
