@@ -1049,6 +1049,15 @@
   left: var(--wb-gutter);
   margin: 0;
 }
+/* 新建工作（还没开始对话）的 hero 态：徽章在 .wb-hero-above-input 里，按流式
+   排在输入框正上方。上面那套 absolute 只适用于会话态——hero 的
+   --agent-composer-height 写在 .wb-hero-input 上（不是徽章的祖先），拿不到就
+   退化成 150px，正好把「1 条注释」压在居中的输入框上（遮挡对话框）。 */
+.wb-conversation[data-state='empty'] .wb-note-chip {
+  position: relative;
+  bottom: auto;
+  left: auto;
+}
 /* 徽章占掉消息区底部的一点呼吸位：有徽章时底部留白加一档，最后一条消息
    不被盖住（--agent-composer-height 不含徽章，这里手动补）。 */
 .wb-conversation[data-has-note-queue='true'] .agent-conversation {
