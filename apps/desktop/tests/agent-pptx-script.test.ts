@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 
 import { runAgentPptxScript } from '../src/main/office/agent-pptx-script'
@@ -102,6 +103,14 @@ describe('runAgentPptxScript', () => {
     expect(run.ok).toBe(true)
     if (!run.ok) return
     expect(run.bytes[0]).toBe(0x50)
+    // 中文的字体必须同时写进 <a:ea> 与 Hans 脚本表：只写 latin 时 WPS/PowerPoint 用 Hans 兜底字体，
+    // 不读脚本表的渲染器（GenOffice）用 latin 字体，同一份 deck 会显示成两种中文字体。
+    const theme = await (await JSZip.loadAsync(run.bytes)).file('ppt/theme/theme1.xml')!.async('string')
+    for (const font of ['majorFont', 'minorFont']) {
+      const block = new RegExp(`<a:${font}>[\\s\\S]*?</a:${font}>`).exec(theme)![0]
+      expect(block).toContain('<a:ea typeface="Calibri"/>')
+      expect(block).toContain('<a:font script="Hans" typeface="Calibri"/>')
+    }
   })
 
   it('apply_theme 缺失 → require("pptx/apply_theme.js") 得到明确报错', async () => {

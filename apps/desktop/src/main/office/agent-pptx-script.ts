@@ -164,6 +164,26 @@ function wrapPptxgen(
   return Object.assign(wrapped, RealPptxgen as Record<string, unknown>, { default: wrapped })
 }
 
+/**
+ * 编译期错误补上脚本行号与上下文：模型写整册脚本难免一处语法手滑（实测 634 行脚本
+ * 第 350 行多了个 `]`），只回 "Unexpected token ']'" 它找不到位置、重试还在盲改。
+ * vm 栈形如 "evalmachine.<anonymous>:351"，包了一层 (async () => {\n 故脚本行号 = 栈行号 - 1。
+ */
+function withScriptContext(message: string, scriptBody: string, error: unknown): string {
+  const stack = error instanceof Error ? error.stack ?? "" : ""
+  const line = Number(/evalmachine\.<anonymous>:(\d+)/.exec(stack)?.[1] ?? NaN);
+  if (!Number.isFinite(line)) return message
+  const target = Math.max(1, line - 1)
+  const lines = scriptBody.split("\n")
+  const from = Math.max(1, target - 2)
+  const to = Math.min(lines.length, target + 2)
+  const excerpt = []
+  for (let n = from; n <= to; n += 1) {
+    excerpt.push(`${n === target ? ">" : " "} ${n}: ${lines[n - 1] ?? ""}`.slice(0, 220))
+  }
+  return `${message}（脚本第 ${target} 行附近；上下文：\n${excerpt.join("\n")}）`
+}
+
 export async function runAgentPptxScript(
   script: string,
   options: AgentPptxScriptOptions = {},
@@ -172,13 +192,14 @@ export async function runAgentPptxScript(
   const consoleTail: string[] = []
   const dir = mkdtempSync(join(tmpdir(), 'everroom-agent-pptx-'))
   const deckPath = join(dir, DECK_NAME)
+  let scriptBody = ""
   try {
     const baseRequire = createRequire(import.meta.url)
     const rawPptxgen = baseRequire('pptxgenjs') as { default?: unknown } & unknown
     // 兼容 CJS 直出与 { default } 两种导出形态（pptxgenjs 历代打包差异）。
     const RealPptxgen = ((rawPptxgen as { default?: unknown }).default ?? rawPptxgen) as unknown
 
-    const scriptBody = await preResolveMaterials(script, dir, options.resolveMaterial, warnings)
+    scriptBody = await preResolveMaterials(script, dir, options.resolveMaterial, warnings)
     let applyTheme: Record<string, unknown> | null = null
     const writes: Array<Promise<unknown>> = []
     const sandboxRequire = (name: string): unknown => {
@@ -235,7 +256,7 @@ export async function runAgentPptxScript(
     return { ok: true, bytes, warnings, consoleTail }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { ok: false, error: message, warnings, consoleTail }
+    return { ok: false, error: withScriptContext(message, scriptBody, error), warnings, consoleTail }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

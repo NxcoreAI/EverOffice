@@ -1,6 +1,11 @@
-// Give a deck pptxgenjs wrote its own theme colors and theme name. pptxgenjs sets the theme's
-// two fonts (pres.theme) but hard-codes Office's palette, so scheme colors resolve to Office
-// blue and orange until the deck's colors are written into ppt/theme/theme1.xml.
+// Give a deck pptxgenjs wrote its own theme colors, theme name and complete theme fonts.
+// pptxgenjs sets the theme's two fonts (pres.theme) but hard-codes Office's palette, so scheme
+// colors resolve to Office blue and orange until the deck's colors are written into
+// ppt/theme/theme1.xml. It also writes pres.theme into `<a:latin>` only and leaves
+// `<a:ea typeface=""/>`: PowerPoint/WPS/LibreOffice then use the Office template's
+// `<a:font script="Hans" typeface="等线">` for Chinese, while renderers that ignore script
+// fonts (GenOffice) fall back to the latin name — one deck, two different Chinese fonts.
+// This mirrors each font block's latin name into its empty `<a:ea>` and its Hans entry.
 //
 //   const { applyTheme } = require("<this skill's directory>/scripts/apply_theme.js");
 //   await pres.writeFile({ fileName: "deck.pptx" });
@@ -41,10 +46,20 @@ function themeXml(xml, theme) {
 	const scheme = `<a:clrScheme name="${name}">` + SLOTS.map((k) => `<a:${k}><a:srgbClr val="${String(colors[k]).toUpperCase()}"/></a:${k}>`).join("") + "</a:clrScheme>";
 	// Function replacements, so a "$" in the name is not read as a replacement pattern.
 	// The theme, its color scheme and its font scheme each carry a name; none should still say Office.
-	const out = xml
+	let out = xml
 		.replace(/<a:clrScheme\b[\s\S]*?<\/a:clrScheme>/, () => scheme)
 		.replace(/(<a:(?:theme|fontScheme)\b[^>]*?\bname=")[^"]*"/g, (_, head) => `${head}${name}"`);
 	if (!out.includes(scheme)) throw new Error("ppt/theme/theme1.xml has no <a:clrScheme> to replace; this script expects the theme part pptxgenjs writes. Nothing was changed.");
+	const escapeAttr = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+	// Each block (major = heading, minor = body) keeps its own latin name; an `<a:ea>` a template
+	// already filled keeps its own face.
+	out = out.replace(/<a:(majorFont|minorFont)>([\s\S]*?)<\/a:\1>/g, (block, tag, body) => {
+		const latin = /<a:latin typeface="([^"]+)"/.exec(body);
+		if (!latin) return block;
+		return `<a:${tag}>` + body
+			.replace(/<a:ea typeface=""/, `<a:ea typeface="${escapeAttr(latin[1])}"`)
+			.replace(/<a:font script="Hans" typeface="[^"]*"/, `<a:font script="Hans" typeface="${escapeAttr(latin[1])}"`) + `</a:${tag}>`;
+	});
 	return out;
 }
 
