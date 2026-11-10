@@ -23,6 +23,7 @@ import {
   DOCUMENT_IMAGE_ACCEPT,
   storeDocumentImageFile,
 } from './documentImageAssets'
+import { documentsApi } from '@/components/office-editor/documentApi'
 
 type SlashMatch = { from: number; to: number; query: string }
 const SLASH_MENU_WIDTH = 284
@@ -251,7 +252,7 @@ export function TiptapSlashCommandMenu({
           const range = imageRangeRef.current
           if (!range) return
           imageRangeRef.current = null
-          const documents = window.nxcore?.documents
+          const documents = documentsApi()
           if (!documents) {
             showToast({ title: t('contextRoom:tiptapSlashCommandMenu.unableToInsertImage'), message: t('contextRoom:tiptapSlashCommandMenu.theLocalImageServiceIsUnavailable') })
             return

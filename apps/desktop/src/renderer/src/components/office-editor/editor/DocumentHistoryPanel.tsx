@@ -14,6 +14,7 @@ import {
   consumePendingDocumentHistory,
   onDocumentHistoryOpen,
 } from './documentHistoryOpenSignal'
+import { documentsApi, externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 /** 时间轴上的"导入版本"卡片数据（未应用候选）。 */
 interface PendingImportVersion {
@@ -119,7 +120,7 @@ export function DocumentHistoryPanel({
     setLoadingMore(false)
     setVersions([])
     setHasMore(false)
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents) return () => { cancelled = true }
     void documents.listVersions(documentId, { limit: HISTORY_PAGE_SIZE })
       .then((result) => {
@@ -150,7 +151,7 @@ export function DocumentHistoryPanel({
   const loadMore = () => {
     if (!open || loading || loadingMore || !hasMore) return
     const beforeVersion = versions.at(-1)?.version
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents || beforeVersion === undefined) return
     const requestGeneration = historyRequestGenerationRef.current
     setLoadingMore(true)
@@ -176,9 +177,9 @@ export function DocumentHistoryPanel({
     if (!open || selected === null) return
     let cancelled = false
     void Promise.all([
-      window.nxcore?.documents.getVersionSnapshot(documentId, selected),
+      documentsApi()?.getVersionSnapshot(documentId, selected),
       currentDocument && selected !== currentDocument.version
-        ? window.nxcore?.documents.getDiff(documentId, selected, currentDocument.version)
+        ? documentsApi()?.getDiff(documentId, selected, currentDocument.version)
         : Promise.resolve(null),
     ]).then(([nextSnapshot, nextDiff]) => {
       if (cancelled) return
@@ -209,7 +210,7 @@ export function DocumentHistoryPanel({
     // 外部导入历史按文档归档（`/v1/documents/:documentId/import-history`）：
     // 工作区级文稿同样可能带外部导入来源，不再按 Room 归属判断。
     let cancelled = false
-    void window.nxcore?.externalDocuments?.importHistory(currentDocument.id)
+    void externalDocumentsApi()?.importHistory(currentDocument.id)
       .then((result) => {
         if (cancelled) return
         setPendingImports(result.entries
@@ -228,7 +229,7 @@ export function DocumentHistoryPanel({
           setHasImportSource(false)
         }
       })
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (documents) {
       void documents.get(currentDocument.id)
         .then((latest) => {
@@ -243,7 +244,7 @@ export function DocumentHistoryPanel({
   }, [currentDocument, open, refreshSignal, importRefreshTick])
 
   const checkExternalUpdate = () => {
-    const external = window.nxcore?.externalDocuments
+    const external = externalDocumentsApi()
     if (!external || !currentDocument || checkingUpdate) return
     setCheckingUpdate(true)
     void external.checkExternalUpdate(currentDocument.id)
@@ -263,7 +264,7 @@ export function DocumentHistoryPanel({
   }
 
   const openImportDiff = (roomImportId: string) => {
-    const external = window.nxcore?.externalDocuments
+    const external = externalDocumentsApi()
     if (!external) return
     setSelected(null)
     setSelectedImportId(roomImportId)
@@ -282,7 +283,7 @@ export function DocumentHistoryPanel({
   // 版本升级为 AI 概览。summaries 变化会带动下一批继续，避免首批之后停摆。
   useEffect(() => {
     if (!open) return
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents) return
     const pending = versions
       .filter((version) => version.changeSummarySource !== 'ai' && !summaryRequestedRef.current.has(version.version))

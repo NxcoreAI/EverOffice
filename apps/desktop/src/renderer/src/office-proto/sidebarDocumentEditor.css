@@ -1,0 +1,70 @@
+/**
+ * 侧栏 Markdown 文件编辑器宿主的外壳样式。
+ *
+ * 旧编辑器（`.context-room-tiptap-editor`）原本铺满整个云文档标签页，这里把它
+ * 放进 OfficeProto 的标签页面板（`.op-tabpane.active` 是 flex 容器），所以只需要
+ * 让外壳与编辑器根节点把剩余高度吃满。
+ */
+.sidebar-doc-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sidebar-doc-editor > .context-room-tiptap-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ── 读取中 / 错误 / 不可用 三态 ── */
+.sidebar-doc-editor-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  color: var(--ui-text-2, #6b7280);
+  font-size: 13px;
+  text-align: center;
+}
+
+.sidebar-doc-editor-state p {
+  margin: 0;
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+.sidebar-doc-editor-state.is-error {
+  color: var(--ui-danger, #dc2626);
+}
+
+.sidebar-doc-editor-state-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--ui-border-strong, rgba(0, 0, 0, 0.16));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sidebar-doc-editor-state-action:hover {
+  background: var(--ui-surface-2, rgba(0, 0, 0, 0.04));
+}
+
+.sidebar-doc-editor-spin {
+  animation: sidebar-doc-editor-spin 0.9s linear infinite;
+}
+
+@keyframes sidebar-doc-editor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

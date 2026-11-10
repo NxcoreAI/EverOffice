@@ -3,6 +3,7 @@ import { Check, Loader2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import './ExternalDocumentDialogs.css'
+import { externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 const POLL_INTERVAL_MS = 2_500
 const TERMINAL_LINGER_MS = 8_000
@@ -24,7 +25,7 @@ export function DocumentExportStatus({ documentId }: { documentId: string }) {
   // 授权成功事件 → 自动恢复卡在 awaiting_auth 的导出任务（弹窗关闭时也生效）。
   useEffect(() => {
     const api = window.nxcore?.agentAuth
-    const external = window.nxcore?.externalDocuments
+    const external = externalDocumentsApi()
     if (!api || !external) return
     return api.onEvent((frame) => {
       if (frame.type !== 'challenge.updated') return
@@ -40,7 +41,7 @@ export function DocumentExportStatus({ documentId }: { documentId: string }) {
   useEffect(() => {
     let cancelled = false
     let timer: number | null = null
-    const external = window.nxcore?.externalDocuments
+    const external = externalDocumentsApi()
     if (!external) return
 
     const poll = async () => {

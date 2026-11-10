@@ -3,6 +3,7 @@ import type { Editor } from '@tiptap/react'
 import i18n from '@/i18n/i18next'
 
 import type { ExportDocumentPdfResult } from '../../../../../shared/sources'
+import { documentsApi } from '@/components/office-editor/documentApi'
 
 export function pdfExportFileName(documentName: string, untitled = '无标题文档'): string {
   const safeName = documentName
@@ -32,7 +33,7 @@ export async function exportEditorPdf(
   documentName: string,
   untitled = '无标题文档',
 ): Promise<ExportDocumentPdfResult> {
-  const api = window.nxcore?.documents
+  const api = documentsApi()
   if (!api) throw new Error(i18n.t('contextRoom:tiptapDocumentActions.pdfExportDesktopOnly'))
   return api.exportPdf({
     fileName: pdfExportFileName(documentName, untitled),

@@ -8,9 +8,9 @@ import remarkGfm from 'remark-gfm'
 import { Sparkles } from 'lucide-react'
 
 import { type OfficeFile } from './data'
-import { MarkdownTiptapEditor } from './MarkdownTiptapEditor'
 import { isMarkdownFileName } from './markdownFileText'
 import { NativeEditorHost, type NativeSpec } from './NativeEditorHost'
+import { SidebarDocumentEditor } from './SidebarDocumentEditor'
 import { SideDock } from './SideDock'
 
 interface EditorViewProps {
@@ -23,14 +23,15 @@ interface EditorViewProps {
 }
 
 /** docx/xlsx/pptx/pdf 都由 GenOffice 原生编辑器承载；真实 .md/.markdown 走侧栏
- *  Tiptap WYSIWYG 编辑器；mock 的 Markdown 仍保留原型编辑器（MdView）。 */
+ *  旧文稿（Tiptap cloud-document）编辑器的文件库宿主；mock 的 Markdown 仍保留
+ *  原型编辑器（MdView）。 */
 export function EditorView({ file, onToast, hideSideDock = false }: EditorViewProps) {
   // 真实文件库文件没有 mock 内容，直接走文件库内置预览（不落到下面的 MdView）。
-  // 其中真实的 .md/.markdown 改由侧栏自带的 Tiptap WYSIWYG 编辑器承载（不打开 genoffice，
+  // 其中真实的 .md/.markdown 改由侧栏复用的旧文稿编辑器承载（不打开 genoffice，
   // 也不走 mock 的 MdView）；其它真实文件仍交给 GenOffice 原生预览。
   if (file.realCatalog) {
     if (isMarkdownFileName(file.realCatalog.originalName)) {
-      return <MarkdownTiptapEditor key={file.id} file={file} onToast={onToast} />
+      return <SidebarDocumentEditor key={file.id} file={file} onToast={onToast} />
     }
     return <NativeFileView file={file} onToast={onToast} hideSideDock={hideSideDock} />
   }
