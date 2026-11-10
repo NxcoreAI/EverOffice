@@ -1,5 +1,5 @@
 import { FolderOpen } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { AgentWorkspace } from '@nxcore/agent-contract'
 
@@ -36,6 +36,8 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
   const sessions = useWorkspaceSessions(tab.workspaceId)
   const setWorkspaceView = useWorkbenchStore((state) => state.setWorkspaceView)
   const bubble = useWorkspaceBubble(tab.id)
+  /** 气泡窗是否已拖到铺满整个工作区（由 BubbleWindow 实测容器后回报）。 */
+  const [bubbleFull, setBubbleFull] = useState(false)
 
   // ⌘J：面板收起时打开「资料与文件」浏览（没有文件也能开），已展开时收起。
   useEffect(() => {
@@ -123,6 +125,11 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
       // 让对话区随覆盖层淡出逐渐显现。仅会话/草稿视图有对话区可覆盖，
       // 功能页（资料库/产物/计划）下面同样被盖住，行为一致。
       bubble.bubble.maximized && bubble.visible && !bubble.exitKind && 'has-max-bubble',
+      // 气泡窗被拖过「对话区保底宽度」后，对话区需要能继续让位到 0（铺满整页时完全不可见）。
+      // 退场期间保持放开，否则面板还在收窄、对话区却已恢复 min-width 会把布局顶溢出。
+      bubble.bubble.cover && bubble.visible && 'has-bubble-cover',
+      // 铺满态 = 视觉上完全盖住对话区（同最大化覆盖层）：对话区让出无障碍树。
+      bubble.visible && bubbleFull && 'has-full-bubble',
     )}>
       <div className="wb-ws-main">
         {view.kind === 'page' ? renderPage() : null}
@@ -188,6 +195,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
           onOpenFile={bubble.openFile}
           onToast={workbenchToast}
           workspaceId={workspace.id}
+          onFullChange={setBubbleFull}
         />
       ) : null}
     </div>

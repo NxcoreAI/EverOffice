@@ -2,10 +2,12 @@
 /**
  * 「本轮产生的文件」卡条组件测试（AgentChatView 集成）。
  *
- * 锁定三件事：
+ * 锁定这些事：
  * ① 生成类工具（office_create 等）转终态后，文件卡出现在 assistant 正文下方；
  * ② 点击文件卡调用 files.openOriginal（可编辑打开）；
- * ③ slides_draft 的成品不出卡（SlidesProgressCard 专属车道，避免重复）。
+ * ③ slides_draft 的成品不出卡（SlidesProgressCard 专属车道，避免重复）；
+ * ④ 卡片右侧的「用外部应用打开」分体控件：默认应用主按钮、关联应用下拉
+ *    （默认项标注默认）、文件定位，以及无关联列表时整体隐藏。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -55,6 +57,23 @@ function completedTool(over: Partial<DisplayAgentToolCall> & { id: string; name:
 let container: HTMLDivElement
 let root: Root | null = null
 let openOriginal: ReturnType<typeof vi.fn>
+let listApplications: ReturnType<typeof vi.fn>
+let openWithApplication: ReturnType<typeof vi.fn>
+let revealFile: ReturnType<typeof vi.fn>
+
+const PNG_ICON = 'data:image/png;base64,AAAA'
+const ASSOCIATED_APPS = [
+  { id: '/Applications/WorkBuddy.app', name: 'WorkBuddy.app', default: true, icon: PNG_ICON },
+  { id: '/Applications/WPS Office.app', name: 'WPS Office.app', default: false, icon: PNG_ICON },
+]
+
+async function flush(rounds = 6, step = 5): Promise<void> {
+  for (let index = 0; index < rounds; index += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, step))
+    })
+  }
+}
 
 function baseProps(over: Record<string, unknown> = {}) {
   return {
@@ -102,9 +121,12 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   openOriginal = vi.fn(() => Promise.resolve({ openedWith: 'in-app' }))
+  listApplications = vi.fn(() => Promise.resolve([]))
+  openWithApplication = vi.fn(() => Promise.resolve({ openedWith: 'external' }))
+  revealFile = vi.fn(() => Promise.resolve())
   ;(window as unknown as { nxcore?: unknown }).nxcore = {
     clipboard: { writeText: () => undefined },
-    files: { openOriginal },
+    files: { openOriginal, listApplications, openWithApplication, reveal: revealFile },
   }
   window.matchMedia = window.matchMedia ?? ((query: string) => ({
     matches: false,
@@ -188,6 +210,124 @@ describe('AgentTurnFilesCard in AgentChatView', () => {
       toolCallsByRun: { 'run-1': [tool] },
     })
     expect(turnFileButtons()).toHaveLength(0)
+  })
+
+  it('renders the system-default application control and opens with it on click', async () => {
+    listApplications.mockImplementation(() => Promise.resolve(ASSOCIATED_APPS))
+    const tool = completedTool({
+      id: 'tool-5',
+      name: 'office_create',
+      result: JSON.stringify({ fileEntryId: 'fe-5', originalName: '合同.docx', format: 'docx' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    await flush()
+
+    expect(listApplications).toHaveBeenCalledWith('fe-5')
+    const primary = container.querySelector<HTMLButtonElement>('.file-open-with-primary')
+    expect(primary).not.toBeNull()
+    expect(primary!.title).toContain('WorkBuddy.app')
+    await act(async () => {
+      primary!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(openWithApplication).toHaveBeenCalledWith('fe-5')
+  })
+
+  it('lists associated applications in the dropdown and opens an explicit app', async () => {
+    listApplications.mockImplementation(() => Promise.resolve(ASSOCIATED_APPS))
+    const tool = completedTool({
+      id: 'tool-6',
+      name: 'office_create',
+      result: JSON.stringify({ fileEntryId: 'fe-6', originalName: '方案.docx', format: 'docx' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    await flush()
+
+    const more = container.querySelector<HTMLButtonElement>('.file-open-with-more')
+    expect(more).not.toBeNull()
+    await act(async () => {
+      more!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    })
+    await flush()
+
+    const items = [...document.body.querySelectorAll('[role="menuitem"]')]
+      .map((element) => element.textContent ?? '')
+    // 默认应用标注「（默认）」；文件定位固定排在最后。
+    expect(items[0]).toContain('WorkBuddy.app')
+    expect(items[0]).toContain('默认')
+    expect(items[1]).toContain('WPS Office.app')
+    expect(items.at(-1)).toContain('在访达中显示')
+
+    const target = [...document.body.querySelectorAll('[role="menuitem"]')]
+      .find((element) => (element.textContent ?? '').includes('WPS Office.app'))
+    await act(async () => {
+      target!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flush()
+    expect(openWithApplication).toHaveBeenCalledWith('fe-6', '/Applications/WPS Office.app')
+  })
+
+  it('offers file reveal from the dropdown footer', async () => {
+    listApplications.mockImplementation(() => Promise.resolve(ASSOCIATED_APPS))
+    const tool = completedTool({
+      id: 'tool-7',
+      name: 'markdown_create',
+      result: JSON.stringify({ fileEntryId: 'fe-7', originalName: '纪要.md', format: 'md' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    await flush()
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.file-open-with-more')!
+        .dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    })
+    await flush()
+    const revealItem = [...document.body.querySelectorAll('[role="menuitem"]')]
+      .find((element) => (element.textContent ?? '').includes('在访达中显示'))
+    await act(async () => {
+      revealItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(revealFile).toHaveBeenCalledWith('fe-7')
+  })
+
+  it('collapses to a single button when only one application is associated', async () => {
+    listApplications.mockImplementation(() => Promise.resolve([ASSOCIATED_APPS[0]]))
+    const tool = completedTool({
+      id: 'tool-8',
+      name: 'office_create',
+      result: JSON.stringify({ fileEntryId: 'fe-8', originalName: '周报.docx', format: 'docx' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    await flush()
+
+    expect(container.querySelector('.file-open-with-primary')).not.toBeNull()
+    expect(container.querySelector('.file-open-with-more')).toBeNull()
+  })
+
+  it('hides the external application control when the platform has no associations', async () => {
+    const tool = completedTool({
+      id: 'tool-9',
+      name: 'office_create',
+      result: JSON.stringify({ fileEntryId: 'fe-9', originalName: '附件.xlsx', format: 'xlsx' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    await flush()
+    expect(container.querySelector('.agent-turn-file')).not.toBeNull()
+    expect(container.querySelector('.file-open-with')).toBeNull()
   })
 
   it('renders nothing when the run has no file-producing tools', async () => {

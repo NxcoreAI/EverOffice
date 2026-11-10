@@ -2,6 +2,7 @@ import { ChevronDown, Download, ExternalLink, MoreHorizontal, Trash2 } from 'luc
 
 import type { RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
+import { FileOpenWithSubmenu } from '@/components/files/FileOpenWithSubmenu'
 
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 
@@ -21,6 +22,8 @@ export interface FileRowActions {
   onExportReveal?: (item: RealOfficeFile) => void
   /** 删除文件（调用方自己弹二次确认）。 */
   onDelete?: (item: RealOfficeFile) => void
+  /** 行内操作失败提示（用其他应用打开失败）。 */
+  onError?: (message: string) => void
 }
 
 /** 表头：列名与空单元格的占位必须和行同构，否则列会错开。 */
@@ -84,6 +87,7 @@ function FileRowMenu({ item, actions }: { item: RealOfficeFile; actions: FileRow
         <MenuItem icon={<ExternalLink size={14} />} onSelect={() => actions.onOpen(item)}>
           打开
         </MenuItem>
+        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} label="用其他应用打开" />
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
             文件位置

@@ -830,6 +830,21 @@ export interface JournalTodayDto {
   lastError: string | null
 }
 
+/**
+ * 系统文件关联里的一个可打开应用（macOS 用 LaunchServices 查询；
+ * 其他平台暂不提供关联列表，返回空数组、界面不出现外部打开入口）。
+ */
+export interface FileApplication {
+  /** 应用绝对路径（.app bundle）——打开时原样回传主进程，主进程再按注册表校验。 */
+  id: string
+  /** 系统显示名（如「WPS Office.app」）。 */
+  name: string
+  /** 是否系统为该文件类型登记的默认应用。 */
+  default: boolean
+  /** 32px PNG data URL（供菜单项与卡片按钮图标）；取不到图标时为 null。 */
+  icon: string | null
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   app: {
@@ -1432,6 +1447,11 @@ export interface NxcoreDesktopApi {
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
       | { openedWith: 'external'; legacyFallback?: boolean }
     >
+    /** 该文件在本机可用的外部应用（按系统优先级；当前仅 macOS 提供，其他平台返回空数组）。 */
+    listApplications(fileId: string): Promise<FileApplication[]>
+    /** 用外部应用打开文件：applicationId 来自 listApplications；省略 = 系统默认应用。
+     *  应用路径会被主进程重新按系统文件关联校验，不在列表里的直接拒绝。 */
+    openWithApplication(fileId: string, applicationId?: string): Promise<{ openedWith: 'external' }>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room；
      * workspaceId = 归属工作空间（资料库/产物库按空间隔离，缺省归 default）。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>

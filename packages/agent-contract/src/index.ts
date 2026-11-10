@@ -326,9 +326,9 @@ export interface AgentSession {
   runtimeId: string;
   /** Agent that receives unmentioned user turns in this visible conversation. */
   activeAgentId?: string;
-  /** 会话锁定的模型档位（由 activeAgentId 反推）；后端权威，渲染层只读。 */
+  /** 当前模型档位（由 activeAgentId 反推）；可随时切换，后端权威，渲染层只读。 */
   modelPreference?: AgentModelPreference;
-  /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
+  /** 当前本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
   channelAgentId?: string;
   /**
    * 会话级思考档位覆盖；null/缺省＝跟随模型配置里的 reasoning（runtime config）。
@@ -683,8 +683,8 @@ export interface CreateAgentSessionInput {
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
   /**
-   * 会话档位（在创建时锁定，映射为 activeAgentId）。缺省 smart。
-   * 中途换档只影响之后新建的会话，不改已有会话。
+   * 创建时的初始档位（映射为 activeAgentId）。缺省 smart。
+   * 会话创建后仍可随时切换（updateSession 回写 activeAgentId），下一轮 run 立即生效。
    */
   modelPreference?: AgentModelPreference;
   /**
@@ -701,6 +701,13 @@ export interface CreateAgentSessionInput {
 
 /** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
 export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 模型档位全集（校验与 UI 展示共用；顺序＝由强到弱）。 */
+export const AGENT_MODEL_PREFERENCES: readonly AgentModelPreference[] = ["smart", "primary", "lite"];
+
+export function isAgentModelPreference(value: unknown): value is AgentModelPreference {
+  return typeof value === "string" && (AGENT_MODEL_PREFERENCES as readonly string[]).includes(value);
+}
 
 /** 思考档位（pi thinkingLevel 七档）：off 关闭思考；null 表示跟随模型配置。 */
 export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -752,7 +759,14 @@ export function channelAgentIdFromAgentId(agentId: string | null | undefined): s
 }
 
 export interface UpdateAgentSessionInput {
-  title: string;
+  /** 会话标题；缺省＝不改。 */
+  title?: string;
+  /**
+   * 中途切换模型档位：立即回写会话 activeAgentId，下一轮 run 走新档位。
+   * 与创建会话同口径——目标档位 runtime 不可用时回落 smart。
+   * 运行中的会话拒绝切换（agent_session_busy）。
+   */
+  modelPreference?: AgentModelPreference;
 }
 
 export type AgentNavigationAction = "created" | "updated" | "opened" | "referenced";

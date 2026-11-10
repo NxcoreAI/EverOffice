@@ -1442,6 +1442,79 @@ export function officePlugin(
     },
   };
 
+  /**
+   * 在界面打开文件：把资料库/产物里的文件用应用内预览页签打开给用户看
+   * （与资料库「打开」按钮同一条链路），非 Office 形态交给系统默认应用。
+   * 填补的能力缺口：此前 Agent 只能读/改文件内容，用户说「打开那份文档」
+   * 时没有任何工具能把文件在界面上呈现，只能回答“没有这个能力”。
+   */
+  const fileOpen: DocumentCapabilityTool = {
+    name: "file_open",
+    title: "在界面打开文件",
+    description: "把文件库里的文件在应用界面打开给用户看（Word/Excel/PPT/PDF 用内置预览页签，"
+      + "其他格式交给系统默认应用）。用户说「打开/看一下/给我看看那份文件」时用本工具，"
+      + "不要让用户自己去资料库翻。fileId 必填：没有现成 id 就先用 file_search 按文件名定位。"
+      + "editable=true 以可编辑方式打开（用户要接着改）；缺省只读预览。"
+      + "返回 openedWith（office=应用内页签 / external=系统应用）；打开即生效，不要重复调用。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "要打开的文件 id（fileEntryId）；先用 file_search 按文件名定位",
+        },
+        editable: {
+          type: "boolean",
+          description: "true = 以可编辑方式打开（用户要接着修改时）；缺省只读预览",
+        },
+      },
+      required: ["fileId"],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const fileId = typeof args.fileId === "string" ? args.fileId.trim() : "";
+      if (!fileId) throw new Error("INVALID_REQUEST: fileId 不能为空；先用 file_search 按文件名定位");
+      let title = fileId;
+      try {
+        const target = await resolveOfficeTarget({ fileId }, context);
+        title = target.entry.displayName ?? target.entry.originalName;
+      } catch {
+        // 条目暂不可查不阻断打开：桌面端会按 fileId 自行核实并给出可读失败。
+      }
+      let opened: Awaited<ReturnType<OfficeBridgeClient["openFile"]>>;
+      try {
+        opened = await bridge.openFile({
+          fileId,
+          ...(args.editable === true ? { editable: true } : {}),
+          workspaceId: context.workspaceId ?? null,
+        });
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (code === "not_found") {
+          throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+        }
+        throw new Error(
+          `FILE_OPEN_FAILED: 《${title}》打开失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return success({
+        fileId,
+        title,
+        openedWith: opened.openedWith,
+        originalName: opened.originalName,
+        ...(opened.kind ? { kind: opened.kind } : {}),
+        editable: args.editable === true,
+        nextAction: "report_result",
+        hint: opened.openedWith === "office"
+          ? "已在应用内打开并切换到该文件页签；回复里一句告知打开了哪份文件即可。"
+          : "已交给系统默认应用打开；回复里一句告知即可。",
+      });
+    },
+  };
+
   /** 宿主生图 + 插入：prompt → ai-relay 生图中转 → 图片对象库字节 → 渲染层插入。
    *  未注入 illustration 端口时不暴露（测试/无生图配置的部署）。 */
   const wordAgentIllustration: DocumentCapabilityTool | null = illustration ? {
@@ -1821,6 +1894,9 @@ export function officePlugin(
       + "只比段落文本；格式/表格结构差异要如实说明该工具看不到。",
       "用户要把 Word 转成 PDF（“导出 PDF / 给我一份 PDF”）时用 word_export_pdf（先 file_search 拿 fileId，省略 fileId 即当前文件）；"
       + "导出后告知新 PDF 文件名即可，不要用 office_create 重建一份、也不要假装改动原 .docx。",
+      "用户要在界面看某份文件（“打开/看一下/给我看看资料库里的 XX”）时用 file_open：先 file_search 拿 fileId，"
+      + "再 file_open（要接着改就带 editable=true）。这是真实打开动作，不要回答“我没有打开文件的能力”，"
+      + "也不要让用户自己去资料库翻；file_open 只负责呈现，改内容仍走 word_agent_* / sheets_agent_* / slides_edit。",
       "word_agent_ops 的 object.image.replace 图片来源只写本地图片绝对路径 path 或公网图片 url"
       + "（网关读字节后注入 base64/mime，模型不必也不许把 base64 抄进 ops）；来源解析失败会整批拒绝，先修正 path/url 再重试。",
       "破坏性 op（图片转灰度/裁剪/去背景、删块、整章删除）不可逆但版本链兜底：用户想反悔（“恢复原图/回到改之前”）"
@@ -1837,6 +1913,7 @@ export function officePlugin(
       ...(files
         ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordAgentRevert, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit, pdfAgentRead, pdfAgentEdit]
         : []),
+      fileOpen,
       ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],
   };

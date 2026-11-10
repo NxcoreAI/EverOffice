@@ -185,6 +185,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     onExportReveal: (item) => { void exportReveal(item) },
     onSetThesisTemplate: (item) => { void setThesisTemplate(item) },
     onDelete: (item) => setPendingDelete(item),
+    onError: onToast,
   }
 
   // 访达拖放：落点是页面根节点——空库/加载/不可用态也能拖，不只在有内容的浏览器里。

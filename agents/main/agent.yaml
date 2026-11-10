@@ -33,6 +33,7 @@ tools:
   - sheets_agent_read
   - sheets_agent_edit
   - file_search
+  - file_open
   - document_export
   - connector_query
   - connector_read

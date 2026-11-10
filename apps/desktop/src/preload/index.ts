@@ -37,7 +37,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type FileApplication, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -867,6 +867,10 @@ const api: NxcoreDesktopApi = {
       options?: { editable?: boolean; roomId?: string; workspaceId?: string },
     ) =>
       invoke('files:open-original', fileId, originalName, contentHash, options),
+    listApplications: (fileId: string) =>
+      invoke<FileApplication[]>('files:applications:list', fileId),
+    openWithApplication: (fileId: string, applicationId?: string) =>
+      invoke<{ openedWith: 'external' }>('files:applications:open', fileId, applicationId),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
       invoke('files:pick-and-import', options),
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */

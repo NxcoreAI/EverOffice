@@ -6,6 +6,7 @@ import { app } from 'electron'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 
 import type { OfficeAskQueueAction } from '../../shared/office'
+import { resolveGenOfficeRuntimeRoot } from '../runtime/genoffice-root'
 
 export interface GenOfficeAgentToolCall {
   id: string
@@ -592,9 +593,12 @@ export interface PreparedGenOfficeRuntime {
 }
 
 function runtimeRoot(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'genoffice')
-    : join(app.getAppPath(), 'build', 'genoffice-runtime')
+  return resolveGenOfficeRuntimeRoot({
+    envRoot: process.env.GENOFFICE_RUNTIME_ROOT,
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+  })
 }
 
 export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {

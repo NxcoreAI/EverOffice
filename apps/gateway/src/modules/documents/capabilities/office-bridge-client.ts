@@ -97,6 +97,25 @@ export interface OfficeExportPdfResult {
   contentHash?: string;
 }
 
+/** /v1/office-open：在界面打开文件库里的任意文件（Agent 的 file_open 工具）。 */
+export interface OfficeOpenInput {
+  fileId: string;
+  /** true = 以可编辑实例打开（页签可编辑）；缺省只读预览。 */
+  editable?: boolean;
+  /** 归属工作区（预览实例归属；缺省按目录条目回查）。 */
+  workspaceId?: string | null;
+}
+
+export interface OfficeOpenResult {
+  ok: boolean;
+  /** office = 应用内预览页签；external = 已交给系统默认应用。 */
+  openedWith: "office" | "external";
+  fileId: string;
+  originalName: string;
+  /** 应用内实例形态（openedWith=office 时可能携带，如 docx/slides）。 */
+  kind?: string;
+}
+
 /** /v1/office-edit read：活会话大纲 + op 词汇表。 */
 export interface OfficeSlidesDeckInfo {
   outline: string;
@@ -532,6 +551,47 @@ export class OfficeBridgeClient {
       fileId,
       originalName: originalName || `${fileId}.pdf`,
       ...(typeof data.contentHash === "string" ? { contentHash: data.contentHash } : {}),
+    };
+  }
+
+  /**
+   * /v1/office-open：桌面端把文件库里的文件在界面上打开（应用内预览页签
+   * 或系统默认应用），并把主窗口提到前台。网关只传 fileId 与归属。
+   */
+  async openFile(input: OfficeOpenInput): Promise<OfficeOpenResult> {
+    const response = await fetch(`${this.config.baseUrl}/v1/office-open`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(input),
+      // 打开预览实例 + 渲染端接管页签；大文件首开解析可到十几秒。
+      signal: AbortSignal.timeout(60_000),
+    });
+    const parsed = await response.json().catch(() => ({})) as {
+      message?: unknown;
+      code?: unknown;
+      data?: Record<string, unknown>;
+    };
+    if (!response.ok) {
+      const code = typeof parsed.code === "string" ? parsed.code : "error";
+      const message = typeof parsed.message === "string"
+        ? parsed.message
+        : `Office open failed (${response.status})`;
+      const error = new Error(message) as Error & { code?: string };
+      error.code = code;
+      throw error;
+    }
+    const data = parsed.data ?? {};
+    const openedWith = data.openedWith === "external" ? "external" : "office";
+    return {
+      ok: true,
+      openedWith,
+      fileId: typeof data.fileId === "string" ? data.fileId : input.fileId,
+      originalName: typeof data.originalName === "string" ? data.originalName : "",
+      ...(typeof data.kind === "string" ? { kind: data.kind } : {}),
     };
   }
 

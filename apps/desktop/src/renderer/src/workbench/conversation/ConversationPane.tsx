@@ -363,9 +363,8 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
        *  拖进来的文件必须落进本空间，否则 Agent 找不到刚导入的文件。 */
       attachmentWorkspaceId={workspaceId}
       modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
-      modelPreferenceLocked={Boolean(hook.sessionId)}
       loadModelAvailability={async () => ({ lite: true, primary: true })}
-      onSelectModelPreference={hook.setModelPreferenceDefault}
+      onSelectModelPreference={hook.setSessionModelPreference}
       channelAgentId={null}
       thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
       onSelectThinkingLevel={hook.setSessionThinkingLevel}

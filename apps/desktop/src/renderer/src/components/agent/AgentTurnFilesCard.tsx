@@ -1,6 +1,7 @@
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
 import { FileGlyphIcon } from '@/office-proto/pages/parts'
+import { FileOpenWithControl } from '@/components/files/FileOpenWithControl'
 
 import type { AgentTurnFile, AgentTurnFiles } from './agentTurnFiles'
 
@@ -46,6 +47,10 @@ async function openTurnFile(file: AgentTurnFile, onError: (message: string) => v
  * 「本轮产生的文件」卡条：DSH 产物卡语义——assistant 正文下方按产生顺序列出
  * 本轮生成的关键文件，点击打开可编辑视图。数据来自工具结果（见 agentTurnFiles.ts），
  * 与时间线/进度卡互补：时间线讲过程，这里给最终产物的落点。
+ *
+ * 卡片右侧的分体控件（默认应用图标 + 下拉）与 DSH 产物卡一致：主按钮用系统默认
+ * 应用打开，下拉列出本机注册的打开应用（默认项标注「（默认）」）并保留文件定位；
+ * 点击卡片本体仍走应用内预览，两条路径互不影响。
  */
 export function AgentTurnFilesCard({ files, onOpenError }: { files: AgentTurnFiles; onOpenError?: (message: string) => void }) {
   const { t } = useLocale()
@@ -58,22 +63,23 @@ export function AgentTurnFilesCard({ files, onOpenError }: { files: AgentTurnFil
   return (
     <div className="agent-turn-files" role="list" aria-label={t('surface:agentChat.turnFilesLabel')}>
       {files.map((file) => (
-        <button
-          key={file.fileEntryId}
-          type="button"
-          role="listitem"
-          className="agent-turn-file"
-          title={t('surface:agentChat.turnFileOpenTitle', { name: file.name })}
-          onClick={() => void openTurnFile(file, reportError)}
-        >
-          <span className="agent-turn-file-icon" aria-hidden="true">
-            <FileGlyphIcon kind={file.format} size={28} />
-          </span>
-          <span className="agent-turn-file-copy">
-            <strong>{file.name}</strong>
-            <small>{originLabel(file.origin, file.format, t)}</small>
-          </span>
-        </button>
+        <div key={file.fileEntryId} role="listitem" className="agent-turn-file-shell">
+          <button
+            type="button"
+            className="agent-turn-file"
+            title={t('surface:agentChat.turnFileOpenTitle', { name: file.name })}
+            onClick={() => void openTurnFile(file, reportError)}
+          >
+            <span className="agent-turn-file-icon" aria-hidden="true">
+              <FileGlyphIcon kind={file.format} size={28} />
+            </span>
+            <span className="agent-turn-file-copy">
+              <strong>{file.name}</strong>
+              <small>{originLabel(file.origin, file.format, t)}</small>
+            </span>
+          </button>
+          <FileOpenWithControl fileId={file.fileEntryId} fileName={file.name} onError={reportError} />
+        </div>
       ))}
     </div>
   )

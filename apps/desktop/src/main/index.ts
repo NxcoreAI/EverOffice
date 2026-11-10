@@ -63,6 +63,9 @@ import { McpGatewayBridge } from './gateway/mcp-gateway-bridge'
 import { ExternalCallsGatewayBridge } from './gateway/external-calls-gateway-bridge'
 import { cleanupLegacyGatewaySecretKey } from './security/gateway-secret-key'
 import { FilesGatewayBridge } from './gateway/files-gateway-bridge'
+import { FileApplicationsService } from './files/file-applications'
+import { OpenWithStaging } from './files/open-with-staging'
+import { resolveOpenWithTarget } from './files/open-with-target'
 import { ThesisFormatGatewayBridge } from './gateway/thesis-format-gateway-bridge'
 import { SubagentGatewayBridge } from './gateway/subagent-gateway-bridge'
 import { SlidesGatewayBridge } from './gateway/slides-gateway-bridge'
@@ -81,6 +84,7 @@ import {
   type OfficeAgentToolsRequest,
   type OfficeExportPdfRequest,
   type OfficeExportPdfResult,
+  type OfficeOpenRequest,
 } from './gateway/office-bridge'
 import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
@@ -510,6 +514,10 @@ const FILES_CHANNELS = {
   reveal: 'files:reveal',
   exportReveal: 'files:export-reveal',
   openOriginal: 'files:open-original',
+  /** 该文件在系统里可用的外部应用（macOS LaunchServices；其他平台空）。 */
+  listApplications: 'files:applications:list',
+  /** 用外部应用打开文件（applicationId 省略 = 系统默认应用）。 */
+  openWithApplication: 'files:applications:open',
   pickAndImport: 'files:pick-and-import',
   pickAgentAttachments: 'files:pick-agent-attachments',
   pickPaths: 'files:pick-paths',
@@ -2772,6 +2780,43 @@ function registerFilesHandlers(
     if (request) notifyPreviewRequested(request)
     return opened
   })
+  // 「打开方式」：系统文件关联里的外部应用（macOS）。卡片菜单消费这两个通道；
+  // 主进程按 fileId 向网关换 storagePath，应用路径再由系统注册表重新校验。
+  //
+  // 对象库路径没有扩展名（files/sha256/xx/<hash>）：直接交给 LaunchServices 只会
+  // 得到通用文本/归档程序，所以先用 OpenWithStaging 复制成原始文件名副本——
+  // 关联查询只要同扩展名的占位，真正启动前才写入完整内容。local-folder 等
+  // 本身就是磁盘真实文件的条目直接原样打开（外部编辑会写回真实文件）。
+  const fileApplications = new FileApplicationsService()
+  const openWithStaging = new OpenWithStaging(join(app.getPath('userData'), 'open-with'))
+  // 清理必须排在首次使用前：否则启动瞬间刚写好的占位/副本可能被清理任务删掉。
+  const openWithStagingReady = openWithStaging.cleanup().catch((error) => {
+    console.warn('[file-applications] 清理外部打开临时副本失败', error)
+  })
+  const openWithTargetOf = async (fileId: string, mode: 'association' | 'open'): Promise<string> => {
+    await openWithStagingReady
+    return resolveOpenWithTarget({
+      storagePath: (id) => bridge.storagePath(id),
+      catalogEntry: (id) => bridge.catalogEntry(id),
+      legacyFile: (id) => bridge.get(id),
+    }, openWithStaging, fileId, mode)
+  }
+  handle(FILES_CHANNELS.listApplications, async (_event, fileId: unknown) => {
+    if (typeof fileId !== 'string' || !fileId.trim()) throw new Error('文件标识不能为空')
+    return fileApplications.applicationsFor(await openWithTargetOf(fileId.trim(), 'association'))
+  })
+  handle(FILES_CHANNELS.openWithApplication, async (_event, fileId: unknown, applicationId?: unknown) => {
+    if (typeof fileId !== 'string' || !fileId.trim()) throw new Error('文件标识不能为空')
+    if (applicationId !== undefined && applicationId !== null
+      && (typeof applicationId !== 'string' || !applicationId.trim())) {
+      throw new Error('应用标识不合法')
+    }
+    await fileApplications.openWith(
+      await openWithTargetOf(fileId.trim(), 'open'),
+      typeof applicationId === 'string' ? applicationId.trim() : undefined,
+    )
+    return { openedWith: 'external' as const }
+  })
   bridge.onImportProgress((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(FILES_CHANNELS.importProgress, event)
@@ -3743,6 +3788,45 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           return {
             ok: false,
             message: `导出 PDF 失败：${error instanceof Error ? error.message : String(error)}`,
+          }
+        }
+      },
+      // Agent 在界面打开文件（gateway file_open 工具 → /v1/office-open）：
+      // 与资料库「打开」/论文成品自动打开同一条 openFileInAppPreview 链路，
+      // 并补 office:preview-request 通知让工作台开标签接管实例（否则实例
+      // 建好了也不可见，用户看到的是「Agent 说打开了，但什么都没发生」）。
+      () => async (req: OfficeOpenRequest): Promise<
+        | { ok: true; openedWith: 'office' | 'external'; fileId: string; originalName: string; kind?: string }
+        | { ok: false; code: 'not_found' | 'error'; message: string }
+      > => {
+        const bridge = officeFilesBridge
+        if (!bridge) return { ok: false, code: 'error', message: '文件网关不可用，暂时无法打开文件。' }
+        try {
+          const entry = await bridge.catalogEntry(req.fileId).catch(() => null)
+          const originalName = entry?.originalName?.trim() || ''
+          if (!originalName) {
+            return { ok: false, code: 'not_found', message: `文件 ${req.fileId} 不在文件库中（可能已删除）。` }
+          }
+          const opened = await openFileInAppPreview(bridge, req.fileId, originalName, {
+            ...(req.editable ? { editable: true } : {}),
+            ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+            // Agent 打开是用户明确要看的动作：把交互窗口提到前台，页签才可见。
+            focusWindow: true,
+          })
+          const previewRequest = previewRequestFromOpenResult(opened)
+          if (previewRequest) notifyPreviewRequested(previewRequest)
+          return {
+            ok: true,
+            openedWith: opened.openedWith,
+            fileId: req.fileId,
+            originalName,
+            ...(opened.kind ? { kind: opened.kind } : {}),
+          }
+        } catch (error) {
+          return {
+            ok: false,
+            code: 'error',
+            message: `打开失败：${error instanceof Error ? error.message : String(error)}`,
           }
         }
       },

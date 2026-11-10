@@ -274,4 +274,59 @@ describe("OfficeBridgeClient", () => {
       await stub.close();
     }
   });
+
+  it("openFile 走 /v1/office-open，透传 fileId/editable/workspaceId 并带回打开形态", async () => {
+    const stub = await startStub(200, {
+      openedWith: "office",
+      fileId: "fe-1",
+      originalName: "合同.docx",
+      kind: "docx",
+    });
+    try {
+      const result = await stub.client.openFile({
+        fileId: "fe-1",
+        editable: true,
+        workspaceId: "ws-1",
+      });
+      expect(stub.recorded[0]?.url).toBe("/v1/office-open");
+      expect(stub.recorded[0]?.authorization).toBe("Bearer test-token");
+      expect(stub.recorded[0]?.body).toMatchObject({
+        fileId: "fe-1",
+        editable: true,
+        workspaceId: "ws-1",
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        openedWith: "office",
+        fileId: "fe-1",
+        originalName: "合同.docx",
+        kind: "docx",
+      });
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("openFile 非 200 时把桌面端 code（not_found）挂到 error 上", async () => {
+    const stub = await startStub(422, {}, { code: "not_found", message: "文件不在文件库中" });
+    try {
+      await expect(stub.client.openFile({ fileId: "fe-404" })).rejects.toMatchObject({
+        message: "文件不在文件库中",
+        code: "not_found",
+      });
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("openFile 对外部应用打开（external）原样透传", async () => {
+    const stub = await startStub(200, { openedWith: "external", fileId: "fe-2", originalName: "素材.zip" });
+    try {
+      const result = await stub.client.openFile({ fileId: "fe-2" });
+      expect(result.openedWith).toBe("external");
+      expect(result.originalName).toBe("素材.zip");
+    } finally {
+      await stub.close();
+    }
+  });
 });

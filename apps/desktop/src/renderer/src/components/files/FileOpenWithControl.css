@@ -1,0 +1,100 @@
+/* 文件「用外部应用打开」分体控件（与 DSH 产物卡同观感）。
+ * 颜色跟随 Agent 对话卡片的浅色工作面色板；控件本身不含外框，
+ * 由宿主卡片提供边框与底，这里只画按钮和竖分隔。 */
+
+.file-open-with {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px 0 0;
+}
+
+.file-open-with-primary,
+.file-open-with-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #59626f;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.file-open-with-primary {
+  width: 28px;
+  height: 28px;
+}
+
+.file-open-with-more {
+  width: 20px;
+  height: 28px;
+}
+
+.file-open-with-primary:hover,
+.file-open-with-more:hover {
+  background: #eaeff6;
+  color: #303640;
+}
+
+.file-open-with-primary:active,
+.file-open-with-more:active {
+  background: #dfe6ef;
+}
+
+.file-open-with-primary:disabled,
+.file-open-with-more:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.file-open-with-primary:focus-visible,
+.file-open-with-more:focus-visible {
+  outline: 2px solid #7c9bc4;
+  outline-offset: -2px;
+}
+
+.file-open-with-sep {
+  width: 1px;
+  height: 18px;
+  background: #e4e8ee;
+}
+
+.file-open-with-icon {
+  display: block;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.file-open-with-fallback {
+  color: #8a929d;
+}
+
+/* 应用可能多达二十个：菜单限高滚动，避免顶出屏幕。 */
+.file-open-with-menu {
+  max-height: min(460px, 70vh);
+  overflow-y: auto;
+}
+
+/* 紧凑变体：文件列表行 / PPT 卡动作区，只占一行文字的高度。 */
+.file-open-with.is-compact {
+  gap: 0;
+  padding: 0 2px 0 0;
+}
+
+.file-open-with.is-compact .file-open-with-primary {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.file-open-with.is-compact .file-open-with-more {
+  width: 16px;
+  height: 24px;
+}
+
+.file-open-with.is-compact .file-open-with-sep {
+  height: 14px;
+}
