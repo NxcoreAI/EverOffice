@@ -234,10 +234,17 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
 /** 选区重写完成后的宽限期：doc-writer-dispatcher 复用（旧管线保留）。 */
 export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 
+function normalizeWorkspaceEnglishName(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const name = value.trim();
+  return name ? name.slice(0, 120) : null;
+}
+
 function toWorkspace(row: typeof agentWorkspaces.$inferSelect): AgentWorkspace {
   return {
     id: row.id,
     name: row.name,
+    nameEn: row.nameEn ?? null,
     description: row.description ?? null,
     // 兼容迁移前/直插留空的旧行：NULL 与空数组都暴露为 []。
     goals: Array.isArray(row.goals) ? row.goals : [],
@@ -1175,6 +1182,7 @@ export class AgentService {
     const name = input.name?.trim();
     if (!name) throw new Error("agent_workspace_name_required");
     const requestedPath = normalizeWorkspacePath(input.path);
+    const nameEn = normalizeWorkspaceEnglishName(input.nameEn);
     const description = normalizeWorkspaceDescription(input.description);
     const goals = normalizeWorkspaceGoals(input.goals) ?? [];
     const spaceId = randomUUID();
@@ -1188,6 +1196,7 @@ export class AgentService {
     const created = this.db.insert(agentWorkspaces).values({
       id: spaceId,
       name,
+      nameEn,
       description,
       goals,
       path: scope.path,
@@ -1243,6 +1252,7 @@ export class AgentService {
     if (!existing) return null;
     const patch: {
       name?: string;
+      nameEn?: string | null;
       description?: string | null;
       goals?: string[];
       path?: string | null;
@@ -1257,6 +1267,9 @@ export class AgentService {
       const name = input.name.trim();
       if (!name) throw new Error("agent_workspace_name_required");
       patch.name = name;
+    }
+    if (input.nameEn !== undefined) {
+      patch.nameEn = normalizeWorkspaceEnglishName(input.nameEn);
     }
     // description 传 null/空白串 → 清空（落库 NULL）；goals 传 [] → 清空。
     if (input.description !== undefined) {

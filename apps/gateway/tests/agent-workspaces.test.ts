@@ -70,21 +70,30 @@ describe("agent workspaces", () => {
       method: "POST",
       url: "/v1/agent/workspaces",
       headers,
-      payload: { name: "项目 A", path: config.dataDir },
+      payload: { name: "项目 A", nameEn: "Project A", path: config.dataDir },
     });
     expect(created.statusCode).toBe(201);
     const workspace = created.json<AgentWorkspace>();
-    expect(workspace).toMatchObject({ name: "项目 A", path: config.dataDir, kind: "custom" });
+    expect(workspace).toMatchObject({ name: "项目 A", nameEn: "Project A", path: config.dataDir, kind: "custom" });
     expect(workspace.id).not.toBe("default");
 
     const renamed = await app.inject({
       method: "PATCH",
       url: `/v1/agent/workspaces/${workspace.id}`,
       headers,
-      payload: { name: "项目 B", lastOpenedAt: new Date(Date.now() + 60_000).toISOString() },
+      payload: { name: "项目 B", nameEn: "Project B", lastOpenedAt: new Date(Date.now() + 60_000).toISOString() },
     });
     expect(renamed.statusCode).toBe(200);
-    expect(renamed.json<AgentWorkspace>().name).toBe("项目 B");
+    expect(renamed.json<AgentWorkspace>()).toMatchObject({ name: "项目 B", nameEn: "Project B" });
+
+    const clearedAlias = await app.inject({
+      method: "PATCH",
+      url: `/v1/agent/workspaces/${workspace.id}`,
+      headers,
+      payload: { nameEn: "   " },
+    });
+    expect(clearedAlias.statusCode).toBe(200);
+    expect(clearedAlias.json<AgentWorkspace>().nameEn).toBeNull();
 
     // 最近打开时间倒序：刚 touch 的自定义工作区排在默认工作区之前。
     const listed = (await app.inject({ method: "GET", url: "/v1/agent/workspaces", headers }))

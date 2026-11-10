@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 /**
  * 「技能」页的真实数据层（网关 `/v1/skills`）。
  *
@@ -102,6 +104,7 @@ export function useSkills(): {
   /** 删除一个用户技能（成功后刷新清单）。 */
   removeSkill: (skillId: string) => Promise<void>
 } {
+  const { t } = useLocale()
   const [state, setState] = useState<SkillsLoadable>({ status: 'loading' })
   const [pending, setPending] = useState<string[]>([])
   const [nonce, setNonce] = useState(0)
@@ -145,7 +148,7 @@ export function useSkills(): {
 
   const setEnabled = useCallback(async (skillId: string, enabled: boolean) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.setSkillEnabled) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
+    if (!bridge?.setSkillEnabled) throw new Error(t('workbench:home.skills.bridgeUnavailable'))
     setPending((current) => (current.includes(skillId) ? current : [...current, skillId]))
     // 先改界面再等网关：开关是幂等的布尔写入，失败时会回滚。
     setState((current) => current.status === 'ready'
@@ -167,19 +170,19 @@ export function useSkills(): {
     } finally {
       setPending((current) => current.filter((id) => id !== skillId))
     }
-  }, [])
+  }, [t])
 
   const createSkill = useCallback(async (input: CreateSkillInput) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.createSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
+    if (!bridge?.createSkill) throw new Error(t('workbench:home.skills.bridgeUnavailable'))
     await bridge.createSkill(input)
     reload()
-  }, [reload])
+  }, [reload, t])
 
   const importDirectory = useCallback(async (): Promise<boolean> => {
     const bridge = window.nxcore?.agent
     if (!bridge?.pickSkillDirectory || !bridge.importSkillDirectory) {
-      throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
+      throw new Error(t('workbench:home.skills.bridgeUnavailable'))
     }
     // 选择器同时接受文件夹与 .zip；SKILL.md 的存在性由网关校验。
     const picked = await bridge.pickSkillDirectory()
@@ -187,14 +190,14 @@ export function useSkills(): {
     await bridge.importSkillDirectory(picked)
     reload()
     return true
-  }, [reload])
+  }, [reload, t])
 
   const removeSkill = useCallback(async (skillId: string) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.deleteSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
+    if (!bridge?.deleteSkill) throw new Error(t('workbench:home.skills.bridgeUnavailable'))
     await bridge.deleteSkill(skillId)
     reload()
-  }, [reload])
+  }, [reload, t])
 
   return { state, reload, pending, setEnabled, createSkill, importDirectory, removeSkill }
 }

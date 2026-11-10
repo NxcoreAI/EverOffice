@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { JournalEntryDto, JournalTodayDto, NxcoreDesktopApi } from '@/shared/sources'
 
 export type DailyJournalState = 'loading' | 'ready' | 'empty' | 'unavailable' | 'failed'
@@ -89,6 +90,7 @@ function snapshotFrom(dto: JournalTodayDto): DailyJournalSnapshot {
  * - 卸载时清定时器与两个监听（`cancelled` 标志拦住迟到的响应）。
  */
 export function useDailyJournal(): DailyJournal {
+  const { t } = useLocale()
   const [snapshot, setSnapshot] = useState<DailyJournalSnapshot>(INITIAL_SNAPSHOT)
   const [refreshing, setRefreshing] = useState(false)
   // 「重试」靠 nonce 重跑主 effect（与 useFileLibrary.reload 同构）。
@@ -166,13 +168,13 @@ export function useDailyJournal(): DailyJournal {
       .catch(() => {
         // 重写失败不算数据没了：旧条目留着，只补一行弱化错误文案。
         if (aliveRef.current) {
-          setSnapshot((current) => ({ ...current, refreshError: '重写没成功，稍后可以再试一次。' }))
+          setSnapshot((current) => ({ ...current, refreshError: t('workbench:home.journal.refreshFailed') }))
         }
       })
       .finally(() => {
         if (aliveRef.current) setRefreshing(false)
       })
-  }, [])
+  }, [t])
 
   return { ...snapshot, refreshing, refresh, reload }
 }

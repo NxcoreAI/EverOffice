@@ -1,5 +1,7 @@
 import type { AgentEvent, AgentSession, AgentSessionSnapshot } from '@nxcore/agent-contract'
 
+import { translateZh, type Translate } from '@/i18n/LocaleContext'
+
 import {
   INSIGHT_MAX_CHARS,
   INSIGHT_MAX_LINES,
@@ -110,7 +112,7 @@ export const INSIGHT_CACHE_TTL_MS = 60_000
 /** 连续失败后的自动重试冷却，手动刷新不受限。 */
 export const INSIGHT_FAILURE_COOLDOWN_MS = 60_000
 
-/** 洞察卡的全部用户可见文案（zh-CN）。规格 §5.4 的落地版本。 */
+/** zh-CN 文案基线：单测断言沿用此对象；运行时 UI 渲染 `workbench:insight.*` 词条。 */
 export const INSIGHT_COPY = {
   title: '洞察',
   updating: '小 E 正在更新…',
@@ -210,6 +212,8 @@ export interface DeriveWorkspaceInsightInput {
   retryDelaysMs?: readonly number[]
   /** 注入时钟，方便单测断言 capturedAt。 */
   now?: () => number
+  /** 翻译器；缺省 zh-CN（单测/离线默认）。 */
+  t?: Translate
 }
 
 /* ───────────────── 聚合总结 + 建议（确定性兜底） ───────────────── */
@@ -223,6 +227,8 @@ export interface ComposeWorkspaceInsightInput {
   latestText: string | null
   /** 本空间文件数；未就绪时省略（总结里不提文件）。 */
   fileCount?: number
+  /** 翻译器；缺省 zh-CN（单测/离线默认）。 */
+  t?: Translate
 }
 
 /** 聚合输出：总结一句 + 建议若干（已按优先级截到 2 条）。 */
@@ -239,24 +245,24 @@ function shortTitle(title: string): string {
 }
 
 /** 与 `types.ts` 的 `sessionDisplayTitle` 同口径（这里只拿得到 Pick 字段）。 */
-function displayTitleOf(session: InsightSessionLike): string {
+function displayTitleOf(session: InsightSessionLike, t: Translate): string {
   const title = session.title?.trim()
-  return title ? title : '新工作'
+  return title ? title : t('workbench:common.newWork')
 }
 
 /** 工作分布描述：「1 项在跑，2 项已完成」。 */
-function workStateLine(sessions: readonly InsightSessionLike[]): string {
+function workStateLine(sessions: readonly InsightSessionLike[], t: Translate): string {
   const running = sessions.filter((session) => session.status === 'running').length
   const interrupted = sessions.filter((session) => session.status === 'interrupted').length
   const closed = sessions.filter((session) => session.status === 'closed').length
   const idle = sessions.filter((session) => session.status === 'idle').length
   const parts: string[] = []
-  if (running > 0) parts.push(`${running} 项在跑`)
-  if (interrupted > 0) parts.push(`${interrupted} 项待续`)
-  if (idle > 0) parts.push(`${idle} 项有新结果`)
-  if (closed > 0) parts.push(`${closed} 项已完成`)
-  if (parts.length === 0) return `${sessions.length} 项工作`
-  return parts.join('，')
+  if (running > 0) parts.push(t('workbench:insight.stateRunning', { count: running }))
+  if (interrupted > 0) parts.push(t('workbench:insight.stateInterrupted', { count: interrupted }))
+  if (idle > 0) parts.push(t('workbench:insight.stateIdle', { count: idle }))
+  if (closed > 0) parts.push(t('workbench:insight.stateClosed', { count: closed }))
+  if (parts.length === 0) return t('workbench:insight.stateCount', { count: sessions.length })
+  return parts.join(t('workbench:insight.stateSeparator'))
 }
 
 /**
@@ -270,35 +276,35 @@ function workStateLine(sessions: readonly InsightSessionLike[]): string {
  * 5. 状态信号不足（单项且无上述条件）→ 引用最近正文一行作「最近进展」。
  */
 export function composeWorkspaceInsight(input: ComposeWorkspaceInsightInput): ComposedWorkspaceInsight {
-  const { sessions, latest, latestText, fileCount } = input
+  const { sessions, latest, latestText, fileCount, t = translateZh } = input
   const interrupted = sessions.filter((session) => session.status === 'interrupted')
   const idleWithText = sessions.filter((session) => session.status === 'idle')
   const closed = sessions.filter((session) => session.status === 'closed')
-  const latestTitle = shortTitle(displayTitleOf(latest))
+  const latestTitle = shortTitle(displayTitleOf(latest, t))
 
   const summaryParts = [
-    `${sessions.length} 项工作：${workStateLine(sessions)}。`,
-    fileCount === undefined ? null : `资料 ${fileCount} 个文件。`,
+    t('workbench:insight.summary', { count: sessions.length, state: workStateLine(sessions, t) }),
+    fileCount === undefined ? null : t('workbench:insight.fileCount', { count: fileCount }),
   ].filter(Boolean) as string[]
   const summary = summaryParts.join('')
 
   const suggestions: string[] = []
   if (latest.status === 'running') {
-    suggestions.push(`「${latestTitle}」正在跑，完成后我会把结果汇总在这里。`)
+    suggestions.push(t('workbench:insight.suggestionRunning', { title: latestTitle }))
   }
   if (interrupted.length > 0) {
-    suggestions.push(`「${shortTitle(displayTitleOf(interrupted[0]!))}」被中断过，要不要让它接着跑？`)
+    suggestions.push(t('workbench:insight.suggestionInterrupted', { title: shortTitle(displayTitleOf(interrupted[0]!, t)) }))
   }
   if (suggestions.length === 0 && idleWithText.length > 0 && latestText) {
-    suggestions.push(`「${latestTitle}」有你没细看的结果，值得花一分钟过一眼。`)
+    suggestions.push(t('workbench:insight.suggestionIdle', { title: latestTitle }))
   }
   if (suggestions.length === 0 && sessions.length >= 2 && sessions.length === closed.length) {
-    suggestions.push('这一轮工作都收尾了，适合开下一项或整理归档。')
+    suggestions.push(t('workbench:insight.suggestionClosed'))
   }
   if (suggestions.length === 0 && latestText) {
     // 状态信号不足：引用最近正文的第一句，作为「最近进展」而不是全文复述。
     const firstSentence = latestText.split(/(?<=[。？！?])/)[0]?.trim() ?? latestText
-    suggestions.push(`最近进展：${firstSentence.length > 60 ? `${firstSentence.slice(0, 59)}…` : firstSentence}`)
+    suggestions.push(t('workbench:insight.suggestionRecent', { text: firstSentence.length > 60 ? `${firstSentence.slice(0, 59)}…` : firstSentence }))
   }
 
   const text = normalizeInsightText([summary, ...suggestions.slice(0, 2)].join('\n')) ?? summary
@@ -489,6 +495,7 @@ export async function deriveWorkspaceInsight(
         latest,
         latestText: hit?.text ?? null,
         ...(input.fileCount === undefined ? {} : { fileCount: input.fileCount }),
+        t: input.t ?? translateZh,
       })
       const text = llmText ?? composed.text
       if (!hit) {
@@ -545,20 +552,26 @@ export async function deriveWorkspaceInsight(
 /* ───────────────── 展示格式化 ───────────────── */
 
 /** 「刚刚」不写成「更新于 刚刚」；其余拼「更新于 X」。 */
-export function formatInsightUpdatedLabel(relativeLabel: string): string {
+export function formatInsightUpdatedLabel(
+  relativeLabel: string,
+  t: Translate = translateZh,
+): string {
   if (!relativeLabel) return ''
-  return relativeLabel === '刚刚' ? '刚刚更新' : `更新于 ${relativeLabel}`
+  return relativeLabel === t('workbench:time.justNow')
+    ? t('workbench:insight.justUpdated')
+    : t('workbench:insight.updatedAt', { time: relativeLabel })
 }
 
 /** 来源行：`基于本空间 N 项工作[与 M 个文件][ · 更新于 X]`。 */
 export function formatInsightSourceLine(
   stats: WorkspaceInsightStats,
   updatedLabel: string,
+  t: Translate = translateZh,
 ): string {
   const parts = [
     stats.fileCount === undefined
-      ? `基于本空间 ${stats.workCount} 项工作`
-      : `基于本空间 ${stats.workCount} 项工作与 ${stats.fileCount} 个文件`,
+      ? t('workbench:insight.sourceWork', { count: stats.workCount })
+      : t('workbench:insight.sourceWorkFiles', { count: stats.workCount, files: stats.fileCount }),
   ]
   if (updatedLabel) parts.push(updatedLabel)
   return parts.join(' · ')

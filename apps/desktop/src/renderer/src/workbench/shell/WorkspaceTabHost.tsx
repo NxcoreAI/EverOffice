@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 
 import type { AgentWorkspace } from '@nxcore/agent-contract'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { OfficeFile } from '@/office-proto/data'
 
 import { ConversationPane } from '../conversation/ConversationPane'
@@ -32,6 +33,7 @@ import '../workspace/workspace.css'
  * - 右侧文件气泡窗由本组件持有，跨页面切换保留。
  */
 export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: boolean }) {
+  const { t } = useLocale()
   const workspace = useWorkspace(tab.workspaceId)
   const sessions = useWorkspaceSessions(tab.workspaceId)
   const setWorkspaceView = useWorkbenchStore((state) => state.setWorkspaceView)
@@ -82,7 +84,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
   }, [active, refreshSessions])
 
   if (!workspace) {
-    return <div className="wb-ws-missing">工作空间不存在或已删除</div>
+    return <div className="wb-ws-missing">{t('workbench:tabHost.missing')}</div>
   }
 
   const pageProps: WorkspacePageProps = {
@@ -101,9 +103,9 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
     ? sessions.find((item) => item.id === view.sessionId) ?? null
     : null
   const chatTitle = view.kind === 'draft'
-    ? '新工作'
+    ? t('workbench:common.newWork')
     : view.kind === 'session'
-      ? sessionDisplayTitle(session)
+      ? sessionDisplayTitle(session, t)
       : ''
   const renderPage = () => {
     if (view.kind !== 'page') return null
@@ -135,9 +137,9 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
                 {/* 面板打开时它自己有浏览/收起/关闭按钮；这里保留同一个按钮的位置（仅隐藏），
                     避免收起/展开最后一步因「按钮出现/消失」把标题挤动一下。 */}
                 <span className={bubble.visible ? 'wb-chat-files-slot is-hidden' : 'wb-chat-files-slot'}>
-                  <Hint label="资料与文件（⌘J）">
+                  <Hint label={t('workbench:tabHost.filesShortcut')}>
                     <IconButton
-                      label="资料与文件"
+                      label={t('workbench:tabHost.files')}
                       size="sm"
                       icon={<FolderOpen size={15} />}
                       aria-expanded={bubble.visible}
@@ -169,7 +171,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
         ) : null}
         {!active && (view.kind === 'session' || view.kind === 'draft') ? (
           <div className="wb-ws-inactive-hint">
-            {view.kind === 'draft' ? '新工作草稿' : '工作会话'}
+            {view.kind === 'draft' ? t('workbench:tabHost.newWorkDraft') : t('workbench:tabHost.workSession')}
           </div>
         ) : null}
       </div>

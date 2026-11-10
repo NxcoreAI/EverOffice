@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { PlanItem, PlanStatus } from '@nxcore/agent-contract'
 
 import { IconButton, TextInput } from '../../ui/primitives'
@@ -45,6 +46,7 @@ export function PlanColumn({
   onCreate,
   onOpenCard,
 }: PlanColumnProps) {
+  const { t } = useLocale()
   const [insertAt, setInsertAt] = useState<number | null>(null)
   const [composing, setComposing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -74,14 +76,14 @@ export function PlanColumn({
         setInsertAt(null)
         onDropAt(index)
       }}
-      aria-label={`${label}列，${items.length} 条`}
+      aria-label={t('workbench:workspace.plan.columnAria', { label, count: items.length })}
     >
       <header className="wb-plan-col-head">
         <span className={`wb-status-dot is-${status}`} aria-hidden="true" />
         <strong>{label}</strong>
         <span className="wb-plan-col-count">{items.length}</span>
         <IconButton
-          label={`在「${label}」新建任务`}
+          label={t('workbench:workspace.plan.newTaskInColumn', { label })}
           size="sm"
           icon={<Plus size={14} />}
           onClick={() => setComposing(true)}
@@ -94,7 +96,7 @@ export function PlanColumn({
             <TextInput
               autoFocus
               value={draft}
-              placeholder="任务标题，回车创建"
+              placeholder={t('workbench:workspace.plan.composePlaceholder')}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') commit()
@@ -146,7 +148,7 @@ export function PlanColumn({
 
         {!items.length && !composing ? (
           <button type="button" className="wb-plan-empty" onClick={() => setComposing(true)}>
-            <span className="wb-plan-empty-action">新建任务</span>
+            <span className="wb-plan-empty-action">{t('workbench:workspace.plan.newTask')}</span>
           </button>
         ) : null}
       </div>

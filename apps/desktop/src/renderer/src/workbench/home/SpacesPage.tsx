@@ -1,27 +1,33 @@
 import type { AgentWorkspace } from '@nxcore/agent-contract'
-import { LayoutGrid, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Languages, LayoutGrid, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { useWorkbenchStore } from '../state/store'
-import { relativeTimeLabel } from '../types'
+import { relativeTimeLabel, workspaceDisplayName } from '../types'
 import { Badge, Button, EmptyState, IconButton, PageHeader, TextInput } from '../ui/primitives'
 import { ConfirmModal } from '../ui/modal'
+import { WorkspaceEnglishNameDialog } from '../ui/WorkspaceEnglishNameDialog'
 import { workbenchToast } from '../shell/toast'
 import { requestNewSpace } from './parts'
 import { cn } from '../ui/cn'
 
 /** 项目空间页：真实 workspace 网格 + 搜索 + 新建 / 行内重命名 / 删除确认。 */
 export function SpacesPage() {
+  const { t, locale } = useLocale()
   const workspaces = useWorkbenchStore((state) => state.workspaces)
   const sessions = useWorkbenchStore((state) => state.sessions)
   const openWorkspaceTab = useWorkbenchStore((state) => state.openWorkspaceTab)
   const renameWorkspace = useWorkbenchStore((state) => state.renameWorkspace)
   const deleteWorkspace = useWorkbenchStore((state) => state.deleteWorkspace)
+  const updateWorkspaceMeta = useWorkbenchStore((state) => state.updateWorkspaceMeta)
 
   const [query, setQuery] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [pendingDelete, setPendingDelete] = useState<AgentWorkspace | null>(null)
+  const [aliasTarget, setAliasTarget] = useState<AgentWorkspace | null>(null)
   const renameCommittedRef = useRef(false)
 
   const sessionCounts = useMemo(() => {
@@ -37,7 +43,7 @@ export function SpacesPage() {
     const keyword = query.trim().toLowerCase()
     if (!keyword) return workspaces
     return workspaces.filter((workspace) =>
-      [workspace.name, workspace.description ?? '', ...(workspace.goals ?? []), workspace.path ?? '']
+      [workspace.name, workspace.nameEn ?? '', workspace.description ?? '', ...(workspace.goals ?? []), workspace.path ?? '']
         .some((field) => field.toLowerCase().includes(keyword)))
   }, [query, workspaces])
 
@@ -47,6 +53,13 @@ export function SpacesPage() {
     setRenameDraft(workspace.name)
   }
 
+  const saveEnglishName = async (nameEn: string | null): Promise<boolean> => {
+    if (!aliasTarget) return false
+    const ok = await updateWorkspaceMeta(aliasTarget.id, { nameEn })
+    workbenchToast(ok ? t('workbench:workspaceAlias.saved') : t('workbench:workspaceAlias.saveFailed'))
+    return ok
+  }
+
   const commitRename = async (workspace: AgentWorkspace) => {
     if (renameCommittedRef.current) return
     renameCommittedRef.current = true
@@ -54,16 +67,16 @@ export function SpacesPage() {
     const name = renameDraft.trim()
     if (!name || name === workspace.name) return
     const ok = await renameWorkspace(workspace.id, name)
-    workbenchToast(ok ? '已重命名项目空间' : '重命名失败')
+    workbenchToast(ok ? t('workbench:home.spaces.renamed') : t('workbench:home.spaces.renameFailed'))
   }
 
   return (
     <div className="wb-home-scroll">
       <PageHeader
-        title="项目空间"
+        title={t('workbench:home.spaces.title')}
         actions={(
           <Button variant="primary" icon={<Plus size={15} />} onClick={requestNewSpace}>
-            新建项目空间
+            {t('workbench:home.spaces.new')}
           </Button>
         )}
       />
@@ -73,14 +86,14 @@ export function SpacesPage() {
           <label className="wb-home-search">
             <TextInput
               type="search"
-              aria-label="搜索项目空间"
-              placeholder="搜索名称、描述或目标"
+              aria-label={t('workbench:home.spaces.searchAria')}
+              placeholder={t('workbench:home.spaces.searchPlaceholder')}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
           <span className="wb-home-toolbar-meta">
-            {query.trim() ? `匹配 ${filtered.length} / ${workspaces.length}` : null}
+            {query.trim() ? t('workbench:home.spaces.matchCount', { matched: filtered.length, total: workspaces.length }) : null}
           </span>
         </div>
       ) : null}
@@ -88,16 +101,17 @@ export function SpacesPage() {
       {workspaces.length === 0 ? (
         <EmptyState
           icon={<LayoutGrid size={18} />}
-          title="还没有项目空间"
-          description="一个项目空间装一个项目的资料、工作与产物。"
-          action={<Button variant="primary" size="sm" icon={<Plus size={13} />} onClick={requestNewSpace}>新建项目空间</Button>}
+          title={t('workbench:home.spaces.emptyTitle')}
+          description={t('workbench:home.spaces.emptyDescription')}
+          action={<Button variant="primary" size="sm" icon={<Plus size={13} />} onClick={requestNewSpace}>{t('workbench:home.spaces.new')}</Button>}
         />
       ) : filtered.length === 0 ? (
-        <div className="wb-home-empty">没有匹配的项目空间。</div>
+        <div className="wb-home-empty">{t('workbench:home.spaces.noMatch')}</div>
       ) : (
         <div className="wb-home-space-grid">
           {filtered.map((workspace) => {
             const renaming = renamingId === workspace.id
+            const displayName = workspaceDisplayName(workspace, locale)
             const count = sessionCounts.get(workspace.id) ?? 0
             return (
               <article key={workspace.id} className={cn('wb-home-space-tile', renaming && 'is-renaming')}>
@@ -108,7 +122,7 @@ export function SpacesPage() {
                       <span className="wb-home-space-main">
                         <TextInput
                           className="wb-home-rename-input"
-                          aria-label="空间名称"
+                          aria-label={t('workbench:home.spaces.nameAria')}
                           autoFocus
                           value={renameDraft}
                           maxLength={120}
@@ -132,13 +146,13 @@ export function SpacesPage() {
                       type="button"
                       className="wb-home-space-open"
                       onClick={() => openWorkspaceTab(workspace.id)}
-                      title={`打开「${workspace.name}」`}
+                      title={t('workbench:home.spaces.openNamed', { name: displayName })}
                     >
                       <span className="wb-home-space-icon" aria-hidden="true"><LayoutGrid size={17} /></span>
                       <span className="wb-home-space-main">
                         <span className="wb-home-space-name">
-                          <span className="wb-home-truncate">{workspace.name}</span>
-                          {workspace.kind === 'default' ? <Badge tone="neutral">默认</Badge> : null}
+                          <span className="wb-home-truncate">{displayName}</span>
+                          {workspace.kind === 'default' ? <Badge tone="neutral">{t('workbench:home.common.default')}</Badge> : null}
                         </span>
                       </span>
                     </button>
@@ -146,20 +160,26 @@ export function SpacesPage() {
                 </div>
                 <div className="wb-home-space-tile-foot">
                   <span className="wb-home-space-tile-meta">
-                    {count} 项工作
+                    {t('workbench:home.spaces.workCount', { count })}
                     {' · '}
-                    {relativeTimeLabel(workspace.lastOpenedAt) || '未打开'}
+                    {relativeTimeLabel(workspace.lastOpenedAt) || t('workbench:home.spaces.neverOpened')}
                   </span>
                   <span className="wb-home-space-tile-actions">
                     <IconButton
-                      label={`重命名 ${workspace.name}`}
+                      label={t('workbench:workspaceAlias.editNamed', { name: displayName })}
+                      size="sm"
+                      icon={<Languages size={13} />}
+                      onClick={() => setAliasTarget(workspace)}
+                    />
+                    <IconButton
+                      label={t('workbench:home.spaces.renameNamed', { name: displayName })}
                       size="sm"
                       icon={<Pencil size={13} />}
                       onClick={() => startRename(workspace)}
                     />
                     {workspace.kind !== 'default' ? (
                       <IconButton
-                        label={`删除 ${workspace.name}`}
+                        label={t('workbench:home.spaces.deleteNamed', { name: displayName })}
                         size="sm"
                         tone="danger"
                         icon={<Trash2 size={13} />}
@@ -175,25 +195,32 @@ export function SpacesPage() {
             <span className="wb-home-space-tile-head">
               <span className="wb-home-space-icon" aria-hidden="true"><Plus size={17} /></span>
               <span className="wb-home-space-main">
-                <strong>新建项目空间</strong>
+                <strong>{t('workbench:home.spaces.new')}</strong>
               </span>
             </span>
           </button>
         </div>
       )}
 
+      <WorkspaceEnglishNameDialog
+        open={aliasTarget !== null}
+        onOpenChange={(open) => { if (!open) setAliasTarget(null) }}
+        workspace={aliasTarget}
+        onSave={saveEnglishName}
+      />
+
       <ConfirmModal
         open={pendingDelete !== null}
         onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
-        title={`删除项目空间「${pendingDelete?.name ?? ''}」？`}
-        description="空间里的工作会移回默认空间。删除后，资料与产物不再按这个空间归类。"
-        confirmLabel="删除空间"
+        title={t('workbench:home.spaces.deleteTitle', { name: pendingDelete?.name ?? '' })}
+        description={t('workbench:home.spaces.deleteDescription')}
+        confirmLabel={t('workbench:home.spaces.deleteConfirm')}
         onConfirm={() => {
           const target = pendingDelete
           setPendingDelete(null)
           if (!target) return
           void deleteWorkspace(target.id).then((ok) => {
-            workbenchToast(ok ? '已删除项目空间' : '删除失败')
+            workbenchToast(ok ? t('workbench:home.spaces.deleted') : t('workbench:home.spaces.deleteFailed'))
           })
         }}
       />

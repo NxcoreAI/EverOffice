@@ -1,5 +1,6 @@
 import { ChevronDown, Download, ExternalLink, MoreHorizontal, Trash2 } from 'lucide-react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 
@@ -25,12 +26,13 @@ export interface FileRowActions {
 
 /** 表头：列名与空单元格的占位必须和行同构，否则列会错开。 */
 export function FileTableHead() {
+  const { t } = useLocale()
   return (
     <div className="wb-home-filetbl-head" aria-hidden="true">
       <span />
-      <span>文件名</span>
-      <span className="wb-home-filetbl-sort">修改时间 <ChevronDown size={11} /></span>
-      <span>大小</span>
+      <span>{t('workbench:home.files.columnName')}</span>
+      <span className="wb-home-filetbl-sort">{t('workbench:home.files.columnModified')} <ChevronDown size={11} /></span>
+      <span>{t('workbench:home.files.columnSize')}</span>
       <span />
     </div>
   )
@@ -46,6 +48,7 @@ export function FileTableRow({
   /** 类型图标尺寸：所有文件页照原型用 36，最近分栏用紧凑 26。 */
   iconSize?: number
 }) {
+  const { t } = useLocale()
   return (
     <div className="wb-home-filerow" title={item.file.name}>
       <FileTypeIcon kind={item.file.kind} size={iconSize ?? 26} />
@@ -59,7 +62,7 @@ export function FileTableRow({
       <button
         type="button"
         className="wb-home-filerow-open"
-        aria-label={`打开 ${item.file.name}`}
+        aria-label={t('workbench:home.files.openAria', { name: item.file.name })}
         onClick={() => actions.onOpen(item)}
       />
     </div>
@@ -67,6 +70,7 @@ export function FileTableRow({
 }
 
 function FileRowMenu({ item, actions }: { item: RealOfficeFile; actions: FileRowActions }) {
+  const { t } = useLocale()
   return (
     <Menu>
       <MenuTrigger asChild>
@@ -74,26 +78,26 @@ function FileRowMenu({ item, actions }: { item: RealOfficeFile; actions: FileRow
         <button
           type="button"
           className="ui-iconbtn ui-iconbtn--sm"
-          aria-label={`${item.file.name} 的操作`}
-          title="更多操作"
+          aria-label={t('workbench:home.files.rowActionsAria', { name: item.file.name })}
+          title={t('workbench:home.files.moreActions')}
         >
           <MoreHorizontal size={15} />
         </button>
       </MenuTrigger>
       <MenuContent>
         <MenuItem icon={<ExternalLink size={14} />} onSelect={() => actions.onOpen(item)}>
-          打开
+          {t('workbench:home.common.open')}
         </MenuItem>
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
-            文件位置
+            {t('workbench:home.files.fileLocation')}
           </MenuItem>
         ) : null}
         {actions.onDelete ? (
           <>
             <MenuSeparator />
             <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => actions.onDelete?.(item)}>
-              删除文件…
+              {t('workbench:home.files.deleteFileMenu')}
             </MenuItem>
           </>
         ) : null}

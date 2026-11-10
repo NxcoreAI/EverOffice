@@ -1,6 +1,8 @@
 import { RotateCw, Settings2 } from 'lucide-react'
 import { useEffect, useState, type ComponentType } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { useWorkbenchStore } from '../state/store'
 import { Button, EmptyState, Spinner } from '../ui/primitives'
 
@@ -17,6 +19,7 @@ type SettingsViewProps = {
  * `section` 来自 workbench store：账号菜单「账号与同步」等入口可直达某个分区。
  */
 export function SettingsHost() {
+  const { t } = useLocale()
   const section = useWorkbenchStore((state) => state.settingsSection)
   const [View, setView] = useState<ComponentType<SettingsViewProps> | null>(null)
   const [failed, setFailed] = useState(false)
@@ -40,8 +43,8 @@ export function SettingsHost() {
       {failed ? (
         <EmptyState
           icon={<Settings2 size={18} />}
-          title="设置页暂时无法加载"
-          description="重新加载这一页即可，已保存的设置不会受影响。"
+          title={t('workbench:home.settings.loadFailed')}
+          description={t('workbench:home.settings.loadFailedDescription')}
           action={(
             <Button
               variant="secondary"
@@ -49,14 +52,14 @@ export function SettingsHost() {
               icon={<RotateCw size={13} />}
               onClick={() => { setView(null); setNonce((value) => value + 1) }}
             >
-              重试
+              {t('workbench:home.common.retry')}
             </Button>
           )}
         />
       ) : View ? (
         <View hideHeader section={section} />
       ) : (
-        <div className="wb-home-state"><Spinner /> 正在打开设置…</div>
+        <div className="wb-home-state"><Spinner /> {t('workbench:home.settings.loading')}</div>
       )}
     </div>
   )

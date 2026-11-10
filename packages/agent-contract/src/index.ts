@@ -94,6 +94,8 @@ export interface AgentContextCompaction {
 export interface AgentWorkspace {
   id: string;
   name: string;
+  /** 可选的英文展示名：英文界面优先用它，留空回落到 name。 */
+  nameEn?: string | null;
   /** 空间描述（概览页展示）；未填写为 null，落库前 trim，最长 2000 字符。 */
   description: string | null;
   /** 目标列表（概览页药丸）；无目标为空数组，最多 12 条、每条 trim 后 ≤ 200 字符。 */
@@ -293,6 +295,8 @@ export interface AgentSpaceRepairReport {
 
 export interface CreateAgentWorkspaceInput {
   name: string;
+  /** 可选英文展示名；空白按 null 存。 */
+  nameEn?: string | null;
   path?: string | null;
   /** 目录归属模式；缺省按 `path` 是否给出推断（有 path=external，无=managed）。 */
   rootMode?: AgentWorkspaceRootMode;
@@ -304,6 +308,8 @@ export interface CreateAgentWorkspaceInput {
 
 export interface UpdateAgentWorkspaceInput {
   name?: string;
+  /** 传 null 或空白串清空英文展示名。 */
+  nameEn?: string | null;
   path?: string | null;
   /** 传 null 或空白串清空描述。 */
   description?: string | null;

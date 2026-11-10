@@ -1,5 +1,6 @@
 import { AlertTriangle, LayoutGrid, List, Plus, Search, X } from 'lucide-react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
 import { cn } from '../ui/cn'
@@ -69,7 +70,7 @@ export type FileViewMode = 'list' | 'grid'
 
 export function FileToolbar<K extends string>({
   query, onQueryChange, filters, filter, onFilterChange, view, onViewChange,
-  searchPlaceholder = '搜索文件', filterAriaLabel = '来源筛选',
+  searchPlaceholder, filterAriaLabel,
 }: {
   query: string
   onQueryChange: (query: string) => void
@@ -81,11 +82,14 @@ export function FileToolbar<K extends string>({
   searchPlaceholder?: string
   filterAriaLabel?: string
 }) {
+  const { t } = useLocale()
+  const placeholder = searchPlaceholder ?? t('workbench:workspace.file.searchPlaceholder')
+  const filterLabel = filterAriaLabel ?? t('workbench:workspace.file.sourceFilter')
   return (
     <div className="wb-file-toolbar">
       {/* 与资料页工具行同构：筛选 chips 在左（对应资料的位置区），搜索靠右、
           视图切换在尾——搜索框与切换按钮直接复用 .wb-lib-* 样式，保证两页一致。 */}
-      <div className="wb-file-filters" role="group" aria-label={filterAriaLabel}>
+      <div className="wb-file-filters" role="group" aria-label={filterLabel}>
         {filters.map((option) => {
           const active = option.key === filter
           return (
@@ -108,16 +112,16 @@ export function FileToolbar<K extends string>({
         <input
           type="search"
           value={query}
-          placeholder={searchPlaceholder}
-          aria-label={searchPlaceholder}
+          placeholder={placeholder}
+          aria-label={placeholder}
           onChange={(event) => onQueryChange(event.target.value)}
         />
         {query ? (
           <button
             type="button"
             className="wb-lib-search-clear"
-            title="清空搜索"
-            aria-label="清空搜索"
+            title={t('workbench:workspace.common.clearSearch')}
+            aria-label={t('workbench:workspace.common.clearSearch')}
             onClick={() => onQueryChange('')}
           >
             <X size={12} />
@@ -125,16 +129,16 @@ export function FileToolbar<K extends string>({
         ) : null}
       </label>
 
-      <div className="wb-lib-views" role="group" aria-label="视图切换">
+      <div className="wb-lib-views" role="group" aria-label={t('workbench:workspace.common.viewSwitch')}>
         <IconButton
-          label="网格视图"
+          label={t('workbench:workspace.common.gridView')}
           size="sm"
           active={view === 'grid'}
           icon={<LayoutGrid size={15} />}
           onClick={() => onViewChange('grid')}
         />
         <IconButton
-          label="列表视图"
+          label={t('workbench:workspace.common.listView')}
           size="sm"
           active={view === 'list'}
           icon={<List size={15} />}
@@ -147,33 +151,38 @@ export function FileToolbar<K extends string>({
 
 /* ───────────────── 加载 / 不可用 / 空态 ───────────────── */
 
-export function FileLibraryLoading({ label = '读取中…' }: { label?: string }) {
+export function FileLibraryLoading({ label }: { label?: string }) {
+  const { t } = useLocale()
   return (
     <div className="wb-file-loading" role="status">
       <Spinner size={16} />
-      <span>{label}</span>
+      <span>{label ?? t('workbench:workspace.file.loading')}</span>
     </div>
   )
 }
 
 export function FileLibraryUnavailable({ onRetry }: { onRetry?: () => void }) {
+  const { t } = useLocale()
   return (
     <EmptyState
       className="wb-file-state is-unavailable"
       icon={<AlertTriangle size={18} />}
-      title="资料暂不可用"
-      action={onRetry ? <Button variant="secondary" onClick={onRetry}>重试</Button> : null}
+      title={t('workbench:workspace.common.filesUnavailable')}
+      action={onRetry
+        ? <Button variant="secondary" onClick={onRetry}>{t('workbench:workspace.common.retry')}</Button>
+        : null}
     />
   )
 }
 
 export function FileNoMatches({ onClear }: { onClear: () => void }) {
+  const { t } = useLocale()
   return (
     <EmptyState
       className="wb-file-state"
       icon={<Search size={18} />}
-      title="没有匹配的文件"
-      action={<Button variant="secondary" onClick={onClear}>清除搜索与筛选</Button>}
+      title={t('workbench:workspace.file.noMatches')}
+      action={<Button variant="secondary" onClick={onClear}>{t('workbench:workspace.file.clearFilters')}</Button>}
     />
   )
 }
@@ -181,9 +190,10 @@ export function FileNoMatches({ onClear }: { onClear: () => void }) {
 /* ───────────────── 页头按钮组（可选复用） ───────────────── */
 
 export function FileImportButton({ importing, onClick }: { importing: boolean; onClick: () => void }) {
+  const { t } = useLocale()
   return (
     <Button variant="primary" icon={<Plus size={15} />} disabled={importing} onClick={onClick}>
-      {importing ? '导入中…' : '导入文件'}
+      {importing ? t('workbench:workspace.file.importing') : t('workbench:workspace.file.import')}
     </Button>
   )
 }

@@ -9,12 +9,12 @@ export interface PlanDropTarget {
   afterId: string | null
 }
 
-/** 看板列顺序与列名（渲染层与网关共用语义，只是展示文案在这里）。 */
-export const PLAN_COLUMNS: ReadonlyArray<{ status: PlanStatus; label: string }> = [
-  { status: 'todo', label: '待开始' },
-  { status: 'doing', label: '进行中' },
-  { status: 'done', label: '已完成' },
-  { status: 'dropped', label: '已取消' },
+/** 看板列顺序与列名（渲染层与网关共用语义，展示文案的 i18n key 在这里）。 */
+export const PLAN_COLUMNS: ReadonlyArray<{ status: PlanStatus; labelKey: string }> = [
+  { status: 'todo', labelKey: 'workbench:status.idle' },
+  { status: 'doing', labelKey: 'workbench:status.running' },
+  { status: 'done', labelKey: 'workbench:workspace.plan.status.done' },
+  { status: 'dropped', labelKey: 'workbench:workspace.plan.status.dropped' },
 ]
 
 /** 把扁平的 items（服务端按 rank 排好）按列分组，列内保持原有顺序。 */

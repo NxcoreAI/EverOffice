@@ -12,6 +12,7 @@ import {
 import React, { useEffect, useRef } from 'react'
 
 import { WindowControls } from '@/components/WindowControls'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import { HOME_TAB_ID, type WindowTab, tabTitle } from '../types'
 import { useWorkbenchStore } from '../state/store'
@@ -21,6 +22,7 @@ import { cn } from '../ui/cn'
 
 /** 标签栏：窗口最顶层。主页标签固定最左；工作空间标签可关；右侧是全局动作与窗口按钮。 */
 export function TabBar() {
+  const { t, locale } = useLocale()
   const tabs = useWorkbenchStore((state) => state.tabs)
   const activeTabId = useWorkbenchStore((state) => state.activeTabId)
   const workspaces = useWorkbenchStore((state) => state.workspaces)
@@ -53,9 +55,9 @@ export function TabBar() {
       <div className="wb-tabbar-left">
         <span className="wb-sidebar-toggle-slot">
           {hasSidebar ? (
-            <Hint label={sidebarCollapsed ? '展开侧栏（⌘B）' : '收起侧栏（⌘B）'}>
+            <Hint label={sidebarCollapsed ? t('workbench:tab.expandSidebarShortcut') : t('workbench:tab.collapseSidebarShortcut')}>
               <IconButton
-                label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+                label={sidebarCollapsed ? t('workbench:tab.expandSidebar') : t('workbench:tab.collapseSidebar')}
                 icon={sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
                 aria-expanded={!sidebarCollapsed}
                 onClick={() => toggleSidebar()}
@@ -69,19 +71,19 @@ export function TabBar() {
         type="button"
         className={cn('wb-tab wb-tab--home', activeTabId === HOME_TAB_ID && 'is-active')}
         onClick={() => activateTab(HOME_TAB_ID)}
-        title="主页"
+        title={t('workbench:tab.home')}
       >
         <Home size={15} strokeWidth={1.9} aria-hidden="true" />
-        <span className="wb-tab-name">主页</span>
+        <span className="wb-tab-name">{t('workbench:tab.home')}</span>
       </button>
 
-      <div className="wb-tablist" role="tablist" aria-label="打开的标签页">
+      <div className="wb-tablist" role="tablist" aria-label={t('workbench:tab.openTabs')}>
         {tabs.filter((tab) => tab.kind !== 'home').map((tab) => (
           <WindowTabButton
             key={tab.id}
             tab={tab}
             active={tab.id === activeTabId}
-            title={tabTitle(tab, workspaces)}
+            title={tabTitle(tab, workspaces, locale)}
             badge={tab.kind === 'workspace' ? askCountByWorkspace.get(tab.workspaceId) : undefined}
             onActivate={() => activateTab(tab.id)}
             onClose={(event) => closeTab(event, tab.id)}
@@ -91,7 +93,7 @@ export function TabBar() {
 
       <Menu>
         <MenuTrigger asChild>
-          <button type="button" className="wb-tab-add" title="新建" aria-label="新建">
+          <button type="button" className="wb-tab-add" title={t('workbench:tab.new')} aria-label={t('workbench:tab.new')}>
             <Plus size={16} strokeWidth={1.9} />
           </button>
         </MenuTrigger>
@@ -106,20 +108,20 @@ export function TabBar() {
               else window.dispatchEvent(new CustomEvent('everroom:workbench-new-space'))
             }}
           >
-            新建工作
+            {t('workbench:tab.newWork')}
           </MenuItem>
           <MenuItem
             icon={<LayoutGrid size={14} />}
             onSelect={() => window.dispatchEvent(new CustomEvent('everroom:workbench-new-space'))}
           >
-            新建项目空间
+            {t('workbench:tab.newSpace')}
           </MenuItem>
           <MenuSeparator />
           <MenuItem
             icon={<FilePlus2 size={14} />}
             onSelect={() => openHome('files')}
           >
-            浏览资料
+            {t('workbench:tab.browseFiles')}
           </MenuItem>
         </MenuContent>
       </Menu>
@@ -127,9 +129,9 @@ export function TabBar() {
       <div className="wb-tabbar-spacer" aria-hidden="true" />
 
       <div className="wb-tabbar-actions">
-        <Hint label="搜索（⌘K）">
+        <Hint label={t('workbench:tab.searchShortcut')}>
           <IconButton
-            label="搜索"
+            label={t('workbench:tab.search')}
             icon={<Search size={15} />}
             onClick={() => window.dispatchEvent(new CustomEvent('everroom:workbench-search'))}
           />
@@ -149,6 +151,7 @@ function WindowTabButton({ tab, active, title, badge, onActivate, onClose }: {
   onActivate: () => void
   onClose: (event: React.MouseEvent) => void
 }) {
+  const { t } = useLocale()
   const ref = useRef<HTMLDivElement>(null)
   // 激活标签滚进可视区（标签多到溢出时）。
   useEffect(() => {
@@ -180,15 +183,15 @@ function WindowTabButton({ tab, active, title, badge, onActivate, onClose }: {
       </span>
       <span className="wb-tab-name">{title}</span>
       {badge ? (
-        <span className="wb-tab-badge" title={`${badge} 条待发送批注`} aria-label={`${badge} 条待发送批注`}>
+        <span className="wb-tab-badge" title={t('workbench:tab.pendingAnnotations', { count: badge })} aria-label={t('workbench:tab.pendingAnnotations', { count: badge })}>
           {badge}
         </span>
       ) : null}
       <button
         type="button"
         className="wb-tab-close"
-        aria-label={`关闭 ${title}`}
-        title="关闭标签"
+        aria-label={t('workbench:tab.closeTabNamed', { title })}
+        title={t('workbench:tab.closeTab')}
         onClick={onClose}
       >
         <X size={12} strokeWidth={2} />

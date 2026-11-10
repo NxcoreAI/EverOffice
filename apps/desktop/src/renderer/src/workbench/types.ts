@@ -1,5 +1,7 @@
 import type { AgentSession, AgentWorkspace } from '@nxcore/agent-contract'
 
+import { translate, translateZh, type AppLocale, type Translate } from '@/i18n/LocaleContext'
+
 /* ───────────────── 主页标签 ───────────────── */
 
 /**
@@ -8,14 +10,14 @@ import type { AgentSession, AgentWorkspace } from '@nxcore/agent-contract'
  */
 export type HomePageKey = 'recent' | 'spaces' | 'files' | 'agent' | 'skills' | 'connectors' | 'settings'
 
-export const HOME_PAGES: ReadonlyArray<{ key: HomePageKey; label: string }> = [
-  { key: 'recent', label: '最近' },
-  { key: 'spaces', label: '项目空间' },
-  { key: 'files', label: '所有文件' },
-  { key: 'agent', label: 'Agent' },
-  { key: 'skills', label: '技能' },
-  { key: 'connectors', label: '连接器' },
-  { key: 'settings', label: '设置' },
+export const HOME_PAGES: ReadonlyArray<{ key: HomePageKey; labelKey: string }> = [
+  { key: 'recent', labelKey: 'workbench:nav.recent' },
+  { key: 'spaces', labelKey: 'workbench:nav.spaces' },
+  { key: 'files', labelKey: 'workbench:nav.files' },
+  { key: 'agent', labelKey: 'workbench:nav.agent' },
+  { key: 'skills', labelKey: 'workbench:nav.skills' },
+  { key: 'connectors', labelKey: 'workbench:nav.connectors' },
+  { key: 'settings', labelKey: 'workbench:nav.settings' },
 ]
 
 /* ───────────────── 工作空间标签 ───────────────── */
@@ -23,11 +25,11 @@ export const HOME_PAGES: ReadonlyArray<{ key: HomePageKey; label: string }> = [
 /** 工作空间侧栏的功能菜单（「新建工作」是即开的会话，不是页面）。 */
 export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'plan'
 
-export const WORKSPACE_PAGES: ReadonlyArray<{ key: WorkspacePageKey; label: string }> = [
-  { key: 'overview', label: '概览' },
-  { key: 'library', label: '资料' },
-  { key: 'outputs', label: '产物' },
-  { key: 'plan', label: '计划' },
+export const WORKSPACE_PAGES: ReadonlyArray<{ key: WorkspacePageKey; labelKey: string }> = [
+  { key: 'overview', labelKey: 'workbench:workspacePage.overview' },
+  { key: 'library', labelKey: 'workbench:workspacePage.library' },
+  { key: 'outputs', labelKey: 'workbench:workspacePage.outputs' },
+  { key: 'plan', labelKey: 'workbench:workspacePage.plan' },
 ]
 
 /**
@@ -67,20 +69,40 @@ export const HOME_TAB: HomeTab = { id: HOME_TAB_ID, kind: 'home', page: 'recent'
 
 export const workspaceTabId = (workspaceId: string): string => `ws:${workspaceId}`
 
+/** 默认工作区是应用种子数据；展示时按当前语言本地化，用户改过名则保留原名。 */
+const DEFAULT_WORKSPACE_SEED_NAMES = new Set(['默认工作区', 'Default workspace'])
+
+export function workspaceDisplayName(
+  workspace: AgentWorkspace,
+  locale: AppLocale = 'zh-CN',
+): string {
+  const preferred = workspace.nameEn?.trim()
+  if (locale === 'en-US' && preferred) return preferred
+  if (workspace.kind === 'default' && DEFAULT_WORKSPACE_SEED_NAMES.has(workspace.name.trim())) {
+    return translate(locale, 'workbench:common.defaultWorkspace')
+  }
+  return workspace.name
+}
+
 /** 标签标题：主页固定、工作空间显示空间名。 */
-export function tabTitle(tab: WindowTab, workspaces: readonly AgentWorkspace[]): string {
-  if (tab.kind === 'home') return '主页'
-  return workspaces.find((workspace) => workspace.id === tab.workspaceId)?.name ?? '工作空间'
+export function tabTitle(
+  tab: WindowTab,
+  workspaces: readonly AgentWorkspace[],
+  locale: AppLocale = 'zh-CN',
+): string {
+  if (tab.kind === 'home') return translate(locale, 'workbench:common.home')
+  const workspace = workspaces.find((item) => item.id === tab.workspaceId)
+  return workspace ? workspaceDisplayName(workspace, locale) : translate(locale, 'workbench:common.workspace')
 }
 
 /* ───────────────── 工作会话（= AgentSession） ───────────────── */
 
 export type WorkSessionStatus = 'running' | 'idle' | 'done'
 
-export const WORK_SESSION_STATUS_META: Record<WorkSessionStatus, { label: string }> = {
-  running: { label: '进行中' },
-  idle: { label: '待开始' },
-  done: { label: '已结束' },
+export const WORK_SESSION_STATUS_META: Record<WorkSessionStatus, { labelKey: string }> = {
+  running: { labelKey: 'workbench:status.running' },
+  idle: { labelKey: 'workbench:status.idle' },
+  done: { labelKey: 'workbench:status.done' },
 }
 
 /** 看板/工作列表共用的状态归一：interrupted 也归入已结束（可点开继续对话）。 */
@@ -117,24 +139,30 @@ export function runningSessionCount(
 }
 
 /** 会话显示标题：未命名会话用于草稿态的占位。 */
-export function sessionDisplayTitle(session: AgentSession | null | undefined): string {
+export function sessionDisplayTitle(
+  session: AgentSession | null | undefined,
+  t: Translate = translateZh,
+): string {
   const title = session?.title?.trim()
   if (title) return title
-  return '新工作'
+  return t('workbench:common.newWork')
 }
 
 /** 相对时间：侧栏、概览动态、列表共用（刚刚 / 5 分钟 / 2 小时 / 昨天 / 10月20日）。 */
-export function relativeTimeLabel(iso: string | null | undefined): string {
+export function relativeTimeLabel(
+  iso: string | null | undefined,
+  t: Translate = translateZh,
+): string {
   if (!iso) return ''
   const time = Date.parse(iso)
   if (!Number.isFinite(time)) return ''
   const delta = Date.now() - time
-  if (delta < 60_000) return '刚刚'
-  if (delta < 60 * 60_000) return `${Math.floor(delta / 60_000)} 分钟前`
-  if (delta < 24 * 60 * 60_000) return `${Math.floor(delta / 3_600_000)} 小时前`
-  if (delta < 48 * 60 * 60_000) return '昨天'
+  if (delta < 60_000) return t('workbench:time.justNow')
+  if (delta < 60 * 60_000) return t('workbench:time.minutesAgo', { count: Math.floor(delta / 60_000) })
+  if (delta < 24 * 60 * 60_000) return t('workbench:time.hoursAgo', { count: Math.floor(delta / 3_600_000) })
+  if (delta < 48 * 60 * 60_000) return t('workbench:time.yesterday')
   const date = new Date(time)
-  return `${date.getMonth() + 1}月${date.getDate()}日`
+  return t('workbench:time.monthDay', { month: date.getMonth() + 1, day: date.getDate() })
 }
 
 /** 「MM/DD」短日期（概览 meta 行的开始日）。 */

@@ -8,6 +8,7 @@ import { useMemo } from 'react'
 import { create } from 'zustand'
 
 import type { PendingAskDraft } from '@/components/agent/askDrafts'
+import i18n from '@/i18n/i18next'
 
 import type { OfficeFile } from '@/office-proto/data'
 
@@ -28,16 +29,18 @@ import {
 } from '../types'
 
 /** 网关不可用时也能渲染侧栏骨架；等真实数据回来后覆盖。 */
-const FALLBACK_DEFAULT_WORKSPACE: AgentWorkspace = {
-  id: 'default',
-  name: '默认工作区',
-  path: null,
-  kind: 'default',
-  description: null,
-  goals: [],
-  createdAt: new Date(0).toISOString(),
-  updatedAt: new Date(0).toISOString(),
-  lastOpenedAt: new Date(0).toISOString(),
+function fallbackDefaultWorkspace(): AgentWorkspace {
+  return {
+    id: 'default',
+    name: i18n.t('workbench:store.defaultWorkspace'),
+    path: null,
+    kind: 'default',
+    description: null,
+    goals: [],
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    lastOpenedAt: new Date(0).toISOString(),
+  }
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -48,7 +51,7 @@ function defaultWorkspaceOf(workspaces: readonly AgentWorkspace[]): AgentWorkspa
   return workspaces.find((workspace) => workspace.kind === 'default')
     ?? workspaces.find((workspace) => workspace.id === 'default')
     ?? workspaces[0]
-    ?? FALLBACK_DEFAULT_WORKSPACE
+    ?? fallbackDefaultWorkspace()
 }
 
 /** 标签页脏关闭守卫注册表：工作空间标签里的气泡窗/编辑器在卸载前先过主进程的保存对话框。 */
@@ -268,7 +271,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
         // 会话清单失败不阻塞外壳启动：工作区是骨架，会话可稍后轮询回来。
         workbenchApi.listSessions().catch(() => [] as AgentSession[]),
       ])
-      const resolved = workspaces.length ? workspaces : [FALLBACK_DEFAULT_WORKSPACE]
+      const resolved = workspaces.length ? workspaces : [fallbackDefaultWorkspace()]
       const { tabs, activeTabId } = restoreTabs(resolved, sessions)
       set({
         booted: true,
@@ -280,7 +283,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       })
       persistTabs(tabs, activeTabId)
     } catch (error) {
-      set({ loading: false, booted: true, error: errorMessage(error, '工作台初始化失败') })
+      set({ loading: false, booted: true, error: errorMessage(error, i18n.t('workbench:store.bootFailed')) })
     }
   },
 
@@ -291,7 +294,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     ])
     const patch: Partial<WorkbenchStore> = {}
     if (workspacesResult.status === 'fulfilled') {
-      const resolved = workspacesResult.value.length ? workspacesResult.value : [FALLBACK_DEFAULT_WORKSPACE]
+      const resolved = workspacesResult.value.length ? workspacesResult.value : [fallbackDefaultWorkspace()]
       patch.workspaces = resolved
       // 工作区被删后，它的标签页也要消失；当前激活标签没了就退回主页。
       const state = get()
@@ -311,7 +314,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     }
     if (Object.keys(patch).length) set(patch)
     if (workspacesResult.status === 'rejected' && sessionsResult.status === 'rejected') {
-      set({ error: errorMessage(workspacesResult.reason, '工作台数据加载失败') })
+      set({ error: errorMessage(workspacesResult.reason, i18n.t('workbench:store.loadFailed')) })
     }
   },
 
@@ -384,8 +387,9 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     // 工作区清单还没加载（网关慢/失败）也要能打开文件：目标空间不在清单里时，
     // 先把兜底默认空间注入 store（boot() 同款容错），保证标签能建出来。
     if (!workspaces.some((workspace) => workspace.id === target)) {
-      workspaces = [...workspaces, FALLBACK_DEFAULT_WORKSPACE]
-      target = FALLBACK_DEFAULT_WORKSPACE.id
+      const fallback = fallbackDefaultWorkspace()
+      workspaces = [...workspaces, fallback]
+      target = fallback.id
       set({ workspaces })
     }
     get().openWorkspaceTab(target)
@@ -454,7 +458,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       get().registerWorkspace(created)
       return created
     } catch (error) {
-      set({ error: errorMessage(error, '创建工作空间失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.createWorkspaceFailed')) })
       return null
     }
   },
@@ -465,7 +469,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       get().registerWorkspace(adopted)
       return adopted
     } catch (error) {
-      set({ error: errorMessage(error, '打开项目空间失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.adoptSpaceFailed')) })
       return null
     }
   },
@@ -488,7 +492,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       }))
       return true
     } catch (error) {
-      set({ error: errorMessage(error, '更新工作空间失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.updateWorkspaceFailed')) })
       return false
     }
   },
@@ -523,7 +527,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       void get().refresh()
       return true
     } catch (error) {
-      set({ error: errorMessage(error, '删除工作空间失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.deleteWorkspaceFailed')) })
       return false
     }
   },
@@ -544,7 +548,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       get().openWorkspaceTab(targetWorkspace, { kind: 'session', sessionId: session.id })
       return session
     } catch (error) {
-      set({ error: errorMessage(error, '新建工作失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.createWorkFailed')) })
       return null
     }
   },
@@ -576,7 +580,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       }))
       return true
     } catch (error) {
-      set({ error: errorMessage(error, '重命名工作失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.renameWorkFailed')) })
       return false
     }
   },
@@ -585,7 +589,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     const target = get().sessions.find((session) => session.id === id)
     if (!target) return false
     if (target.status === 'running') {
-      set({ error: '工作正在运行，先停止再删除' })
+      set({ error: i18n.t('workbench:store.workRunning') })
       return false
     }
     try {
@@ -600,7 +604,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       }))
       return true
     } catch (error) {
-      set({ error: errorMessage(error, '删除工作失败') })
+      set({ error: errorMessage(error, i18n.t('workbench:store.deleteWorkFailed')) })
       return false
     }
   },

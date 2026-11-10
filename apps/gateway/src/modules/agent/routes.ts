@@ -162,8 +162,9 @@ function workspaceErrorPayload(
   }
 }
 
-/** 工作区元数据（描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
+/** 工作区元数据（英文名 + 描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
 const WorkspaceMetaSchema = {
+  nameEn: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
   description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
   goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
   /** 目录归属模式：缺省按 path 是否给出推断（有 path=external，无=managed）。 */

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { PlanItem, PlanStatus, UpdatePlanItemInput } from '@nxcore/agent-contract'
 
 import { workbenchApi } from '../../api'
@@ -42,6 +43,7 @@ export interface UsePlanItems {
 const REALTIME_FALLBACK_MS = 30_000
 
 export function usePlanItems(workspaceId: string): UsePlanItems {
+  const { t } = useLocale()
   const [items, setItems] = useState<PlanItem[]>([])
   const [state, setState] = useState<PlanLoadState>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -56,14 +58,14 @@ export function usePlanItems(workspaceId: string): UsePlanItems {
       setState('ready')
       setError(null)
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : '计划加载失败'
+      const message = reason instanceof Error ? reason.message : t('workbench:workspace.plan.error.load')
       // 旧网关没有 plan 端点时给"能力不可用"而不是红色报错。
       setState(/404|未就绪|not found/i.test(message) ? 'unavailable' : 'error')
       setError(message)
     } finally {
       inFlight.current = false
     }
-  }, [workspaceId])
+  }, [workspaceId, t])
 
   useEffect(() => {
     setState('loading')
@@ -90,10 +92,10 @@ export function usePlanItems(workspaceId: string): UsePlanItems {
       setItems((current) => upsertPlanItem(current, created))
       return created
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '新建任务失败')
+      setError(reason instanceof Error ? reason.message : t('workbench:workspace.plan.createFailed'))
       return null
     }
-  }, [workspaceId])
+  }, [workspaceId, t])
 
   const updateItem = useCallback(async (item: PlanItem, patch: PlanItemPatch) => {
     try {
@@ -101,12 +103,12 @@ export function usePlanItems(workspaceId: string): UsePlanItems {
       setItems((current) => upsertPlanItem(current, saved))
       return saved
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存失败')
+      setError(reason instanceof Error ? reason.message : t('workbench:workspace.plan.error.save'))
       // 冲突/失败后拉一次真实状态，避免界面停在错误的乐观态。
       void reload()
       return null
     }
-  }, [reload])
+  }, [reload, t])
 
   const moveItem = useCallback(async (
     item: PlanItem,
@@ -128,10 +130,10 @@ export function usePlanItems(workspaceId: string): UsePlanItems {
       return true
     } catch (reason) {
       setItems(snapshot)
-      setError(reason instanceof Error ? reason.message : '移动失败，已恢复')
+      setError(reason instanceof Error ? reason.message : t('workbench:workspace.plan.error.move'))
       return false
     }
-  }, [items])
+  }, [items, t])
 
   const dropItem = useCallback(async (dragId: string, column: PlanStatus, index: number) => {
     const item = items.find((entry) => entry.id === dragId)
@@ -145,10 +147,10 @@ export function usePlanItems(workspaceId: string): UsePlanItems {
       setItems((current) => upsertPlanItem(current, result.item))
       return { sessionId: result.sessionId, runId: result.runId }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '交给 Agent 失败')
+      setError(reason instanceof Error ? reason.message : t('workbench:workspace.plan.error.assign'))
       return null
     }
-  }, [])
+  }, [t])
 
   const removeItem = useCallback(async (item: PlanItem) => {
     try {
@@ -156,10 +158,10 @@ export function usePlanItems(workspaceId: string): UsePlanItems {
       setItems((current) => upsertPlanItem(current, saved))
       return true
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '取消任务失败')
+      setError(reason instanceof Error ? reason.message : t('workbench:workspace.plan.error.remove'))
       return false
     }
-  }, [])
+  }, [t])
 
   const groups = useMemo(() => groupPlanItems(items), [items])
 
