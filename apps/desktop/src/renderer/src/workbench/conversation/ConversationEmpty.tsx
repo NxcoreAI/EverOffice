@@ -47,9 +47,12 @@ export function ConversationEmpty({ children, aboveInput, onSuggestion }: Conver
 
         <h1 className="wb-hero-title">{t('workbench:conversation.heroTitle')}</h1>
 
-        {aboveInput ? <div className="wb-hero-above-input">{aboveInput}</div> : null}
-
-        <div className="wb-hero-input">{children}</div>
+        {/* 附加行（待发送批注徽章）与输入框放在**同一个列容器**里：左边缘天然与输入框
+            对齐（gap 给出 8px 间距），不再靠两行各自 100% 宽度去"看起来对齐"。 */}
+        <div className="wb-hero-input">
+          {aboveInput ? <div className="wb-hero-above-input">{aboveInput}</div> : null}
+          {children}
+        </div>
 
         <div className="wb-hero-chips" aria-label={t('workbench:conversation.suggestionsLabel')}>
           {HERO_SUGGESTIONS.map(({ id, labelKey, promptKey, Icon }) => (

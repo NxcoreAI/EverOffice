@@ -313,21 +313,20 @@
   position: relative;
   display: flex;
   width: 100%;
+  margin-top: 34px;
   flex-direction: column;
   gap: 8px;
   text-align: left;
 }
-/* 输入框正上方的附加行（待发送批注徽章）：与输入框同宽、左对齐，不撑开 hero 布局。
-   空队列时 NoteQueueChip 返回 null，这行渲染成空 <div>——margin-top 由
-   .wb-hero-input 承担（两者共享 34px），:empty 判定把徽章在时的间距收紧。 */
+/* 输入框正上方的附加行（待发送批注徽章）：与输入框同一个列容器（.wb-hero-input），
+   所以左右边缘天然对齐；间距由容器的 8px gap 给出。空队列时 NoteQueueChip 返回
+   null，本行不渲染，hero 的 34px 上间距由 .wb-hero-input 自己的 margin-top 承担。 */
 .wb-hero-above-input {
   width: 100%;
-  margin-top: 34px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
 }
-.wb-hero-above-input:not(:empty) + .wb-hero-input { margin-top: 8px; }
 
 /* 旧的 hero 发送钮（.wb-hero-actions/.wb-hero-send）已随输入框一并换成
    AgentComposer（发送/停止按钮由组件自带），样式删除。 */
