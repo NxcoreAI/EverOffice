@@ -101,7 +101,10 @@ type OfficeAgentToolsFailureReason = AgentArtifactFailureReason
 function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (!value || typeof value !== 'object') return false
   const input = value as Partial<OfficeAgentToolsRequest>
-  if (input.kind !== 'docx' && input.kind !== 'spreadsheet') return false
+  // PDF 活文档也走这条通道（pdf_agent_read / pdf_agent_edit）。此前只放行
+  // docx/spreadsheet，PDF 工具的每个请求都被 422 挡掉，表现是
+  // 「Invalid office agent-tools request」——用户在 PDF 里选段批注后 agent 改不动。
+  if (input.kind !== 'docx' && input.kind !== 'spreadsheet' && input.kind !== 'pdf') return false
   if (input.mode !== 'read' && input.mode !== 'apply') return false
   if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
   if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
@@ -483,7 +486,7 @@ export class OfficeBridgeServer {
       }
     }
     if (!outcome.ok) {
-      const kindLabel = req.kind === 'docx' ? 'Word' : 'Excel'
+      const kindLabel = req.kind === 'docx' ? 'Word' : req.kind === 'pdf' ? 'PDF' : 'Excel'
       const openSummary = describeOpenInstances(outcome.open)
       const detail = outcome.message ? `（${outcome.message}）` : ''
       const message =

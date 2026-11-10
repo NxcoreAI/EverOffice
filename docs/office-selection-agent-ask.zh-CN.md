@@ -148,3 +148,18 @@ desktop：
 - 块索引/区域漂移只靠 Agent 侧先 read + `excerpt` 交叉校验，没有在宿主侧做版本指纹。
 - Excel 冻结窗格下锚点可能不贴合；PPT 元素被删则锚点消失；PDF 多页选区只锚第一页。
 - 编辑器内没有「全部发送」按钮：队列事实与发送统一在对话侧（与 Word 一致）。
+
+## 改完之后：右侧文件显示最新版本（2026-11-10）
+
+批注发出去、Agent 改完文件后，右侧气泡窗里的文件必须是**改后**的版本。
+
+- 可见的 Word/Excel 是活会话：apply 就地改、就地重绘，天然同步。
+- **可见的 PDF 是只读预览**，Agent 的 PDF 编辑永远发生在后台隐藏会话里；改完只回填了
+  版本链，前台视图不会自己变。因此后台会话 apply 成功（有 `mutated` 结果）后，registry
+  会广播 `office:instance-reloaded`（`notifyInstanceContentChanged`），渲染端
+  `NativeEditorHost` 收到后按「磁盘现算哈希」重开一次，绑定到新实例（旧快照里的
+  contentHash 会让主进程误判"内容没变"而复用旧视图）。只读批（无 mutated）不重开，
+  避免无意义重建与闪烁。
+- 同一轮修复：`/v1/office-agent-tools` 的请求校验此前只放行 `docx`/`spreadsheet`，
+  `kind: 'pdf'` 一律 422（`Invalid office agent-tools request`）——PDF 里选段批注后
+  Agent 根本改不动，只会退化成"改同名 Word 再另存 PDF"。现已放行 `pdf`。

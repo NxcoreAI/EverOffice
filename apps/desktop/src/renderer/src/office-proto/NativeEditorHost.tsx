@@ -95,11 +95,29 @@ export function NativeEditorHost({
   const catalogId = realCatalog?.id ?? ''
   const catalogHash = realCatalog?.contentHash ?? ''
   const catalogName = realCatalog?.originalName ?? ''
+  /**
+   * 「文件在磁盘上被改过」的重开序号：主进程重建/回填版本后广播
+   * office:instance-reloaded（见 registry.notifyInstanceContentChanged）。
+   * 序号进 openKey，逼出一次真正的 openOriginal——否则本组件会以「同 key」
+   * 早退，右侧原生视图永远停在被修改前的旧内容（agent 说改好了，右边没变）。
+   */
+  const [reloadTick, setReloadTick] = useState(0)
+  /**
+   * 重开时不要用渲染端快照里的 contentHash：那份哈希是「改之前」的，主进程
+   * 会据此判定内容没变而复用旧实例。置 true 表示让主进程按磁盘现算。
+   */
+  const diskHashRef = useRef(false)
+  /**
+   * 「重新绑定」序号：重开完成后 +1，逼矩形/激活 effect 再跑一次。
+   * 主进程换了实例（旧 view 已销毁）时，只重开不重新激活的话新实例一直
+   * setVisible(false)，用户看到的就是空白/旧帧。
+   */
+  const [bindTick, setBindTick] = useState(0)
   const openKey = real
-    ? `${fileId}|${catalogId}|${catalogHash}|${catalogName}`
+    ? `${fileId}|${catalogId}|${catalogHash}|${catalogName}|${reloadTick}`
     : `${fileId}|mock|${title}`
 
-  const open = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+  const open = useCallback(async (): Promise<{ ok: boolean; error?: string; rebind?: boolean }> => {
     // 已成功打开 / 正在打开同一份文件：直接复用现有实例，不再发 IPC（断环）。
     if (openedKeyRef.current === openKey || inFlightKeyRef.current === openKey) {
       // 在途时等实例 id 落地：调用链上的 setStatus('ready') 可能早于 openOriginal
@@ -111,8 +129,10 @@ export function NativeEditorHost({
       }
       return { ok: true }
     }
+    // 这一轮是「内容变了，按磁盘现算哈希重开」：成功后要重新激活新实例。
+    const rebind = diskHashRef.current
     inFlightKeyRef.current = openKey
-    const run = async (): Promise<{ ok: boolean; error?: string }> => {
+    const run = async (): Promise<{ ok: boolean; error?: string; rebind?: boolean }> => {
       const catalog = catalogRef.current
       if (catalog) {
         const files = window.nxcore?.files
@@ -121,7 +141,7 @@ export function NativeEditorHost({
         const result = await files.openOriginal(
           catalog.id,
           catalog.originalName,
-          catalog.contentHash,
+          diskHashRef.current ? undefined : catalog.contentHash,
           editable ? { editable: true } : undefined,
         )
         if (result.openedWith !== 'office') {
@@ -140,7 +160,9 @@ export function NativeEditorHost({
         if (!result.ok) return { ok: false, error: result.error ?? '未知错误' }
       }
       openedKeyRef.current = openKey
-      return { ok: true }
+      // 重开已完成：后续普通打开恢复用快照哈希（省一次读盘+哈希）。
+      diskHashRef.current = false
+      return { ok: true, ...(rebind ? { rebind: true } : {}) }
     }
     const flight = run()
     // 在途登记：activate() 等它，instanceId 在 resolve 前必然落地（或整体失败走 error 态）。
@@ -181,8 +203,12 @@ export function NativeEditorHost({
     void open()
       .then((result) => {
         if (cancelled) return
-        if (result.ok) setStatus('ready')
-        else {
+        if (result.ok) {
+          setStatus('ready')
+          // 实例被换过（旧 view 已销毁）：等实例 id 落地后再激活 + 上报矩形，
+          // 否则新实例永远不可见（见 bindTick 注释）。
+          if (result.rebind) setBindTick((tick) => tick + 1)
+        } else {
           setStatus('error')
           setError(result.error ?? '未知错误')
         }
@@ -196,6 +222,24 @@ export function NativeEditorHost({
       cancelled = true
     }
   }, [open, openKey])
+
+  // 这份文件的内容被 Agent 改过了（主进程重建实例 / 后台会话回填新版本）：
+  // 重开一次，把右侧原生视图绑到最新内容。不接这条广播就是
+  // 「对话里说改好了，右侧文件还是旧版」——PDF 尤其明显（可见 PDF 只读，
+  // 编辑永远发生在隐藏会话里，视图自己不会变）。
+  useEffect(() => {
+    if (!real) return
+    const office = window.nxcore?.office
+    if (typeof office?.onInstanceReloaded !== 'function') return
+    return office.onInstanceReloaded((event) => {
+      // 事件里的 id 是文件库条目 id（主进程 instances 的键）；本组件的 fileId
+      // 是 `real:<catalogId>` 形态，不能直接比。
+      const target = catalogRef.current?.id
+      if (!target || event?.id !== target) return
+      diskHashRef.current = true
+      setReloadTick((tick) => tick + 1)
+    })
+  }, [real])
 
   // 实例就绪后才上报矩形：open 之前发出的 setWorkspaceBounds 没有监听者。
   useEffect(() => {
@@ -366,7 +410,7 @@ export function NativeEditorHost({
       cancelAnimationFrame(raf)
       if (visible) sendBounds(ZERO)
     }
-  }, [activate, sendBounds, status])
+  }, [activate, sendBounds, status, bindTick])
 
   return (
     <div className="op-native-wrap">
