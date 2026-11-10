@@ -7,7 +7,6 @@ import { useWorkbenchStore } from '../state/store'
 import { Button, EmptyState, Spinner } from '../ui/primitives'
 
 type SettingsViewProps = {
-  onStartFullOnboarding?: () => void
   hideHeader?: boolean
   section?: string | null
 }

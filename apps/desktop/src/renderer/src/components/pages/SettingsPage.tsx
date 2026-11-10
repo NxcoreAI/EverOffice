@@ -10,7 +10,6 @@ import {
   Palette,
   Plug,
   RefreshCw,
-  Rocket,
   ShieldCheck,
   ShieldAlert,
   Sparkles,
@@ -65,7 +64,6 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
-  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Rocket },
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
@@ -108,11 +106,9 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
 }
 
 export function SettingsPage({
-  onStartFullOnboarding,
   hideHeader = false,
   section = null,
 }: {
-  onStartFullOnboarding?: () => void
   /** 嵌进工作台主页时由外壳提供导航，隐藏组件自带的页头（避免与侧栏/分区导航重复）。 */
   hideHeader?: boolean
   /** 外部指定要打开的分区（如账号菜单直达「账号与同步」）。 */
@@ -400,23 +396,6 @@ export function SettingsPage({
               English
             </button>
           </div>
-        </div>
-      </section>
-
-      <section id="settings-onboarding" className="reality-settings-section settings-anchor-section" aria-labelledby="onboarding-settings-title">
-        <header>
-          <span><Sparkles aria-hidden="true" /></span>
-          <div>
-            <h2 id="onboarding-settings-title">{t('surface:settings.onboardingSetupTitle')}</h2>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div>
-            <strong>{t('surface:settings.fullOnboardingActionTitle')}</strong>
-          </div>
-          <button type="button" className="primary-button" onClick={onStartFullOnboarding} disabled={!onStartFullOnboarding}>
-            <Sparkles aria-hidden="true" />{t('surface:settings.fullOnboardingAction')}
-          </button>
         </div>
       </section>
 
