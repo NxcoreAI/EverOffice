@@ -1273,8 +1273,9 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
-    list(roomId: string): Promise<RoomDocument[]>
-    listTrash(roomId: string): Promise<RoomDocument[]>
+    /** roomId 传 null/省略 = 整个工作区（工作区级文稿，P0-2）；传 roomId 时按 Room 过滤。 */
+    list(roomId?: string | null): Promise<RoomDocument[]>
+    listTrash(roomId?: string | null): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
     readMarkdown(documentId: string): Promise<{ markdown: string }>
     listBlocks(documentId: string): Promise<DocumentBlockList>
@@ -1312,12 +1313,15 @@ export interface NxcoreDesktopApi {
     moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
-    emptyTrash(roomId: string): Promise<void>
+    /** roomId 传 null/省略 = 清空整个工作区回收站。 */
+    emptyTrash(roomId?: string | null): Promise<void>
     exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
-    subscribe(roomId: string): Promise<void>
-    unsubscribe(roomId?: string): Promise<void>
+    /** 订阅文稿事件流；roomId 传 null/省略 = 工作区频道（WORKSPACE_DOCUMENT_CHANNEL）。 */
+    subscribe(roomId?: string | null): Promise<void>
+    unsubscribe(roomId?: string | null): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
     onOperationChanged(listener: (operationId: string) => void): () => void
+    /** 每次（重）连接触发：事件流有损，渲染层需据此重拉 REST 基线。 */
     onReady(listener: (roomId: string) => void): () => void
   }
   externalDocuments: {

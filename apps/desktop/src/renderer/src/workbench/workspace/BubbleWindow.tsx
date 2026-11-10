@@ -8,12 +8,19 @@ import {
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { EditorView } from '@/office-proto/EditorView'
-import type { OfficeFile, RealOfficeFile } from '@/office-proto/data'
+import {
+  cloudDocumentTitle,
+  cloudDocumentToOfficeFile,
+  type OfficeFile,
+  type RealOfficeFile,
+} from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 import { FileOpenWithControl } from '@/components/files/FileOpenWithControl'
+import type { RoomDocument } from '@nxcore/agent-contract'
 import { cn } from '../ui/cn'
 import { Hint, IconButton, Spinner } from '../ui/primitives'
 import { isArtifactFile } from './fileBrowser'
+import { useCloudDocuments, type CloudDocuments } from './useCloudDocuments'
 import { useFileLibrary } from './useFileLibrary'
 import {
   BUBBLE_DEFAULT_WIDTH,
@@ -340,14 +347,18 @@ const SCOPES: ReadonlyArray<{ key: BrowserScope; label: string }> = [
 ]
 
 /**
- * 窄面板里的文件库列表：资料/产物筛选 + 点开即进气泡标签。
- * workspaceId 传入时按工作空间过滤（资料库/产物库独立）；缺省拉全库。
+ * 窄面板里的「资料与文件」列表：顶部一组工作空间云文档（documents 表）+
+ * 资料/产物筛选的文件库列表；点开即进气泡标签。
+ * workspaceId 传入时文件库部分按工作空间过滤（资料库/产物库独立）；缺省拉全库。
+ * 云文档是工作区级文稿（`roomId === null`），不参与 资料/产物 归类，始终单列在最上方。
  */
 function BubbleBrowser({ onOpenFile, workspaceId }: {
   onOpenFile: (file: OfficeFile) => void
   workspaceId?: string
 }) {
   const library = useFileLibrary(workspaceId)
+  // 云文档清单单独订阅工作区文稿频道：Agent 新建/改动云文档后列表自动刷新。
+  const cloudDocuments = useCloudDocuments()
   const [scope, setScope] = useState<BrowserScope>('all')
 
   const items = useMemo(() => {
@@ -363,6 +374,8 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
 
   return (
     <div className="wb-bubble-browser">
+      <CloudDocumentsGroup state={cloudDocuments} onOpenFile={onOpenFile} />
+
       <div className="wb-bubble-browser-scopes" role="group" aria-label="资料类型">
         {SCOPES.map((item) => (
           <button
@@ -398,6 +411,71 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
           最近 {library.items.length} / 共 {library.total} 个
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/* ───────────────── 气泡内「云文档」分组（documents 表） ───────────────── */
+
+/** 工作空间云文档分组：标题 + 更新时间，点击把伪文件加进气泡标签并打开。 */
+function CloudDocumentsGroup({ state, onOpenFile }: {
+  state: CloudDocuments
+  onOpenFile: (file: OfficeFile) => void
+}) {
+  // 真实文稿桥不存在（旧版主进程 / 未恢复）时整组隐藏，不占位。
+  if (!state.available) return null
+
+  return (
+    <section className="wb-bubble-cloud-docs" aria-label="云文档">
+      <div className="wb-bubble-cloud-docs-head">
+        <span className="wb-bubble-cloud-docs-title">云文档</span>
+        {state.loading ? (
+          <Spinner size={12} />
+        ) : (
+          <span className="wb-bubble-cloud-docs-count">{state.documents.length}</span>
+        )}
+      </div>
+      {!state.loading && state.documents.length === 0 ? (
+        <div className="wb-bubble-cloud-docs-state">还没有云文档，可以让 Agent 写一篇</div>
+      ) : null}
+      {state.documents.length > 0 ? (
+        <div className="wb-bubble-cloud-docs-list" role="list">
+          {state.documents.map((document) => (
+            <CloudDocumentRow key={document.id} document={document} onOpen={onOpenFile} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function CloudDocumentRow({ document, onOpen }: {
+  document: RoomDocument
+  onOpen: (file: OfficeFile) => void
+}) {
+  // 与气泡标签共用同一套伪文件转换：id / 更新时间 / 文案只在 data.ts 定义一次。
+  const file = cloudDocumentToOfficeFile(document)
+  const title = cloudDocumentTitle(document)
+  const meta = [
+    '云文档',
+    document.version ? `v${document.version}` : null,
+    file.updatedLabel,
+  ].filter((part): part is string => Boolean(part)).join(' · ')
+
+  return (
+    <div role="listitem" className="wb-bubble-browser-row wb-bubble-cloud-doc-row" title={title}>
+      <button
+        type="button"
+        className="wb-bubble-browser-row-main"
+        aria-label={`打开云文档 ${title}`}
+        onClick={() => onOpen(file)}
+      >
+        <FileTypeIcon kind={file.kind} size={24} />
+        <span className="wb-bubble-browser-row-copy">
+          <span className="wb-bubble-browser-row-name">{title}</span>
+          <span className="wb-bubble-browser-row-meta">{meta}</span>
+        </span>
+      </button>
     </div>
   )
 }

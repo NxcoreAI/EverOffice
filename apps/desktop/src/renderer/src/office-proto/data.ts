@@ -2,7 +2,7 @@
 // 人物与素材沿用仓库既有 mock 世界观（连接器项目室 / 林薇 / V1 视觉定稿…），
 // 保证各原型页之间叙事一致。
 
-export type FileKind = 'docx' | 'md' | 'xlsx' | 'pptx' | 'pdf'
+export type FileKind = 'docx' | 'md' | 'xlsx' | 'pptx' | 'pdf' | 'cloud-doc'
 
 /** 主页侧边栏五个一级菜单。 */
 export type MenuKey = 'recent' | 'files' | 'agent' | 'kb' | 'connectors'
@@ -20,6 +20,18 @@ export type FileContent =
   | { type: 'md'; source: string }
   | { type: 'pdf'; pages: { paragraphs: string[] }[] }
 
+/**
+ * 工作空间云文档（documents 表）伪文件的绑定信息。
+ *
+ * 云文档不是文件库条目（没有 catalog / 不落文件版本链），正文存在网关 documents 表；
+ * 打开时 `EditorView` 直接把它路由到 `CloudDocumentEditor`（真实 documents IPC），
+ * 编辑/保存都走旧云文档编辑器自己的 `documents.get/save`。
+ */
+export interface CloudDocumentRef {
+  documentId: string
+  title: string
+}
+
 export interface OfficeFile {
   id: string
   name: string
@@ -31,6 +43,9 @@ export interface OfficeFile {
   /** 真实文件库条目：存在时编辑页走 nxcore 文件库内置预览（可编辑 + 保存回填版本链），
    *  不存在（mock 文件）才走原型 GenOffice 桥。 */
   realCatalog?: FileCatalogDto
+  /** 工作空间云文档（documents 表）伪文件：存在时编辑页走 `CloudDocumentEditor`，
+   *  优先级高于 realCatalog 与 mock content 分流。 */
+  cloudDocument?: CloudDocumentRef
 }
 
 export const files: OfficeFile[] = [
@@ -386,6 +401,7 @@ export const kindMeta: Record<FileKind, { label: string; color: string }> = {
   xlsx: { label: '表格', color: '#2fa14e' },
   pptx: { label: '演示', color: '#f08a24' },
   pdf: { label: 'PDF', color: '#e0564a' },
+  'cloud-doc': { label: '云文档', color: '#7d5bd6' },
 }
 
 /** 各类型空白文件工厂（新建 tiles / 标签栏 + 按钮）。 */
@@ -523,6 +539,7 @@ export const starterPrompts: Record<FileKind, string[]> = {
   pptx: ['把第 2 页的时间线改成表格', '给每页要点补一句风险提示', '整体换成更收敛的配色'],
   pdf: ['这份 PDF 的核心结论是什么？', '把第 2 页的观点改写进我的周报', '提炼三句给管理层看的摘要'],
   md: ['把这篇笔记整理成周报初稿', '补全「待办」的下一步行动', '总结这篇笔记的三条结论'],
+  'cloud-doc': ['把这篇云文档的结论改得更精炼', '给正文补一段「风险」章节', '检查全文的引用是否还有效'],
 }
 
 /* ───────────── EverOfficeMac 真实文件接入（迁移附加层，不改上方原型数据） ─────────────
@@ -531,6 +548,7 @@ export const starterPrompts: Record<FileKind, string[]> = {
  * 调 nxcore.files.openOriginal 打开内置 GenOffice 预览（可编辑，保存回填版本链），
  * 无桥/为空时回退原型 mock 列表。 */
 
+import type { RoomDocument } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '@/shared/ingest'
 
 export interface RealOfficeFile {
@@ -585,6 +603,33 @@ export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | n
       content: { type: 'md', source: '' },
       realCatalog: catalog,
     },
+  }
+}
+
+/** 展示用的云文档标题：去掉首尾空白，空标题回落「未命名云文档」。 */
+export function cloudDocumentTitle(document: Pick<RoomDocument, 'title'>): string {
+  return document.title?.trim() || '未命名云文档'
+}
+
+/**
+ * 工作空间云文档 → 气泡窗里的「伪文件」。
+ *
+ * 云文档没有文件库条目，标签页/气泡窗只按 OfficeFile 的形状渲染；打开后
+ * `EditorView` 用 `cloudDocument` 标记把它路由到 `CloudDocumentEditor`。
+ * 纯函数，供列表与测试共用。
+ */
+export function cloudDocumentToOfficeFile(document: RoomDocument): OfficeFile {
+  const title = cloudDocumentTitle(document)
+  return {
+    id: `cloud-doc:${document.id}`,
+    name: title,
+    kind: 'cloud-doc',
+    roomId: document.roomId,
+    updatedLabel: updatedLabelFrom(document.updatedAt),
+    sizeLabel: '—',
+    // 正文不在 OfficeFile 里：云文档打开时由 CloudDocumentEditor 从 documents 表取。
+    content: { type: 'md', source: '' },
+    cloudDocument: { documentId: document.id, title },
   }
 }
 

@@ -1985,7 +1985,14 @@ export class AgentService {
       && (run.status === "accepted" || run.status === "running")
       && execution
       && execution.sessionId === input.agentSessionId);
-    if (!session || !run || !activeContextMatches) {
+    const completedSelectionRewriteMatches = Boolean(session
+      && run?.status === "completed"
+      && input.capabilityId === "document.selection-rewrite"
+      && execution?.sessionId === input.agentSessionId
+      && run.completedAt
+      && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
+    if (!session || !run
+      || (!activeContextMatches && !completedSelectionRewriteMatches)) {
       throw new Error("agent_operation_context_invalid");
     }
   }
