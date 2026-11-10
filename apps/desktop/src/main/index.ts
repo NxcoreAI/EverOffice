@@ -501,6 +501,10 @@ const FILES_CHANNELS = {
   get: 'files:get',
   readMarkdown: 'files:read-markdown',
   readDataUrl: 'files:read-data-url',
+  /** 原始 UTF-8 文本（侧栏 Markdown 编辑器读正文）。 */
+  readText: 'files:read-text',
+  /** 侧栏 Markdown 编辑器保存：写同一 fileEntry 的新版本并广播刷新。 */
+  saveMarkdown: 'files:save-markdown',
   rename: 'files:rename',
   delete: 'files:delete',
   reveal: 'files:reveal',
@@ -2710,6 +2714,32 @@ function registerFilesHandlers(
     (_event, fileId: string, options?: { waitMs?: number; pollMs?: number }) => bridge.readMarkdown(fileId, options),
   )
   handle(FILES_CHANNELS.readDataUrl, (_event, fileId: string) => bridge.readDataUrl(fileId))
+  handle(FILES_CHANNELS.readText, (_event, fileId: string) => bridge.readText(fileId))
+  handle(FILES_CHANNELS.saveMarkdown, async (_event, input?: unknown) => {
+    const value = (input ?? {}) as {
+      fileId?: unknown
+      markdown?: unknown
+      originalName?: unknown
+      workspaceId?: unknown
+    }
+    if (typeof value.fileId !== 'string' || !value.fileId) throw new Error('缺少文件 id。')
+    if (typeof value.markdown !== 'string') throw new Error('缺少 Markdown 内容。')
+    const saved = await bridge.saveMarkdown({
+      fileId: value.fileId,
+      markdown: value.markdown,
+      ...(typeof value.originalName === 'string' && value.originalName ? { originalName: value.originalName } : {}),
+      ...(typeof value.workspaceId === 'string' && value.workspaceId ? { workspaceId: value.workspaceId } : {}),
+    })
+    // 与 Office 保存回填同一通道：资料库/产物页据此重拉（useFileLibrary 消费 edited）。
+    broadcastOfficeAgentFileEvent({
+      type: 'edited',
+      format: 'md',
+      title: saved.originalName,
+      fileId: saved.fileEntryId,
+      ...(typeof value.workspaceId === 'string' && value.workspaceId ? { workspaceId: value.workspaceId } : {}),
+    })
+    return saved
+  })
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))

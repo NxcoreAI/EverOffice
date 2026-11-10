@@ -1399,6 +1399,15 @@ export interface NxcoreDesktopApi {
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
+    /** 文件本体按 UTF-8 解码后的原始文本（工作空间侧栏的 Markdown 编辑器用）。 */
+    readText(fileId: string): Promise<{ text: string }>
+    /** 把侧栏 Markdown 编辑器的内容存回同一 fileEntry 的新版本（编辑回填）。 */
+    saveMarkdown(input: { fileId: string; markdown: string; originalName?: string; workspaceId?: string }): Promise<{
+      fileEntryId: string
+      fileVersionId: string
+      contentHash: string
+      originalName: string
+    }>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
     /** 删除：级联 knowledge cleanup + 对象库 GC。 */
     delete(fileId: string): Promise<{

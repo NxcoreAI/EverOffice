@@ -1,0 +1,323 @@
+/* 侧栏 Markdown WYSIWYG 编辑器（office-proto/MarkdownTiptapEditor.tsx）。
+ *
+ * 视觉沿用工作台暖纸主题的 token（styles/tokens.css）：白纸画布、暖纸工具条、
+ * 墨青正文。类名统一 `wb-md-` 前缀，避免和气泡窗/既有 office-proto 样式打架。
+ * 结构：.wb-md-root（flex 列）> 工具条（固定）> 滚动区 > 纸张 > Tiptap 正文 > 状态条。
+ */
+
+.wb-md-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-text-sm);
+}
+
+/* ───────────── 工具条 ───────────── */
+
+.wb-md-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1px;
+  padding: 5px 8px;
+  background: var(--ui-surface-alt);
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.wb-md-tool {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-2);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-md-tool:hover:not(:disabled) { background: var(--ui-hover); color: var(--ui-text); }
+.wb-md-tool.is-active {
+  background: var(--ui-selected);
+  color: var(--ui-accent-strong);
+  box-shadow: inset 0 0 0 1px var(--ui-accent-line);
+}
+.wb-md-tool:disabled { opacity: 0.38; cursor: default; }
+.wb-md-tool:focus-visible {
+  outline: 2px solid var(--ui-focus-ring-color);
+  outline-offset: 1px;
+}
+
+.wb-md-tool-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--ui-border);
+}
+
+/* ───────────── 滚动区 / 纸张 ───────────── */
+
+.wb-md-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.wb-md-scroll::-webkit-scrollbar { width: 9px; }
+.wb-md-scroll::-webkit-scrollbar-thumb {
+  background: var(--ui-scrollbar-thumb);
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.wb-md-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--ui-scrollbar-thumb-hover); }
+
+.wb-md-page {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 20px 44px;
+}
+
+.wb-md-editor { width: 100%; }
+
+/* ───────────── Tiptap 正文（.wb-md-tiptap-content = ProseMirror 根） ───────────── */
+
+.wb-md-tiptap-content {
+  min-height: 240px;
+  outline: none;
+  color: var(--ui-text);
+  font-size: var(--ui-text-md);
+  line-height: 1.72;
+  word-break: break-word;
+  caret-color: var(--ui-accent-strong);
+}
+.wb-md-tiptap-content:focus { outline: none; }
+
+.wb-md-tiptap-content > :first-child { margin-top: 0; }
+
+.wb-md-tiptap-content p {
+  margin: 0 0 0.72em;
+}
+.wb-md-tiptap-content p:last-child { margin-bottom: 0; }
+
+.wb-md-tiptap-content h1,
+.wb-md-tiptap-content h2,
+.wb-md-tiptap-content h3 {
+  margin: 1.1em 0 0.45em;
+  color: var(--ui-text);
+  font-family: var(--ui-font-display);
+  letter-spacing: var(--ui-tracking-tight);
+  line-height: 1.3;
+}
+.wb-md-tiptap-content h1 { font-size: var(--ui-text-2xl); font-weight: 700; }
+.wb-md-tiptap-content h2 { font-size: var(--ui-text-xl); font-weight: 700; }
+.wb-md-tiptap-content h3 { font-size: var(--ui-text-lg); font-weight: 600; }
+
+.wb-md-tiptap-content strong { font-weight: 700; }
+.wb-md-tiptap-content em { font-style: italic; }
+.wb-md-tiptap-content s { color: var(--ui-text-2); }
+
+.wb-md-tiptap-content code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--ui-surface-sunken);
+  color: var(--ui-text);
+  font-family: var(--ui-font-mono);
+  font-size: 0.92em;
+}
+
+.wb-md-tiptap-content pre {
+  margin: 0.85em 0;
+  padding: 10px 12px;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface-alt);
+  overflow-x: auto;
+  line-height: 1.55;
+}
+.wb-md-tiptap-content pre code {
+  padding: 0;
+  background: transparent;
+  font-size: var(--ui-text-xs);
+}
+
+.wb-md-tiptap-content blockquote {
+  margin: 0.85em 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--ui-accent-line);
+  color: var(--ui-text-2);
+  background: var(--ui-accent-softer);
+  border-radius: 0 var(--ui-radius-xs) var(--ui-radius-xs) 0;
+}
+
+.wb-md-tiptap-content ul,
+.wb-md-tiptap-content ol {
+  margin: 0.35em 0 0.85em;
+  padding-left: 1.5em;
+}
+.wb-md-tiptap-content li { margin: 0.2em 0; }
+
+/* 任务列表（TaskList / TaskItem） */
+.wb-md-tiptap-content ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0.25em;
+}
+.wb-md-tiptap-content ul[data-type='taskList'] li[data-type='taskItem'] {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.wb-md-tiptap-content li[data-type='taskItem'] input[type='checkbox'] {
+  flex: none;
+  margin-top: 5px;
+  accent-color: var(--ui-accent);
+  cursor: pointer;
+}
+.wb-md-tiptap-content li[data-type='taskItem'][data-checked='true'] > div {
+  color: var(--ui-text-2);
+  text-decoration: line-through;
+}
+
+.wb-md-tiptap-content a {
+  color: var(--ui-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.wb-md-tiptap-content hr {
+  margin: 1.3em 0;
+  border: 0;
+  height: 1px;
+  background: var(--ui-border);
+}
+
+.wb-md-tiptap-content img { max-width: 100%; height: auto; }
+
+/* 占位符：Placeholder 扩展给空节点的 data-placeholder */
+.wb-md-tiptap-content p.is-editor-empty:first-child::before,
+.wb-md-tiptap-content .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--ui-text-3);
+  pointer-events: none;
+}
+
+/* 选区颜色跟强调色一致（系统默认蓝会跳出暖纸主题） */
+.wb-md-tiptap-content ::selection { background: var(--ui-selected-strong); }
+
+/* ───────────── 状态条 ───────────── */
+
+.wb-md-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.wb-md-status-idle { color: var(--ui-text-3); opacity: 0.72; }
+.wb-md-status-error-icon { color: var(--ui-danger); }
+.wb-md-status-retry {
+  margin-left: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--ui-danger);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  cursor: pointer;
+}
+.wb-md-status-retry:hover { background: var(--ui-danger); color: var(--ui-text-inverse); }
+
+.wb-md-spin { animation: wb-md-spin 0.9s linear infinite; }
+@keyframes wb-md-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ───────────── 加载 / 错误 / 不可用状态 ───────────── */
+
+.wb-md-state {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  text-align: center;
+}
+.wb-md-state p { margin: 0; max-width: 320px; line-height: 1.6; }
+.wb-md-state.is-error { color: var(--ui-danger); }
+.wb-md-state-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-sm);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-md-state-action:hover { background: var(--ui-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-md-root * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ───────────── 表格 / 图片（Markdown 原样保真渲染） ───────────── */
+
+.wb-md-tiptap-content table {
+  width: 100%;
+  margin: 14px 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--ui-text-sm);
+}
+.wb-md-tiptap-content th,
+.wb-md-tiptap-content td {
+  padding: 6px 9px;
+  border: 1px solid var(--ui-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.wb-md-tiptap-content th {
+  background: var(--ui-surface-alt);
+  font-weight: 600;
+}
+.wb-md-tiptap-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 14px 0;
+  border-radius: var(--ui-radius-sm);
+}
+.wb-md-tiptap-content img.ProseMirror-selectednode {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
