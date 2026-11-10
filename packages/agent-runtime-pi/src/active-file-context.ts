@@ -36,6 +36,9 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
     activeFile.kind === "docx"
       ? "要修改这份 Word（改文字/格式、增删段落、插图、水印等）用 word_agent_edit：先 word_agent_read 拿块索引与 HTML/命令规则，再按块索引构造工具调用；"
         + "表格/分页与页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops；office_create 是另建一份新文件，不是修改当前文件。"
+        + "默认建议模式：用户要求“以修订形式呈现/我审阅后决定”或没有明确要求直接改时，"
+        + "先用 word_agent_ops 调 review.trackChanges {enabled:true}（word_agent_read 的 documentState.trackChanges 是当前状态），"
+        + "再执行修改；只有用户明确说“直接改/不用修订”时才保持关闭。"
       : null,
     "改 Word/Excel 不要求文件已经打开：任何已入库 .docx / .xlsx 都能按 fileId 由后台编辑器读取和编辑（headless 打开、不占页签）。"
       + "用户说的是“另一份/之前生成的那份”或没给 fileId 时，先用 file_search 按文件名找到 fileId，再 word_agent_read → word_agent_edit/word_agent_ops"
