@@ -1391,9 +1391,9 @@ export function officePlugin(
   const wordExportPdf: DocumentCapabilityTool = {
     name: "word_export_pdf",
     title: "把 Word 导出为 PDF 并加入文件库",
-    description: "把任意已入库 .docx 导出为 PDF（桌面端用 LibreOffice 转换，作为新文件加入文件库），"
+    description: "把任意已入库 .docx 导出为 PDF（桌面端进程内渲染；同名 PDF 已存在时按版本更新那一份，不新增重复文件），"
       + "适合“导出 PDF / 发我一份 PDF / 转成 PDF”这类请求。fileId 省略 = 用户当前浏览的文件；"
-      + "不需要文件已经在界面上打开。返回新 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
+      + "不需要文件已经在界面上打开。返回 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
       + "fileName 可选，必须以 .pdf 结尾（默认沿用原文件名）。",
     inputSchema: {
       type: "object",

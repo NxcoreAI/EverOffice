@@ -2464,6 +2464,30 @@ async function findLibraryFileByName(
   }
 }
 
+/**
+ * Word→PDF 导出的复用目标：同一工作空间里同名的、agent 生成的 PDF。
+ *
+ * 命中就按版本链「更新那一份」而不是新增条目——否则每次让 agent 改完再导出，
+ * 资料库就多一个「xxx_更新版.pdf」，用户眼里就是「每次都生成一个新文件」。
+ * 不唯一、无归属、跨空间同名 → 返回 null（仍按新文件入库，避免覆盖别人的文件）。
+ */
+async function findReusableAgentPdf(
+  files: FilesGatewayBridge | null,
+  name: string,
+  workspaceId: string | null | undefined,
+): Promise<string | null> {
+  if (!files || !name || !workspaceId) return null
+  try {
+    const catalog = await files.list(200, 0, { workspaceId })
+    const hits = (catalog?.items ?? []).filter(
+      (item) => item.originalName === name && item.sourceKind === 'agent-generated',
+    )
+    return hits.length === 1 ? hits[0]!.id : null
+  } catch {
+    return null
+  }
+}
+
 async function importTemplateBytesIntoLibrary(
   workspaceId: string,
   name: string,
@@ -3698,11 +3722,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             || `${basename(originalName, extname(originalName))}.pdf`
           const safeName = (rawName.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120) || 'document.pdf')
           const pdfName = /\.pdf$/i.test(safeName) ? safeName : `${safeName}.pdf`
+          // 同一空间已有同名（agent 生成的）PDF：这次导出按「更新那份文件」走版本链，
+          // 不再新增「xxx_更新版.pdf」之类的重复条目——用户要的是「改完还是那份文件」，
+          // 右侧那份 PDF 也会因为内容哈希变化被重开成最新版。
+          const reuseEntryId = await findReusableAgentPdf(files, pdfName, req.workspaceId)
           try {
             const imported = await files.importAgentGeneratedFile({
               filePath: converted.pdfPath,
               originalName: pdfName,
-              sourceKey: `agent:word:pdf:${req.fileId}:${Date.now()}`,
+              sourceKey: reuseEntryId
+                ? `agent:word:pdf:update:${reuseEntryId}`
+                : `agent:word:pdf:${req.fileId}:${Date.now()}`,
+              ...(reuseEntryId ? { fileEntryId: reuseEntryId } : {}),
               ...(req.roomId ? { roomId: req.roomId } : {}),
               ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
             })
