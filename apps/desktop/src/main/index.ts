@@ -2583,7 +2583,12 @@ function registerThesisFormatHandlers(
     }
   })
   handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
-  /** 导出 PDF：优先 genoffice 进程内渲染（无 LibreOffice 依赖）→ ~/Downloads/EverOffice/，并定位到文件。 */
+  /**
+   * 导出 PDF：优先 genoffice 进程内渲染（无 LibreOffice 依赖）→ ~/Downloads/EverOffice/。
+   * 不做「在访达中显示」：导出成功后前端已用 toast 给出落点，自动弹访达会抢走焦点
+   * （用户预期是「导出」而不是「打开文件管理器」）；需要定位时走资料库行内的
+   * 「导出并定位」这一显式入口（files.exportReveal）。
+   */
   handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
     const storagePath = await files.storagePath(fileEntryId)
     const entry = await files.catalogEntry(fileEntryId)
@@ -2595,7 +2600,6 @@ function registerThesisFormatHandlers(
       targetDir: join(app.getPath('downloads'), 'EverOffice'),
     })
     if (!outcome.ok) return { unavailable: true as const }
-    shell.showItemInFolder(outcome.pdfPath)
     return { unavailable: false as const, path: outcome.pdfPath }
   })
   handle(THESIS_FORMAT_CHANNELS.reformat, async (
@@ -3702,6 +3706,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
               ...(req.roomId ? { roomId: req.roomId } : {}),
               ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
             })
+            // 导出完成即「打开」：按与资料库/对话文件卡同一条预览管线建实例，再补一条
+            // 预览请求让工作台在归属空间的气泡窗（右侧文件区）里显示它。用户要的是
+            // 「导出后右侧出现 PDF」，而不是自己去资料库找、更不是弹出访达。
+            // 打开失败不改变导出成功的语义（文件已入库，文件卡仍是可靠入口）。
+            const opened = await openFileInAppPreview(files, imported.fileEntryId, pdfName, {
+              ...(req.roomId ? { roomId: req.roomId } : {}),
+              ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+              // 从对话/文档面板发起：把主窗口提到前台，否则右侧开了也看不见。
+              focusWindow: true,
+            }).catch((error: unknown) => {
+              console.warn('[office] 导出 PDF 后自动打开失败：', error instanceof Error ? error.message : String(error))
+              return null
+            })
+            const request = opened ? previewRequestFromOpenResult(opened) : null
+            if (request) notifyPreviewRequested(request)
             return {
               ok: true,
               fileId: imported.fileEntryId,
