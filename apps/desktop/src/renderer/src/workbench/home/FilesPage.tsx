@@ -1,7 +1,8 @@
 import { FolderOpen, LayoutGrid, List, RotateCw, Search, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
-import { type FileKind, type RealOfficeFile, kindMeta } from '@/office-proto/data'
+import { useLocale } from '@/i18n/LocaleContext'
+import { type FileKind, type RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 
 import { useWorkbenchStore } from '../state/store'
@@ -34,6 +35,7 @@ const KIND_ORDER: readonly FileKind[] = ['docx', 'xlsx', 'pptx', 'pdf', 'md']
  * 来源筛选标签是本端曾有的扩展，原型没有这一行，已按原型去除。
  */
 export function FilesPage() {
+  const { t } = useLocale()
   const openFileInWorkspace = useWorkbenchStore((state) => state.openFileInWorkspace)
   const files = useFileLibrary(LOAD_LIMIT)
   const [query, setQuery] = useState('')
@@ -60,11 +62,11 @@ export function FilesPage() {
       const outcomes = await window.nxcore!.files.pickAndImport()
       const imported = outcomes?.length ?? 0
       if (imported > 0) {
-        workbenchToast(`已导入 ${imported} 个文件`)
+        workbenchToast(t('workbench:home.files.imported', { count: imported }))
         files.reload()
       }
     } catch (error) {
-      workbenchToast(error instanceof Error && error.message ? error.message : '导入文件失败')
+      workbenchToast(error instanceof Error && error.message ? error.message : t('workbench:home.files.importFailed'))
     } finally {
       setImporting(false)
     }
@@ -73,14 +75,14 @@ export function FilesPage() {
   const exportReveal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
     if (!api || typeof api.exportReveal !== 'function') {
-      workbenchToast('桌面端文件能力不可用')
+      workbenchToast(t('workbench:home.files.desktopUnavailable'))
       return
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      workbenchToast('已导出到「下载/EverOffice」并定位到文件管理器')
+      workbenchToast(t('workbench:home.files.exportDone'))
     } catch {
-      workbenchToast('导出失败，请稍后重试')
+      workbenchToast(t('workbench:home.files.exportFailed'))
     }
   }
 
@@ -89,18 +91,18 @@ export function FilesPage() {
     if (!target) return
     const api = window.nxcore?.files
     if (!api || typeof api.delete !== 'function') {
-      workbenchToast('桌面端文件能力不可用')
+      workbenchToast(t('workbench:home.files.desktopUnavailable'))
       setPendingDelete(null)
       return
     }
     setDeleting(true)
     try {
       await api.delete(target.catalog.id)
-      workbenchToast(`已删除「${target.file.name}」`)
+      workbenchToast(t('workbench:home.files.deletedNamed', { name: target.file.name }))
       setPendingDelete(null)
       files.reload()
     } catch {
-      workbenchToast('删除失败，请稍后重试')
+      workbenchToast(t('workbench:home.files.deleteFailed'))
     } finally {
       setDeleting(false)
     }
@@ -115,23 +117,23 @@ export function FilesPage() {
 
   /** 工具行左侧的类型标签（原型 `Seg`：胶囊裸标签，不带计数徽标）。 */
   const kindTabs: Array<{ key: KindFilter; label: string }> = [
-    { key: ALL_KINDS, label: '全部' },
-    ...KIND_ORDER.map((item) => ({ key: item as KindFilter, label: kindMeta[item].label })),
+    { key: ALL_KINDS, label: t('workbench:home.files.allKinds') },
+    ...KIND_ORDER.map((item) => ({ key: item as KindFilter, label: t(`workbench:home.files.filterKind.${item}`) })),
   ]
 
   return (
     <div className="wb-home-scroll">
       <PageHeader
-        title="所有文件"
+        title={t('workbench:home.files.title')}
         actions={(
           <Button
             variant="primary"
             icon={<Upload size={15} />}
             disabled={!canImport || importing}
-            title={canImport ? '导入本地文件' : '桌面文件服务未就绪，暂时无法导入'}
+            title={canImport ? t('workbench:home.files.importTitle') : t('workbench:home.files.importDisabledTitle')}
             onClick={() => { void handleImport() }}
           >
-            {importing ? '导入中…' : '导入文件'}
+            {importing ? t('workbench:home.files.importing') : t('workbench:home.files.import')}
           </Button>
         )}
       />
@@ -141,20 +143,20 @@ export function FilesPage() {
       {files.state === 'unavailable' ? (
         <EmptyState
           icon={<FolderOpen size={18} />}
-          title="资料暂不可用"
-          description="桌面文件服务没有响应。重试一次；仍然失败请重启 EverOffice。"
-          action={<Button variant="secondary" size="sm" icon={<RotateCw size={13} />} onClick={files.reload}>重试</Button>}
+          title={t('workbench:home.files.unavailable')}
+          description={t('workbench:home.files.unavailableDescription')}
+          action={<Button variant="secondary" size="sm" icon={<RotateCw size={13} />} onClick={files.reload}>{t('workbench:home.common.retry')}</Button>}
         />
       ) : null}
 
       {files.state === 'ready' && files.items.length === 0 ? (
         <EmptyState
           icon={<FolderOpen size={18} />}
-          title="资料还没有文件"
-          description="导入本地文档，或从连接器同步资料，之后就能在这里打开。"
+          title={t('workbench:home.files.emptyTitle')}
+          description={t('workbench:home.files.emptyDescription')}
           action={canImport ? (
             <Button variant="primary" size="sm" icon={<Upload size={13} />} onClick={() => { void handleImport() }}>
-              导入文件
+              {t('workbench:home.files.import')}
             </Button>
           ) : null}
         />
@@ -163,7 +165,7 @@ export function FilesPage() {
       {files.state === 'ready' && files.items.length > 0 ? (
         <div className="wb-home-filetbl">
           <div className="wb-home-filetbl-bar">
-            <div className="wb-home-ft-seg" role="tablist" aria-label="按类型筛选">
+            <div className="wb-home-ft-seg" role="tablist" aria-label={t('workbench:home.files.filterAria')}>
               {kindTabs.map((tab) => (
                 <button
                   key={tab.key}
@@ -181,8 +183,8 @@ export function FilesPage() {
               <Search size={14} aria-hidden="true" />
               <input
                 type="search"
-                aria-label="搜索文件"
-                placeholder="搜索文件名…"
+                aria-label={t('workbench:home.files.searchAria')}
+                placeholder={t('workbench:home.files.searchPlaceholder')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -190,19 +192,19 @@ export function FilesPage() {
                 <button
                   className="wb-home-ft-search-clear"
                   type="button"
-                  title="清空"
-                  aria-label="清空搜索"
+                  title={t('workbench:home.files.clearTitle')}
+                  aria-label={t('workbench:home.files.clearSearchAria')}
                   onClick={() => setQuery('')}
                 >
                   <X size={12} />
                 </button>
               ) : null}
             </div>
-            <div className="wb-home-ft-views" role="group" aria-label="文件视图">
+            <div className="wb-home-ft-views" role="group" aria-label={t('workbench:home.files.viewAria')}>
               <button
                 type="button"
                 className={cn(view === 'list' && 'active')}
-                title="列表视图"
+                title={t('workbench:home.files.listView')}
                 aria-pressed={view === 'list'}
                 onClick={() => setView('list')}
               >
@@ -211,7 +213,7 @@ export function FilesPage() {
               <button
                 type="button"
                 className={cn(view === 'grid' && 'active')}
-                title="网格视图"
+                title={t('workbench:home.files.gridView')}
                 aria-pressed={view === 'grid'}
                 onClick={() => setView('grid')}
               >
@@ -221,7 +223,7 @@ export function FilesPage() {
           </div>
 
           {filtered.length === 0 ? (
-            <div className="wb-home-filetbl-empty">没有匹配的文件。</div>
+            <div className="wb-home-filetbl-empty">{t('workbench:home.files.noMatch')}</div>
           ) : view === 'list' ? (
             <>
               <FileTableHead />
@@ -255,18 +257,18 @@ export function FilesPage() {
 
       {files.state === 'ready' && files.total > LOAD_LIMIT ? (
         <p className="wb-home-footnote">
-          文件较多，这里只列出最近的 {LOAD_LIMIT} 个。
+          {t('workbench:home.files.limitNote', { limit: LOAD_LIMIT })}
         </p>
       ) : null}
 
       <ConfirmModal
         open={pendingDelete !== null}
         onOpenChange={(next) => { if (!next) setPendingDelete(null) }}
-        title="删除文件？"
+        title={t('workbench:home.files.deleteTitle')}
         description={pendingDelete
-          ? `「${pendingDelete.file.name}」会从资料移除，相关项目空间里也不再可见。`
+          ? t('workbench:home.files.deleteDescription', { name: pendingDelete.file.name })
           : undefined}
-        confirmLabel={deleting ? '删除中…' : '删除'}
+        confirmLabel={deleting ? t('workbench:home.files.deleting') : t('workbench:home.common.delete')}
         busy={deleting}
         onConfirm={() => { void confirmDelete() }}
       />

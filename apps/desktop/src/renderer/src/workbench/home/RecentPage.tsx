@@ -3,13 +3,14 @@ import { useCallback, useMemo } from 'react'
 
 import type { AgentSession } from '@nxcore/agent-contract'
 
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import { type FileKind, blankFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 import type { JournalActionDto } from '@/shared/sources'
 import { useOptionalAccount } from '@/state/AccountContext'
 
 import { useWorkbenchStore } from '../state/store'
-import { relativeTimeLabel, sessionDisplayTitle } from '../types'
+import { relativeTimeLabel, sessionDisplayTitle, workspaceDisplayName } from '../types'
 import { Badge, Button, PageHeader, Spinner } from '../ui/primitives'
 import { DailyJournalCard } from './DailyJournalCard'
 import { FileTableRow } from './fileTable'
@@ -17,21 +18,21 @@ import { HomeNote, HomeSection, requestNewSpace } from './parts'
 import { useFileLibrary } from './useFileLibrary'
 
 /** 按本机时间给问候语；不掺任何假数据。 */
-function greetingFor(hour: number): string {
-  if (hour < 5) return '夜深了'
-  if (hour < 9) return '早上好'
-  if (hour < 12) return '上午好'
-  if (hour < 14) return '中午好'
-  if (hour < 18) return '下午好'
-  return '晚上好'
+function greetingFor(hour: number, t: Translate): string {
+  if (hour < 5) return t('workbench:home.recent.greetingNight')
+  if (hour < 9) return t('workbench:home.recent.greetingMorning')
+  if (hour < 12) return t('workbench:home.recent.greetingLateMorning')
+  if (hour < 14) return t('workbench:home.recent.greetingNoon')
+  if (hour < 18) return t('workbench:home.recent.greetingAfternoon')
+  return t('workbench:home.recent.greetingEvening')
 }
 
 /** 「新建」右栏的四个文件瓦片（顺序照原型：文字文档 / 表格 / 演示 / Markdown）。 */
-const NEW_FILE_KINDS: ReadonlyArray<{ kind: FileKind; label: string }> = [
-  { kind: 'docx', label: '文字文档' },
-  { kind: 'xlsx', label: '表格' },
-  { kind: 'pptx', label: '演示' },
-  { kind: 'md', label: 'Markdown' },
+const NEW_FILE_KINDS: ReadonlyArray<{ kind: FileKind; labelKey: string }> = [
+  { kind: 'docx', labelKey: 'workbench:home.files.kind.docx' },
+  { kind: 'xlsx', labelKey: 'workbench:home.files.kind.xlsx' },
+  { kind: 'pptx', labelKey: 'workbench:home.files.kind.pptx' },
+  { kind: 'md', labelKey: 'workbench:home.files.kind.md' },
 ]
 
 /** 「最近」分栏的条数：左右两栏条数一致（4 个项目空间 + 4 个文件）。 */
@@ -55,6 +56,7 @@ const RECENT_FILE_FETCH = 40
  * 「最近的工作」是本端多出的一节：会话 = 一项工作，原型没有会话概念。
  */
 export function RecentPage() {
+  const { t, locale } = useLocale()
   const workspaces = useWorkbenchStore((state) => state.workspaces)
   const sessions = useWorkbenchStore((state) => state.sessions)
   const openHome = useWorkbenchStore((state) => state.openHome)
@@ -74,8 +76,8 @@ export function RecentPage() {
   )
 
   const workspaceNames = useMemo(
-    () => new Map(workspaces.map((workspace) => [workspace.id, workspace.name])),
-    [workspaces],
+    () => new Map(workspaces.map((workspace) => [workspace.id, workspaceDisplayName(workspace, locale)])),
+    [workspaces, locale],
   )
 
   /** 最近工作：只看归属到现存空间的会话，避免点开不存在的标签。 */
@@ -88,7 +90,7 @@ export function RecentPage() {
       .slice(0, 4)
   }, [sessions, workspaces])
 
-  const greeting = greetingFor(new Date().getHours())
+  const greeting = greetingFor(new Date().getHours(), t)
 
   /**
    * 今日洞察卡的动作落地（卡片只抛 action，不自己导航）：
@@ -110,16 +112,16 @@ export function RecentPage() {
 
   return (
     <div className="wb-home-scroll">
-      <PageHeader title={userName ? `${greeting}，${userName}` : greeting} />
+      <PageHeader title={userName ? t('workbench:home.recent.greetingWithName', { greeting, name: userName }) : greeting} />
 
       <DailyJournalCard onAction={handleJournalAction} />
 
-      <HomeSection title="新建">
+      <HomeSection title={t('workbench:home.recent.newSection')}>
         <div className="wb-home-new-row">
           <button
             type="button"
             className="wb-home-new-tile"
-            title="新建空白项目空间"
+            title={t('workbench:home.recent.newBlankSpaceTitle')}
             onClick={requestNewSpace}
           >
             <svg
@@ -143,31 +145,34 @@ export function RecentPage() {
               <path d="M1.5 13 A11.5 11.5 0 0 1 13 1.5 H35 A11.5 11.5 0 0 1 46.5 13 V21 H1.5 Z" fill="url(#wb-new-space-h)" />
               <rect x="14" y="14" width="20" height="20" rx="4" stroke="#fff" strokeWidth="3" strokeLinejoin="round" fill="none" opacity="0.95" />
             </svg>
-            <span className="wb-home-new-name">空白空间</span>
+            <span className="wb-home-new-name">{t('workbench:home.recent.blankSpace')}</span>
           </button>
-          {NEW_FILE_KINDS.map(({ kind, label }) => (
-            <button
-              key={kind}
-              type="button"
-              className="wb-home-new-tile"
-              title={`新建${label}（在默认项目空间打开）`}
-              onClick={() => openFileInWorkspace(blankFile(kind))}
-            >
-              <FileTypeIcon kind={kind} size={46} />
-              <span className="wb-home-new-name">{label}</span>
-            </button>
-          ))}
+          {NEW_FILE_KINDS.map(({ kind, labelKey }) => {
+            const label = t(labelKey)
+            return (
+              <button
+                key={kind}
+                type="button"
+                className="wb-home-new-tile"
+                title={t('workbench:home.recent.newFileTitle', { label })}
+                onClick={() => openFileInWorkspace(blankFile(kind))}
+              >
+                <FileTypeIcon kind={kind} size={46} />
+                <span className="wb-home-new-name">{label}</span>
+              </button>
+            )
+          })}
         </div>
       </HomeSection>
 
-      <HomeSection title="最近">
+      <HomeSection title={t('workbench:home.recent.title')}>
         <div className="wb-home-split">
           <div className="wb-home-split-col">
             <button type="button" className="wb-home-split-label" onClick={() => openHome('spaces')}>
-              项目空间
+              {t('workbench:home.common.spaces')}
             </button>
             {recentWorkspaces.length === 0 ? (
-              <HomeNote>还没有项目空间。新建一个，把资料、工作和产物放在一起。</HomeNote>
+              <HomeNote>{t('workbench:home.recent.spacesEmpty')}</HomeNote>
             ) : (
               <div className="wb-home-list">
                 {recentWorkspaces.map((workspace) => (
@@ -179,9 +184,9 @@ export function RecentPage() {
                   >
                     <span className="wb-home-space-icon" aria-hidden="true"><LayoutGrid size={17} /></span>
                     <span className="wb-home-space-main">
-                      <strong className="wb-home-truncate">{workspace.name}</strong>
+                      <strong className="wb-home-truncate">{workspaceDisplayName(workspace, locale)}</strong>
                     </span>
-                    <span className="wb-home-space-row-open">打开</span>
+                    <span className="wb-home-space-row-open">{t('workbench:home.common.open')}</span>
                   </button>
                 ))}
               </div>
@@ -190,24 +195,24 @@ export function RecentPage() {
 
           <div className="wb-home-split-col">
             <button type="button" className="wb-home-split-label" onClick={() => openHome('files')}>
-              文件
+              {t('workbench:home.common.files')}
             </button>
             {files.state === 'loading' ? (
-              <div className="wb-home-state"><Spinner /> 正在读取资料…</div>
+              <div className="wb-home-state"><Spinner /> {t('workbench:home.files.reading')}</div>
             ) : null}
             {files.state === 'unavailable' ? (
               <HomeNote>
-                资料暂不可用
+                {t('workbench:home.files.unavailable')}
                 <Button variant="ghost" size="sm" icon={<RotateCw size={12} />} onClick={files.reload}>
-                  重试
+                  {t('workbench:home.common.retry')}
                 </Button>
               </HomeNote>
             ) : null}
             {files.state === 'ready' && files.items.length === 0 ? (
               <HomeNote>
                 <FileText size={14} aria-hidden="true" />
-                资料还没有文件
-                <Button variant="ghost" size="sm" onClick={() => openHome('files')}>去导入</Button>
+                {t('workbench:home.files.emptyTitle')}
+                <Button variant="ghost" size="sm" onClick={() => openHome('files')}>{t('workbench:home.recent.goImport')}</Button>
               </HomeNote>
             ) : null}
             {files.state === 'ready' && files.items.length > 0 ? (
@@ -226,9 +231,9 @@ export function RecentPage() {
         </div>
       </HomeSection>
 
-      <HomeSection title="最近的工作">
+      <HomeSection title={t('workbench:home.recent.worksTitle')}>
         {recentSessions.length === 0 ? (
-          <HomeNote>还没有工作。打开一个项目空间就能开始第一项工作。</HomeNote>
+          <HomeNote>{t('workbench:home.recent.worksEmpty')}</HomeNote>
         ) : (
           <div className="wb-home-list">
             {recentSessions.map((session) => (
@@ -244,12 +249,12 @@ export function RecentPage() {
                     <span className="wb-home-truncate">{sessionDisplayTitle(session)}</span>
                   </span>
                   <span className="wb-home-row-sub">
-                    {workspaceNames.get(session.workspaceId) ?? '工作空间'}
+                    {workspaceNames.get(session.workspaceId) ?? t('workbench:home.common.workspaceFallback')}
                     {' · '}
                     {relativeTimeLabel(session.updatedAt)}
                   </span>
                 </span>
-                {session.status === 'running' ? <Badge tone="running" dot>进行中</Badge> : null}
+                {session.status === 'running' ? <Badge tone="running" dot>{t('workbench:home.common.running')}</Badge> : null}
               </button>
             ))}
           </div>

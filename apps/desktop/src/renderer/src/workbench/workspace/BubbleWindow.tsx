@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import { EditorView } from '@/office-proto/EditorView'
 import type { OfficeFile, RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
@@ -67,6 +68,7 @@ export function BubbleWindow({
    */
   onFullChange?: (full: boolean) => void
 }) {
+  const { t } = useLocale()
   const [resizing, setResizing] = useState(false)
   const resizingRef = useRef(false)
   /**
@@ -229,14 +231,14 @@ export function BubbleWindow({
             width: geometry.width,
             ...(containerAdjusting || containerWidth <= 0 ? { transition: 'none' } : null),
           }}
-      aria-label="资料与文件"
+      aria-label={t('workbench:workspace.bubble.title')}
     >
       {!bubble.maximized ? (
         <div
           className="wb-bubble-resize"
           role="separator"
           aria-orientation="vertical"
-          aria-label="调整气泡窗宽度"
+          aria-label={t('workbench:workspace.bubble.resize')}
           onPointerDown={startResize}
         />
       ) : null}
@@ -246,9 +248,12 @@ export function BubbleWindow({
         style={freezeWidth ? { width: freezeWidth } : undefined}
       >
       <div className="wb-bubble-head">
-        <Hint label={browsing ? '当前正在浏览资料' : '浏览资料与文件'}>
+        <Hint label={browsing
+          ? t('workbench:workspace.bubble.browsingNow')
+          : t('workbench:workspace.bubble.browse')}
+        >
           <IconButton
-            label="浏览资料与文件"
+            label={t('workbench:workspace.bubble.browse')}
             size="sm"
             icon={<FolderOpen size={14} />}
             active={browsing}
@@ -256,7 +261,7 @@ export function BubbleWindow({
             onClick={browse}
           />
         </Hint>
-        <div className="wb-bubble-tabs" role="tablist" aria-label="气泡窗文件">
+        <div className="wb-bubble-tabs" role="tablist" aria-label={t('workbench:workspace.bubble.tabs')}>
           {bubble.files.map((file) => (
             <div
               key={file.id}
@@ -278,8 +283,8 @@ export function BubbleWindow({
               <button
                 type="button"
                 className="wb-bubble-tab-close"
-                title="关闭文件"
-                aria-label={`关闭 ${file.name}`}
+                title={t('workbench:workspace.bubble.closeFile')}
+                aria-label={t('workbench:workspace.bubble.closeFileNamed', { name: file.name })}
                 onClick={(event) => { event.stopPropagation(); onCloseFile(file.id) }}
               >
                 <X size={11} />
@@ -296,19 +301,35 @@ export function BubbleWindow({
           />
         ) : null}
         <div className="wb-bubble-ctl">
-          <Hint label="收起">
-            <IconButton label="收起" size="sm" icon={<Minus size={13} />} onClick={onMinimize} />
-          </Hint>
-          <Hint label={bubble.maximized ? '还原' : '最大化'}>
+          <Hint label={t('workbench:workspace.bubble.minimize')}>
             <IconButton
-              label={bubble.maximized ? '还原' : '最大化'}
+              label={t('workbench:workspace.bubble.minimize')}
+              size="sm"
+              icon={<Minus size={13} />}
+              onClick={onMinimize}
+            />
+          </Hint>
+          <Hint label={bubble.maximized
+            ? t('workbench:workspace.bubble.restore')
+            : t('workbench:workspace.bubble.maximize')}
+          >
+            <IconButton
+              label={bubble.maximized
+                ? t('workbench:workspace.bubble.restore')
+                : t('workbench:workspace.bubble.maximize')}
               size="sm"
               icon={bubble.maximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
               onClick={onToggleMax}
             />
           </Hint>
-          <Hint label="关闭">
-            <IconButton label="关闭" size="sm" tone="danger" icon={<X size={13} />} onClick={onClose} />
+          <Hint label={t('workbench:workspace.bubble.close')}>
+            <IconButton
+              label={t('workbench:workspace.bubble.close')}
+              size="sm"
+              tone="danger"
+              icon={<X size={13} />}
+              onClick={onClose}
+            />
           </Hint>
         </div>
       </div>
@@ -321,7 +342,7 @@ export function BubbleWindow({
             <EditorView file={active} onToast={onToast} hideSideDock />
           </div>
         ) : (
-          <div className="wb-bubble-empty">还没有打开文件</div>
+          <div className="wb-bubble-empty">{t('workbench:workspace.bubble.empty')}</div>
         )}
       </div>
       </div>
@@ -333,10 +354,10 @@ export function BubbleWindow({
 
 type BrowserScope = 'all' | 'material' | 'output'
 
-const SCOPES: ReadonlyArray<{ key: BrowserScope; label: string }> = [
-  { key: 'all', label: '全部' },
-  { key: 'material', label: '资料' },
-  { key: 'output', label: '产物' },
+const SCOPES: ReadonlyArray<{ key: BrowserScope; labelKey: string }> = [
+  { key: 'all', labelKey: 'workbench:workspace.bubble.scope.all' },
+  { key: 'material', labelKey: 'workbench:workspace.bubble.scope.material' },
+  { key: 'output', labelKey: 'workbench:workspace.bubble.scope.output' },
 ]
 
 /**
@@ -347,6 +368,7 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
   onOpenFile: (file: OfficeFile) => void
   workspaceId?: string
 }) {
+  const { t } = useLocale()
   const library = useFileLibrary(workspaceId)
   const [scope, setScope] = useState<BrowserScope>('all')
 
@@ -363,7 +385,7 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
 
   return (
     <div className="wb-bubble-browser">
-      <div className="wb-bubble-browser-scopes" role="group" aria-label="资料类型">
+      <div className="wb-bubble-browser-scopes" role="group" aria-label={t('workbench:workspace.bubble.scopeLabel')}>
         {SCOPES.map((item) => (
           <button
             key={item.key}
@@ -372,7 +394,7 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
             className={cn('wb-bubble-scope', scope === item.key && 'is-active')}
             onClick={() => setScope(item.key)}
           >
-            {item.label}
+            {t(item.labelKey)}
             <span>{counts[item.key]}</span>
           </button>
         ))}
@@ -383,10 +405,10 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
           <div className="wb-bubble-browser-state"><Spinner size={13} /></div>
         ) : null}
         {library.state === 'unavailable' ? (
-          <div className="wb-bubble-browser-state">资料暂不可用</div>
+          <div className="wb-bubble-browser-state">{t('workbench:workspace.common.filesUnavailable')}</div>
         ) : null}
         {library.state === 'ready' && items.length === 0 ? (
-          <div className="wb-bubble-browser-state">没有匹配的文件</div>
+          <div className="wb-bubble-browser-state">{t('workbench:workspace.file.noMatches')}</div>
         ) : null}
         {library.state === 'ready' ? items.map((item) => (
           <BubbleBrowserRow key={item.file.id} item={item} onOpen={onOpenFile} />
@@ -395,7 +417,7 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
 
       {library.state === 'ready' && library.total > library.items.length ? (
         <div className="wb-bubble-browser-note">
-          最近 {library.items.length} / 共 {library.total} 个
+          {t('workbench:workspace.bubble.note', { shown: library.items.length, total: library.total })}
         </div>
       ) : null}
     </div>

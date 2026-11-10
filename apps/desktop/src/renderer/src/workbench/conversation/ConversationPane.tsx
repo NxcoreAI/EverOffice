@@ -7,6 +7,7 @@ import { AgentChatView } from '@/components/agent/AgentChatView'
 import { buildAskBatch, buildNoteCards, type PendingAskDraft } from '@/components/agent/askDrafts'
 import { AgentComposer, type AgentComposerHandle } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
+import { useLocale } from '@/i18n/LocaleContext'
 import { onToast as onAppToast } from '@/state/toast'
 import '@/components/agent/AgentChat.css'
 import '@/components/agent/AgentPanel.css'
@@ -19,9 +20,6 @@ import './conversation.css'
 
 /** 连接失败的「正在连接」提示延迟出现，避免 ready 帧到达前的闪烁。 */
 const CONNECTING_HINT_DELAY_MS = 1500
-
-/** 草稿态 hero 输入框占位文案（与会话态 composer 的占位区分）。 */
-const HERO_PLACEHOLDER = '今天帮你做些什么？'
 
 export interface ConversationPaneProps {
   /** 所属工作空间标签 id：草稿落成会话时把标签视图切到该会话。 */
@@ -48,11 +46,14 @@ export function ConversationPane({ tabId, workspaceId, sessionId }: Conversation
    */
   const [paneEpoch, setPaneEpoch] = useState(0)
   const restartConversationKernel = useCallback(() => setPaneEpoch((epoch) => epoch + 1), [])
+  const { t } = useLocale()
 
   // Agent 组件内部用 showToast（@/state/toast）报错/提示，桥接到工作台 toast。
   useEffect(() => onAppToast((detail) => {
-    workbenchToast(detail.message ? `${detail.title}：${detail.message}` : detail.title)
-  }), [])
+    workbenchToast(detail.message
+      ? t('workbench:conversation.toastWithDetail', { title: detail.title, message: detail.message })
+      : detail.title)
+  }), [t])
 
   return (
     <ConversationPaneInner
@@ -75,6 +76,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const askDrafts = useWorkbenchStore((state) => state.askDrafts)
   const clearAskDrafts = useWorkbenchStore((state) => state.clearAskDrafts)
   const askQueueSendNonce = useWorkbenchStore((state) => state.askQueueSendNonce)
+  const { t } = useLocale()
 
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
@@ -115,19 +117,19 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       // 当前会话还有 run 在跑：startNewConversation 会拒绝（不能取消别人的 run）。
       // 重挂载会话内核进入草稿态，旧 run 交给网关继续，回到旧会话时由快照恢复。
       if (hookRef.current.activeRunId) {
-        workbenchToast('已新建对话，原会话任务会在后台继续运行')
+        workbenchToast(t('workbench:conversation.newChatStarted'))
         onRestartConversationKernel()
         return
       }
       void hookRef.current.startNewConversation().catch((error: unknown) => {
-        workbenchToast(error instanceof Error ? error.message : '新建对话失败')
+        workbenchToast(error instanceof Error ? error.message : t('workbench:conversation.newChatFailed'))
       })
       return
     }
     void hookRef.current.selectSessionById(sessionId).catch((error: unknown) => {
-      workbenchToast(error instanceof Error ? error.message : '切换会话失败')
+      workbenchToast(error instanceof Error ? error.message : t('workbench:conversation.switchChatFailed'))
     })
-  }, [onRestartConversationKernel, sessionId])
+  }, [onRestartConversationKernel, sessionId, t])
 
   /**
    * Office「AI 修改」浮层的待注入消息（Word 选区浮层等）：本面板是这个工作空间的
@@ -161,10 +163,10 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       .then((runId) => {
         if (runId !== null || queuesBehindRun) return
         fallback()
-        workbenchToast('Agent 正忙，批注已放进输入框')
+        workbenchToast(t('workbench:conversation.agentBusyDraftKept'))
       })
       .catch(fallback)
-  }, [pendingAgentAsk, workspaceId, hook.scopeReady, hook.loading])
+  }, [pendingAgentAsk, workspaceId, hook.scopeReady, hook.loading, t])
 
   // 会话快照同步回 store：首次发送自动建会话后，侧栏立刻出现该会话（不必等轮询）。
   // 只把「当前请求的会话」（或草稿态自动创建的会话）写回 store；切会话过程中旧的
@@ -317,12 +319,12 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       )
       .then((runId) => {
         if (runId === null && !hookRef.current.activeRunId) {
-          workbenchToast('Agent 正忙，批注先留着，稍后再发')
+          workbenchToast(t('workbench:conversation.agentBusyAnnotationsKept'))
           return
         }
         clearAskDrafts(workspaceId)
       })
-      .catch(() => workbenchToast('发送失败，批注已保留'))
+      .catch(() => workbenchToast(t('workbench:conversation.sendFailedAnnotationsKept')))
   }
 
   /**
@@ -371,7 +373,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       contextUsage={hook.contextUsage}
       contextCompacting={hook.contextCompacting}
       ghostSuggestion={null}
-      placeholder={conversationState ? undefined : HERO_PLACEHOLDER}
+      placeholder={conversationState ? undefined : t('workbench:conversation.heroPlaceholder')}
       queuedSubmissions={hook.queuedSubmissions}
       onRemoveQueuedSubmission={hook.removeQueuedSubmission}
       value={draft}
@@ -404,13 +406,15 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       {dragDepth > 0 ? (
         <div className="wb-conversation-drop-hint" aria-hidden="true">
           <FilePlus2 aria-hidden="true" />
-          <span>松开以添加为对话附件</span>
+          <span>{t('workbench:conversation.dropToAttach')}</span>
         </div>
       ) : null}
 
       {!bridgeAvailable || !workspaceId ? (
         <div className="wb-conversation-notice" role="status">
-          {bridgeAvailable ? '工作区未就绪，暂时无法发送消息。' : '桌面端 Agent 服务未就绪，暂时无法发送消息。'}
+          {bridgeAvailable
+            ? t('workbench:conversation.workspaceNotReady')
+            : t('workbench:conversation.agentServiceNotReady')}
         </div>
       ) : null}
 
@@ -419,7 +423,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           <span>{standaloneError}</span>
           <button type="button" className="wb-conversation-retry" onClick={() => hook.reload()}>
             <RefreshCw size={13} aria-hidden="true" />
-            重试
+            {t('workbench:conversation.retry')}
           </button>
         </div>
       ) : null}
@@ -433,7 +437,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           </div>
           <p>
             <LoaderCircle className="wb-spin" size={13} aria-hidden="true" />
-            正在连接对话…
+            {t('workbench:conversation.connectingChat')}
           </p>
         </div>
       ) : conversationState ? (
@@ -441,9 +445,9 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           {connectingVisible && hook.sessionId && !hook.loading ? (
             <div className="wb-conversation-status" role="status">
               <LoaderCircle className="wb-spin" size={13} aria-hidden="true" />
-              <span>正在连接会话…</span>
+              <span>{t('workbench:conversation.connectingSession')}</span>
               <button type="button" className="wb-conversation-status-retry" onClick={() => hook.reload()}>
-                重试
+                {t('workbench:conversation.retry')}
               </button>
             </div>
           ) : null}
@@ -466,9 +470,14 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             loading={hook.loading}
             messages={hook.messages}
             onOpenMention={(item) => {
-              workbenchToast(`${item.kind === 'file' ? '文件' : item.kind === 'room' ? '房间' : '对话'}：${item.displayName}`)
+              const mentionKey = item.kind === 'file'
+                ? 'workbench:conversation.openFileMention'
+                : item.kind === 'room'
+                  ? 'workbench:conversation.openRoomMention'
+                  : 'workbench:conversation.openConversationMention'
+              workbenchToast(t(mentionKey, { name: item.displayName }))
             }}
-            onOpenSessionLink={() => workbenchToast('会话引用跳转暂未接入工作台')}
+            onOpenSessionLink={() => workbenchToast(t('workbench:conversation.sessionLinkNotSupported'))}
             onResolveApproval={(approvalId, decision, feedback, choice, text) => void hook.resolveApproval(approvalId, decision, feedback, choice, text)}
             onRetryError={() => hook.reload()}
             onSlidesAction={(prompt) => void hook.sendPrompt(prompt)}

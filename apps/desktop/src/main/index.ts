@@ -2476,6 +2476,30 @@ async function findLibraryFileByName(
   }
 }
 
+/**
+ * Word→PDF 导出的复用目标：同一工作空间里同名的、agent 生成的 PDF。
+ *
+ * 命中就按版本链「更新那一份」而不是新增条目——否则每次让 agent 改完再导出，
+ * 资料库就多一个「xxx_更新版.pdf」，用户眼里就是「每次都生成一个新文件」。
+ * 不唯一、无归属、跨空间同名 → 返回 null（仍按新文件入库，避免覆盖别人的文件）。
+ */
+async function findReusableAgentPdf(
+  files: FilesGatewayBridge | null,
+  name: string,
+  workspaceId: string | null | undefined,
+): Promise<string | null> {
+  if (!files || !name || !workspaceId) return null
+  try {
+    const catalog = await files.list(200, 0, { workspaceId })
+    const hits = (catalog?.items ?? []).filter(
+      (item) => item.originalName === name && item.sourceKind === 'agent-generated',
+    )
+    return hits.length === 1 ? hits[0]!.id : null
+  } catch {
+    return null
+  }
+}
+
 async function importTemplateBytesIntoLibrary(
   workspaceId: string,
   name: string,
@@ -2595,7 +2619,12 @@ function registerThesisFormatHandlers(
     }
   })
   handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
-  /** 导出 PDF：优先 genoffice 进程内渲染（无 LibreOffice 依赖）→ ~/Downloads/EverOffice/，并定位到文件。 */
+  /**
+   * 导出 PDF：优先 genoffice 进程内渲染（无 LibreOffice 依赖）→ ~/Downloads/EverOffice/。
+   * 不做「在访达中显示」：导出成功后前端已用 toast 给出落点，自动弹访达会抢走焦点
+   * （用户预期是「导出」而不是「打开文件管理器」）；需要定位时走资料库行内的
+   * 「导出并定位」这一显式入口（files.exportReveal）。
+   */
   handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
     const storagePath = await files.storagePath(fileEntryId)
     const entry = await files.catalogEntry(fileEntryId)
@@ -2607,7 +2636,6 @@ function registerThesisFormatHandlers(
       targetDir: join(app.getPath('downloads'), 'EverOffice'),
     })
     if (!outcome.ok) return { unavailable: true as const }
-    shell.showItemInFolder(outcome.pdfPath)
     return { unavailable: false as const, path: outcome.pdfPath }
   })
   handle(THESIS_FORMAT_CHANNELS.reformat, async (
@@ -3557,12 +3585,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     if (!client) return Promise.resolve([])
     return rateLimitAware(() => client.creditPacks())
   })
-  handle(ACCOUNT_CHANNELS.billingTopup, (_event, packCode: unknown) => {
+  handle(ACCOUNT_CHANNELS.billingTopup, (_event, packCode: unknown, channel: unknown) => {
     const client = saasClient
     if (!client || typeof packCode !== 'string') return Promise.reject(new Error('尚未登录。'))
-    // mock 协议不开系统浏览器(它不是真实 URL);真 paypal 的 approval 链外部打开
+    // mock 协议不开系统浏览器(它不是真实 URL);真 paypal 的 approval 链外部打开;
+    // 微信 code_url(weixin://)不是网页,留在充值弹窗内渲染二维码扫码
+    const topupChannel = channel === 'wechatpay' ? 'wechatpay' : undefined
     return rateLimitAware(async () => {
-      const order = await client.createTopup(packCode)
+      const order = await client.createTopup(packCode, topupChannel)
       if (order.provider !== 'mock' && order.approvalUrl.startsWith('http')) {
         void shell.openExternal(order.approvalUrl)
       }
@@ -3767,14 +3797,36 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             || `${basename(originalName, extname(originalName))}.pdf`
           const safeName = (rawName.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120) || 'document.pdf')
           const pdfName = /\.pdf$/i.test(safeName) ? safeName : `${safeName}.pdf`
+          // 同一空间已有同名（agent 生成的）PDF：这次导出按「更新那份文件」走版本链，
+          // 不再新增「xxx_更新版.pdf」之类的重复条目——用户要的是「改完还是那份文件」，
+          // 右侧那份 PDF 也会因为内容哈希变化被重开成最新版。
+          const reuseEntryId = await findReusableAgentPdf(files, pdfName, req.workspaceId)
           try {
             const imported = await files.importAgentGeneratedFile({
               filePath: converted.pdfPath,
               originalName: pdfName,
-              sourceKey: `agent:word:pdf:${req.fileId}:${Date.now()}`,
+              sourceKey: reuseEntryId
+                ? `agent:word:pdf:update:${reuseEntryId}`
+                : `agent:word:pdf:${req.fileId}:${Date.now()}`,
+              ...(reuseEntryId ? { fileEntryId: reuseEntryId } : {}),
               ...(req.roomId ? { roomId: req.roomId } : {}),
               ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
             })
+            // 导出完成即「打开」：按与资料库/对话文件卡同一条预览管线建实例，再补一条
+            // 预览请求让工作台在归属空间的气泡窗（右侧文件区）里显示它。用户要的是
+            // 「导出后右侧出现 PDF」，而不是自己去资料库找、更不是弹出访达。
+            // 打开失败不改变导出成功的语义（文件已入库，文件卡仍是可靠入口）。
+            const opened = await openFileInAppPreview(files, imported.fileEntryId, pdfName, {
+              ...(req.roomId ? { roomId: req.roomId } : {}),
+              ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+              // 从对话/文档面板发起：把主窗口提到前台，否则右侧开了也看不见。
+              focusWindow: true,
+            }).catch((error: unknown) => {
+              console.warn('[office] 导出 PDF 后自动打开失败：', error instanceof Error ? error.message : String(error))
+              return null
+            })
+            const request = opened ? previewRequestFromOpenResult(opened) : null
+            if (request) notifyPreviewRequested(request)
             return {
               ok: true,
               fileId: imported.fileEntryId,

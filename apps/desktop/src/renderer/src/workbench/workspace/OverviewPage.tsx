@@ -15,12 +15,13 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { AgentSession } from '@nxcore/agent-contract'
 
 import type { OfficeFile } from '@/office-proto/data'
 
 import { useWorkbenchStore } from '../state/store'
-import { relativeTimeLabel, sessionDisplayTitle, shortDateLabel } from '../types'
+import { relativeTimeLabel, sessionDisplayTitle, shortDateLabel, workspaceDisplayName } from '../types'
 import { cn } from '../ui/cn'
 import { Badge, Button, EmptyState, IconButton, Spinner } from '../ui/primitives'
 import {
@@ -31,7 +32,6 @@ import {
   type ActivitySegment,
 } from './activity'
 import {
-  INSIGHT_COPY,
   formatInsightSourceLine,
   formatInsightUpdatedLabel,
   type WorkspaceInsight,
@@ -79,6 +79,7 @@ export function OverviewPage({
   onNewWork,
   onToast,
 }: WorkspacePageProps) {
+  const { t, locale } = useLocale()
   const updateWorkspaceMeta = useWorkbenchStore((state) => state.updateWorkspaceMeta)
   // 本空间文件库（空间隔离 + 产物落库自动重拉）：动态的「产物/材料」行来自这里。
   const files = useFileLibrary(workspace.id, { limit: ACTIVITY_FILE_LIMIT })
@@ -107,8 +108,8 @@ export function OverviewPage({
     pollMs: hasRunningSession ? 10_000 : 0,
   })
   const localActivities = useMemo(
-    () => buildActivities({ sessions, files: files.items }),
-    [files.items, sessions],
+    () => buildActivities({ sessions, files: files.items, t }),
+    [files.items, sessions, t],
   )
   const activities = feed.state === 'ready' ? feed.items : localActivities
 
@@ -150,10 +151,14 @@ export function OverviewPage({
           key={key}
           type="button"
           className="wb-ov-activity-ref"
-          aria-label={session ? `打开工作：${sessionDisplayTitle(session)}` : '打开工作'}
-          onClick={() => (session ? onOpenSession(session.id) : onToast('工作不存在'))}
+          aria-label={session
+            ? t('workbench:workspace.overview.openWorkNamed', { title: sessionDisplayTitle(session, t) })
+            : t('workbench:workspace.overview.openWork')}
+          onClick={() => (session
+            ? onOpenSession(session.id)
+            : onToast(t('workbench:workspace.overview.workMissing')))}
         >
-          {session ? sessionDisplayTitle(session) : '工作'}
+          {session ? sessionDisplayTitle(session, t) : t('workbench:common.work')}
         </button>
       )
     }
@@ -164,10 +169,14 @@ export function OverviewPage({
           key={key}
           type="button"
           className="wb-ov-activity-ref"
-          aria-label={entry ? `打开文件：${entry.file.name}` : '打开文件'}
-          onClick={() => (entry ? onOpenFile(entry.file) : onToast('文件不存在'))}
+          aria-label={entry
+            ? t('workbench:workspace.overview.openFileNamed', { name: entry.file.name })
+            : t('workbench:workspace.overview.openFile')}
+          onClick={() => (entry
+            ? onOpenFile(entry.file)
+            : onToast(t('workbench:workspace.overview.fileMissing')))}
         >
-          {entry?.file.name ?? '文件'}
+          {entry?.file.name ?? t('workbench:common.file')}
         </button>
       )
     }
@@ -178,10 +187,10 @@ export function OverviewPage({
           key={key}
           type="button"
           className="wb-ov-activity-ref"
-          aria-label="打开计划"
+          aria-label={t('workbench:workspace.overview.openPlan')}
           onClick={() => onOpenPage('plan')}
         >
-          计划项
+          {t('workbench:workspace.overview.planItem')}
         </button>
       )
     }
@@ -208,9 +217,9 @@ export function OverviewPage({
     setTitleEditing(false)
     if (!next || next === workspace.name) return
     void updateWorkspaceMeta(workspace.id, { name: next }).then((ok) => {
-      if (!ok) onToast('名称保存失败，请稍后重试')
+      if (!ok) onToast(t('workbench:workspace.overview.nameSaveFailed'))
     })
-  }, [onToast, titleDraft, titleEditing, updateWorkspaceMeta, workspace.id, workspace.name])
+  }, [onToast, t, titleDraft, titleEditing, updateWorkspaceMeta, workspace.id, workspace.name])
 
   /* ── 描述行内编辑（失焦 / ⌘Enter 保存） ── */
   const [descriptionEditing, setDescriptionEditing] = useState(false)
@@ -232,9 +241,9 @@ export function OverviewPage({
     setDescriptionEditing(false)
     if (next === (workspace.description ?? '').trim()) return
     void updateWorkspaceMeta(workspace.id, { description: next ? next : null }).then((ok) => {
-      if (!ok) onToast('描述保存失败，请稍后重试')
+      if (!ok) onToast(t('workbench:workspace.overview.descriptionSaveFailed'))
     })
-  }, [descriptionDraft, descriptionEditing, onToast, updateWorkspaceMeta, workspace.description, workspace.id])
+  }, [descriptionDraft, descriptionEditing, onToast, t, updateWorkspaceMeta, workspace.description, workspace.id])
 
   /* ── 目标药丸（可增删，最多 12 条） ── */
   const [goals, setGoals] = useState<string[]>(workspace.goals ?? [])
@@ -268,10 +277,10 @@ export function OverviewPage({
       if (!ok) {
         lastPersistedGoalsRef.current = null
         setGoals(workspace.goals ?? [])
-        onToast('目标保存失败，请稍后重试')
+        onToast(t('workbench:workspace.overview.goalsSaveFailed'))
       }
     })
-  }, [onToast, updateWorkspaceMeta, workspace.goals, workspace.id])
+  }, [onToast, t, updateWorkspaceMeta, workspace.goals, workspace.id])
 
   function addGoal(raw: string): void {
     const value = raw.trim()
@@ -281,7 +290,7 @@ export function OverviewPage({
       return
     }
     if (goals.length >= MAX_GOALS) {
-      onToast('目标最多 12 条')
+      onToast(t('workbench:workspace.overview.goalsLimit'))
       return
     }
     if (savingGoals) return
@@ -313,10 +322,12 @@ export function OverviewPage({
       <header className="wb-ov-head">
         <div className="wb-ov-head-top">
           <Badge tone={runningCount > 0 ? 'running' : 'neutral'} dot>
-            {runningCount > 0 ? `进行中 ${runningCount}` : '待开始'}
+            {runningCount > 0
+              ? t('workbench:workspace.overview.running', { count: runningCount })
+              : t('workbench:status.idle')}
           </Badge>
           <Button variant="primary" icon={<Plus size={15} />} onClick={onNewWork}>
-            新建工作
+            {t('workbench:workspaceSidebar.newWork')}
           </Button>
         </div>
 
@@ -325,7 +336,7 @@ export function OverviewPage({
             <input
               ref={titleRef}
               className="ui-input wb-ov-title-input"
-              aria-label="工作空间名称"
+              aria-label={t('workbench:workspace.overview.titleAria')}
               value={titleDraft}
               onChange={(event) => setTitleDraft(event.target.value)}
               onBlur={commitTitle}
@@ -344,10 +355,10 @@ export function OverviewPage({
               <button
                 type="button"
                 className="wb-ov-title-btn"
-                title="点击重命名工作空间"
+                title={t('workbench:workspace.overview.renameHint')}
                 onClick={startTitleEdit}
               >
-                {workspace.name}
+                {workspaceDisplayName(workspace, locale)}
               </button>
             </h1>
           )}
@@ -357,8 +368,8 @@ export function OverviewPage({
           <textarea
             ref={descriptionRef}
             className="ui-input ui-textarea wb-ov-desc-input"
-            aria-label="项目描述（⌘Enter 保存）"
-            placeholder="补充项目描述…"
+            aria-label={t('workbench:workspace.overview.descriptionAria')}
+            placeholder={t('workbench:workspace.overview.descriptionPlaceholder')}
             value={descriptionDraft}
             onChange={(event) => setDescriptionDraft(event.target.value)}
             onBlur={commitDescription}
@@ -378,11 +389,13 @@ export function OverviewPage({
             className={cn('wb-ov-desc', !hasDescription && 'is-empty')}
             onClick={startDescriptionEdit}
           >
-            {hasDescription ? workspace.description : '补充项目描述…'}
+            {hasDescription
+              ? workspace.description
+              : t('workbench:workspace.overview.descriptionPlaceholder')}
           </button>
         )}
 
-        <div className="wb-ov-goals" role="group" aria-label="目标">
+        <div className="wb-ov-goals" role="group" aria-label={t('workbench:workspace.overview.goals')}>
           {goals.map((goal) => (
             <span key={goal} className="wb-ov-goal">
               <Crosshair size={12} aria-hidden="true" />
@@ -390,8 +403,8 @@ export function OverviewPage({
               <button
                 type="button"
                 className="wb-ov-goal-remove"
-                aria-label={`移除目标：${goal}`}
-                title="移除目标"
+                aria-label={t('workbench:workspace.overview.removeGoalNamed', { goal })}
+                title={t('workbench:workspace.overview.removeGoal')}
                 disabled={savingGoals}
                 onClick={() => removeGoal(goal)}
               >
@@ -404,8 +417,8 @@ export function OverviewPage({
             <input
               ref={goalInputRef}
               className="wb-ov-goal-input"
-              aria-label="新目标"
-              placeholder="输入目标"
+              aria-label={t('workbench:workspace.overview.newGoal')}
+              placeholder={t('workbench:workspace.overview.goalPlaceholder')}
               maxLength={200}
               value={goalDraft}
               onChange={(event) => setGoalDraft(event.target.value)}
@@ -429,13 +442,15 @@ export function OverviewPage({
             />
           ) : goals.length < MAX_GOALS ? (
             <button type="button" className="wb-ov-goal-add" onClick={startGoalAdd} disabled={savingGoals}>
-              ＋ 添加目标
+              {t('workbench:workspace.overview.addGoal')}
             </button>
           ) : null}
           {savingGoals ? <Spinner size={12} className="wb-ov-goals-spinner" /> : null}
         </div>
 
-        <p className="wb-ov-meta">{startedLabel} 开始</p>
+        <p className="wb-ov-meta">
+          {t('workbench:workspace.overview.started', { date: startedLabel })}
+        </p>
       </header>
 
       <InsightCard
@@ -444,20 +459,20 @@ export function OverviewPage({
         refreshing={insight.refreshing}
         onRefresh={async () => {
           const ok = await insight.refresh()
-          if (ok) onToast(INSIGHT_COPY.refreshToast)
+          if (ok) onToast(t('workbench:insight.refreshToast'))
         }}
         onOpenSession={onOpenSession}
       />
 
       <section className="wb-ov-card" aria-labelledby="wb-ov-activity-heading">
         <header className="wb-ov-card-head">
-          <h2 id="wb-ov-activity-heading">动态</h2>
+          <h2 id="wb-ov-activity-heading">{t('workbench:workspace.overview.activity')}</h2>
           <button
             type="button"
             className="ui-btn ui-btn--ghost ui-btn--sm wb-ov-card-action"
             onClick={() => onOpenPage('plan')}
           >
-            全部工作
+            {t('workbench:workspace.overview.allWork')}
           </button>
         </header>
 
@@ -469,8 +484,8 @@ export function OverviewPage({
           <EmptyState
             className="wb-ov-empty"
             icon={<History size={18} />}
-            title="还没有动态"
-            description="空间里发生的工作与文件变化会记录在这里"
+            title={t('workbench:workspace.overview.emptyTitle')}
+            description={t('workbench:workspace.overview.emptyBody')}
           />
         ) : null}
 
@@ -485,9 +500,9 @@ export function OverviewPage({
                   <span className="wb-ov-activity-label">
                     {item.segments.map((segment, index) => renderSegment(segment, `${item.id}-${index}`))}
                   </span>
-                  {relativeTimeLabel(item.at) ? (
+                  {relativeTimeLabel(item.at, t) ? (
                     <time className="wb-ov-activity-time" dateTime={item.at} title={absoluteTimeTitle(item.at)}>
-                      {relativeTimeLabel(item.at)}
+                      {relativeTimeLabel(item.at, t)}
                     </time>
                   ) : null}
                 </div>
@@ -498,7 +513,7 @@ export function OverviewPage({
 
         {!showAll && (hiddenLocally > 0 || canLoadMore) ? (
           <button type="button" className="wb-ov-more" onClick={expandTimeline}>
-            显示更早
+            {t('workbench:workspace.overview.showEarlier')}
           </button>
         ) : null}
 
@@ -511,17 +526,19 @@ export function OverviewPage({
                 disabled={feed.loadingMore}
                 onClick={() => feed.loadMore()}
               >
-                {feed.loadingMore ? '加载中…' : '显示更早'}
+                {feed.loadingMore
+                  ? t('workbench:workspace.common.loading')
+                  : t('workbench:workspace.overview.showEarlier')}
               </button>
             ) : null}
             <button type="button" className="wb-ov-more" onClick={() => setShowAll(false)}>
-              收起
+              {t('workbench:workspace.overview.collapse')}
             </button>
           </div>
         ) : null}
 
         {files.state === 'unavailable' ? (
-          <p className="wb-ov-note">资料暂不可用</p>
+          <p className="wb-ov-note">{t('workbench:workspace.common.filesUnavailable')}</p>
         ) : null}
       </section>
     </div>
@@ -630,6 +647,7 @@ function InsightCard({
   onRefresh: () => Promise<void> | void
   onOpenSession: (sessionId: string) => void
 }) {
+  const { t } = useLocale()
   const [evidenceOpen, setEvidenceOpen] = useState(false)
   const evidenceRef = useRef<HTMLDivElement | null>(null)
   const sourceRef = useRef<HTMLButtonElement | null>(null)
@@ -668,7 +686,7 @@ function InsightCard({
   const hasText = Boolean(insight.text)
     && (insight.status === 'ready' || insight.status === 'updating'
       || insight.status === 'refreshing' || insight.status === 'no-content')
-  const updatedLabel = formatInsightUpdatedLabel(relativeTimeLabel(insight.updatedAt))
+  const updatedLabel = formatInsightUpdatedLabel(relativeTimeLabel(insight.updatedAt, t), t)
   const canRefresh = insight.status !== 'loading' && insight.status !== 'empty'
 
   return (
@@ -676,15 +694,15 @@ function InsightCard({
       <header className="wb-ov-card-head">
         <span className="wb-ov-insight-badge">
           <span className="wb-ov-insight-ai" aria-hidden="true"><Sparkles size={15} /></span>
-          <span id="wb-ov-insight-heading">{INSIGHT_COPY.title}</span>
+          <span id="wb-ov-insight-heading">{t('workbench:insight.title')}</span>
         </span>
         {insight.status === 'updating' ? (
-          <span className="wb-ov-insight-updating">{INSIGHT_COPY.updating}</span>
+          <span className="wb-ov-insight-updating">{t('workbench:insight.updating')}</span>
         ) : null}
         {canRefresh ? (
           <IconButton
             className="wb-ov-insight-refresh"
-            label={INSIGHT_COPY.refreshLabel}
+            label={t('workbench:insight.refreshLabel')}
             size="sm"
             icon={refreshing ? <Spinner size={12} /> : <RefreshCw size={12} />}
             aria-disabled={refreshing}
@@ -694,7 +712,7 @@ function InsightCard({
       </header>
 
       {insight.status === 'loading' ? (
-        <div className="wb-ov-insight-skeleton" role="status" aria-label={INSIGHT_COPY.loading}>
+        <div className="wb-ov-insight-skeleton" role="status" aria-label={t('workbench:insight.loading')}>
           <span /><span /><span />
         </div>
       ) : null}
@@ -705,20 +723,20 @@ function InsightCard({
 
       {insight.status === 'empty' ? (
         <div className="wb-ov-insight-empty">
-          <p className="wb-ov-insight-empty-title">{INSIGHT_COPY.emptyTitle}</p>
-          <p className="wb-ov-insight-empty-desc">{INSIGHT_COPY.emptyBody}</p>
+          <p className="wb-ov-insight-empty-title">{t('workbench:insight.emptyTitle')}</p>
+          <p className="wb-ov-insight-empty-desc">{t('workbench:insight.emptyBody')}</p>
         </div>
       ) : null}
 
       {insight.status === 'no-content' && !insight.text ? (
-        <p className="wb-ov-insight-state">{INSIGHT_COPY.noContent}</p>
+        <p className="wb-ov-insight-state">{t('workbench:insight.noContent')}</p>
       ) : null}
 
       {insight.status === 'error' ? (
         <div className="wb-ov-insight-error">
-          <span>{INSIGHT_COPY.error}</span>
+          <span>{t('workbench:insight.error')}</span>
           <Button variant="ghost" size="sm" onClick={() => { void onRefresh() }}>
-            {INSIGHT_COPY.retry}
+            {t('workbench:insight.retry')}
           </Button>
         </div>
       ) : null}
@@ -733,20 +751,20 @@ function InsightCard({
             aria-expanded={evidenceOpen}
             onClick={() => setEvidenceOpen((open) => !open)}
           >
-            {formatInsightSourceLine(insight.stats, updatedLabel)}
+            {formatInsightSourceLine(insight.stats, updatedLabel, t)}
           </button>
           {evidenceOpen ? (
             <div
               ref={evidenceRef}
               className="wb-ov-insight-evidence"
               role="dialog"
-              aria-label={INSIGHT_COPY.evidenceTitle}
+              aria-label={t('workbench:insight.evidenceTitle')}
             >
-              <p className="wb-ov-insight-evidence-title">{INSIGHT_COPY.evidenceTitle}</p>
+              <p className="wb-ov-insight-evidence-title">{t('workbench:insight.evidenceTitle')}</p>
               <button
                 type="button"
                 className="wb-ov-insight-evidence-row"
-                aria-label={`${INSIGHT_COPY.evidenceOpen}：${originSession ? sessionDisplayTitle(originSession) : '工作'}`}
+                aria-label={t('workbench:insight.evidenceOpenNamed', { title: originSession ? sessionDisplayTitle(originSession, t) : t('workbench:common.work') })}
                 onClick={() => {
                   setEvidenceOpen(false)
                   if (origin) onOpenSession(origin.sessionId)
@@ -754,10 +772,10 @@ function InsightCard({
               >
                 <FileText size={13} aria-hidden="true" />
                 <span className="wb-ov-insight-evidence-name">
-                  {originSession ? sessionDisplayTitle(originSession) : '工作'}
+                  {originSession ? sessionDisplayTitle(originSession, t) : t('workbench:common.work')}
                 </span>
                 <span className="wb-ov-insight-evidence-time">
-                  {relativeTimeLabel(originSession?.updatedAt ?? insight.updatedAt)}
+                  {relativeTimeLabel(originSession?.updatedAt ?? insight.updatedAt, t)}
                 </span>
               </button>
             </div>
@@ -767,7 +785,7 @@ function InsightCard({
 
       {hasText ? (
         <footer className="wb-ov-insight-footer">
-          <span className="wb-ov-insight-speaker">{INSIGHT_COPY.footer}</span>
+          <span className="wb-ov-insight-speaker">{t('workbench:insight.footer')}</span>
         </footer>
       ) : null}
     </section>

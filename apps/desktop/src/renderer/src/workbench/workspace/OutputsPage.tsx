@@ -1,6 +1,7 @@
 import { FolderOpen, PackageOpen, RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
 import { Button, EmptyState, IconButton } from '../ui/primitives'
@@ -36,6 +37,7 @@ type ArtifactFilter = 'all' | 'agent-generated' | 'artifact-imported'
  * 本页多出的只是来源筛选 chips（筛选不是排序）。
  */
 export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewWork }: WorkspacePageProps) {
+  const { t } = useLocale()
   const library = useFileLibrary(workspace.id)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ArtifactFilter>('all')
@@ -65,45 +67,48 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     () => filtered.map((item): LibraryRow => ({
       kind: 'file',
       item,
-      location: folderLabel(folderOf(item)),
+      location: folderLabel(folderOf(item), t),
     })),
-    [filtered],
+    [filtered, t],
   )
 
   const filters: ReadonlyArray<FileFilterOption<ArtifactFilter>> = [
-    { key: 'all', label: '全部产物', count: counts.all },
-    { key: 'agent-generated', label: 'Agent 生成', count: counts['agent-generated'] },
-    { key: 'artifact-imported', label: '产物导入', count: counts['artifact-imported'] },
+    { key: 'all', label: t('workbench:workspace.outputs.filter.all'), count: counts.all },
+    { key: 'agent-generated', label: t('workbench:workspace.outputs.filter.agent'), count: counts['agent-generated'] },
+    { key: 'artifact-imported', label: t('workbench:workspace.outputs.filter.imported'), count: counts['artifact-imported'] },
   ]
 
   const exportReveal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
     if (!api || typeof api.exportReveal !== 'function') {
-      onToast('桌面端文件能力不可用')
+      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast('已导出到「下载/EverOffice」并定位到文件管理器')
+      onToast(t('workbench:workspace.common.exported'))
     } catch {
-      onToast('导出失败，请稍后重试')
+      onToast(t('workbench:workspace.common.exportFailed'))
     }
   }
 
   const openOriginal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
     if (!api || typeof api.openOriginal !== 'function') {
-      onToast('桌面端文件能力不可用')
+      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
       const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
         workspaceId: workspace.id,
       })
-      if (result.openedWith === 'office') onToast(`已在内置 Office 预览中打开「${item.file.name}」`)
-      else onToast('已用系统默认应用打开')
+      if (result.openedWith === 'office') {
+        onToast(t('workbench:workspace.common.openedInOffice', { name: item.file.name }))
+      } else {
+        onToast(t('workbench:workspace.common.openedDefaultApp'))
+      }
     } catch {
-      onToast('打开失败，请稍后重试')
+      onToast(t('workbench:workspace.common.openFailed'))
     }
   }
 
@@ -117,16 +122,16 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
   return (
     <div className="wb-wspage wb-outputs-page">
       <header className="wb-wspage-head">
-        <h1 className="wb-wspage-title">产物</h1>
+        <h1 className="wb-wspage-title">{t('workbench:workspacePage.outputs')}</h1>
         <div className="wb-file-head-actions">
           <IconButton
-            label="刷新产物"
+            label={t('workbench:workspace.outputs.refresh')}
             icon={<RefreshCw size={15} className={library.refreshing ? 'ui-spin' : undefined} />}
             onClick={library.refresh}
             disabled={library.refreshing}
           />
           <Button variant="secondary" icon={<FolderOpen size={15} />} onClick={() => onOpenPage('library')}>
-            去资料
+            {t('workbench:workspace.outputs.goLibrary')}
           </Button>
         </div>
       </header>
@@ -140,8 +145,8 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
           onFilterChange={setFilter}
           view={view}
           onViewChange={setView}
-          searchPlaceholder="搜索产物"
-          filterAriaLabel="产物来源筛选"
+          searchPlaceholder={t('workbench:workspace.outputs.searchPlaceholder')}
+          filterAriaLabel={t('workbench:workspace.outputs.filterAria')}
         />
       ) : null}
 
@@ -152,8 +157,12 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
         <EmptyState
           className="wb-file-state"
           icon={<PackageOpen size={18} />}
-          title="还没有产物"
-          action={<Button variant="ghost" onClick={onNewWork}>新建工作</Button>}
+          title={t('workbench:workspace.outputs.empty')}
+          action={(
+            <Button variant="ghost" onClick={onNewWork}>
+              {t('workbench:workspaceSidebar.newWork')}
+            </Button>
+          )}
         />
       ) : null}
 

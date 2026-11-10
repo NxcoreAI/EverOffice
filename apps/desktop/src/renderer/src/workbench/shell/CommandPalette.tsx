@@ -9,11 +9,12 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import { fetchRealFiles, type RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 
 import { useWorkbenchStore } from '../state/store'
-import { HOME_PAGES, relativeTimeLabel, sessionDisplayTitle } from '../types'
+import { HOME_PAGES, relativeTimeLabel, sessionDisplayTitle, workspaceDisplayName } from '../types'
 import { Spinner } from '../ui/primitives'
 import './palette.css'
 
@@ -22,6 +23,7 @@ import './palette.css'
  * 数据全部来自已加载的 store 与真实文件库（打开时拉一次最近 40 个文件）。
  */
 export function CommandPalette() {
+  const { t, locale } = useLocale()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [files, setFiles] = useState<RealOfficeFile[] | null>(null)
@@ -72,80 +74,80 @@ export function CommandPalette() {
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="wb-palette-overlay" />
-        <Dialog.Content className="wb-palette" aria-label="命令面板">
-          <Dialog.Title className="wb-palette-title">搜索与跳转</Dialog.Title>
-          <Command label="命令面板" shouldFilter>
+        <Dialog.Content className="wb-palette" aria-label={t('workbench:palette.aria')}>
+          <Dialog.Title className="wb-palette-title">{t('workbench:palette.title')}</Dialog.Title>
+          <Command label={t('workbench:palette.aria')} shouldFilter>
             <div className="wb-palette-input">
               <Search size={15} aria-hidden="true" />
               <Command.Input
                 autoFocus
                 value={query}
                 onValueChange={setQuery}
-                placeholder="搜索工作空间、工作或文件…"
+                placeholder={t('workbench:palette.placeholder')}
               />
               <kbd>esc</kbd>
             </div>
             <Command.List className="wb-palette-list">
-              <Command.Empty className="wb-palette-empty">没有匹配项</Command.Empty>
+              <Command.Empty className="wb-palette-empty">{t('workbench:palette.empty')}</Command.Empty>
 
-              <Command.Group heading="主页">
+              <Command.Group heading={t('workbench:palette.groupHome')}>
                 {HOME_PAGES.map((page) => (
                   <Command.Item
                     key={page.key}
-                    value={`主页 ${page.label}`}
+                    value={t('workbench:palette.homeValue', { label: t(page.labelKey) })}
                     onSelect={() => { openHome(page.key); close() }}
                   >
                     <span className="wb-palette-icon" aria-hidden="true"><Clock size={15} /></span>
-                    <span className="wb-palette-label">主页 · {page.label}</span>
+                    <span className="wb-palette-label">{t('workbench:palette.homeItem', { label: t(page.labelKey) })}</span>
                   </Command.Item>
                 ))}
               </Command.Group>
 
-              <Command.Group heading="项目空间">
+              <Command.Group heading={t('workbench:palette.groupSpaces')}>
                 {orderedWorkspaces.map((workspace) => (
                   <Command.Item
                     key={workspace.id}
-                    value={`空间 ${workspace.name} ${workspace.path ?? ''}`}
+                    value={t('workbench:palette.spaceValue', { name: workspaceDisplayName(workspace, locale), path: workspace.path ?? '' })}
                     onSelect={() => { openWorkspaceTab(workspace.id); close() }}
                   >
                     <span className="wb-palette-icon" aria-hidden="true"><LayoutGrid size={15} /></span>
-                    <span className="wb-palette-label">{workspace.name}</span>
-                    <span className="wb-palette-meta">{workspace.path ?? '应用托管空间'}</span>
+                    <span className="wb-palette-label">{workspaceDisplayName(workspace, locale)}</span>
+                    <span className="wb-palette-meta">{workspace.path ?? t('workbench:palette.managedSpace')}</span>
                   </Command.Item>
                 ))}
               </Command.Group>
 
-              <Command.Group heading="工作">
+              <Command.Group heading={t('workbench:palette.groupWorks')}>
                 {recentSessions.slice(0, 12).map((session) => {
                   const workspace = workspaces.find((item) => item.id === session.workspaceId)
                   return (
                     <Command.Item
                       key={session.id}
-                      value={`工作 ${sessionDisplayTitle(session)} ${workspace?.name ?? ''}`}
+                      value={t('workbench:palette.workValue', { title: sessionDisplayTitle(session, t), workspace: workspace ? workspaceDisplayName(workspace, locale) : '' })}
                       onSelect={() => {
                         if (session.workspaceId) openWorkspaceTab(session.workspaceId, { kind: 'session', sessionId: session.id })
                         close()
                       }}
                     >
                       <span className="wb-palette-icon" aria-hidden="true"><FolderOpen size={15} /></span>
-                      <span className="wb-palette-label">{sessionDisplayTitle(session)}</span>
+                      <span className="wb-palette-label">{sessionDisplayTitle(session, t)}</span>
                       <span className="wb-palette-meta">
-                        {workspace?.name ?? '工作空间'} · {relativeTimeLabel(session.updatedAt)}
+                        {workspace ? workspaceDisplayName(workspace, locale) : t('workbench:palette.workspace')} · {relativeTimeLabel(session.updatedAt, t)}
                       </span>
                     </Command.Item>
                   )
                 })}
               </Command.Group>
 
-              <Command.Group heading="文件">
+              <Command.Group heading={t('workbench:palette.groupFiles')}>
                 {files === null ? (
-                  <div className="wb-palette-loading"><Spinner size={13} /> 正在读取资料…</div>
+                  <div className="wb-palette-loading"><Spinner size={13} /> {t('workbench:palette.loading')}</div>
                 ) : files.length === 0 ? (
-                  <div className="wb-palette-loading">资料暂无文件</div>
+                  <div className="wb-palette-loading">{t('workbench:palette.noFiles')}</div>
                 ) : files.map((item) => (
                   <Command.Item
                     key={item.file.id}
-                    value={`文件 ${item.file.name} ${item.catalog.sourceLabel}`}
+                    value={t('workbench:palette.fileValue', { name: item.file.name, source: item.catalog.sourceLabel })}
                     onSelect={() => { openFileInWorkspace(item.file); close() }}
                   >
                     <span className="wb-palette-icon" aria-hidden="true">
@@ -159,11 +161,11 @@ export function CommandPalette() {
 
               {files === null ? null : (
                 <Command.Item
-                  value="资料 所有文件"
+                  value={t('workbench:palette.allFiles')}
                   onSelect={() => { openHome('files'); close() }}
                 >
                   <span className="wb-palette-icon" aria-hidden="true"><FileText size={15} /></span>
-                  <span className="wb-palette-label">在「所有文件」中继续浏览</span>
+                  <span className="wb-palette-label">{t('workbench:palette.browseAll')}</span>
                 </Command.Item>
               )}
             </Command.List>

@@ -1,16 +1,17 @@
 import { AlertCircle, CalendarDays, CheckSquare, Paperclip } from 'lucide-react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { PlanItem } from '@nxcore/agent-contract'
 
 import { relativeTimeLabel } from '../../types'
 import { Badge } from '../../ui/primitives'
 import { isPlanOverdue } from './planDrag'
 
-const PRIORITY_LABEL: Record<PlanItem['priority'], string> = {
-  low: '低',
-  normal: '常规',
-  high: '高',
-  urgent: '紧急',
+const PRIORITY_KEY: Record<PlanItem['priority'], string> = {
+  low: 'workbench:workspace.plan.priority.low',
+  normal: 'workbench:workspace.plan.priority.normal',
+  high: 'workbench:workspace.plan.priority.high',
+  urgent: 'workbench:workspace.plan.priority.urgent',
 }
 
 export interface PlanCardProps {
@@ -45,6 +46,7 @@ export function PlanCard({
   onDragStart,
   onDragEnd,
 }: PlanCardProps) {
+  const { t } = useLocale()
   const checklistDone = item.checklist.filter((entry) => entry.done).length
   const overdue = isPlanOverdue(item.dueAt) && item.status !== 'done' && item.status !== 'dropped'
   const blocked = (blockedTitles?.length ?? 0) > 0
@@ -84,7 +86,7 @@ export function PlanCard({
             type="checkbox"
             className="wb-plan-select"
             checked={selected}
-            aria-label={`选择「${item.title}」`}
+            aria-label={t('workbench:workspace.plan.selectCard', { title: item.title })}
             onClick={(event) => event.stopPropagation()}
             onChange={onToggleSelect}
           />
@@ -115,7 +117,7 @@ export function PlanCard({
         ) : null}
         {item.priority === 'urgent' || item.priority === 'high' ? (
           <Badge tone={item.priority === 'urgent' ? 'danger' : 'warning'}>
-            {PRIORITY_LABEL[item.priority]}
+            {t(PRIORITY_KEY[item.priority])}
           </Badge>
         ) : null}
       </div>
@@ -123,16 +125,20 @@ export function PlanCard({
       {blocked ? (
         <div className="wb-plan-task-blocked">
           <AlertCircle size={12} aria-hidden="true" />
-          等待 {blockedTitles!.slice(0, 2).join('、')}
+          {t('workbench:workspace.plan.waitingOn', {
+            items: blockedTitles!.slice(0, 2).join(t('workbench:workspace.common.separator')),
+          })}
         </div>
       ) : null}
 
       {item.assigneeSessionId ? (
         <footer className="wb-plan-task-foot">
           <span className="wb-plan-task-session">
-            会话「{sessionTitle ?? '新工作'}」
+            {t('workbench:workspace.plan.sessionLabel', {
+              title: sessionTitle ?? t('workbench:common.newWork'),
+            })}
           </span>
-          <span>{relativeTimeLabel(item.updatedAt)}</span>
+          <span>{relativeTimeLabel(item.updatedAt, t)}</span>
         </footer>
       ) : null}
     </article>

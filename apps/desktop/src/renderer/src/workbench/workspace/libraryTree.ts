@@ -1,3 +1,4 @@
+import { translateZh, type Translate } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
 import { directoryOf, fileSearchText } from './fileBrowser'
@@ -44,7 +45,7 @@ export type LibraryRow =
   /** scratch（`.tmp/`）里的临时文件：不入库索引，只读浏览 + 访达定位。 */
   | { kind: 'scratch'; path: string; name: string; location: string; sizeLabel: string; modifiedLabel: string }
 
-export const LIBRARY_ROOT_LABEL = '资料'
+export const LIBRARY_ROOT_KEY = 'workbench:workspace.library.root'
 
 /** scratch（`.tmp/`）子树的保留路径前缀；与真实文件夹命名空间互不混淆。 */
 export const TMP_FOLDER_PATH = '.tmp'
@@ -78,10 +79,11 @@ export function folderCrumbs(path: string): LibraryCrumb[] {
 }
 
 /** 位置列的展示文案：`docs/api` → `docs / api`，根目录 → 「资料」。 */
-export function folderLabel(path: string): string {
+export function folderLabel(path: string, t: Translate = translateZh): string {
   const normalized = normalizeFolderPath(path)
-  if (normalized === TMP_FOLDER_PATH) return `${LIBRARY_ROOT_LABEL} / ${TMP_FOLDER_PATH}`
-  return normalized ? normalized.split('/').join(' / ') : LIBRARY_ROOT_LABEL
+  const rootLabel = t(LIBRARY_ROOT_KEY)
+  if (normalized === TMP_FOLDER_PATH) return `${rootLabel} / ${TMP_FOLDER_PATH}`
+  return normalized ? normalized.split('/').join(' / ') : rootLabel
 }
 
 function nameCollator(left: string, right: string): number {
@@ -125,8 +127,8 @@ export function buildLibraryLevel(
 }
 
 /** 当前层的一行行列表（文件夹在前，文件在后）。 */
-export function levelRows(level: LibraryLevel): LibraryRow[] {
-  const location = folderLabel(level.path)
+export function levelRows(level: LibraryLevel, t: Translate = translateZh): LibraryRow[] {
+  const location = folderLabel(level.path, t)
   return [
     ...level.folders.map((folder): LibraryRow => ({
       kind: 'folder',
@@ -183,8 +185,8 @@ export function buildScratchLevel(
 }
 
 /** scratch 层的行（与 levelRows 同构；文件行 kind='scratch'，文件夹行复用 'folder'）。 */
-export function scratchRows(level: ScratchLevel): LibraryRow[] {
-  const location = folderLabel(level.path)
+export function scratchRows(level: ScratchLevel, t: Translate = translateZh): LibraryRow[] {
+  const location = folderLabel(level.path, t)
   return [
     ...level.folders.map((name): LibraryRow => ({
       kind: 'folder' as const,
@@ -229,7 +231,11 @@ export interface LibrarySearch {
 }
 
 /** 全库搜索：文件夹按名称命中，文件按名称/路径/来源/标签命中（与列表搜索同口径）。 */
-export function searchLibrary(items: readonly RealOfficeFile[], keyword: string): LibrarySearch {
+export function searchLibrary(
+  items: readonly RealOfficeFile[],
+  keyword: string,
+  t: Translate = translateZh,
+): LibrarySearch {
   const query = keyword.trim().toLowerCase()
   if (!query) return { folders: [], files: [] }
 
@@ -251,7 +257,7 @@ export function searchLibrary(items: readonly RealOfficeFile[], keyword: string)
       path,
       name: path.split('/').pop()!,
       fileCount: folderFiles.get(path) ?? 0,
-      location: folderLabel(parentFolderOf(path)),
+      location: folderLabel(parentFolderOf(path), t),
     }))
 
   const fileRows = items
@@ -259,7 +265,7 @@ export function searchLibrary(items: readonly RealOfficeFile[], keyword: string)
     .map((item): LibraryRow => ({
       kind: 'file',
       item,
-      location: folderLabel(folderOf(item)),
+      location: folderLabel(folderOf(item), t),
     }))
 
   return { folders: folderRows, files: fileRows }

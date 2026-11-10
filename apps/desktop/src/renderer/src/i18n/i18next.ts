@@ -12,7 +12,7 @@ if (!i18n.isInitialized) {
       fallbackLng: false,
       fallbackNS: 'common',
       defaultNS: 'common',
-      ns: ['common', 'surface'],
+      ns: ['common', 'surface', 'workbench'],
       interpolation: {
         escapeValue: false,
         prefix: '{',

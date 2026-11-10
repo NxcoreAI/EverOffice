@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { ClipboardList, FileText, LineChart, Presentation } from 'lucide-react'
 
 import { BrandRibbon } from '@/components/ui/BrandRibbon'
+import { useLocale } from '@/i18n/LocaleContext'
 
 /**
  * 主区空态 hero（品牌时刻）：缎带 + 问候 + 大输入框 + 建议 chips。
@@ -21,19 +22,22 @@ export interface ConversationEmptyProps {
 }
 
 interface HeroSuggestion {
-  label: string
-  prompt: string
+  id: string
+  labelKey: string
+  promptKey: string
   Icon: typeof FileText
 }
 
 const HERO_SUGGESTIONS: HeroSuggestion[] = [
-  { label: '写周报', prompt: '帮我写一份本周的工作周报', Icon: FileText },
-  { label: '分析数据', prompt: '帮我分析一份数据表，找出关键趋势和异常', Icon: LineChart },
-  { label: '做 PPT', prompt: '帮我把这些材料整理成一份演示文稿', Icon: Presentation },
-  { label: '整理会议纪要', prompt: '帮我整理会议纪要，提炼结论和待办事项', Icon: ClipboardList },
+  { id: 'weekly', labelKey: 'workbench:conversation.suggestWeekly', promptKey: 'workbench:conversation.promptWeekly', Icon: FileText },
+  { id: 'data', labelKey: 'workbench:conversation.suggestData', promptKey: 'workbench:conversation.promptData', Icon: LineChart },
+  { id: 'slides', labelKey: 'workbench:conversation.suggestSlides', promptKey: 'workbench:conversation.promptSlides', Icon: Presentation },
+  { id: 'minutes', labelKey: 'workbench:conversation.suggestMinutes', promptKey: 'workbench:conversation.promptMinutes', Icon: ClipboardList },
 ]
 
 export function ConversationEmpty({ children, aboveInput, onSuggestion }: ConversationEmptyProps) {
+  const { t } = useLocale()
+
   return (
     <div className="wb-conversation-hero">
       <div className="wb-hero">
@@ -41,22 +45,25 @@ export function ConversationEmpty({ children, aboveInput, onSuggestion }: Conver
           <BrandRibbon size={44} animated />
         </div>
 
-        <h1 className="wb-hero-title">EverOffice，我帮你</h1>
+        <h1 className="wb-hero-title">{t('workbench:conversation.heroTitle')}</h1>
 
-        {aboveInput ? <div className="wb-hero-above-input">{aboveInput}</div> : null}
+        {/* 附加行（待发送批注徽章）与输入框放在**同一个列容器**里：左边缘天然与输入框
+            对齐（gap 给出 8px 间距），不再靠两行各自 100% 宽度去"看起来对齐"。 */}
+        <div className="wb-hero-input">
+          {aboveInput ? <div className="wb-hero-above-input">{aboveInput}</div> : null}
+          {children}
+        </div>
 
-        <div className="wb-hero-input">{children}</div>
-
-        <div className="wb-hero-chips" aria-label="建议任务">
-          {HERO_SUGGESTIONS.map(({ label, prompt, Icon }) => (
+        <div className="wb-hero-chips" aria-label={t('workbench:conversation.suggestionsLabel')}>
+          {HERO_SUGGESTIONS.map(({ id, labelKey, promptKey, Icon }) => (
             <button
-              key={label}
+              key={id}
               type="button"
               className="wb-hero-chip"
-              onClick={() => onSuggestion?.(prompt)}
+              onClick={() => onSuggestion?.(t(promptKey))}
             >
               <Icon aria-hidden="true" />
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </div>

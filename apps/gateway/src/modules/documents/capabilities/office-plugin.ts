@@ -1015,6 +1015,9 @@ export function officePlugin(
       + "autoFit 'window' 撑满栏、'contents' 收缩到内容宽；用户说“表格太宽了/调窄一点”就用它）。"
       + "一次最多 50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
       + "表格/页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops（ops DSL）更稳，本工具更适合块级内容与格式命令。"
+      + "默认建议模式：用户要求“以修订形式呈现/我审阅后决定”或没有明确要求直接改时，"
+      + "先 word_agent_ops 调 review.trackChanges {enabled:true}（当前状态见 word_agent_read 的 documentState.trackChanges），再编辑；"
+      + "只有用户明确要求直接修改时才保持关闭。"
       + "只有界面里正开着这份文档且有未保存修改时才会被拒绝（提示用户先保存）；没打开或 UI 隐藏时网关会在后台编辑器里打开它，"
       + "不需要请用户先打开或先保存。",
     inputSchema: {
@@ -1104,6 +1107,8 @@ export function officePlugin(
       + "ops 1-50 条，按序执行、逐条隔离（一条失败不影响其他条）；dryRun=true 只校验并返回计划，不落盘。"
       + "高风险 op（review.accept/reject 全部修订、review.protect、review.encrypt）必须带 confirm: true，"
       + "调用前先向用户说明影响并取得明确同意；逐条修订 id 用 read_revisions 返回的 [rN]。"
+      + "默认建议模式：用户要求修订形式或未明确要求直改时，先 review.trackChanges {enabled:true} 再编辑；"
+      + "documentState.trackChanges 是当前开关状态。"
       + "纯文字/段落/格式/插图仍可用 word_agent_edit。只有界面里正开着这份文档且有未保存修改时才会被拒绝（提示用户先保存）。",
     inputSchema: {
       type: "object",
@@ -1391,9 +1396,9 @@ export function officePlugin(
   const wordExportPdf: DocumentCapabilityTool = {
     name: "word_export_pdf",
     title: "把 Word 导出为 PDF 并加入文件库",
-    description: "把任意已入库 .docx 导出为 PDF（桌面端用 LibreOffice 转换，作为新文件加入文件库），"
+    description: "把任意已入库 .docx 导出为 PDF（桌面端进程内渲染；同名 PDF 已存在时按版本更新那一份，不新增重复文件），"
       + "适合“导出 PDF / 发我一份 PDF / 转成 PDF”这类请求。fileId 省略 = 用户当前浏览的文件；"
-      + "不需要文件已经在界面上打开。返回新 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
+      + "不需要文件已经在界面上打开。返回 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
       + "fileName 可选，必须以 .pdf 结尾（默认沿用原文件名）。",
     inputSchema: {
       type: "object",

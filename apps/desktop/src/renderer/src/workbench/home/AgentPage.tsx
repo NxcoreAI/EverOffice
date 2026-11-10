@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Bot } from 'lucide-react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { workbenchToast } from '../shell/toast'
 import { useAgentPersona } from './useAgentPersona'
 
@@ -17,10 +19,10 @@ import { useAgentPersona } from './useAgentPersona'
 
 type AgentTab = 'persona' | 'profile' | 'insights'
 
-const agentTabs: { key: AgentTab; label: string }[] = [
-  { key: 'persona', label: '人格' },
-  { key: 'profile', label: '用户画像' },
-  { key: 'insights', label: '经验' },
+const agentTabs: { key: AgentTab; labelKey: string }[] = [
+  { key: 'persona', labelKey: 'workbench:home.agent.tabPersona' },
+  { key: 'profile', labelKey: 'workbench:home.agent.tabProfile' },
+  { key: 'insights', labelKey: 'workbench:home.agent.tabInsights' },
 ]
 
 /* ───────────── 以下两段结构复制自 `office-proto/pages/parts.tsx` ─────────────
@@ -69,6 +71,7 @@ function Seg<T extends string>({
 function PersonaTab({ persona }: {
   persona: { name: string; tagline: string; skills: string[]; promptSummary: string }
 }) {
+  const { t } = useLocale()
   return (
     <section className="op-info-card op-persona-card">
       <div className="op-persona-head">
@@ -84,7 +87,7 @@ function PersonaTab({ persona }: {
       )}
       {persona.promptSummary ? (
         <div className="op-persona-prompt">
-          <div className="op-persona-prompt-label">系统提示词（摘要）</div>
+          <div className="op-persona-prompt-label">{t('workbench:home.agent.promptSummaryLabel')}</div>
           <p>{persona.promptSummary}</p>
         </div>
       ) : null}
@@ -115,19 +118,21 @@ function ProfileTab({ groups }: {
  * （用户会以为自己的信息没被记住）。样式沿用原型 `.op-empty`，只加一个就地重试。
  */
 function ReadFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useLocale()
   return (
     <div className="op-empty" role="alert">
       {message}
-      <button className="op-ghost-btn" type="button" onClick={onRetry} style={{ marginLeft: 10 }}>重试</button>
+      <button className="op-ghost-btn" type="button" onClick={onRetry} style={{ marginLeft: 10 }}>{t('workbench:home.common.retry')}</button>
     </div>
   )
 }
 
 /** 经验：原型没有这个 tab，沿用同一张 `op-info-card` 与列表结构。 */
 function InsightsTab({ items }: { items: { id: string; text: string; whenLabel: string }[] }) {
+  const { t } = useLocale()
   return (
     <section className="op-info-card">
-      <div className="op-info-title">经验</div>
+      <div className="op-info-title">{t('workbench:home.agent.insightsTitle')}</div>
       <ul>
         {items.map((item) => (
           <li key={item.id}>
@@ -141,6 +146,7 @@ function InsightsTab({ items }: { items: { id: string; text: string; whenLabel: 
 }
 
 export function AgentPage() {
+  const { t } = useLocale()
   const [tab, setTab] = useState<AgentTab>('profile')
   const { state, reload } = useAgentPersona()
 
@@ -149,61 +155,64 @@ export function AgentPage() {
   const experiences = state.status === 'ready' ? state.value.experiences : []
   const failed = state.status === 'ready' ? state.value.failed : { profile: false, experiences: false }
   const ready = state.status === 'ready'
+  const tabs = agentTabs.map((item) => ({ key: item.key, label: t(item.labelKey) }))
 
   /** 调试面板是独立窗口：这里只触发主进程开窗（单例），失败给出可读提示。 */
   const openAgentDebug = () => {
     const api = window.nxcore?.agentDebug
     if (!api?.openWindow) {
-      workbenchToast('调试窗口不可用（桌面服务未就绪）')
+      workbenchToast(t('workbench:home.agent.debugUnavailable'))
       return
     }
     void api.openWindow().catch((error: unknown) => {
-      workbenchToast(error instanceof Error ? error.message : '打开调试窗口失败')
+      workbenchToast(error instanceof Error ? error.message : t('workbench:home.agent.debugOpenFailed'))
     })
   }
 
   return (
     <div className="wb-home-scroll wb-home-agent-host">
-      <PageHead title="智能体" />
+      <PageHead title={t('workbench:home.agent.title')} />
 
       <section className="op-agent-hero">
         <div className="op-agent-avatar"><Bot size={24} /></div>
         <div className="op-agent-hero-text">
           <div className="op-agent-hero-name">
-            {persona?.name ?? '工作台 Agent'}
+            {persona?.name ?? t('workbench:home.agent.defaultName')}
             <span className={`op-pill${ready ? ' on' : ''}`}>
               <i className={`op-dot${ready ? ' on' : ''}`} />
-              {state.status === 'error' ? '未连接' : ready ? '运行中' : '连接中'}
+              {state.status === 'error'
+                ? t('workbench:home.agent.statusDisconnected')
+                : ready ? t('workbench:home.agent.statusRunning') : t('workbench:home.agent.statusConnecting')}
             </span>
           </div>
         </div>
-        <button className="op-ghost-btn" type="button" title="打开独立的 Agent 调试窗口" onClick={openAgentDebug}>调试</button>
+        <button className="op-ghost-btn" type="button" title={t('workbench:home.agent.debugTitle')} onClick={openAgentDebug}>{t('workbench:home.agent.debug')}</button>
       </section>
 
       {state.status === 'error' ? (
-        <ReadFailed message="Agent 设定读取失败。" onRetry={reload} />
+        <ReadFailed message={t('workbench:home.agent.personaFailed')} onRetry={reload} />
       ) : state.status === 'loading' ? (
-        <div className="op-empty">正在读取…</div>
+        <div className="op-empty">{t('workbench:home.agent.loading')}</div>
       ) : (
         <>
-          <Seg items={agentTabs} value={tab} onChange={setTab} />
+          <Seg items={tabs} value={tab} onChange={setTab} />
 
           <div className="op-agent-body">
             {tab === 'persona' && (persona
               ? <PersonaTab persona={persona} />
-              : <div className="op-empty">这个 Agent 没有可展示的系统提示词。</div>)}
+              : <div className="op-empty">{t('workbench:home.agent.noPersona')}</div>)}
 
             {tab === 'profile' && (failed.profile
-              ? <ReadFailed message="用户画像读取失败。" onRetry={reload} />
+              ? <ReadFailed message={t('workbench:home.agent.profileFailed')} onRetry={reload} />
               : profile.length > 0
                 ? <ProfileTab groups={profile} />
-                : <div className="op-empty">还没有用户画像。在对话里告诉 Agent 关于你的事，它记下来后会出现在这里。</div>)}
+                : <div className="op-empty">{t('workbench:home.agent.profileEmpty')}</div>)}
 
             {tab === 'insights' && (failed.experiences
-              ? <ReadFailed message="经验列表读取失败。" onRetry={reload} />
+              ? <ReadFailed message={t('workbench:home.agent.experiencesFailed')} onRetry={reload} />
               : experiences.length > 0
                 ? <InsightsTab items={experiences} />
-                : <div className="op-empty">还没有积累经验。做过的工作越多，这里沉淀越完整。</div>)}
+                : <div className="op-empty">{t('workbench:home.agent.experiencesEmpty')}</div>)}
           </div>
         </>
       )}

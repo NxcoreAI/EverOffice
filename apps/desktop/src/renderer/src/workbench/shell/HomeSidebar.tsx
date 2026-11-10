@@ -15,6 +15,7 @@ import {
 import React, { useCallback, useEffect, useState } from 'react'
 
 import everroomAppIcon from '@/assets/everoffice-app-icon.png'
+import { useLocale } from '@/i18n/LocaleContext'
 import { formatCredits } from '@/shared/sources'
 import { useOptionalAccount } from '@/state/AccountContext'
 
@@ -24,14 +25,14 @@ import { cn } from '../ui/cn'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 import { PlanUpgradeModal } from './PlanUpgradeModal'
 
-const NAV_ITEMS: ReadonlyArray<{ key: HomePageKey; label: string; icon: React.ReactNode }> = [
-  { key: 'recent', label: '最近', icon: <Clock size={16} strokeWidth={1.8} /> },
-  { key: 'spaces', label: '项目空间', icon: <LayoutGrid size={16} strokeWidth={1.8} /> },
-  { key: 'files', label: '所有文件', icon: <FolderOpen size={16} strokeWidth={1.8} /> },
-  { key: 'agent', label: 'Agent', icon: <Bot size={16} strokeWidth={1.8} /> },
-  { key: 'skills', label: '技能', icon: <Sparkles size={16} strokeWidth={1.8} /> },
-  { key: 'connectors', label: '连接器', icon: <Plug size={16} strokeWidth={1.8} /> },
-  { key: 'settings', label: '设置', icon: <Settings size={16} strokeWidth={1.8} /> },
+const NAV_ITEMS: ReadonlyArray<{ key: HomePageKey; labelKey: string; icon: React.ReactNode }> = [
+  { key: 'recent', labelKey: 'workbench:nav.recent', icon: <Clock size={16} strokeWidth={1.8} /> },
+  { key: 'spaces', labelKey: 'workbench:nav.spaces', icon: <LayoutGrid size={16} strokeWidth={1.8} /> },
+  { key: 'files', labelKey: 'workbench:nav.files', icon: <FolderOpen size={16} strokeWidth={1.8} /> },
+  { key: 'agent', labelKey: 'workbench:nav.agent', icon: <Bot size={16} strokeWidth={1.8} /> },
+  { key: 'skills', labelKey: 'workbench:nav.skills', icon: <Sparkles size={16} strokeWidth={1.8} /> },
+  { key: 'connectors', labelKey: 'workbench:nav.connectors', icon: <Plug size={16} strokeWidth={1.8} /> },
+  { key: 'settings', labelKey: 'workbench:nav.settings', icon: <Settings size={16} strokeWidth={1.8} /> },
 ]
 
 /**
@@ -41,6 +42,7 @@ const NAV_ITEMS: ReadonlyArray<{ key: HomePageKey; label: string; icon: React.Re
  * - 账户行只表示身份，点开是账号菜单：档位+升级 / 积分余额 / 账号与同步 / 退出登录。
  */
 export function HomeSidebar() {
+  const { t } = useLocale()
   const homeTab = useHomeTab()
   const openHome = useWorkbenchStore((state) => state.openHome)
   const openSettings = useWorkbenchStore((state) => state.openSettings)
@@ -49,9 +51,9 @@ export function HomeSidebar() {
   const account = accountState?.account ?? null
   const signedIn = account?.authenticated === true
   const accountName = account?.user?.name || account?.user?.email || account?.user?.phone || null
-  const accountLabel = signedIn ? (accountName ?? '已登录') : '未登录'
-  const accountHint = signedIn ? (account?.subscription?.planName ?? 'EverOffice 账号') : '登录后同步项目空间'
-  const avatarText = signedIn && accountName ? accountName.trim().slice(0, 1).toUpperCase() : '登'
+  const accountLabel = signedIn ? (accountName ?? t('workbench:sidebar.signedIn')) : t('workbench:sidebar.signedOut')
+  const accountHint = signedIn ? (account?.subscription?.planName ?? t('workbench:sidebar.everofficeAccount')) : t('workbench:sidebar.loginToSync')
+  const avatarText = signedIn && accountName ? accountName.trim().slice(0, 1).toUpperCase() : t('workbench:sidebar.avatarFallback')
   const planCode = signedIn ? (account?.subscription?.planCode ?? null) : null
   const isPro = planCode === 'pro' && ['active', 'trialing'].includes(account?.subscription?.status ?? '')
 
@@ -73,11 +75,14 @@ export function HomeSidebar() {
         const periodRemaining = status.periodRemainingCredits ?? status.remainingCredits
         const topupRemaining = status.topupRemainingCredits ?? 0
         setCreditsTooltip(
-          `套餐内积分 ${formatCredits(periodRemaining, 'en')} · 充值积分 ${formatCredits(topupRemaining, 'en')}`,
+          t('workbench:sidebar.creditsTooltip', {
+            period: formatCredits(periodRemaining, 'en'),
+            topup: formatCredits(topupRemaining, 'en'),
+          }),
         )
       })
       .catch(() => undefined)
-  }, [signedIn])
+  }, [signedIn, t])
 
   useEffect(() => {
     if (menuOpen) refreshCredits()
@@ -98,7 +103,7 @@ export function HomeSidebar() {
   }
 
   return (
-    <aside className="wb-sidebar" aria-label="主导航">
+    <aside className="wb-sidebar" aria-label={t('workbench:nav.mainNavigation')}>
       <div className="wb-sidebar-titlebar" aria-hidden="true" />
       <div className="wb-sidebar-brand">
         <img className="wb-sidebar-brand-mark" src={everroomAppIcon} alt="" aria-hidden="true" draggable={false} />
@@ -107,7 +112,7 @@ export function HomeSidebar() {
         </div>
       </div>
 
-      <nav className="wb-sidebar-nav" aria-label="主页入口">
+      <nav className="wb-sidebar-nav" aria-label={t('workbench:nav.homeEntries')}>
         {NAV_ITEMS.map((item) => {
           const active = homeTab.page === item.key
           return (
@@ -119,7 +124,7 @@ export function HomeSidebar() {
               onClick={() => (item.key === 'settings' ? openSettings() : openHome(item.key))}
             >
               <span className="wb-nav-icon" aria-hidden="true">{item.icon}</span>
-              <span className="wb-nav-label">{item.label}</span>
+              <span className="wb-nav-label">{t(item.labelKey)}</span>
             </button>
           )
         })}
@@ -131,8 +136,8 @@ export function HomeSidebar() {
             <button
               type="button"
               className="wb-account"
-              aria-label={signedIn ? `账号：${accountLabel}` : '账号'}
-              title={signedIn ? accountLabel : '登录 EverOffice 账号'}
+              aria-label={signedIn ? t('workbench:sidebar.accountNamed', { name: accountLabel }) : t('workbench:sidebar.account')}
+              title={signedIn ? accountLabel : t('workbench:sidebar.loginHint')}
             >
               <span className="wb-account-avatar" aria-hidden="true">{avatarText}</span>
               <span className="wb-account-text">
@@ -145,12 +150,12 @@ export function HomeSidebar() {
           <MenuContent side="top" align="start" sideOffset={8} className="wb-account-menu">
             {signedIn ? (
               <>
-                <div className="wb-account-plan" role="group" aria-label="当前套餐">
+                <div className="wb-account-plan" role="group" aria-label={t('workbench:sidebar.currentPlan')}>
                   <Crown size={14} aria-hidden="true" />
                   <strong>{isPro ? 'Pro' : 'Free'}</strong>
                   {isPro ? null : (
                     <button type="button" className="wb-account-plan-upgrade" onClick={() => setUpgradeOpen(true)}>
-                      升级
+                      {t('workbench:sidebar.upgrade')}
                     </button>
                   )}
                 </div>
@@ -158,10 +163,10 @@ export function HomeSidebar() {
                   type="button"
                   className="wb-account-credits"
                   onClick={openPlanSection}
-                  title={creditsTooltip ?? '积分余额'}
+                  title={creditsTooltip ?? t('workbench:sidebar.credits')}
                 >
                   <Sparkles size={14} aria-hidden="true" />
-                  <strong>积分余额</strong>
+                  <strong>{t('workbench:sidebar.credits')}</strong>
                   <span className="wb-account-credits-value">
                     {creditsValue === null ? '…' : formatCredits(creditsValue, 'en')}
                   </span>
@@ -171,13 +176,13 @@ export function HomeSidebar() {
               </>
             ) : null}
             <MenuItem icon={<UserRound size={14} />} onSelect={() => openSettings('settings-account')}>
-              {signedIn ? '账号与同步' : '登录账号'}
+              {signedIn ? t('workbench:sidebar.accountSync') : t('workbench:sidebar.login')}
             </MenuItem>
             {signedIn ? (
               <>
                 <MenuSeparator />
                 <MenuItem icon={<LogOut size={14} />} danger disabled={loggingOut} onSelect={() => { void logout() }}>
-                  {loggingOut ? '正在退出…' : '退出登录'}
+                  {loggingOut ? t('workbench:sidebar.loggingOut') : t('workbench:sidebar.logout')}
                 </MenuItem>
               </>
             ) : null}

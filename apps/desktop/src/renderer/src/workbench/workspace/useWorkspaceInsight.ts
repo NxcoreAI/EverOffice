@@ -1,4 +1,6 @@
 import type { AgentSession } from '@nxcore/agent-contract'
+
+import { useLocale } from '@/i18n/LocaleContext'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -154,6 +156,7 @@ export function useWorkspaceInsight({
   sessions,
   fileCount,
 }: UseWorkspaceInsightOptions): WorkspaceInsightController {
+  const { t } = useLocale()
   const debounceMs = debounceMsOverride ?? INSIGHT_DEBOUNCE_MS
   const scoped = useMemo(() => scopedSessions(sessions, workspaceId), [sessions, workspaceId])
   const latest = useMemo(() => pickLatestSession(scoped), [scoped])
@@ -230,6 +233,7 @@ export function useWorkspaceInsight({
           reader,
           llm: getLlmReader(),
           ...(retryDelaysOverride === null ? {} : { retryDelaysMs: retryDelaysOverride }),
+          t,
         }).finally(() => {
           inflight.delete(workspaceId)
         })
@@ -265,7 +269,7 @@ export function useWorkspaceInsight({
       setState(result)
       return true
     },
-    [workspaceId],
+    [workspaceId, t],
   )
 
   // 空间 / 会话指纹变化 → 重新派生（§6.2 T6/T8：800ms 去抖合并连发变化）。

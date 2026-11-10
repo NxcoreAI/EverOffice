@@ -1,6 +1,7 @@
 import { RefreshCw, Sparkles } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { JournalActionDto } from '@/shared/sources'
 
 import { Button } from '../ui/primitives'
@@ -55,6 +56,7 @@ export interface DailyJournalCardProps {
 }
 
 export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
+  const { t } = useLocale()
   const journal = useDailyJournal()
   const titleId = useId()
   const entry = journal.entry
@@ -69,44 +71,44 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
         <span className="wb-journal-icon" aria-hidden="true"><Sparkles size={15} /></span>
         {/* 用 div 而不是 span 包 h2：h2 是流内容，塞进 span 里是非法嵌套。 */}
         <div className="wb-journal-title">
-          <h2 className="wb-journal-name" id={titleId}>今日洞察</h2>
+          <h2 className="wb-journal-name" id={titleId}>{t('workbench:home.journal.title')}</h2>
         </div>
         <Button
           variant="ghost"
           size="sm"
           className="wb-journal-refresh"
-          title="重新整理今天的记忆"
+          title={t('workbench:home.journal.refreshTitle')}
           disabled={journal.refreshing}
           onClick={journal.refresh}
           icon={<RefreshCw size={12} className={journal.refreshing ? 'ui-spin' : undefined} aria-hidden="true" />}
         >
-          {journal.refreshing ? '整理中' : '刷新'}
+          {journal.refreshing ? t('workbench:home.journal.refreshing') : t('workbench:home.journal.refresh')}
         </Button>
       </header>
 
       {journal.state === 'loading' ? (
         <div className="wb-journal-state">
           <span className="wb-journal-skel" aria-hidden="true" />
-          正在整理今天的记忆…
+          {t('workbench:home.journal.loading')}
         </div>
       ) : null}
 
       {journal.state === 'unavailable' ? (
         <div className="wb-journal-state">
-          今日洞察暂时读不到（桌面服务未就绪）。
-          <Button variant="ghost" size="sm" onClick={journal.reload}>重试</Button>
+          {t('workbench:home.journal.unavailable')}
+          <Button variant="ghost" size="sm" onClick={journal.reload}>{t('workbench:home.common.retry')}</Button>
         </div>
       ) : null}
 
       {journal.state === 'failed' ? (
         <div className="wb-journal-state">
-          {journal.lastError ?? '今天这次整理没成功。'}
-          <Button variant="ghost" size="sm" onClick={journal.reload}>重试</Button>
+          {journal.lastError ?? t('workbench:home.journal.failed')}
+          <Button variant="ghost" size="sm" onClick={journal.reload}>{t('workbench:home.common.retry')}</Button>
         </div>
       ) : null}
 
       {journal.state === 'empty' ? (
-        <p className="wb-journal-empty">今天还没有新的动静。跟我聊几句，我边听边记。</p>
+        <p className="wb-journal-empty">{t('workbench:home.journal.empty')}</p>
       ) : null}
 
       {journal.state === 'ready' && entry ? (
@@ -128,10 +130,10 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
             </ul>
           ) : null}
           {entry.advice && entry.advice.length > 0 ? (
-            <ul className="wb-journal-advice" aria-label="下一步建议">
+            <ul className="wb-journal-advice" aria-label={t('workbench:home.journal.adviceAria')}>
               {entry.advice.map((line, index) => (
                 <li key={`${index}:${line}`}>
-                  <span className="wb-journal-advice-tag" aria-hidden="true">建议</span>
+                  <span className="wb-journal-advice-tag" aria-hidden="true">{t('workbench:home.journal.adviceTag')}</span>
                   {line}
                 </li>
               ))}
@@ -158,7 +160,7 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
             ))}
           </span>
         ) : null}
-        <span className="wb-journal-sign">—— 小 E · 你的工作台助理</span>
+        <span className="wb-journal-sign">{t('workbench:home.journal.sign')}</span>
       </footer>
     </section>
   )

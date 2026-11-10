@@ -1,6 +1,8 @@
 import { AlertTriangle } from 'lucide-react'
 import React from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { Button } from './primitives'
 import './error-boundary.css'
 
@@ -45,17 +47,23 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   render(): React.ReactNode {
     const { error } = this.state
     if (!error) return this.props.children
-    return (
-      <div className="wb-errorboundary" role="alert">
-        <div className="wb-errorboundary-card">
-          <span className="wb-errorboundary-icon" aria-hidden="true"><AlertTriangle size={18} /></span>
-          <div className="wb-errorboundary-text">
-            <strong>{this.props.label}暂时无法显示</strong>
-            <p>{error.message || '页面渲染时发生未知错误。'}</p>
-          </div>
-          <Button variant="secondary" size="sm" onClick={this.retry}>重试</Button>
-        </div>
-      </div>
-    )
+    return <ErrorCard label={this.props.label} message={error.message} onRetry={this.retry} />
   }
+}
+
+/** 错误卡片单独成组件：类组件里拿不到 useLocale 的响应式翻译。 */
+function ErrorCard({ label, message, onRetry }: { label: string; message: string; onRetry: () => void }) {
+  const { t } = useLocale()
+  return (
+    <div className="wb-errorboundary" role="alert">
+      <div className="wb-errorboundary-card">
+        <span className="wb-errorboundary-icon" aria-hidden="true"><AlertTriangle size={18} /></span>
+        <div className="wb-errorboundary-text">
+          <strong>{t('workbench:ui.errorBoundaryTitle', { label })}</strong>
+          <p>{message || t('workbench:ui.errorBoundaryUnknown')}</p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onRetry}>{t('workbench:ui.retry')}</Button>
+      </div>
+    </div>
+  )
 }

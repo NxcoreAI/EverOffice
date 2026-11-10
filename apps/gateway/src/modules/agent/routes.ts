@@ -162,8 +162,9 @@ function workspaceErrorPayload(
   }
 }
 
-/** 工作区元数据（描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
+/** 工作区元数据（英文名 + 描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
 const WorkspaceMetaSchema = {
+  nameEn: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
   description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
   goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
   /** 目录归属模式：缺省按 path 是否给出推断（有 path=external，无=managed）。 */
@@ -234,13 +235,15 @@ export function agentRoutes(
         // 决策卡（confirm/question）：choice/text 是用户在卡片上的作答。
         const choice = (request.body as { choice?: unknown }).choice;
         const text = (request.body as { text?: unknown }).text;
-        if (typeof choice === "string" && choice) {
-          const resolved = service.resolveAgentCard(request.params.approvalId, {
-            choice,
-            ...(typeof text === "string" && text ? { text } : {}),
-          });
-          if (resolved) return { approvalId: request.params.approvalId, decision: choice };
-        }
+        // 决策卡优先且与 choice 无关：旧客户端（如 main 打包版的确认按钮）回传
+        // decision 但不带 choice，也必须能落到卡片回填（2026-11-09 打包版确认 404 实测）。
+        // resolveAgentCard 对非卡片审批立即返回 false，不干扰 bash/ACP 流程。
+        const cardChoice = typeof choice === "string" && choice ? choice : decision;
+        const cardResolved = service.resolveAgentCard(request.params.approvalId, {
+          choice: cardChoice,
+          ...(typeof text === "string" && text ? { text } : {}),
+        });
+        if (cardResolved) return { approvalId: request.params.approvalId, decision: cardChoice };
         const result = service.resolveApproval(request.params.approvalId, decision);
         return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
       },
