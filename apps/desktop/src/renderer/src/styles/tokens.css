@@ -203,6 +203,24 @@
   --raised-shadow: var(--ui-shadow-sm);
   --inset-shadow: var(--ui-shadow-inset);
 
+  /* 兼容别名 3：云文档编辑器（旧 Tiptap 编辑器 / office-editor）的 --cr-* 命名。
+     这些名字来自旧 Context Room 设计系统，恢复云文档能力时组件与样式按原样
+     带回来，但 token 定义随旧 ContextRoom.css 一起被删了——缺定义时
+     selection 高亮、悬浮工具条、评论面板、版本面板全部退化成透明/白底。
+     这里统一映射到当前暖纸主题，组件侧不用改动，也不允许再局部覆写。 */
+  --cr-surface: var(--ui-surface);
+  --cr-surface-secondary: var(--ui-surface-alt);
+  --cr-surface-hover: var(--ui-hover);
+  --cr-border: var(--ui-border);
+  --cr-border-strong: var(--ui-border-strong);
+  --cr-text: var(--ui-text);
+  --cr-muted: var(--ui-text-2);
+  --cr-tertiary: var(--ui-text-3);
+  --cr-blue: var(--ui-accent);
+  --cr-blue-soft: var(--ui-accent-soft);
+  --cr-accent: var(--ui-accent);
+  --cr-danger: var(--ui-danger);
+
   /* 内容分类色（旧名 → 新色） */
   --icon-ai: #7a5fa8;
   --icon-calendar: #c4763a;

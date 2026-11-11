@@ -166,10 +166,7 @@ export class DocumentMcpHost {
     private readonly operations?: DocumentOperationService,
     private readonly onDiagnostic?: (diagnostic: DocumentToolDiagnostic) => void,
   ) {
-    void documents;
-    void rooms;
-    // 缺省工具面只剩 Office 一组（Markdown 文稿工具链已下线，见 builtins.ts 注释）。
-    this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry();
+    this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry(documents, rooms, operations);
   }
 
   listTools(): readonly DocumentMcpToolDefinition[] {

@@ -1,6 +1,8 @@
 import { Plug, RotateCw } from 'lucide-react'
 import { useEffect, useState, type ComponentType } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { workbenchToast } from '../shell/toast'
 import { Button, EmptyState, Spinner } from '../ui/primitives'
 
@@ -11,6 +13,7 @@ type ConnectorsViewProps = { onToast: (message: string) => void }
  * 自带页头与分类筛选），这里只提供主页标签的滚动容器，不改组件源码。
  */
 export function ConnectorsHost() {
+  const { t } = useLocale()
   const [View, setView] = useState<ComponentType<ConnectorsViewProps> | null>(null)
   const [failed, setFailed] = useState(false)
   const [nonce, setNonce] = useState(0)
@@ -34,8 +37,8 @@ export function ConnectorsHost() {
         {failed ? (
           <EmptyState
             icon={<Plug size={18} />}
-            title="连接器页暂时无法加载"
-            description="页面模块加载失败，稍后重试。"
+            title={t('workbench:home.connectors.loadFailed')}
+            description={t('workbench:home.connectors.loadFailedDescription')}
             action={(
               <Button
                 variant="secondary"
@@ -43,14 +46,14 @@ export function ConnectorsHost() {
                 icon={<RotateCw size={13} />}
                 onClick={() => { setView(null); setNonce((value) => value + 1) }}
               >
-                重试
+                {t('workbench:home.common.retry')}
               </Button>
             )}
           />
         ) : View ? (
           <View onToast={workbenchToast} />
         ) : (
-          <div className="wb-home-state"><Spinner /> 正在加载连接器…</div>
+          <div className="wb-home-state"><Spinner /> {t('workbench:home.connectors.loading')}</div>
         )}
       </div>
     </div>

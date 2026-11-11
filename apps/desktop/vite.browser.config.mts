@@ -623,6 +623,14 @@ const base = {
     },
     onImportProgress: () => () => {},
     catalogEntry: async (fileId) => null,
+    // 「用外部应用打开」：纯浏览器预览没有系统文件关联，给一组演示应用验证卡片/菜单 UI；
+    // 真实列表来自桌面端主进程的 LaunchServices 查询。
+    listApplications: async () => ([
+      { id: '/Applications/WorkBuddy.app', name: 'WorkBuddy.app', default: true, icon: null },
+      { id: '/Applications/WPS Office.app', name: 'WPS Office.app', default: false, icon: null },
+      { id: '/Applications/Visual Studio Code.app', name: 'Visual Studio Code.app', default: false, icon: null },
+    ]),
+    openWithApplication: async () => ({ openedWith: 'external' }),
   },
   office: {
     // Doc 生成流程原型：浏览器 mock 只回假 fileId（真实管线在 Electron 主进程）。
@@ -761,7 +769,7 @@ export default defineConfig({
   },
   resolve: {
     dedupe: ['react', 'react-dom'],
-    alias: { '@': resolve(here, 'src/renderer/src') },
+    alias: { '@/shared': resolve(here, 'src/shared'), '@': resolve(here, 'src/renderer/src') },
   },
   plugins: [react(), nxcoreMock()],
 })

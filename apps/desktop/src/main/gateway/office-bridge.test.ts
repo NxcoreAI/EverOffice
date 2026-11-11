@@ -294,6 +294,39 @@ describe('office-agent-tools：后台 Word 会话', () => {
   })
 })
 
+describe('office-agent-tools：PDF 活文档', () => {
+  // 回归：校验器只放行 docx/spreadsheet 时，pdf_agent_read/edit 的每个请求都被
+  // 422 挡成「Invalid office agent-tools request」——用户在 PDF 里选段批注后
+  // agent 永远改不动。kind=pdf 必须原样转给宿主执行器。
+  it('接受 kind=pdf 并转给宿主执行器', async () => {
+    const agentTools = vi.fn(async (_req: OfficeAgentToolsRequest) => ({
+      ok: true as const,
+      data: { describe: { context: 'pdf-doc' } },
+    }))
+    const server = new OfficeBridgeServer(
+      () => ({ get: async () => fileEntry(), catalogEntry: async () => fileEntry() }) as unknown as FilesGatewayBridge,
+      () => undefined,
+      () => null,
+      () => null,
+      () => null,
+      () => agentTools,
+    )
+    const { baseUrl, token } = await server.start()
+    try {
+      const response = await fetch(`${baseUrl}/v1/office-agent-tools`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'pdf', mode: 'read', fileId: 'file-pdf-1' }),
+      })
+      expect(response.status).toBe(200)
+      expect(agentTools).toHaveBeenCalledOnce()
+      expect(agentTools.mock.calls[0]![0]).toMatchObject({ kind: 'pdf', mode: 'read', fileId: 'file-pdf-1' })
+    } finally {
+      await server.stop()
+    }
+  })
+})
+
 describe('office-export-pdf：Word → PDF 并入库', () => {
   it('把 fileId/归属转给桌面导出器，并回传新 PDF fileId', async () => {
     const exportPdf = vi.fn(async (req: {

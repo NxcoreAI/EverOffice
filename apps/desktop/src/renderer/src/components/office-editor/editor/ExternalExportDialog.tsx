@@ -12,6 +12,7 @@ import { showToast } from '@/state/toast'
 import { FilterSelect } from '@/components/ui/FilterSelect'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
 import './ExternalDocumentDialogs.css'
+import { documentsApi, externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 /**
  * "导出到飞书 / Notion" 面板（文档 ··· 菜单入口）。与 Agent 智能区导出共用
@@ -54,7 +55,7 @@ export function ExternalExportDialog({
   const [targetResults, setTargetResults] = useState<Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>>([])
   const [searchingTargets, setSearchingTargets] = useState(false)
 
-  const external = window.nxcore?.externalDocuments
+  const external = externalDocumentsApi()
   const providerLabel = provider === 'feishu'
     ? t('contextRoom:externalExportDialog.feishu')
     : t('contextRoom:externalExportDialog.notion')
@@ -112,7 +113,7 @@ export function ExternalExportDialog({
     setTargetUrl('')
     setParentUrl('')
     setImportSource(null)
-    void window.nxcore?.documents.listVersions(documentId, { limit: 30 })
+    void documentsApi()?.listVersions(documentId, { limit: 30 })
       .then((items) => setVersions(items))
       .catch(() => setVersions([]))
     // 导入来源绑定 = 最近一次已应用的导入（primary 必有 importedVersion，候选

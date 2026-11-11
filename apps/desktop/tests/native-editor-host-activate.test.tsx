@@ -22,6 +22,16 @@ const openOriginal = vi.fn(async () => ({
   title: '模版.doc',
 }))
 
+// office:instance-reloaded 的渲染端订阅者（主进程在文件内容被 Agent 改过后广播）。
+const reloadListeners: Array<(event: { id: string; kind: string }) => void> = []
+const onInstanceReloaded = vi.fn((listener: (event: { id: string; kind: string }) => void) => {
+  reloadListeners.push(listener)
+  return () => {
+    const index = reloadListeners.indexOf(listener)
+    if (index >= 0) reloadListeners.splice(index, 1)
+  }
+})
+
 const catalog = {
   id: 'file-template-1',
   originalName: '附件4-6-1：毕业设计（论文）外文翻译 (1).doc',
@@ -40,6 +50,15 @@ const rafCallbacks: FrameRequestCallback[] = []
 
 beforeEach(() => {
   vi.clearAllMocks()
+  reloadListeners.length = 0
+  // 用例之间不残留实现：'在途打开竞态' 那条会把 openOriginal 换成永不 resolve 的
+  // promise（vi.clearAllMocks 只清调用记录，不清实现），后面的用例会被它带死。
+  openOriginal.mockImplementation(async () => ({
+    openedWith: 'office',
+    instanceId: 'file-template-1',
+    kind: 'docx',
+    title: '模版.doc',
+  }))
   container = document.createElement('div')
   // happy-dom 的 getBoundingClientRect 全 0：给宿主一个非零尺寸的近似实现
   // （componentReadRect 走 DOMRect；只要 width/height > 0 即可通过 paintable）。
@@ -50,7 +69,7 @@ beforeEach(() => {
     configurable: true,
     value: {
       files: { openOriginal },
-      office: { setActiveInstance, setWorkspaceBounds },
+      office: { setActiveInstance, setWorkspaceBounds, onInstanceReloaded },
     },
   })
   Object.defineProperty(window, 'desktop', {
@@ -197,5 +216,52 @@ describe('NativeEditorHost 在途打开竞态（2026-11-09 模版预览锁死回
     await flushFrames(4)
     await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(setActiveInstance).toHaveBeenCalledWith('file-template-1')
+  })
+})
+
+describe('NativeEditorHost 内容变更后重开（2026-11-10 右侧显示旧版回归）', () => {
+  it('office:instance-reloaded 命中本文件 → 按磁盘现算哈希重开一次', async () => {
+    await act(async () => {
+      root = createRoot(container)
+      root.render(
+        <NativeEditorHost
+          fileId="real:file-template-1"
+          title="附件4-6-1：毕业设计（论文）外文翻译 (1).doc"
+          realCatalog={catalog}
+        />,
+      )
+    })
+    await flushFrames()
+    expect(openOriginal).toHaveBeenCalledTimes(1)
+    // 首次打开用快照里的 contentHash（省一次读盘哈希）
+    expect(openOriginal.mock.calls[0]![2]).toBe('a'.repeat(64))
+
+    await act(async () => {
+      reloadListeners.forEach((listener) => listener({ id: 'file-template-1', kind: 'docx' }))
+    })
+    await flushFrames()
+    expect(openOriginal).toHaveBeenCalledTimes(2)
+    // 重开必须不带旧哈希：否则主进程按「内容没变」复用旧实例，右侧仍是改前的版本
+    expect(openOriginal.mock.calls[1]![2]).toBeUndefined()
+    expect(setActiveInstance).toHaveBeenLastCalledWith('file-template-1')
+  })
+
+  it('别的文件的 reload 事件不触发重开', async () => {
+    await act(async () => {
+      root = createRoot(container)
+      root.render(
+        <NativeEditorHost
+          fileId="real:file-template-1"
+          title="附件4-6-1：毕业设计（论文）外文翻译 (1).doc"
+          realCatalog={catalog}
+        />,
+      )
+    })
+    await flushFrames()
+    await act(async () => {
+      reloadListeners.forEach((listener) => listener({ id: 'file-other', kind: 'docx' }))
+    })
+    await flushFrames()
+    expect(openOriginal).toHaveBeenCalledTimes(1)
   })
 })

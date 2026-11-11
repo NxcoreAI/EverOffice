@@ -2,6 +2,8 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import React from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { cn } from './cn'
 import { Button } from './primitives'
 
@@ -20,6 +22,7 @@ export function Modal({
   size?: ModalSize
   dismissible?: boolean
 }) {
+  const { t } = useLocale()
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (dismissible || next) onOpenChange(next) }}>
       <Dialog.Portal>
@@ -36,7 +39,7 @@ export function Modal({
             </div>
             {dismissible ? (
               <Dialog.Close asChild>
-                <button type="button" className="ui-iconbtn ui-iconbtn--sm" aria-label="关闭">
+                <button type="button" className="ui-iconbtn ui-iconbtn--sm" aria-label={t('workbench:ui.close')}>
                   <X size={15} />
                 </button>
               </Dialog.Close>
@@ -52,7 +55,7 @@ export function Modal({
 
 /** 二次确认弹窗（删除工作空间/工作等破坏性操作）。 */
 export function ConfirmModal({
-  open, onOpenChange, title, description, confirmLabel = '确认', cancelLabel = '取消',
+  open, onOpenChange, title, description, confirmLabel, cancelLabel,
   danger = true, busy = false, onConfirm,
 }: {
   open: boolean
@@ -65,6 +68,9 @@ export function ConfirmModal({
   busy?: boolean
   onConfirm: () => void
 }) {
+  const { t } = useLocale()
+  const resolvedConfirmLabel = confirmLabel ?? t('workbench:ui.confirm')
+  const resolvedCancelLabel = cancelLabel ?? t('workbench:ui.cancel')
   return (
     <Modal
       open={open}
@@ -74,8 +80,8 @@ export function ConfirmModal({
       size="sm"
       footer={(
         <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>{cancelLabel}</Button>
-          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>{confirmLabel}</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>{resolvedCancelLabel}</Button>
+          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>{resolvedConfirmLabel}</Button>
         </>
       )}
     >

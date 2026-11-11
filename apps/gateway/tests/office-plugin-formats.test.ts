@@ -45,9 +45,10 @@ function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
 const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1" };
 
 describe("office 工具：PPT / Excel 扩展", () => {
-  it("插件暴露五个工具：word / slides 整册脚本生成 / sheets 生成 + slides 读 / 编辑", () => {
+  it("插件暴露六个工具：word / slides 整册脚本生成 / sheets 生成 + slides 读 / 编辑 + 界面打开", () => {
     const { tools } = createHarness();
     expect([...tools.keys()].sort()).toEqual([
+      "file_open",
       "office_create",
       "sheets_create",
       "slides_create",
@@ -131,10 +132,10 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(input.idempotencyKey!.startsWith("agent-word:")).toBe(true);
   });
 
-  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），五个工具照常暴露", () => {
+  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），六个工具照常暴露", () => {
     const { plugin, tools } = createHarness();
     expect(plugin.manifest.requiresRoom).toBe(false);
-    expect(tools.size).toBe(5);
+    expect(tools.size).toBe(6);
   });
 
   it("Room 已删除：工具文案不再指向 Room / 产物库，生成物统一落在文件库", () => {

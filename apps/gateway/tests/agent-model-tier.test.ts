@@ -104,7 +104,7 @@ describe("Agent session model tiers", () => {
     const { service, primary, direct, lite, sqlite } = await createHarness();
     const session = service.createSession({ pageLabel: "Home", roomId: null, modelPreference: "lite" });
 
-    // targetAgentId 省略：按会话锁定的档位运行（渲染层已不再传 'main'）。
+    // targetAgentId 省略：按会话当前档位运行（渲染层已不再传 'main'）。
     const run = await service.startRun(session.id, {
       prompt: "轻量直答",
       idempotencyKey: "tier-run-lite",
@@ -121,7 +121,7 @@ describe("Agent session model tiers", () => {
     sqlite.close();
   });
 
-  it("forces a different tier request back to the tier locked on the session", async () => {
+  it("ignores a stale per-run tier request in favor of the session's current tier", async () => {
     const { service, primary, direct, sqlite } = await createHarness();
     const session = service.createSession({ pageLabel: "Home", roomId: null });
 
@@ -136,6 +136,58 @@ describe("Agent session model tiers", () => {
     expect(primary.starts).toHaveLength(1);
     expect(direct.starts).toHaveLength(0);
     await settle();
+    await service.dispose();
+    sqlite.close();
+  });
+
+  it("switches an existing session's tier immediately and routes the next run to the new runtime", async () => {
+    const { service, primary, direct, sqlite } = await createHarness();
+    const session = service.createSession({ pageLabel: "Home", roomId: null });
+
+    await service.startRun(session.id, { prompt: "第一轮", idempotencyKey: "switch-before", context: {} });
+    await settle();
+
+    const updated = service.updateSession(session.id, { modelPreference: "primary" });
+    expect(updated?.activeAgentId).toBe("main-direct");
+    expect(updated?.modelPreference).toBe("primary");
+    expect(primary.starts).toHaveLength(1);
+    expect(direct.starts).toHaveLength(0);
+
+    const run = await service.startRun(session.id, { prompt: "第二轮", idempotencyKey: "switch-after", context: {} });
+    expect(run.agentId).toBe("main-direct");
+    expect(direct.starts).toHaveLength(1);
+    expect(primary.starts).toHaveLength(1);
+    // 换档后新 runtime 还没有自己的会话文件：把旧档位的历史作为 handoff 带入，避免失忆。
+    expect(direct.starts[0]?.prompt).toContain("<everroom_agent_handoff>");
+    expect(direct.starts[0]?.prompt).toContain("第一轮");
+    expect(service.getSnapshot(session.id)?.session.modelPreference).toBe("primary");
+
+    await settle();
+    await service.dispose();
+    sqlite.close();
+  });
+
+  it("rejects switching tiers while a run is active", async () => {
+    const { service, sqlite } = await createHarness();
+    const session = service.createSession({ pageLabel: "Home", roomId: null });
+    sqlite.prepare("UPDATE agent_sessions SET status = 'running' WHERE id = ?").run(session.id);
+
+    expect(() => service.updateSession(session.id, { modelPreference: "primary" }))
+      .toThrow("agent_session_busy");
+
+    await service.dispose();
+    sqlite.close();
+  });
+
+  it("falls back to smart when a switched-to tier runtime is unavailable", async () => {
+    const { service, sqlite } = await createHarness();
+    const session = service.createSession({ pageLabel: "Home", roomId: null });
+    service.setTierRuntimeResolver(() => null);
+
+    const updated = service.updateSession(session.id, { modelPreference: "lite" });
+    expect(updated?.activeAgentId).toBe("main");
+    expect(updated?.modelPreference).toBe("smart");
+
     await service.dispose();
     sqlite.close();
   });

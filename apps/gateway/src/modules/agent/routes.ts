@@ -162,8 +162,9 @@ function workspaceErrorPayload(
   }
 }
 
-/** 工作区元数据（描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
+/** 工作区元数据（英文名 + 描述 + 目标）的共享 JSON schema，POST/PATCH 共用。 */
 const WorkspaceMetaSchema = {
+  nameEn: Type.Optional(Type.Union([Type.String({ maxLength: 120 }), Type.Null()])),
   description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
   goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
   /** 目录归属模式：缺省按 path 是否给出推断（有 path=external，无=managed）。 */
@@ -523,11 +524,32 @@ export function agentRoutes(
         schema: {
           tags: ["agent"],
           params: SessionParams,
-          body: Type.Object({ title: Type.String({ minLength: 1, maxLength: 120 }) }),
+          body: Type.Object({
+            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+            // 中途切换模型档位：立即回写 activeAgentId，下一轮 run 走新档位。
+            modelPreference: Type.Optional(Type.Union([
+              Type.Literal("smart"),
+              Type.Literal("primary"),
+              Type.Literal("lite"),
+            ])),
+          }),
         },
       },
-      async (request, reply) => service.updateSession(request.params.sessionId, request.body)
-        ?? reply.code(404).send({ error: "not_found", message: "Agent session not found" }),
+      async (request, reply) => {
+        try {
+          return service.updateSession(request.params.sessionId, request.body)
+            ?? reply.code(404).send({ error: "not_found", message: "Agent session not found" });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === "agent_session_busy") {
+            return reply.code(409).send({ error: "session_busy", message: "Running agent sessions cannot switch targets" });
+          }
+          if (message === "agent_model_preference_invalid") {
+            return reply.code(400).send({ error: "invalid_model_preference", message });
+          }
+          throw error;
+        }
+      },
     );
 
     app.delete(

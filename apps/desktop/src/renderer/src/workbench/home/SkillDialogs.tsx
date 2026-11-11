@@ -2,6 +2,8 @@ import { useState } from 'react'
 
 import { describeSkillError } from '../../../../shared/skill-error-message'
 
+import { useLocale } from '@/i18n/LocaleContext'
+
 import { Modal } from '../ui/modal'
 import { Button } from '../ui/primitives'
 import type { SkillItemView } from './useSkills'
@@ -21,6 +23,7 @@ export function DeleteSkillDialog({
   onOpenChange: (open: boolean) => void
   onConfirm: (skill: SkillItemView) => Promise<void>
 }) {
+  const { t } = useLocale()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -42,13 +45,13 @@ export function DeleteSkillDialog({
     <Modal
       open={skill !== null}
       onOpenChange={(next) => { if (!next) { setError(null); onOpenChange(false) } }}
-      title={skill ? `删除「${skill.name}」？` : '删除技能'}
+      title={skill ? t('workbench:home.skills.deleteTitle', { name: skill.name }) : t('workbench:home.skills.deleteDialogTitle')}
       size="sm"
       footer={(
         <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>{t('workbench:home.common.cancel')}</Button>
           <Button variant="danger" onClick={() => { void confirm() }} disabled={busy}>
-            {busy ? '正在删除…' : '删除'}
+            {busy ? t('workbench:home.skills.deleting') : t('workbench:home.common.delete')}
           </Button>
         </>
       )}

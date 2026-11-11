@@ -3,6 +3,7 @@ import React from 'react'
 
 import type { AgentWorkspace } from '@nxcore/agent-contract'
 
+import type { Translate } from '@/i18n/LocaleContext'
 import { cn } from '../ui/cn'
 
 /**
@@ -21,11 +22,13 @@ function firstLine(value: string | null | undefined): string {
  * 一行项目空间摘要：描述优先，其次目标，最后本地目录（最近页与项目空间页共用）。
  * `fallback` 传空串时，三者都没有就返回空串——最近页的行里不需要「应用托管空间」这类占位。
  */
-export function workspaceSummary(workspace: AgentWorkspace, fallback = '应用托管空间'): string {
+export function workspaceSummary(workspace: AgentWorkspace, t: Translate, fallback?: string): string {
   return firstLine(workspace.description)
-    || ((workspace.goals ?? []).length > 0 ? `目标：${(workspace.goals ?? []).join(' · ')}` : '')
+    || ((workspace.goals ?? []).length > 0
+      ? t('workbench:home.common.goalsSummary', { goals: (workspace.goals ?? []).join(' · ') })
+      : '')
     || workspace.path
-    || fallback
+    || (fallback ?? t('workbench:home.common.hostedSpace'))
 }
 
 export interface HomeSectionProps {

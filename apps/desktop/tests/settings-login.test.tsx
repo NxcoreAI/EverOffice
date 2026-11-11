@@ -266,6 +266,9 @@ describe('迁移后的设置页入口', () => {
     expect(container.querySelector('.page.settings-page')).not.toBeNull()
     expect(container.querySelector('#settings-account'), '设置页账号区块应存在').not.toBeNull()
     expect(container.querySelector('#settings-account')!.textContent).toContain('qa@everroom.test')
+    // 「新手引导」入口与分区已从设置页隐藏。
+    expect(container.querySelector('#settings-onboarding')).toBeNull()
+    expect(container.querySelector('.settings-navigation')?.textContent).not.toContain('新手引导')
 
     const back = container.querySelector<HTMLButtonElement>('.op-settings-back')
     expect(back, '设置覆盖层应提供返回按钮').not.toBeNull()

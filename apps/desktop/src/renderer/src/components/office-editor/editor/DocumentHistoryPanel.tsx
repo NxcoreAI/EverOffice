@@ -6,7 +6,7 @@ import type {
   RoomDocument,
 } from '@nxcore/agent-contract'
 import { Check, ChevronDown, Clock3, CloudDownload, History, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
@@ -14,6 +14,7 @@ import {
   consumePendingDocumentHistory,
   onDocumentHistoryOpen,
 } from './documentHistoryOpenSignal'
+import { documentsApi, externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 /** 时间轴上的"导入版本"卡片数据（未应用候选）。 */
 interface PendingImportVersion {
@@ -58,6 +59,9 @@ export function DocumentHistoryPanel({
   onCloseDiff,
   closeSignal,
   refreshSignal,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
 }: {
   documentId: string
   currentDocument: RoomDocument | null
@@ -70,9 +74,19 @@ export function DocumentHistoryPanel({
   onCloseDiff: () => void
   closeSignal: number
   refreshSignal: number
+  /** 受控打开：外部（右上「···」菜单）负责开合时传入，不传则沿用面板自带触发按钮。 */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** 受控场景下隐藏面板自带的「版本历史」按钮入口（由外部菜单项代替）。 */
+  hideTrigger?: boolean
 }) {
   const { locale, t } = useLocale()
-  const [open, setOpen] = useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = useCallback((next: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }, [controlledOpen, onOpenChange])
   const [versions, setVersions] = useState<DocumentVersionSummary[]>([])
   const [pendingImports, setPendingImports] = useState<PendingImportVersion[]>([])
   const [selected, setSelected] = useState<number | null>(null)
@@ -119,7 +133,7 @@ export function DocumentHistoryPanel({
     setLoadingMore(false)
     setVersions([])
     setHasMore(false)
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents) return () => { cancelled = true }
     void documents.listVersions(documentId, { limit: HISTORY_PAGE_SIZE })
       .then((result) => {
@@ -150,7 +164,7 @@ export function DocumentHistoryPanel({
   const loadMore = () => {
     if (!open || loading || loadingMore || !hasMore) return
     const beforeVersion = versions.at(-1)?.version
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents || beforeVersion === undefined) return
     const requestGeneration = historyRequestGenerationRef.current
     setLoadingMore(true)
@@ -176,9 +190,9 @@ export function DocumentHistoryPanel({
     if (!open || selected === null) return
     let cancelled = false
     void Promise.all([
-      window.nxcore?.documents.getVersionSnapshot(documentId, selected),
+      documentsApi()?.getVersionSnapshot(documentId, selected),
       currentDocument && selected !== currentDocument.version
-        ? window.nxcore?.documents.getDiff(documentId, selected, currentDocument.version)
+        ? documentsApi()?.getDiff(documentId, selected, currentDocument.version)
         : Promise.resolve(null),
     ]).then(([nextSnapshot, nextDiff]) => {
       if (cancelled) return
@@ -209,7 +223,7 @@ export function DocumentHistoryPanel({
     // 外部导入历史按文档归档（`/v1/documents/:documentId/import-history`）：
     // 工作区级文稿同样可能带外部导入来源，不再按 Room 归属判断。
     let cancelled = false
-    void window.nxcore?.externalDocuments?.importHistory(currentDocument.id)
+    void externalDocumentsApi()?.importHistory(currentDocument.id)
       .then((result) => {
         if (cancelled) return
         setPendingImports(result.entries
@@ -228,7 +242,7 @@ export function DocumentHistoryPanel({
           setHasImportSource(false)
         }
       })
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (documents) {
       void documents.get(currentDocument.id)
         .then((latest) => {
@@ -243,7 +257,7 @@ export function DocumentHistoryPanel({
   }, [currentDocument, open, refreshSignal, importRefreshTick])
 
   const checkExternalUpdate = () => {
-    const external = window.nxcore?.externalDocuments
+    const external = externalDocumentsApi()
     if (!external || !currentDocument || checkingUpdate) return
     setCheckingUpdate(true)
     void external.checkExternalUpdate(currentDocument.id)
@@ -263,7 +277,7 @@ export function DocumentHistoryPanel({
   }
 
   const openImportDiff = (roomImportId: string) => {
-    const external = window.nxcore?.externalDocuments
+    const external = externalDocumentsApi()
     if (!external) return
     setSelected(null)
     setSelectedImportId(roomImportId)
@@ -282,7 +296,7 @@ export function DocumentHistoryPanel({
   // 版本升级为 AI 概览。summaries 变化会带动下一批继续，避免首批之后停摆。
   useEffect(() => {
     if (!open) return
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents) return
     const pending = versions
       .filter((version) => version.changeSummarySource !== 'ai' && !summaryRequestedRef.current.has(version.version))
@@ -310,9 +324,18 @@ export function DocumentHistoryPanel({
 
   return (
     <>
-      <button type="button" aria-label={t('contextRoom:documentHistory.open')} title={t('contextRoom:documentHistory.open')} onClick={() => setOpen(true)}>
-        <History aria-hidden="true" />
-      </button>
+      {hideTrigger ? null : (
+        <button
+          type="button"
+          aria-label={t('contextRoom:documentHistory.open')}
+          title={t('contextRoom:documentHistory.open')}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => setOpen(true)}
+        >
+          <History aria-hidden="true" />
+        </button>
+      )}
       {open ? (
         <div
           className="context-room-history-overlay"

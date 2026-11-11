@@ -1,11 +1,12 @@
 import { ChevronDown, ChevronRight, FolderOpen } from 'lucide-react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon, FolderGlyphIcon } from '@/office-proto/pages/parts'
 import type { FileKind } from '@/office-proto/data'
 
 import { FileItemMenu, type FileItemActions } from './fileItemViews'
-import { LIBRARY_ROOT_LABEL, TMP_FOLDER_PATH, type LibraryRow } from './libraryTree'
+import { LIBRARY_ROOT_KEY, TMP_FOLDER_PATH, type LibraryRow } from './libraryTree'
 
 /**
  * 资料页的两种视图：网格（Finder 式图标瓦片）与列表（文件管理器表格）。
@@ -38,13 +39,14 @@ function ScratchRevealButton({
   row: Extract<LibraryRow, { kind: 'scratch' }>
   onReveal?: (row: Extract<LibraryRow, { kind: 'scratch' }>) => void
 }) {
+  const { t } = useLocale()
   if (!onReveal) return null
   return (
     <button
       type="button"
       className="wb-lib-scratch-reveal"
-      title="在访达中显示"
-      aria-label={`在访达中显示 ${row.name}`}
+      title={t('workbench:workspace.common.revealInFinder')}
+      aria-label={t('workbench:workspace.common.revealNamed', { name: row.name })}
       onClick={(event) => {
         event.stopPropagation()
         onReveal(row)
@@ -69,6 +71,8 @@ function scratchKindOf(name: string): FileKind {
 /* ───────────────── 网格 ───────────────── */
 
 export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
+  const { t } = useLocale()
+  const rootLabel = t(LIBRARY_ROOT_KEY)
   return (
     <ul className="wb-lib-grid">
       {rows.map((row) => (
@@ -77,13 +81,17 @@ export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onReveal
             <button
               type="button"
               className="wb-lib-tile"
-              title={row.path === TMP_FOLDER_PATH ? `${TMP_FOLDER_PATH}（Agent 过程缓存，只读）` : row.path}
+              title={row.path === TMP_FOLDER_PATH
+                ? t('workbench:workspace.library.tmpFolderTitle', { name: TMP_FOLDER_PATH })
+                : row.path}
               onClick={() => onEnterFolder(row.path)}
             >
               <FolderGlyphIcon size={44} />
               <span className="wb-lib-tile-name">{row.name}</span>
               <span className="wb-lib-tile-meta">
-                {row.path === TMP_FOLDER_PATH ? '临时文件' : `${row.fileCount} 项`}
+                {row.path === TMP_FOLDER_PATH
+                  ? t('workbench:workspace.library.tmpFolderMeta')
+                  : t('workbench:workspace.library.itemCount', { count: row.fileCount })}
               </span>
             </button>
           </li>
@@ -100,7 +108,7 @@ export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onReveal
             <button
               type="button"
               className="wb-lib-tile"
-              title={row.location === LIBRARY_ROOT_LABEL ? row.item.file.name : `${row.item.file.name}\n${row.location}`}
+              title={row.location === rootLabel ? row.item.file.name : `${row.item.file.name}\n${row.location}`}
               onClick={() => onOpenFile(row.item)}
             >
               <FileTypeIcon kind={row.item.file.kind} size={46} />
@@ -123,6 +131,7 @@ function FolderRow({
   row: Extract<LibraryRow, { kind: 'folder' }>
   onEnterFolder: (path: string) => void
 }) {
+  const { t } = useLocale()
   return (
     <li className="wb-lib-row">
       <button
@@ -135,7 +144,9 @@ function FolderRow({
         <span className="wb-lib-name">{row.name}</span>
         <span className="wb-lib-loc">{row.location}</span>
         <span className="wb-lib-time">—</span>
-        <span className="wb-lib-size">{row.fileCount} 项</span>
+        <span className="wb-lib-size">
+          {t('workbench:workspace.library.itemCount', { count: row.fileCount })}
+        </span>
       </button>
       <ChevronRight size={14} className="wb-lib-enter" aria-hidden="true" />
     </li>
@@ -150,12 +161,13 @@ function FileRow({
   onOpenFile: (item: RealOfficeFile) => void
 }) {
   const { item } = row
+  const { t } = useLocale()
   return (
     <li className="wb-lib-row">
       <button
         type="button"
         className="wb-lib-row-main"
-        title={row.location === LIBRARY_ROOT_LABEL ? item.file.name : `${item.file.name}\n${row.location}`}
+        title={row.location === t(LIBRARY_ROOT_KEY) ? item.file.name : `${item.file.name}\n${row.location}`}
         onClick={() => onOpenFile(item)}
       >
         <FileTypeIcon kind={item.file.kind} size={36} />
@@ -191,14 +203,17 @@ function ScratchRow({
 }
 
 export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
+  const { t } = useLocale()
   return (
     <div className="wb-lib-list">
       <div className="wb-lib-head" aria-hidden="true">
         <span />
-        <span>名称</span>
-        <span>本地位置</span>
-        <span className="wb-lib-sort">修改时间<ChevronDown size={11} /></span>
-        <span>大小</span>
+        <span>{t('workbench:workspace.library.header.name')}</span>
+        <span>{t('workbench:workspace.library.header.location')}</span>
+        <span className="wb-lib-sort">
+          {t('workbench:workspace.library.header.modified')}<ChevronDown size={11} />
+        </span>
+        <span>{t('workbench:workspace.library.header.size')}</span>
         <span />
       </div>
       <ul className="wb-lib-rows">

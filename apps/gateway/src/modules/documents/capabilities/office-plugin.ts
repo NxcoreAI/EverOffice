@@ -365,7 +365,7 @@ export function officePlugin(
     title: "生成 Word 文档",
     description: "用本地 Word 引擎生成一份新的 .docx 文档并保存到文件库，"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
-      + "本环境没有独立的 Markdown 文稿库——用户要落成文件的文档一律用本工具，聊天里随口的短答复直接用文字回复即可。"
+      + "本工具只产出正式 Office 文件；笔记、速记、会议纪要、清单这类轻量文本用云文档工具（document_draft + document_write_*），聊天里随口的短答复直接用文字回复即可。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
       + "生成完成后在回复中告知文件名即可，一句带过。",
     inputSchema: {
@@ -1015,6 +1015,9 @@ export function officePlugin(
       + "autoFit 'window' 撑满栏、'contents' 收缩到内容宽；用户说“表格太宽了/调窄一点”就用它）。"
       + "一次最多 50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
       + "表格/页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops（ops DSL）更稳，本工具更适合块级内容与格式命令。"
+      + "默认建议模式：用户要求“以修订形式呈现/我审阅后决定”或没有明确要求直接改时，"
+      + "先 word_agent_ops 调 review.trackChanges {enabled:true}（当前状态见 word_agent_read 的 documentState.trackChanges），再编辑；"
+      + "只有用户明确要求直接修改时才保持关闭。"
       + "只有界面里正开着这份文档且有未保存修改时才会被拒绝（提示用户先保存）；没打开或 UI 隐藏时网关会在后台编辑器里打开它，"
       + "不需要请用户先打开或先保存。",
     inputSchema: {
@@ -1104,6 +1107,8 @@ export function officePlugin(
       + "ops 1-50 条，按序执行、逐条隔离（一条失败不影响其他条）；dryRun=true 只校验并返回计划，不落盘。"
       + "高风险 op（review.accept/reject 全部修订、review.protect、review.encrypt）必须带 confirm: true，"
       + "调用前先向用户说明影响并取得明确同意；逐条修订 id 用 read_revisions 返回的 [rN]。"
+      + "默认建议模式：用户要求修订形式或未明确要求直改时，先 review.trackChanges {enabled:true} 再编辑；"
+      + "documentState.trackChanges 是当前开关状态。"
       + "纯文字/段落/格式/插图仍可用 word_agent_edit。只有界面里正开着这份文档且有未保存修改时才会被拒绝（提示用户先保存）。",
     inputSchema: {
       type: "object",
@@ -1391,9 +1396,9 @@ export function officePlugin(
   const wordExportPdf: DocumentCapabilityTool = {
     name: "word_export_pdf",
     title: "把 Word 导出为 PDF 并加入文件库",
-    description: "把任意已入库 .docx 导出为 PDF（桌面端用 LibreOffice 转换，作为新文件加入文件库），"
+    description: "把任意已入库 .docx 导出为 PDF（桌面端进程内渲染；同名 PDF 已存在时按版本更新那一份，不新增重复文件），"
       + "适合“导出 PDF / 发我一份 PDF / 转成 PDF”这类请求。fileId 省略 = 用户当前浏览的文件；"
-      + "不需要文件已经在界面上打开。返回新 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
+      + "不需要文件已经在界面上打开。返回 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
       + "fileName 可选，必须以 .pdf 结尾（默认沿用原文件名）。",
     inputSchema: {
       type: "object",
@@ -1438,6 +1443,79 @@ export function officePlugin(
         ...(exported.contentHash ? { contentHash: exported.contentHash } : {}),
         nextAction: "report_result",
         hint: "PDF 已生成并加入文件库（原 Word 未改动）；回复里告知 PDF 文件名即可，不要重复导出。",
+      });
+    },
+  };
+
+  /**
+   * 在界面打开文件：把资料库/产物里的文件用应用内预览页签打开给用户看
+   * （与资料库「打开」按钮同一条链路），非 Office 形态交给系统默认应用。
+   * 填补的能力缺口：此前 Agent 只能读/改文件内容，用户说「打开那份文档」
+   * 时没有任何工具能把文件在界面上呈现，只能回答“没有这个能力”。
+   */
+  const fileOpen: DocumentCapabilityTool = {
+    name: "file_open",
+    title: "在界面打开文件",
+    description: "把文件库里的文件在应用界面打开给用户看（Word/Excel/PPT/PDF 用内置预览页签，"
+      + "其他格式交给系统默认应用）。用户说「打开/看一下/给我看看那份文件」时用本工具，"
+      + "不要让用户自己去资料库翻。fileId 必填：没有现成 id 就先用 file_search 按文件名定位。"
+      + "editable=true 以可编辑方式打开（用户要接着改）；缺省只读预览。"
+      + "返回 openedWith（office=应用内页签 / external=系统应用）；打开即生效，不要重复调用。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "要打开的文件 id（fileEntryId）；先用 file_search 按文件名定位",
+        },
+        editable: {
+          type: "boolean",
+          description: "true = 以可编辑方式打开（用户要接着修改时）；缺省只读预览",
+        },
+      },
+      required: ["fileId"],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const fileId = typeof args.fileId === "string" ? args.fileId.trim() : "";
+      if (!fileId) throw new Error("INVALID_REQUEST: fileId 不能为空；先用 file_search 按文件名定位");
+      let title = fileId;
+      try {
+        const target = await resolveOfficeTarget({ fileId }, context);
+        title = target.entry.displayName ?? target.entry.originalName;
+      } catch {
+        // 条目暂不可查不阻断打开：桌面端会按 fileId 自行核实并给出可读失败。
+      }
+      let opened: Awaited<ReturnType<OfficeBridgeClient["openFile"]>>;
+      try {
+        opened = await bridge.openFile({
+          fileId,
+          ...(args.editable === true ? { editable: true } : {}),
+          workspaceId: context.workspaceId ?? null,
+        });
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (code === "not_found") {
+          throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+        }
+        throw new Error(
+          `FILE_OPEN_FAILED: 《${title}》打开失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return success({
+        fileId,
+        title,
+        openedWith: opened.openedWith,
+        originalName: opened.originalName,
+        ...(opened.kind ? { kind: opened.kind } : {}),
+        editable: args.editable === true,
+        nextAction: "report_result",
+        hint: opened.openedWith === "office"
+          ? "已在应用内打开并切换到该文件页签；回复里一句告知打开了哪份文件即可。"
+          : "已交给系统默认应用打开；回复里一句告知即可。",
       });
     },
   };
@@ -1793,7 +1871,7 @@ export function officePlugin(
     promptGuidelines: [
       "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物/说明书用 office_create，"
       + "数据表格用 sheets_create，演示/汇报（PPT）按内联 pptx skill 写整册 pptxgenjs 脚本走 slides_create，修改用 slides_read + slides_edit 直改；"
-      + "本环境没有独立的 Markdown 文稿库，需要落成文件的文档不要用纯文字答复搪塞。",
+      + "轻量文本（笔记/速记/总结/清单）走云文档工具（document_draft + document_write_*）；需要交付的正式文件才用 office_create 等生成。不要把正文贴在聊天里冒充已保存。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
@@ -1821,6 +1899,9 @@ export function officePlugin(
       + "只比段落文本；格式/表格结构差异要如实说明该工具看不到。",
       "用户要把 Word 转成 PDF（“导出 PDF / 给我一份 PDF”）时用 word_export_pdf（先 file_search 拿 fileId，省略 fileId 即当前文件）；"
       + "导出后告知新 PDF 文件名即可，不要用 office_create 重建一份、也不要假装改动原 .docx。",
+      "用户要在界面看某份文件（“打开/看一下/给我看看资料库里的 XX”）时用 file_open：先 file_search 拿 fileId，"
+      + "再 file_open（要接着改就带 editable=true）。这是真实打开动作，不要回答“我没有打开文件的能力”，"
+      + "也不要让用户自己去资料库翻；file_open 只负责呈现，改内容仍走 word_agent_* / sheets_agent_* / slides_edit。",
       "word_agent_ops 的 object.image.replace 图片来源只写本地图片绝对路径 path 或公网图片 url"
       + "（网关读字节后注入 base64/mime，模型不必也不许把 base64 抄进 ops）；来源解析失败会整批拒绝，先修正 path/url 再重试。",
       "破坏性 op（图片转灰度/裁剪/去背景、删块、整章删除）不可逆但版本链兜底：用户想反悔（“恢复原图/回到改之前”）"
@@ -1837,6 +1918,7 @@ export function officePlugin(
       ...(files
         ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordAgentRevert, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit, pdfAgentRead, pdfAgentEdit]
         : []),
+      fileOpen,
       ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],
   };

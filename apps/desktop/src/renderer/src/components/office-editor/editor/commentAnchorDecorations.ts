@@ -6,7 +6,7 @@ import { Extension, type Editor } from '@tiptap/react'
 /**
  * 评论锚点装饰（ProseMirror inline decoration）：
  * 评论按"稳定块 id 优先、引用文本退化（同文按出现顺序依次锚定）"解析成文档坐标范围，
- * 以行内装饰渲染黄色下划线（class 区分于手动 <u> 下划线），随文档编辑自动映射，
+ * 以行内装饰渲染主题强调色下划线（class 区分于手动 <u> 的正文色下划线），随文档编辑自动映射，
  * 点击装饰范围广播 COMMENT_ANCHOR_CLICKED_EVENT（面板监听后展开/闪亮卡片）。
  * 装饰是视图层的，不写入文档内容。
  */

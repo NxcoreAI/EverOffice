@@ -7,7 +7,9 @@ import {
   Trash2,
 } from 'lucide-react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
+import { FileOpenWithSubmenu } from '@/components/files/FileOpenWithSubmenu'
 
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 
@@ -16,7 +18,8 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/m
  * 产物页与资料页复用同一套视图）。
  *
  * 只做纯展示 + 点开回调；打开文件一律通过 `FileItemActions.onOpen`
- * （页面转交 WorkspacePageProps.onOpenFile → 气泡窗），本模块不碰任何 IPC。
+ * （页面转交 WorkspacePageProps.onOpenFile → 气泡窗）。「用其他应用打开」
+ * 子菜单是自包含组件（内部走 preload 的文件关联接口），页面只注入失败提示。
  */
 
 /* ───────────────── 行操作菜单 ───────────────── */
@@ -29,6 +32,8 @@ export interface FileItemActions {
   /** 把资料库文件设为当前工作区的论文排版模版（AI 面板「排版」里可见）。 */
   onSetThesisTemplate?: (item: RealOfficeFile) => void
   onDelete?: (item: RealOfficeFile) => void
+  /** 行内操作失败提示（用其他应用打开/定位失败）。 */
+  onError?: (message: string) => void
 }
 
 /** 论文模版只收 Word/PDF（与网关 thesis-format 解析入口一致）。 */
@@ -41,6 +46,7 @@ export function FileItemMenu({ item, actions, align = 'end' }: {
   actions: FileItemActions
   align?: 'start' | 'center' | 'end'
 }) {
+  const { t } = useLocale()
   return (
     <Menu>
       <MenuTrigger asChild>
@@ -48,36 +54,37 @@ export function FileItemMenu({ item, actions, align = 'end' }: {
         <button
           type="button"
           className="ui-iconbtn ui-iconbtn--sm wb-file-menu-trigger"
-          aria-label={`${item.file.name} 的操作`}
-          title="更多操作"
+          aria-label={t('workbench:workspace.file.menu.actions', { name: item.file.name })}
+          title={t('workbench:workspace.file.menu.more')}
         >
           <MoreHorizontal size={15} />
         </button>
       </MenuTrigger>
       <MenuContent align={align}>
         <MenuItem icon={<PanelRightOpen size={14} />} onSelect={() => actions.onOpen(item)}>
-          在气泡窗打开
+          {t('workbench:workspace.file.menu.openInBubble')}
         </MenuItem>
         {actions.onOpenOriginal ? (
           <MenuItem icon={<ExternalLink size={14} />} onSelect={() => actions.onOpenOriginal?.(item)}>
-            用原应用打开
+            {t('workbench:workspace.file.menu.openOriginal')}
           </MenuItem>
         ) : null}
+        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} label="用其他应用打开" />
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
-            导出定位
+            {t('workbench:workspace.file.menu.exportReveal')}
           </MenuItem>
         ) : null}
         {actions.onSetThesisTemplate && canBeThesisTemplate(item) ? (
           <MenuItem icon={<Stamp size={14} />} onSelect={() => actions.onSetThesisTemplate?.(item)}>
-            设为论文排版模版
+            {t('workbench:workspace.file.menu.thesisTemplate')}
           </MenuItem>
         ) : null}
         {actions.onDelete ? (
           <>
             <MenuSeparator />
             <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => actions.onDelete?.(item)}>
-              删除文件…
+              {t('workbench:workspace.file.menu.delete')}
             </MenuItem>
           </>
         ) : null}

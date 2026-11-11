@@ -18,9 +18,23 @@
   box-shadow: var(--ui-shadow-sm);
   overflow: hidden;
   contain: layout paint;
-  /* 面板宽度变化（打开 / 最大化 / 还原）统一走过渡，对话区随之逐帧让位。 */
-  transition: width 240ms cubic-bezier(0.4, 0, 0.6, 1);
+  /* 面板宽度变化（打开 / 最大化 / 还原）统一走过渡，对话区随之逐帧让位。
+     停靠留白/描边只在「压满整页」档位切换时变化，同样走一点过渡，避免窗口缩放时跳色块。 */
+  transition:
+    width 240ms cubic-bezier(0.4, 0, 0.6, 1),
+    margin 240ms cubic-bezier(0.4, 0, 0.6, 1),
+    border-width 240ms cubic-bezier(0.4, 0, 0.6, 1),
+    border-radius 240ms cubic-bezier(0.4, 0, 0.6, 1);
   animation: wb-bubble-in 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 拖宽到铺满整个工作区：去掉停靠留白、卡片描边与圆角，视觉上等同最大化覆盖层，
+   但仍是停靠态（左缘把手还在，可以再拖回分栏）。宽度由 BubbleWindow 按容器实测收敛。 */
+.wb-bubble.is-full-cover {
+  margin: 0;
+  border-width: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* 拖拽改宽与退场动画期间关掉过渡，避免和指针/关键帧互相抢值。 */
@@ -266,19 +280,32 @@
 .wb-bubble-browser-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 2px;
   width: 100%;
   flex: none;
-  padding: 7px 8px;
-  border: 0;
+  padding: 0 2px 0 0;
   border-radius: var(--ui-radius-sm);
+}
+.wb-bubble-browser-row:hover { background: var(--ui-hover); }
+.wb-bubble-browser-row-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px 6px 8px;
+  border: 0;
   background: transparent;
   color: var(--ui-text);
   text-align: left;
   cursor: pointer;
+  border-radius: var(--ui-radius-sm);
 }
-.wb-bubble-browser-row:hover { background: var(--ui-hover); }
-.wb-bubble-browser-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.wb-bubble-browser-row-main:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: -2px;
+}
+.wb-bubble-browser-row-copy { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .wb-bubble-browser-row-name {
   font-size: var(--ui-text-xs);
   font-weight: 550;
@@ -318,4 +345,10 @@
   .wb-bubble.is-closing,
   .wb-bubble.is-minimizing,
   .wb-bubble-body > * { animation: none !important; transition: none !important; }
+}
+
+/* 气泡窗头部：当前打开文件的外部应用分体控件（紧凑变体，位于标签/窗口控制之间）。 */
+.wb-bubble-open-with {
+  flex: none;
+  margin-right: 2px;
 }

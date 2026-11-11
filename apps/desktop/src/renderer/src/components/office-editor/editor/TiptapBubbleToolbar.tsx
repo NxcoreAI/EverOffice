@@ -34,6 +34,7 @@ import {
   clearSelectionRewritePromptDecoration,
   showSelectionRewritePromptDecoration,
 } from './TiptapSelectionRewrite'
+import { documentsApi } from '@/components/office-editor/documentApi'
 
 function normalizeLink(value: string): string | null {
   const link = value.trim()
@@ -136,7 +137,7 @@ export function TiptapBubbleToolbar({
   }
 
   const replaceImage = async (file: File) => {
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents) throw new Error(t('contextRoom:tiptapBubbleToolbar.theLocalImageServiceIsUnavailable'))
     const stored = await storeDocumentImageFile(file, documentId, documents.storeImage)
     updateSelectedImage({
@@ -390,7 +391,7 @@ export function TiptapBubbleToolbar({
             const body = commentDraft.trim()
             if (!selection || !body || commentSubmitting) return
             setCommentSubmitting(true)
-            void window.nxcore?.documents.createDocumentComment(documentId, {
+            void documentsApi()?.createDocumentComment(documentId, {
               body,
               blockId: selection.blockId,
               quotedText: selection.quotedText || null,

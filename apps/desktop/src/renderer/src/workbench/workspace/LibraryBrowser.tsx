@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, LayoutGrid, List, Search, X } from 'lucide-r
 import { Fragment, useMemo, useState } from 'react'
 
 import type { AgentScratchListing } from '@nxcore/agent-contract'
+import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
 import { IconButton } from '../ui/primitives'
@@ -12,7 +13,7 @@ import {
   folderCrumbs,
   parentFolderOf,
   levelRows,
-  LIBRARY_ROOT_LABEL,
+  LIBRARY_ROOT_KEY,
   searchLibrary,
   buildScratchLevel,
   scratchRows,
@@ -42,6 +43,7 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
   /** 在访达中定位 `.tmp` 里的文件（参数为相对 `.tmp` 根的路径）。 */
   onRevealScratch: (relativePath: string) => void
 }) {
+  const { t } = useLocale()
   const [path, setPath] = useState('')
   const [query, setQuery] = useState('')
   const [view, setView] = useState<FileViewMode>('grid')
@@ -50,7 +52,7 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
   const searching = keyword.length > 0
   const inTmp = isTmpPath(path)
   const level = useMemo(() => buildLibraryLevel(items, path), [items, path])
-  const levelRowsList = useMemo(() => levelRows(level), [level])
+  const levelRowsList = useMemo(() => levelRows(level, t), [level, t])
   const scratchEntries = useMemo(
     () => (scratch?.present ? scratch.entries : []),
     [scratch],
@@ -59,7 +61,10 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
     () => (inTmp ? buildScratchLevel(scratchEntries, path) : null),
     [inTmp, scratchEntries, path],
   )
-  const hits = useMemo(() => (searching ? searchLibrary(items, keyword) : null), [items, keyword, searching])
+  const hits = useMemo(
+    () => (searching ? searchLibrary(items, keyword, t) : null),
+    [items, keyword, searching, t],
+  )
 
   // 根目录额外挂 .tmp 文件夹（scratch 根存在且有内容时），排在普通目录前。
   const tmpFolderRow: LibraryRow[] = !inTmp && !searching && scratchEntries.length > 0
@@ -68,13 +73,13 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
         path: TMP_FOLDER_PATH,
         name: TMP_FOLDER_PATH,
         fileCount: 0,
-        location: LIBRARY_ROOT_LABEL,
+        location: t(LIBRARY_ROOT_KEY),
       }]
     : []
   const rows: LibraryRow[] = hits
     ? [...hits.folders, ...hits.files]
     : inTmp && scratchLevel
-      ? scratchRows(scratchLevel)
+      ? scratchRows(scratchLevel, t)
       : [...tmpFolderRow, ...levelRowsList]
   const crumbs = useMemo(() => folderCrumbs(level.path), [level.path])
 
@@ -101,22 +106,22 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
         <button
           type="button"
           className="wb-lib-back"
-          title="返回上一级"
-          aria-label="返回上一级"
+          title={t('workbench:workspace.library.back')}
+          aria-label={t('workbench:workspace.library.back')}
           disabled={!level.path || searching}
           onClick={() => goTo(parentFolderOf(level.path))}
         >
           <ChevronLeft size={15} />
         </button>
 
-        <nav className="wb-lib-crumbs" aria-label="当前位置">
+        <nav className="wb-lib-crumbs" aria-label={t('workbench:workspace.library.location')}>
           <button
             type="button"
             className={level.path ? undefined : 'is-current'}
             aria-current={level.path ? undefined : 'page'}
             onClick={() => goTo('')}
           >
-            {LIBRARY_ROOT_LABEL}
+            {t(LIBRARY_ROOT_KEY)}
           </button>
           {crumbs.map((crumb) => (
             <Fragment key={crumb.path}>
@@ -138,16 +143,16 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
           <input
             type="search"
             value={query}
-            placeholder="搜索文件与文件夹"
-            aria-label="搜索文件与文件夹"
+            placeholder={t('workbench:workspace.library.searchPlaceholder')}
+            aria-label={t('workbench:workspace.library.searchPlaceholder')}
             onChange={(event) => setQuery(event.target.value)}
           />
           {query ? (
             <button
               type="button"
               className="wb-lib-search-clear"
-              title="清空搜索"
-              aria-label="清空搜索"
+              title={t('workbench:workspace.common.clearSearch')}
+              aria-label={t('workbench:workspace.common.clearSearch')}
               onClick={() => setQuery('')}
             >
               <X size={12} />
@@ -155,9 +160,9 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
           ) : null}
         </label>
 
-        <div className="wb-lib-views" role="group" aria-label="视图切换">
+        <div className="wb-lib-views" role="group" aria-label={t('workbench:workspace.common.viewSwitch')}>
           <IconButton
-            label="网格视图"
+            label={t('workbench:workspace.common.gridView')}
             size="sm"
             active={view === 'grid' && !searching}
             disabled={searching}
@@ -165,7 +170,7 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
             onClick={() => setView('grid')}
           />
           <IconButton
-            label="列表视图"
+            label={t('workbench:workspace.common.listView')}
             size="sm"
             active={view === 'list' || searching}
             disabled={searching}
@@ -176,7 +181,9 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
       </div>
 
       {inTmp && scratch?.truncated ? (
-        <p className="wb-lib-note">临时文件超过清单上限，以下只显示前 {scratchEntries.length} 项。</p>
+        <p className="wb-lib-note">
+          {t('workbench:workspace.library.scratchTruncated', { count: scratchEntries.length })}
+        </p>
       ) : null}
 
       {rows.length > 0 ? (
@@ -186,10 +193,10 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
       ) : (
         <p className="wb-lib-empty">
           {searching
-            ? `没有匹配「${keyword}」的结果`
+            ? t('workbench:workspace.library.searchNoMatch', { keyword })
             : inTmp
-              ? '此文件夹为空（临时文件由 Agent 使用过程产生，可能随时被清理）'
-              : '此文件夹为空'}
+              ? t('workbench:workspace.library.tmpEmpty')
+              : t('workbench:workspace.library.folderEmpty')}
         </p>
       )}
     </div>

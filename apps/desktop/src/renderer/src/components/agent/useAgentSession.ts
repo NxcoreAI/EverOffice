@@ -916,8 +916,8 @@ export function useAgentSession(
     }
   }, [api, applyEvent, hydrateSnapshot, reloadNonce, selectSession, scheduleAgentEventFlush, sessionKey, workspaceId])
 
-  // 全局默认档位：新会话创建时锁定到 session.activeAgentId（后端权威）。
-  // 切换只影响下一个新会话，进行中的会话档位以 currentSession.modelPreference 为准。
+  // 全局默认档位：新会话创建时的初始档位；已有会话切换走 setSessionModelPreference
+  // （PATCH 回写 activeAgentId，下一轮 run 立即生效）。
   const [modelPreferenceDefault, setModelPreferenceDefaultState] = useState<AgentModelPreference>(readStoredModelPreference)
   const modelPreferenceRef = useRef(modelPreferenceDefault)
   const setModelPreferenceDefault = useCallback((tier: AgentModelPreference) => {
@@ -961,7 +961,8 @@ export function useAgentSession(
         pageLabel: sessionKey,
         roomId: null,
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
-        // 渠道优先：锁定后整个会话由该 CLI Agent 连续执行，档位被忽略。
+        // 渠道优先：创建时锁定的渠道让整个会话由该 CLI Agent 连续执行，档位被忽略；
+        // 创建后可 PATCH 切换档位（updateSession 回写 activeAgentId，下一轮 run 生效）。
         ...(channelAgentDefaultRef.current
           ? { channelAgentId: channelAgentDefaultRef.current }
           : { modelPreference: modelPreferenceRef.current }),
@@ -1284,7 +1285,7 @@ export function useAgentSession(
         ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
         // 气泡正文（批注场景）：空串＝无气泡。runtime 不收。
         ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
-        // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
+        // 'main' 时省略 targetAgentId：档位/渠道以会话当前 activeAgentId 为准，由网关选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
         ...(replaceRunId ? { replaceRunId } : {}),
@@ -1558,6 +1559,31 @@ export function useAgentSession(
     return true
   }, [api, setThinkingLevelDefault, t])
 
+  /**
+   * 切换模型档位：
+   * - 任何一次选择都持久化为「下次新会话默认值」；
+   * - 会话已存在：PATCH 回写会话 activeAgentId（下一轮 run 立即走新档位），并用
+   *   响应回填 currentSession / sessions 列表；运行中网关拒绝（agent_session_busy）；
+   * - 草稿态（无会话/无 API）：只改默认值，首条消息建会话时带上。
+   */
+  const setSessionModelPreference = useCallback(async (tier: AgentModelPreference): Promise<boolean> => {
+    setModelPreferenceDefault(tier)
+    const targetSessionId = sessionIdRef.current
+    if (!api || !targetSessionId) return true
+    setError(null)
+    try {
+      const updated = await api.updateSession(targetSessionId, { modelPreference: tier })
+      setCurrentSession((current) => current && current.id === updated.id ? updated : current)
+      setSessions((current) => current.map((session) => session.id === updated.id ? updated : session))
+      // 会话渠道随档位回写变化（切到档位＝退出渠道），发送时按最新值决定 targetAgentId。
+      channelAgentRef.current = updated.channelAgentId ?? null
+      return true
+    } catch (requestError) {
+      setError(requestErrorMessage(requestError, t('surface:useAgentSession.modelPreferenceUpdateFailed')))
+      return false
+    }
+  }, [api, setModelPreferenceDefault, t])
+
   return {
     activeRunId,
     agentIdByRun,
@@ -1575,6 +1601,7 @@ export function useAgentSession(
     messages,
     modelPreferenceDefault,
     setModelPreferenceDefault,
+    setSessionModelPreference,
     thinkingLevelDefault,
     setThinkingLevelDefault,
     setSessionThinkingLevel,

@@ -37,7 +37,7 @@ import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
 import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
-import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type FileApplication, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -705,9 +705,9 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    // roomId 传 null/undefined = 整个工作区的文稿（P0-2）
-    list: (roomId?: string | null) => invoke('documents:list', roomId),
-    listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
+    // workspaceId 传 null/undefined = 整个工作区的文稿（P0-2）；传值时按工作空间绑定过滤
+    list: (workspaceId?: string | null) => invoke('documents:list', workspaceId),
+    listTrash: (workspaceId?: string | null) => invoke('documents:list-trash', workspaceId),
     get: (documentId) => invoke('documents:get', documentId),
     readMarkdown: (documentId: string) => invoke('documents:read-markdown', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
@@ -852,6 +852,9 @@ const api: NxcoreDesktopApi = {
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),
     readDataUrl: (fileId: string) => invokeQuietly('files:read-data-url', fileId),
+    readText: (fileId: string) => invoke('files:read-text', fileId),
+    saveMarkdown: (input: { fileId: string; markdown: string; originalName?: string; workspaceId?: string }) =>
+      invoke('files:save-markdown', input),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
@@ -864,6 +867,10 @@ const api: NxcoreDesktopApi = {
       options?: { editable?: boolean; roomId?: string; workspaceId?: string },
     ) =>
       invoke('files:open-original', fileId, originalName, contentHash, options),
+    listApplications: (fileId: string) =>
+      invoke<FileApplication[]>('files:applications:list', fileId),
+    openWithApplication: (fileId: string, applicationId?: string) =>
+      invoke<{ openedWith: 'external' }>('files:applications:open', fileId, applicationId),
     pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
       invoke('files:pick-and-import', options),
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */

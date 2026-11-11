@@ -131,7 +131,7 @@ interface AgentSessionSnapshot { session; participants; activeRun: AgentRun|null
 
 ### 2.3 模型 / 额度
 
-没有 `agent.models`。模型是「档位」：`smart/primary/lite` → 内置 agentId（`agent-contract:347-354`），创建会话时锁定，不能中途换；可用性由 composer 打开选择器时判断（`components/agent/AgentComposer.tsx:146`）。用量是 `getUsage(range)` → `AgentUsageSnapshot{provider, model, range, inputTokens, outputTokens, cacheHitTokens, points[]}`（`:29-38`）。
+没有 `agent.models`。模型是「档位」：`smart/primary/lite` → 内置 agentId（`agent-contract:347-354`）；创建会话时作为初始档位写入 `active_agent_id`，会话内可随时 `PATCH /v1/agent/sessions/:id { modelPreference }` 切换（回写同一字段，下一轮 run 生效，运行中拒绝）；可用性由 composer 打开选择器时判断（`components/agent/AgentComposer.tsx:146`）。用量是 `getUsage(range)` → `AgentUsageSnapshot{provider, model, range, inputTokens, outputTokens, cacheHitTokens, points[]}`（`:29-38`）。
 
 ---
 

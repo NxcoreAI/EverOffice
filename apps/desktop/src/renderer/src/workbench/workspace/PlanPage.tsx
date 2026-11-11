@@ -1,6 +1,7 @@
 import { Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { PlanStatus } from '@nxcore/agent-contract'
 
 import { workbenchApi } from '../api'
@@ -21,6 +22,7 @@ import './plan/plan.css'
  * 会话降级为卡片上的执行入口；会话列表仍在侧栏「工作 N」里，这里不再重复。
  */
 export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToast }: WorkspacePageProps) {
+  const { t } = useLocale()
   const plan = usePlanItems(workspace.id)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -45,9 +47,9 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
 
   const sessionTitles = useMemo(() => {
     const map = new Map<string, string>()
-    for (const session of sessions) map.set(session.id, sessionDisplayTitle(session))
+    for (const session of sessions) map.set(session.id, sessionDisplayTitle(session, t))
     return map
-  }, [sessions])
+  }, [sessions, t])
 
   const blockedTitles = useMemo(() => {
     const byId = new Map(plan.items.map((item) => [item.id, item]))
@@ -81,12 +83,18 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
       setSelectedIds(new Set())
       setSelectMode(false)
       await plan.reload()
-      const label = action === 'drop' ? '取消' : '移动'
-      onToast(result.failed.length
-        ? `已${label} ${result.items.length} 项，${result.failed.length} 项被占用未处理`
-        : `已${label} ${result.items.length} 项`)
+      const failed = result.failed.length
+      if (action === 'drop') {
+        onToast(failed
+          ? t('workbench:workspace.plan.batch.cancelledPartial', { count: result.items.length, failed })
+          : t('workbench:workspace.plan.batch.cancelled', { count: result.items.length }))
+      } else {
+        onToast(failed
+          ? t('workbench:workspace.plan.batch.movedPartial', { count: result.items.length, failed })
+          : t('workbench:workspace.plan.batch.moved', { count: result.items.length }))
+      }
     } catch {
-      onToast('批量操作失败，请重试')
+      onToast(t('workbench:workspace.plan.batchFailed'))
     }
   }
 
@@ -95,7 +103,7 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
   const createTask = async (title: string, status: PlanStatus = 'todo') => {
     const created = await plan.createItem(title, status)
     if (!created) {
-      onToast('新建任务失败')
+      onToast(t('workbench:workspace.plan.createFailed'))
       return
     }
     setSelectedId(created.id)
@@ -116,25 +124,25 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
     onAssign: async () => {
       const result = await plan.assignItem(selected)
       if (!result) {
-        onToast('交给 Agent 失败（检查网关与 Agent 配置）')
+        onToast(t('workbench:workspace.plan.assignFailed'))
         return
       }
-      onToast('已交给 Agent，正在新会话里执行')
+      onToast(t('workbench:workspace.plan.assigned'))
       onOpenSession(result.sessionId)
     },
     onRemove: async () => {
       if (await plan.removeItem(selected)) {
-        onToast('已取消该任务')
+        onToast(t('workbench:workspace.plan.removed'))
         setSelectedId(null)
       } else {
-        onToast('取消任务失败，请重试')
+        onToast(t('workbench:workspace.plan.removeFailed'))
       }
     },
     onRestore: async () => {
       const todoCount = plan.items.filter((item) => item.status === 'todo').length
       const target = resolveDrop(plan.items, selected.id, 'todo', todoCount)
-      if (await plan.moveItem(selected, target)) onToast('已恢复到「待开始」')
-      else onToast('恢复失败，请重试')
+      if (await plan.moveItem(selected, target)) onToast(t('workbench:workspace.plan.restored'))
+      else onToast(t('workbench:workspace.plan.restoreFailed'))
     },
     onOpenSession,
     onToast,
@@ -144,14 +152,14 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
     <div className="wb-wspage wb-tools-page wb-plan-page">
       <header className="wb-plan-toolbar">
         <div className="wb-plan-toolbar-title">
-          <h2>计划</h2>
+          <h2>{t('workbench:workspacePage.plan')}</h2>
         </div>
         <div className="wb-plan-toolbar-search">
           <Search size={14} aria-hidden="true" />
           <TextInput
             value={query}
-            placeholder="搜索任务"
-            aria-label="搜索任务"
+            placeholder={t('workbench:workspace.plan.searchPlaceholder')}
+            aria-label={t('workbench:workspace.plan.searchPlaceholder')}
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
@@ -165,12 +173,16 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
                 setSelectedIds(new Set())
               }}
             >
-              {selectMode ? '退出多选' : '多选'}
+              {selectMode
+                ? t('workbench:workspace.plan.exitMultiSelect')
+                : t('workbench:workspace.plan.multiSelect')}
             </Button>
           ) : null}
-          <Button variant="ghost" size="sm" onClick={onNewWork}>新建工作</Button>
+          <Button variant="ghost" size="sm" onClick={onNewWork}>
+            {t('workbench:workspaceSidebar.newWork')}
+          </Button>
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setComposing(true)}>
-            新建任务
+            {t('workbench:workspace.plan.newTask')}
           </Button>
         </div>
       </header>
@@ -180,7 +192,7 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
           <TextInput
             autoFocus
             value={draftTitle}
-            placeholder="任务标题，回车创建"
+            placeholder={t('workbench:workspace.plan.composePlaceholder')}
             onChange={(event) => setDraftTitle(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') void commitDraft()
@@ -197,13 +209,15 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
       {plan.error && plan.state !== 'ready' ? (
         <div className="wb-tool-error" role="alert">
           {plan.state === 'unavailable'
-            ? '当前网关版本不支持计划，升级后可在这里管理任务。'
-            : `计划加载失败：${plan.error}`}
+            ? t('workbench:workspace.plan.unavailable')
+            : t('workbench:workspace.plan.loadFailed', { error: plan.error })}
         </div>
       ) : null}
 
       {plan.state === 'loading' ? (
-        <div className="wb-plan-loading"><Spinner /> 正在加载计划…</div>
+        <div className="wb-plan-loading">
+          <Spinner /> {t('workbench:workspace.plan.loading')}
+        </div>
       ) : (
         <PlanBoard
           groups={groups}
@@ -214,7 +228,7 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
           onToggleSelect={toggleSelect}
           onDrop={async (dragId, column, index) => {
             const ok = await plan.dropItem(dragId, column, index)
-            if (!ok) onToast('移动失败，卡片已恢复')
+            if (!ok) onToast(t('workbench:workspace.plan.moveFailed'))
           }}
           onCreate={(title, status) => void createTask(title, status)}
           onOpenCard={setSelectedId}
@@ -222,13 +236,25 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
       )}
 
       {selectedIds.size ? (
-        <div className="wb-plan-batch-bar" role="toolbar" aria-label="批量操作">
-          <span className="wb-plan-batch-count">已选 {selectedIds.size} 项</span>
-          <Button size="sm" variant="secondary" onClick={() => void runBatch('move', 'todo')}>移到待开始</Button>
-          <Button size="sm" variant="secondary" onClick={() => void runBatch('move', 'doing')}>移到进行中</Button>
-          <Button size="sm" variant="secondary" onClick={() => void runBatch('move', 'done')}>标记完成</Button>
-          <Button size="sm" variant="ghost" onClick={() => void runBatch('drop')}>取消任务</Button>
-          <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>清空</Button>
+        <div className="wb-plan-batch-bar" role="toolbar" aria-label={t('workbench:workspace.plan.batchBar')}>
+          <span className="wb-plan-batch-count">
+            {t('workbench:workspace.plan.selectedCount', { count: selectedIds.size })}
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => void runBatch('move', 'todo')}>
+            {t('workbench:workspace.plan.moveToTodo')}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => void runBatch('move', 'doing')}>
+            {t('workbench:workspace.plan.moveToDoing')}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => void runBatch('move', 'done')}>
+            {t('workbench:workspace.plan.markDone')}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => void runBatch('drop')}>
+            {t('workbench:workspace.plan.cancelTask')}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+            {t('workbench:workspace.plan.clearSelection')}
+          </Button>
         </div>
       ) : null}
 

@@ -228,7 +228,9 @@ function describeDocsAskScope(op: DocsAgentAskPayload): string {
     ? `第 ${op.fromBlockIndex} 块`
     : `第 ${op.fromBlockIndex}–${op.toBlockIndex} 块`
   const label = DOCS_ASK_KIND_LABEL[op.kind] ?? op.kind
-  const excerpt = op.excerpt ? `「${clipAskText(op.excerpt, 40)}」` : ''
+  // 摘要给足：只给 40 字时 agent 往往只看到选区开头，回读整块后就把同段其它
+  // 内容一起改掉（用户视角的「我只想改这一句」）。上限与渲染端 200 字对齐。
+  const excerpt = op.excerpt ? `「${clipAskText(op.excerpt, 200)}」` : ''
   return `${range}（${label}${excerpt}）`
 }
 

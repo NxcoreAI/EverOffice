@@ -348,6 +348,10 @@
   font-size: 10px;
 }
 .ui-menu-sep { height: 1px; margin: 4px 6px; background: var(--ui-border-subtle); }
+.ui-menu-sub-trigger[data-highlighted],
+.ui-menu-sub-trigger[data-state="open"] { background: var(--ui-hover); }
+.ui-menu-chevron { flex: none; margin-left: auto; color: var(--ui-text-3); }
+.ui-menu-sub { min-width: 200px; max-width: 280px; max-height: min(460px, 70vh); overflow-y: auto; }
 .ui-menu-label-text {
   padding: 5px 8px 4px;
   font-size: var(--ui-text-2xs);

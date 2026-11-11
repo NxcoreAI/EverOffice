@@ -153,7 +153,9 @@ token/组件（不复制原型配色）；数据全部来自真实桥。
 气泡窗：
 - 打开：资料库/产物/动态/会话文件提及 → 以 `{ files[], activeFileId, width, maximized }` 状态挂在
   工作空间标签组件里（组件级状态，多开隔离）。
-- 交互：左缘拖拽调宽 360–720、最小化成右缘把手、最大化为覆盖内容栏的悬浮层、内部多文件标签、关闭走
+- 交互：左缘拖拽调宽 360–720；继续往左拖越过「对话区保底宽度」后进入铺满档，可一直拖到
+  覆盖整个工作区（对话区让位到 0，视觉同最大化覆盖层，反向拖回恢复分栏）；最小化成右缘把手、
+  最大化为覆盖内容栏的悬浮层、内部多文件标签、关闭走
   编辑器脏关闭守卫（`files.openOriginal`/实例关闭）。
 - 内容：`office-proto/EditorView`（真实文件走 `NativeEditorHost`，Markdown 走 CodeMirror）；气泡内隐藏 Agent 停靠栏。
 
@@ -397,6 +399,40 @@ pageLabel 是 `'Agent'` 而非分区键；修改后绿：含重挂恢复、改�
   `bubble.width`；退场时最大化分支直接解冻而非量宽度。
 - 原生编辑器（WebContentsView）随 ResizeObserver 立即重报全屏矩形，最大化切换无迟滞；
   退场期间 `.op-native-wrap` 仍按既有 `is-closing/is-minimizing` 规则隐藏。
+
+### 2026-11-10 第七轮：气泡窗拖宽可铺满整个工作区（修复「拖不到整页」）
+
+用户反馈：项目空间对话区右侧的气泡窗（资料与文件侧栏）在拖拽调宽时无法覆盖整个页面——
+面板最多到 720px / 容器减 240px 就停住，永远盖不住对话区。
+
+根因（两处叠加）：
+
+1. `useBubble.ts` 的 `BUBBLE_MAX_WIDTH = 720` 硬上限把记忆宽度截断；
+2. `BubbleWindow.tsx` 的渲染宽度用 CSS `max-width: calc(100% - 240px)`，即使状态再宽也只能
+   到「对话区保留 240px」这条线；
+3. 拖拽起点取的是状态里的记忆宽度，窗口被拖窄后实际渲染宽度已被容器收敛，第一次
+   `pointermove` 会从旧值起算（跳一下 / 拖不动）。
+
+修复：
+
+- **宽度几何抽成纯函数**（新增 `workspace/bubbleGeometry.ts`）：`resolveBubbleGeometry`
+  把「记忆宽度 + 容器实测宽度 + cover 档位」收敛成渲染宽度。常规档收敛在上限
+  「容器 − 对话区保底 240 − 停靠留白 8」；拖过这条线后进入 **cover 档**，允许继续长到容器
+  宽度并让 `.wb-ws-main` 的 `min-width` 放开到 0（对话区宽度让位到 0，`has-bubble-cover`）。
+  `resolveBubbleDrag` 负责指针位移 → 记忆宽度 + 档位，向左越过阈值立即开 cover、向右拖回
+  自动退出，宽度连续无跳变。
+- **不再有 720 硬上限**：`setWidth(width, cover?)` 只收敛下限，上限交给容器实测值。
+- **拖拽起点用实测宽度**：`startWidth` 取 `getBoundingClientRect().width`，窗口变窄/变宽后
+  第一次拖动从实际宽度起算，不再跳。
+- **铺满态视觉**：`.wb-bubble.is-full-cover` 去掉停靠留白、卡片描边与圆角（视觉等同最大化
+  覆盖层），但仍是停靠态——左缘把手还在，可以再拖回分栏；最大化按钮/退场动画逻辑不变。
+- **窗口缩放不橡皮筋**：容器宽度变化期间（`containerAdjusting`，稳定 140ms 后结束）渲染宽度
+  直接给 `transition: none`，面板跟随窗口即时收敛，而不是以 240ms 缓动追着走；窗口缩放属于
+  被动重排，不触发冻结（`is-settling` 不会因此隐藏原生编辑器）。
+- **铺满态无障碍**：`geometry.full` 时宿主加 `has-full-bubble`，对话区 `visibility: hidden`
+  （只把宽度压到 0 挡不住键盘 Tab / 读屏），与最大化覆盖层一致。
+- 回归：`tests/bubble-geometry.test.ts`（13 例几何/拖拽纯函数）+ `tests/workbench-bubble.test.tsx`
+  新增「越过 720 上限 / 最小宽度 / 关闭清零 cover」3 例。
 
 ### 运行/验收提示
 

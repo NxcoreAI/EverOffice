@@ -57,6 +57,9 @@ export function translate(locale: AppLocale, message: string, values?: Record<st
 
 export type Translate = (message: string, values?: Record<string, string | number>) => string
 
+/** zh-CN 默认翻译器：纯函数/非 React 模块在没有注入 t 时使用，保持历史测试与默认行为不变。 */
+export const translateZh: Translate = (message, values) => translate('zh-CN', message, values)
+
 interface LocaleContextValue {
   locale: AppLocale
   preference: LocalePreference

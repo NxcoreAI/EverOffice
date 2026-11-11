@@ -1,8 +1,10 @@
 import { FilePlus2, FileText, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
+import { useLocale, type Translate } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
+import { workspaceDisplayName } from '../types'
 import { ConfirmModal } from '../ui/modal'
 import { EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
@@ -30,14 +32,25 @@ import './library.css'
  */
 
 /** 导入结果摘要 → toast 文案（按钮导入与拖放导入共用）。 */
-function summarizeImport(summary: { imported: number; failed: number; skipped: number }): string {
+function summarizeImport(
+  summary: { imported: number; failed: number; skipped: number },
+  t: Translate,
+): string {
   const parts: string[] = []
-  if (summary.imported > 0) parts.push(`已导入 ${summary.imported} 个文件`)
-  if (summary.failed > 0) parts.push(`${summary.failed} 个失败`)
-  if (summary.skipped > 0) parts.push(`${summary.skipped} 个跳过`)
-  return parts.join('，') || '没有可导入的文件'
+  if (summary.imported > 0) {
+    parts.push(t('workbench:workspace.library.import.imported', { count: summary.imported }))
+  }
+  if (summary.failed > 0) {
+    parts.push(t('workbench:workspace.library.import.failed', { count: summary.failed }))
+  }
+  if (summary.skipped > 0) {
+    parts.push(t('workbench:workspace.library.import.skipped', { count: summary.skipped }))
+  }
+  return parts.join(t('workbench:workspace.library.import.joiner'))
+    || t('workbench:workspace.library.import.none')
 }
 export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePageProps) {
+  const { t, locale } = useLocale()
   const library = useFileLibrary(workspace.id)
   const scratch = useScratchFiles(workspace.id)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
@@ -50,47 +63,52 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
   const revealScratch = async (relativePath: string) => {
     const bridge = window.nxcore?.workspace
     if (!bridge || typeof bridge.layout !== 'function' || typeof bridge.reveal !== 'function') {
-      onToast('桌面端空间能力不可用')
+      onToast(t('workbench:workspace.library.toast.spaceUnavailable'))
       return
     }
     try {
       const layout = await bridge.layout(workspace.id)
       const absolute = `${layout.paths.tmp}/${relativePath}`
       const ok = await bridge.reveal(absolute)
-      onToast(ok ? '已在访达中定位' : '文件已被清理，可刷新后重试')
+      onToast(ok
+        ? t('workbench:workspace.library.toast.revealed')
+        : t('workbench:workspace.library.toast.cleanedUp'))
     } catch {
-      onToast('定位失败，请稍后重试')
+      onToast(t('workbench:workspace.library.toast.revealFailed'))
     }
   }
 
   const openOriginal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
     if (!api || typeof api.openOriginal !== 'function') {
-      onToast('桌面端文件能力不可用')
+      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
       const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
         workspaceId: workspace.id,
       })
-      if (result.openedWith === 'office') onToast(`已在内置 Office 预览中打开「${item.file.name}」`)
-      else onToast('已用系统默认应用打开')
+      if (result.openedWith === 'office') {
+        onToast(t('workbench:workspace.common.openedInOffice', { name: item.file.name }))
+      } else {
+        onToast(t('workbench:workspace.common.openedDefaultApp'))
+      }
     } catch {
-      onToast('打开失败，请稍后重试')
+      onToast(t('workbench:workspace.common.openFailed'))
     }
   }
 
   const exportReveal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
     if (!api || typeof api.exportReveal !== 'function') {
-      onToast('桌面端文件能力不可用')
+      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast('已导出到「下载/EverOffice」并定位到文件管理器')
+      onToast(t('workbench:workspace.common.exported'))
     } catch {
-      onToast('导出失败，请稍后重试')
+      onToast(t('workbench:workspace.common.exportFailed'))
     }
   }
 
@@ -99,18 +117,18 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     if (!target) return
     const api = window.nxcore?.files
     if (!api || typeof api.delete !== 'function') {
-      onToast('桌面端文件能力不可用')
+      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       setPendingDelete(null)
       return
     }
     setDeleting(true)
     try {
       await api.delete(target.catalog.id)
-      onToast(`已删除「${target.file.name}」`)
+      onToast(t('workbench:workspace.library.toast.deleted', { name: target.file.name }))
       setPendingDelete(null)
       library.refresh()
     } catch {
-      onToast('删除失败，请稍后重试')
+      onToast(t('workbench:workspace.library.toast.deleteFailed'))
     } finally {
       setDeleting(false)
     }
@@ -121,35 +139,35 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     try {
       const summary = await library.importFiles()
       if (!summary) {
-        onToast('资料暂不可用，无法导入')
+        onToast(t('workbench:workspace.library.toast.unavailable'))
         return
       }
       if (summary.kind === 'cancelled') {
-        onToast('已取消导入')
+        onToast(t('workbench:workspace.library.toast.importCancelled'))
         return
       }
-      onToast(summarizeImport(summary))
+      onToast(summarizeImport(summary, t))
     } catch {
-      onToast('导入失败，请稍后重试')
+      onToast(t('workbench:workspace.library.toast.importFailed'))
     }
   }
 
   /** 访达拖放导入：结果摘要与按钮导入同一套文案。 */
   const handleDropFiles = async (files: File[]) => {
     if (library.importing) {
-      onToast('正在导入中，请稍候')
+      onToast(t('workbench:workspace.library.toast.importingBusy'))
       return
     }
     try {
       const summary = await library.importDroppedFiles(files)
       if (!summary) {
-        onToast('资料暂不可用，无法导入')
+        onToast(t('workbench:workspace.library.toast.unavailable'))
         return
       }
       if (summary.kind === 'cancelled') return
-      onToast(summarizeImport(summary))
+      onToast(summarizeImport(summary, t))
     } catch {
-      onToast('导入失败，请稍后重试')
+      onToast(t('workbench:workspace.library.toast.importFailed'))
     }
   }
 
@@ -162,20 +180,20 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
   const setThesisTemplate = async (item: RealOfficeFile) => {
     const thesis = window.nxcore?.thesisFormat
     if (!thesis || typeof thesis.setFromLibrary !== 'function') {
-      onToast('桌面端排版能力不可用')
+      onToast(t('workbench:workspace.library.toast.thesisUnavailable'))
       return
     }
-    onToast(`正在解析「${item.file.name}」为排版模版…`)
+    onToast(t('workbench:workspace.library.toast.thesisParsing', { name: item.file.name }))
     try {
       const result = await thesis.setFromLibrary(workspace.id, item.catalog.id)
       const gaps = Array.isArray(result.factGaps) ? result.factGaps.filter(Boolean) : []
       if (gaps.length > 0) {
-        onToast(`已设为排版模版，但有信息没解析出来：${gaps.join('；')}`)
+        onToast(t('workbench:workspace.library.toast.thesisGaps', { gaps: gaps.join('；') }))
       } else {
-        onToast(`已设为「${workspace.name}」的论文排版模版`)
+        onToast(t('workbench:workspace.library.toast.thesisSet', { name: workspaceDisplayName(workspace, locale) }))
       }
     } catch {
-      onToast('设为排版模版失败，请稍后重试')
+      onToast(t('workbench:workspace.library.toast.thesisFailed'))
     }
   }
 
@@ -185,6 +203,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     onExportReveal: (item) => { void exportReveal(item) },
     onSetThesisTemplate: (item) => { void setThesisTemplate(item) },
     onDelete: (item) => setPendingDelete(item),
+    onError: onToast,
   }
 
   // 访达拖放：落点是页面根节点——空库/加载/不可用态也能拖，不只在有内容的浏览器里。
@@ -196,10 +215,10 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       {...dragProps}
     >
       <header className="wb-wspage-head">
-        <h1 className="wb-wspage-title">资料</h1>
+        <h1 className="wb-wspage-title">{t('workbench:workspace.library.root')}</h1>
         <div className="wb-file-head-actions">
           <IconButton
-            label="刷新资料"
+            label={t('workbench:workspace.library.refresh')}
             icon={<RefreshCw size={15} className={library.refreshing ? 'ui-spin' : undefined} />}
             onClick={library.refresh}
             disabled={library.refreshing}
@@ -215,7 +234,9 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         <EmptyState
           className="wb-file-state"
           icon={<FileText size={18} />}
-          title={library.total === 0 ? '本空间还没有文件' : '没有可在此打开的文件'}
+          title={library.total === 0
+            ? t('workbench:workspace.library.emptyNoFiles')
+            : t('workbench:workspace.library.emptyNoOpenable')}
         />
       ) : null}
 
@@ -232,16 +253,24 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       {dragActive ? (
         <div className="wb-lib-dropzone" aria-hidden="true">
           <FilePlus2 size={22} aria-hidden="true" />
-          <p>{library.importing ? '正在导入…' : '松手导入到资料'}</p>
+          <p>
+            {library.importing
+              ? t('workbench:workspace.library.dropImporting')
+              : t('workbench:workspace.library.dropHint')}
+          </p>
         </div>
       ) : null}
 
       <ConfirmModal
         open={pendingDelete !== null}
         onOpenChange={(open) => { if (!open && !deleting) setPendingDelete(null) }}
-        title={pendingDelete ? `删除「${pendingDelete.file.name}」？` : '删除文件？'}
-        description="会从资料删除该文件及其解析产物，操作不可撤销。"
-        confirmLabel={deleting ? '删除中…' : '删除'}
+        title={pendingDelete
+          ? t('workbench:workspace.library.deleteTitle', { name: pendingDelete.file.name })
+          : t('workbench:workspace.library.deleteTitleGeneric')}
+        description={t('workbench:workspace.library.deleteDescription')}
+        confirmLabel={deleting
+          ? t('workbench:workspace.library.deleting')
+          : t('workbench:workspace.library.delete')}
         busy={deleting}
         onConfirm={() => { void confirmDelete() }}
       />
