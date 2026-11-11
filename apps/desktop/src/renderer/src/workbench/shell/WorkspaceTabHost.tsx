@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { AgentWorkspace } from '@nxcore/agent-contract'
 
 import { useLocale } from '@/i18n/LocaleContext'
-import type { OfficeFile } from '@/office-proto/data'
+import { cloudDocumentToOfficeFileById, type OfficeFile } from '@/office-proto/data'
 
 import { ConversationPane } from '../conversation/ConversationPane'
 import { useWorkbenchStore, useWorkspaceSessions, useWorkspace } from '../state/store'
@@ -23,7 +23,13 @@ import { PlanPage } from '../workspace/PlanPage'
 import { useWorkspaceBubble } from '../workspace/useBubble'
 import type { WorkspacePageProps } from '../workspace/contracts'
 import { workbenchToast } from '../shell/toast'
-import { isWorkspaceBubbleTarget, OPEN_AGENT_FILE_EVENT, type OpenAgentFileDetail } from '../shell/openAgentFile'
+import {
+  isWorkspaceBubbleTarget,
+  OPEN_AGENT_FILE_EVENT,
+  OPEN_CLOUD_DOCUMENT_EVENT,
+  type OpenAgentFileDetail,
+  type OpenCloudDocumentDetail,
+} from '../shell/openAgentFile'
 import '../workspace/workspace.css'
 
 /**
@@ -65,6 +71,20 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
     window.addEventListener(OPEN_AGENT_FILE_EVENT, onOpenAgentFile)
     return () => window.removeEventListener(OPEN_AGENT_FILE_EVENT, onOpenAgentFile)
   }, [active, bubble, tab.id])
+
+  // Agent 回复里的云文档卡：点击派发窗口事件（不带 tabId）。当前激活标签把它换成
+  // 伪 OfficeFile 交给气泡窗——云文档没有文件库条目，打开后由 EditorView 路由到
+  // 云文档编辑器。后台标签收到也不抢，避免在不可见空间里开文件。
+  useEffect(() => {
+    const onOpenCloudDocument = (event: Event) => {
+      if (!active) return
+      const detail = (event as CustomEvent<OpenCloudDocumentDetail>).detail
+      if (!detail?.documentId) return
+      bubble.openFile(cloudDocumentToOfficeFileById(detail.documentId, detail.title))
+    }
+    window.addEventListener(OPEN_CLOUD_DOCUMENT_EVENT, onOpenCloudDocument)
+    return () => window.removeEventListener(OPEN_CLOUD_DOCUMENT_EVENT, onOpenCloudDocument)
+  }, [active, bubble])
 
   // 「在工作空间里打开文件」（openFileInWorkspace 写入 store 的交接载荷）：
   // 挂载/激活时取走一次并交给气泡窗。非激活标签不抢——store 里只有一份，

@@ -4460,3 +4460,12 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   align-self: center;
   margin-left: 2px;
 }
+
+/* 云文档卡：没有右侧外部应用分体控件，主按钮自己收满圆角。 */
+.agent-turn-file-shell.is-cloud-document .agent-turn-file {
+  border-radius: 9px;
+}
+
+.agent-turn-file-icon.is-cloud-document {
+  color: #7d5bd6;
+}

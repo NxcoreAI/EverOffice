@@ -16,8 +16,8 @@ import {
 /**
  * 工作空间「云文档」（网关 documents 表）列表数据源。
  *
- * 工作空间气泡窗的「资料与文件」浏览态在最上方单列一组云文档：它们是 Agent /
- * 用户在文稿后端里创建的工作区级文稿（`roomId === null`），不是文件库条目。
+ * 云文档与文件库条目在气泡窗里混排成同一份列表：它们是 Agent / 用户在文稿后端里
+ * 创建的工作区级文稿（`roomId === null`），按 `workspaceId` 归属到具体工作空间。
  * 这里直接读 preload 的真实文稿桥（**不走** `documentsApi()`）：`documentsApi()`
  * 可能被侧栏 Markdown 文件编辑器的「文件库支撑」shim 覆盖，而云文档列表必须
  * 始终来自真实 documents IPC。
@@ -25,24 +25,45 @@ import {
  * 事件语义与 `components/documents/WorkspaceDocumentsProvider` 完全一致（共用
  * `workspaceDocuments.ts` 的合并助手）：订阅工作区频道、增量事件按 id 合并、
  * `(重)连接 ready` 后重新拉快照兜底（事件流有损）。
+ *
+ * 多工作空间：`list(workspaceId ?? null)` 按空间过滤快照；事件 payload 带
+ * `document.workspaceId` 时只接受归属当前空间的事件。旧网关的事件不带归属，
+ * 无法判断属于哪个空间，因此不盲目合并，改为防抖重拉一次快照。
  */
 
 /**
- * preload 的 `documents.list` 现签名是 `list(roomId: string)`，但真实主进程桥把
- * `roomId ?? WORKSPACE_DOCUMENT_CHANNEL` 映射到工作区频道（`null` = 整个工作区）。
- * `WorkspaceDocumentsProvider` 用同样的方法双变声明描述工作区形态；DTO 收窄留给
- * preload/shared 那一轮统一处理，这里不改 shared 类型。
+ * preload 的 `documents.list` 现签名是 `list(workspaceId?: string | null)`；
+ * `null`/缺省 = 整个工作区的文稿集合，传 workspaceId 时按空间过滤。
  */
 interface WorkspaceDocumentsApi {
-  list(roomId: string | null): Promise<RoomDocument[]>
+  list(workspaceId?: string | null): Promise<RoomDocument[]>
   subscribe(roomId?: string): Promise<void>
   unsubscribe(roomId?: string): Promise<void>
   onEvent(listener: (frame: DocumentEventFrame) => void): () => void
   onReady(listener: (roomId: string) => void): () => void
 }
 
+/** 事件未带工作空间归属时的快照重拉防抖窗口（合并同帧内连续到达的事件）。 */
+const WORKSPACE_EVENT_REFRESH_DELAY_MS = 200
+
 function workspaceDocumentsApi(): WorkspaceDocumentsApi | undefined {
   return window.nxcore?.documents
+}
+
+/**
+ * 云文档归属工作空间。契约里 `RoomDocument.workspaceId` 是可选字段（旧数据没有），
+ * 这里防御式读取：字段还没在 shared 类型里落地时也不影响渲染层编译。
+ */
+function documentWorkspaceId(document: RoomDocument | null | undefined): string | null {
+  const value = (document as { workspaceId?: string | null } | null | undefined)?.workspaceId
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/** 快照/事件里的文稿是否属于当前工作空间；无归属信息（旧数据）时按服务端结果放行。 */
+function belongsToWorkspace(document: RoomDocument, workspaceId: string | null): boolean {
+  if (!workspaceId) return true
+  const id = documentWorkspaceId(document)
+  return !id || id === workspaceId
 }
 
 export interface CloudDocumentEventResult {
@@ -84,19 +105,21 @@ export function reduceCloudDocumentEvent(
 }
 
 export interface CloudDocuments {
-  /** 真实文稿桥不存在（未恢复/旧版主进程）：气泡窗隐藏「云文档」分组。 */
+  /** 真实文稿桥不存在（未恢复/旧版主进程）：气泡窗不展示云文档行。 */
   available: boolean
-  /** 工作区级云文档，按更新时间倒序。 */
+  /** 工作空间级云文档，按更新时间倒序。 */
   documents: RoomDocument[]
   loading: boolean
   refresh: () => void
 }
 
 /**
- * 工作区云文档清单：`documents.list(null)` + 工作区订阅 + 事件增量合并。
- * 无桥时返回空清单并标记 `available: false`（调用方据此隐藏入口）。
+ * 工作空间云文档清单：`documents.list(workspaceId ?? null)` + 工作区订阅 + 事件
+ * 增量合并。无桥时返回空清单并标记 `available: false`（调用方据此隐藏云文档行）。
  */
-export function useCloudDocuments(): CloudDocuments {
+export function useCloudDocuments(workspaceId?: string): CloudDocuments {
+  // 归一成 trimmed scope：切空间时 load 依赖变化，自动重新订阅并重拉快照。
+  const scope = workspaceId?.trim() || null
   const [documents, setDocuments] = useState<RoomDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [available, setAvailable] = useState(
@@ -108,6 +131,10 @@ export function useCloudDocuments(): CloudDocuments {
   documentsRef.current = documents
   // 并发刷新只认最后一次请求，避免旧快照覆盖新事件。
   const requestSeq = useRef(0)
+  // 未带归属的事件防抖重拉：连续多条只触发一次快照。
+  const refreshTimer = useRef<number | null>(null)
+  // 切工作空间时先清空旧清单，避免短暂把别的空间的云文档显示出来。
+  const scopeRef = useRef(scope)
 
   const load = useCallback(async (): Promise<void> => {
     const api = workspaceDocumentsApi()
@@ -121,11 +148,12 @@ export function useCloudDocuments(): CloudDocuments {
     requestSeq.current = seq
     setLoading(true)
     try {
-      const listed = await api.list(null)
+      const listed = await api.list(scope)
       if (seq !== requestSeq.current) return
-      // list(null) 语义上只返回工作区文稿；防御性再过滤一次，Room 归属文稿不进本清单。
+      // list 在网关侧按空间过滤；防御性再过滤一次工作区级文稿 + 归属。
       const workspaceDocuments = (Array.isArray(listed) ? listed : [])
         .filter((document) => document.roomId === null)
+        .filter((document) => belongsToWorkspace(document, scope))
       const next = replaceWorkspaceDocuments(documentsRef.current, workspaceDocuments)
       documentsRef.current = next
       setDocuments(next)
@@ -134,7 +162,31 @@ export function useCloudDocuments(): CloudDocuments {
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }
+  }, [scope])
+
+  const clearRefreshTimer = useCallback(() => {
+    if (refreshTimer.current !== null) {
+      window.clearTimeout(refreshTimer.current)
+      refreshTimer.current = null
+    }
   }, [])
+
+  /** 事件不带归属时（旧网关）防抖重拉，合并窗口内的连续事件。 */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) return
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null
+      void load()
+    }, WORKSPACE_EVENT_REFRESH_DELAY_MS)
+  }, [load])
+
+  useEffect(() => {
+    if (scopeRef.current === scope) return
+    scopeRef.current = scope
+    documentsRef.current = []
+    setDocuments([])
+    setLoading(true)
+  }, [scope])
 
   useEffect(() => {
     const api = workspaceDocumentsApi()
@@ -148,12 +200,27 @@ export function useCloudDocuments(): CloudDocuments {
     const reload = () => {
       if (!disposed) void load()
     }
+    const debouncedReload = () => {
+      if (!disposed) scheduleRefresh()
+    }
 
     void api.subscribe().catch(() => undefined)
     void load()
 
     const unsubscribeEvents = api.onEvent((frame) => {
-      const result = reduceCloudDocumentEvent(documentsRef.current, frame.event)
+      const event = frame.event
+      if (!WORKSPACE_DOCUMENT_STATE_EVENT_TYPES.has(event.type)) return
+      const document = workspaceDocumentFromEvent(event)
+      const eventWorkspaceId = documentWorkspaceId(document)
+      // 事件带归属：别的空间的云文档事件不该进入当前清单。
+      if (scope && eventWorkspaceId && eventWorkspaceId !== scope) return
+      // 事件没带归属（旧网关、删除/moved 等无负载事件）：无法判断属于哪个空间，
+      // 不盲目合并，交给防抖快照刷新（服务端按 workspaceId 过滤）。
+      if (scope && !eventWorkspaceId) {
+        debouncedReload()
+        return
+      }
+      const result = reduceCloudDocumentEvent(documentsRef.current, event)
       if (result.needsRefresh) {
         reload()
         return
@@ -170,11 +237,12 @@ export function useCloudDocuments(): CloudDocuments {
 
     return () => {
       disposed = true
+      clearRefreshTimer()
       unsubscribeEvents()
       unsubscribeReady()
       void api.unsubscribe().catch(() => undefined)
     }
-  }, [load])
+  }, [clearRefreshTimer, load, scheduleRefresh, scope])
 
   const refresh = useCallback(() => {
     void load()

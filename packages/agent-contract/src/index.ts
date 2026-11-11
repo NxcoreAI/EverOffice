@@ -1677,6 +1677,11 @@ export interface RoomDocument {
   id: string;
   /** 文稿所属 Room；null = 未归属任何 Room 的工作区级文稿。 */
   roomId: string | null;
+  /**
+   * 文稿所属工作空间（工作台 workspaceId，JSON 索引绑定）；null / 省略 = 旧版未绑定文稿
+   * （网关启动时统一迁移到 `default`，渲染层把 null 视作旧数据兜底）。
+   */
+  workspaceId?: string | null;
   title: string;
   contentJson: TiptapJsonContent;
   contentSchemaVersion: number;

@@ -705,9 +705,9 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    // roomId 传 null/undefined = 整个工作区的文稿（P0-2）
-    list: (roomId?: string | null) => invoke('documents:list', roomId),
-    listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
+    // workspaceId 传 null/undefined = 整个工作区的文稿（P0-2）；传值时按工作空间绑定过滤
+    list: (workspaceId?: string | null) => invoke('documents:list', workspaceId),
+    listTrash: (workspaceId?: string | null) => invoke('documents:list-trash', workspaceId),
     get: (documentId) => invoke('documents:get', documentId),
     readMarkdown: (documentId: string) => invoke('documents:read-markdown', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),

@@ -91,7 +91,15 @@ export function documentOperationListResult(
 }
 
 /**
- * 文档查询串：roomId 为空时省略该参数，网关按「整个工作区」返回（P0-2）。
+ * 文档查询串：workspaceId 为空时省略该参数，网关按「整个工作区」返回（P0-2）。
+ */
+function workspaceQuery(workspaceId: string | null | undefined): string {
+  return workspaceId ? `?${new URLSearchParams({ workspaceId })}` : ''
+}
+
+/**
+ * 回收站查询串：空回收站/清空回收站仍走冻结的 roomId 参数语义（网关忽略该参数，
+ * 一律清空整个工作区回收站）。
  */
 function roomQuery(roomId: string | null | undefined): string {
   return roomId ? `?${new URLSearchParams({ roomId })}` : ''
@@ -103,16 +111,17 @@ export class DocumentGatewayBridge {
 
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
-  /** roomId 传 null/省略 = 整个工作区的文稿（P0-2）；传 roomId 时按 Room 过滤。 */
-  list(roomId?: string | null): Promise<RoomDocument[]> {
-    // 打开房间的文档基线是纯读幂等：网关偶发 500（issue #259）在桥内静默重试，
-    // 瞬断自愈，不再一击即成全局报错弹窗 + 空房间。
-    return this.request(`/v1/documents${roomQuery(roomId)}`, undefined, false, 2)
+  /** workspaceId 传 null/省略 = 整个工作区的文稿（P0-2）；传 workspaceId 时按工作空间绑定过滤。 */
+  list(workspaceId?: string | null): Promise<RoomDocument[]> {
+    // 打开工作空间云文档的基线是纯读幂等：网关偶发 500（issue #259）在桥内静默重试，
+    // 瞬断自愈，不再一击即成全局报错弹窗 + 空列表。
+    return this.request(`/v1/documents${workspaceQuery(workspaceId)}`, undefined, false, 2)
   }
 
-  listTrash(roomId?: string | null): Promise<RoomDocument[]> {
-    const query = roomId ? `?${new URLSearchParams({ roomId, trashed: 'true' })}` : '?trashed=true'
-    return this.request(`/v1/documents${query}`, undefined, false, 2)
+  listTrash(workspaceId?: string | null): Promise<RoomDocument[]> {
+    const query = new URLSearchParams({ trashed: 'true' })
+    if (workspaceId) query.set('workspaceId', workspaceId)
+    return this.request(`/v1/documents?${query.toString()}`, undefined, false, 2)
   }
 
   get(documentId: string): Promise<RoomDocument> {

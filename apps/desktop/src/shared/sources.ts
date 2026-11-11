@@ -1278,9 +1278,9 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
-    /** roomId 传 null/省略 = 整个工作区（工作区级文稿，P0-2）；传 roomId 时按 Room 过滤。 */
-    list(roomId?: string | null): Promise<RoomDocument[]>
-    listTrash(roomId?: string | null): Promise<RoomDocument[]>
+    /** workspaceId 传 null/省略 = 整个工作区（工作区级文稿，P0-2）；传 workspaceId 时按工作空间过滤。 */
+    list(workspaceId?: string | null): Promise<RoomDocument[]>
+    listTrash(workspaceId?: string | null): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
     readMarkdown(documentId: string): Promise<{ markdown: string }>
     listBlocks(documentId: string): Promise<DocumentBlockList>

@@ -12,8 +12,10 @@ import type { DisplayAgentToolCall } from './agentRunActivity'
  * （进度 + 打开成品入口），再出一张文件卡只会重复。
  */
 
-/** 一条文件产物（解析自工具结果，只保留展示必需的字段）。 */
-export interface AgentTurnFile {
+/** 一条文件库产物（解析自工具结果，只保留展示必需的字段）。 */
+export interface AgentTurnOfficeFile {
+  /** 区分联合：文件库条目（缺省值，兼容旧解析结果）。 */
+  kind?: 'file'
   /** file_entries 条目 id（打开文件用）。 */
   fileEntryId: string
   /** 展示名（originalName；生成类工具有，导出 PDF 用 originalName）。 */
@@ -24,7 +26,24 @@ export interface AgentTurnFile {
   origin: 'created' | 'exported'
 }
 
-/** 解析后的整轮文件列表：按完成时间升序（先完成的在前），同 fileId 去重（取首次）。 */
+/**
+ * 一条工作空间云文档产物（`document_write_commit`）。
+ * 云文档没有 file_entries 条目：点击时按 documentId 让工作空间标签用伪 OfficeFile
+ * 打开侧栏编辑器（走 `everroom:open-cloud-document` 事件）。
+ */
+export interface AgentTurnCloudDocument {
+  kind: 'cloud-doc'
+  /** documents 表文稿 id。 */
+  documentId: string
+  /** 文稿标题（navigation.title 优先）。 */
+  title: string
+  /** 云文档卡只出现在「本轮生成」场景。 */
+  origin: 'created'
+}
+
+export type AgentTurnFile = AgentTurnOfficeFile | AgentTurnCloudDocument
+
+/** 解析后的整轮文件列表：按完成时间升序（先完成的在前），同产物去重（取首次）。 */
 export type AgentTurnFiles = AgentTurnFile[]
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -59,7 +78,7 @@ function resultCandidates(result: unknown): Record<string, unknown>[] {
   return candidates
 }
 
-function formatFromExtension(name: string): AgentTurnFile['format'] | null {
+function formatFromExtension(name: string): AgentTurnOfficeFile['format'] | null {
   if (/\.docx?$/i.test(name)) return 'docx'
   if (/\.pptx?$/i.test(name)) return 'pptx'
   if (/\.xlsx?$/i.test(name)) return 'xlsx'
@@ -68,7 +87,7 @@ function formatFromExtension(name: string): AgentTurnFile['format'] | null {
   return null
 }
 
-function normalizeFormat(value: unknown, name: string): AgentTurnFile['format'] | null {
+function normalizeFormat(value: unknown, name: string): AgentTurnOfficeFile['format'] | null {
   if (value === 'docx' || value === 'pptx' || value === 'xlsx' || value === 'pdf' || value === 'md') return value
   return formatFromExtension(name)
 }
@@ -78,7 +97,7 @@ function text(value: unknown): string | null {
 }
 
 /** 从单个候选记录提取文件产物；无有效条目返回 null。 */
-function fileFromRecord(candidate: Record<string, unknown>, origin: AgentTurnFile['origin']): AgentTurnFile | null {
+function fileFromRecord(candidate: Record<string, unknown>, origin: AgentTurnOfficeFile['origin']): AgentTurnOfficeFile | null {
   // word_export_pdf 的 id 字段叫 fileId（不是 fileEntryId）。
   const fileEntryId = text(candidate.fileEntryId) ?? text(candidate.fileId)
   if (!fileEntryId) return null
@@ -120,6 +139,39 @@ function filesFromCandidates(
   return [...byId.values()]
 }
 
+/**
+ * `document_write_commit` 成功结果里的云文档：
+ * 结构化结果形如 `{ docId, roomId, navigation: { title, action, ... } }`
+ * （旧数据有时叫 documentId / title）。
+ */
+function cloudDocumentFromRecord(candidate: Record<string, unknown>): AgentTurnCloudDocument | null {
+  const documentId = text(candidate.docId) ?? text(candidate.documentId)
+  if (!documentId) return null
+  const navigation = record(candidate.navigation)
+  const title = text(navigation?.title)
+    ?? text(candidate.title)
+    ?? text(candidate.documentTitle)
+    ?? text(candidate.name)
+  if (!title) return null
+  return { kind: 'cloud-doc', documentId, title, origin: 'created' }
+}
+
+/** 候选记录 → 云文档列表：同一结果的不同候选形态按 documentId 去重取首个。 */
+function cloudDocumentsFromCandidates(result: unknown): AgentTurnCloudDocument[] {
+  const byId = new Map<string, AgentTurnCloudDocument>()
+  for (const candidate of resultCandidates(result)) {
+    const document = cloudDocumentFromRecord(candidate)
+    if (document && !byId.has(document.documentId)) byId.set(document.documentId, document)
+  }
+  return [...byId.values()]
+}
+
+/** 云文档写入工具（旧数据里带 context_room_ 前缀的同名工具也认）。 */
+const CLOUD_DOCUMENT_TOOLS = new Set([
+  'document_write_commit',
+  'context_room_document_write_commit',
+])
+
 /** 单个工具调用产出的文件（非产出型工具为空数组）。
  *  逐工具缓存：会话每帧重扫全部工具调用，结果 JSON 解析很贵；工具对象转终态
  *  后不再重建（与 agentNavigation 的 navigationTargetCache 同一模式）。 */
@@ -138,15 +190,21 @@ function computeToolTurnFiles(tool: DisplayAgentToolCall): AgentTurnFile[] {
   const name = tool.name.toLowerCase()
   // slides_draft 的成品由 SlidesProgressCard 承载（进度 + 打开），不重复出卡。
   if (name === 'slides_draft') return []
+  if (CLOUD_DOCUMENT_TOOLS.has(name)) return cloudDocumentsFromCandidates(tool.result)
   if (CREATING_TOOLS.has(name)) return filesFromCandidates(tool.result, 'created')
   if (EXPORTING_TOOLS.has(name)) return filesFromCandidates(tool.result, 'exported')
   return []
 }
 
+/** 去重键：文件库条目按 fileEntryId，云文档按 documentId。 */
+function turnFileKey(file: AgentTurnFile): string {
+  return file.kind === 'cloud-doc' ? `cloud-doc:${file.documentId}` : file.fileEntryId
+}
+
 /**
  * 汇总一个 run 的全部文件产物：
  * - 只看已完成工具（失败/中止的生成没有可信条目）；
- * - 同 fileId 去重（编辑链路重生成同 id 只留最新一次，按工具时间序覆盖）；
+ * - 同 fileId / documentId 去重（编辑链路重生成同 id 只留最新一次，按工具时间序覆盖）；
  * - 按完成时间升序排（与产物落库顺序一致，先出的文件排前面）。
  */
 export function agentTurnFilesFromTools(tools: DisplayAgentToolCall[]): AgentTurnFiles {
@@ -156,7 +214,7 @@ export function agentTurnFilesFromTools(tools: DisplayAgentToolCall[]): AgentTur
   ))
   for (const tool of ordered) {
     for (const file of toolTurnFiles(tool)) {
-      byId.set(file.fileEntryId, file)
+      byId.set(turnFileKey(file), file)
     }
   }
   return [...byId.values()]

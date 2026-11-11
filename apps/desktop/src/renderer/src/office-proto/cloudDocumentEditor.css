@@ -56,7 +56,9 @@
 }
 
 .cloud-doc-editor-state-action:hover {
-  background: var(--ui-surface-2, rgba(0, 0, 0, 0.04));
+  border-color: var(--ui-accent-line);
+  background: var(--ui-hover);
+  color: var(--ui-text);
 }
 
 .cloud-doc-editor-spin {

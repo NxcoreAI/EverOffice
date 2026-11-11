@@ -66,6 +66,7 @@ import { AgentDocumentExportService } from "../modules/documents/agent-export/se
 import { agentDocumentExportRoutes } from "../modules/documents/agent-export/routes.js";
 import { createDocumentExportPiTools } from "../modules/documents/agent-export/tools.js";
 import { createDocumentImportPiTools } from "../modules/documents/import/tools.js";
+import { DocumentWorkspaceIndex } from "../modules/documents/workspace-index.js";
 import {
   createAgentResolver,
   createDocumentOverviewRuntime,
@@ -461,12 +462,22 @@ export async function createServer(config: GatewayConfig) {
   await app.register(aiRelayRoutes({ sessions: aiRelaySessions, runtimeConfigManager }));
   const documentEventBroker = new DocumentEventBroker();
   const documentOperationService = new DocumentOperationService(db, documentEventBroker);
+  // 云文档 ↔ 工作空间绑定：dataDir 下的 JSON 索引旁挂（无 DB migration）。
+  const documentWorkspaceIndex = new DocumentWorkspaceIndex(config.dataDir);
   const documentService = new DocumentService(db, documentEventBroker,
     undefined, undefined, (documentId, currentVersion) => (
     documentOperationService.prepareExternalVersionAdvance(documentId, currentVersion)
   ), (error, documentId, currentVersion) => {
     app.log.warn({ err: error, documentId, currentVersion }, "document after-commit observer failed");
-  });
+  }, documentWorkspaceIndex);
+  // 旧数据迁移（索引上线前创建的文稿无归属）：统一归入 default，幂等，只记一次汇总。
+  const migratedLegacyDocumentWorkspaces = documentService.migrateLegacyDocumentWorkspaces();
+  if (migratedLegacyDocumentWorkspaces > 0) {
+    app.log.info(
+      { migratedLegacyDocumentWorkspaces },
+      "legacy workspace-level documents bound to default workspace",
+    );
+  }
   // dispatch 期软租约的崩溃残留清扫（agent-modification:* 不属于任何 Operation）。
   const orphanLeases = documentService.clearOrphanModificationLeases();
   if (orphanLeases > 0) {
@@ -896,7 +907,7 @@ export async function createServer(config: GatewayConfig) {
       ),
       createContentSearchPiTool(() => searchService),
       ...createDocumentExportPiTools(agentDocumentExportService),
-      ...createDocumentImportPiTools(documentImportService),
+      ...createDocumentImportPiTools(documentImportService, documentService),
       // 当前浏览的 Office 文件（file_entries）正文读取：filesService 与本服务
       // 都晚于本对象创建，用惰性取值；activeFile 由运行期 input 提供。
       createFileReadPiTool({

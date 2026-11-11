@@ -35,8 +35,10 @@ import { removeDocumentDraft } from '../src/renderer/src/components/office-edito
 import {
   cloudDocumentTitle,
   cloudDocumentToOfficeFile,
+  cloudDocumentToOfficeFileById,
   type OfficeFile,
 } from '../src/renderer/src/office-proto/data'
+import type { FileCatalogDto } from '../src/shared/ingest'
 import { EditorView } from '../src/renderer/src/office-proto/EditorView'
 import { BubbleWindow } from '../src/renderer/src/workbench/workspace/BubbleWindow'
 import type { BubbleState } from '../src/renderer/src/workbench/workspace/useBubble'
@@ -45,6 +47,7 @@ import { reduceCloudDocumentEvent } from '../src/renderer/src/workbench/workspac
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const DOC_ID = 'doc-cloud-1'
+const WORKSPACE_ID = 'ws-cloud-test'
 
 function documentBody(text: string): TiptapJsonContent {
   return {
@@ -66,6 +69,33 @@ function roomDocument(overrides: Partial<RoomDocument> = {}): RoomDocument {
     activeTransactionId: null,
     createdAt: '2026-11-10T08:00:00.000Z',
     updatedAt: '2026-11-10T09:00:00.000Z',
+    ...overrides,
+  }
+}
+
+/** 文件库条目（真实文件列表）：与云文档混排时验证同一份列表。 */
+function fileCatalog(overrides: Partial<FileCatalogDto> = {}): FileCatalogDto {
+  return {
+    id: 'file-1',
+    originalName: '项目资料.docx',
+    displayName: null,
+    sharedTitle: '项目资料',
+    sourceKind: 'manual-upload',
+    sourceLabel: '本地导入',
+    relativePath: null,
+    provider: null,
+    bytes: 2048,
+    dataType: null,
+    agentCategory: null,
+    summary: null,
+    tags: [],
+    processingState: 'ready',
+    clusterId: WORKSPACE_ID,
+    contentHash: 'hash-file-1',
+    currentVersionId: null,
+    parsed: true,
+    workspaceId: WORKSPACE_ID,
+    updatedAt: '2026-11-09T09:00:00.000Z',
     ...overrides,
   }
 }
@@ -181,10 +211,14 @@ function browsingBubble(): BubbleState {
   }
 }
 
-function renderBubble(bubble = browsingBubble()): React.ReactElement {
+function renderBubble(
+  bubble = browsingBubble(),
+  workspaceId: string | undefined = WORKSPACE_ID,
+): React.ReactElement {
   return (
     <BubbleWindow
       bubble={bubble}
+      workspaceId={workspaceId}
       onResize={() => undefined}
       onMinimize={() => undefined}
       onToggleMax={() => undefined}
@@ -220,7 +254,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  const seed = roomDocument()
+  const seed = roomDocument({ workspaceId: WORKSPACE_ID })
   const mocked = documentsBridge(seed)
   documents = mocked.bridge
   documentsEvents = mocked.events
@@ -265,6 +299,14 @@ describe('云文档伪文件与事件合并（纯函数）', () => {
     expect(file.cloudDocument).toEqual({ documentId: DOC_ID, title: 'Agent 写的云文档' })
     expect(file.updatedLabel).toBeTruthy()
     expect(file.roomId).toBeNull()
+  })
+
+  it('仅凭 documentId/title 也能构造伪文件（对话云文档卡点击路径）', () => {
+    const file = cloudDocumentToOfficeFileById(DOC_ID, '  Agent 刚写的  ')
+    expect(file.id).toBe(`cloud-doc:${DOC_ID}`)
+    expect(file.name).toBe('Agent 刚写的')
+    expect(file.cloudDocument).toEqual({ documentId: DOC_ID, title: 'Agent 刚写的' })
+    expect(cloudDocumentToOfficeFileById(DOC_ID, '   ').name).toBe('未命名云文档')
   })
 
   it('空标题回落「未命名云文档」', () => {
@@ -329,17 +371,33 @@ describe('云文档伪文件与事件合并（纯函数）', () => {
   })
 })
 
-describe('气泡窗「云文档」分组', () => {
-  it('list(null) 拉取工作区云文档并渲染标题 + 更新时间；点击打开伪文件', async () => {
+describe('气泡窗「资料与文件」混排（documents 表 + 文件库）', () => {
+  it('workspaceId 传给 documents.list；云文档与文件混排在同一列表且没有独立分组标题', async () => {
+    fileList.mockResolvedValue({ items: [fileCatalog()], total: 1 })
     await render(renderBubble())
 
     expect(fileList).toHaveBeenCalled()
-    expect(documents.list).toHaveBeenCalledWith(null)
+    expect(documents.list).toHaveBeenCalledWith(WORKSPACE_ID)
     expect(documents.subscribe).toHaveBeenCalled()
-    expect(container.querySelector('[aria-label="云文档"]')).not.toBeNull()
-    expect(text('.wb-bubble-cloud-docs-title')).toBe('云文档')
+
+    // 不再有「云文档」分组/标题：两者都在同一个列表容器里。
+    expect(container.querySelector('[aria-label="云文档"]')).toBeNull()
+    expect(container.querySelector('.wb-bubble-cloud-docs-title')).toBeNull()
+    expect(container.querySelectorAll('.wb-bubble-cloud-docs')).toHaveLength(0)
+
+    const list = container.querySelector('.wb-bubble-browser-list')
+    expect(list).not.toBeNull()
+    expect(list!.querySelectorAll('.wb-bubble-browser-row')).toHaveLength(2)
+    expect(text('.wb-bubble-browser-list')).toContain('项目资料.docx')
     expect(text('.wb-bubble-cloud-doc-row')).toContain('Agent 写的云文档')
+    // 云文档行的副文案保持「云文档 · vN · 更新时间」。
+    expect(text('.wb-bubble-cloud-doc-row')).toContain('云文档')
     expect(text('.wb-bubble-cloud-doc-row')).toContain('v3')
+  })
+
+  it('点击混排列表里的云文档行打开伪文件（cloudDocument 标记）', async () => {
+    fileList.mockResolvedValue({ items: [fileCatalog()], total: 1 })
+    await render(renderBubble())
 
     const row = container.querySelector<HTMLButtonElement>('.wb-bubble-cloud-doc-row button')
     expect(row).not.toBeNull()
@@ -352,37 +410,75 @@ describe('气泡窗「云文档」分组', () => {
     expect(opened.kind).toBe('cloud-doc')
   })
 
-  it('没有云文档时显示让 Agent 写一篇的空态', async () => {
-    documents.list.mockResolvedValue([])
+  it('归属其他工作空间的云文档不进入列表', async () => {
+    documents.list.mockResolvedValue([
+      roomDocument({ id: 'doc-own', title: '本空间云文档', workspaceId: WORKSPACE_ID }),
+      roomDocument({ id: 'doc-other', title: '别的空间云文档', workspaceId: 'ws-other' }),
+    ])
     await render(renderBubble())
 
-    expect(container.querySelector('[aria-label="云文档"]')).not.toBeNull()
-    expect(text('.wb-bubble-cloud-docs-state')).toContain('还没有云文档，可以让 Agent 写一篇')
+    expect(text('.wb-bubble-browser-list')).toContain('本空间云文档')
+    expect(text('.wb-bubble-browser-list')).not.toContain('别的空间云文档')
+    expect(container.querySelectorAll('.wb-bubble-cloud-doc-row')).toHaveLength(1)
+  })
+
+  it('文件与云文档都为空时才显示「还没有文件或云文档」', async () => {
+    documents.list.mockResolvedValue([])
+    fileList.mockResolvedValue({ items: [], total: 0 })
+    await render(renderBubble())
+
+    expect(text('.wb-bubble-browser-list')).toContain('还没有文件或云文档')
+    expect(container.querySelectorAll('.wb-bubble-cloud-doc-row')).toHaveLength(0)
+  })
+
+  it('只有云文档、没有文件时仍显示云文档，不显示空态', async () => {
+    fileList.mockResolvedValue({ items: [], total: 0 })
+    await render(renderBubble())
+
+    expect(text('.wb-bubble-cloud-doc-row')).toContain('Agent 写的云文档')
+    expect(text('.wb-bubble-browser-list')).not.toContain('还没有文件或云文档')
   })
 
   it('工作区文稿事件到达后列表自动刷新（无需手动刷新）', async () => {
     await render(renderBubble())
-    expect(text('.wb-bubble-cloud-docs-list')).toContain('Agent 写的云文档')
+    expect(text('.wb-bubble-browser-list')).toContain('Agent 写的云文档')
 
     await act(async () => {
       emitEvent(changedEvent(roomDocument({
         id: 'doc-cloud-2',
         title: 'Agent 刚写完的新文档',
         version: 1,
+        workspaceId: WORKSPACE_ID,
       })))
     })
     await settle(2)
 
-    expect(text('.wb-bubble-cloud-docs-list')).toContain('Agent 刚写完的新文档')
+    expect(text('.wb-bubble-browser-list')).toContain('Agent 刚写完的新文档')
   })
 
-  it('没有 documents 桥时整组隐藏，资料列表不受影响', async () => {
+  it('其他工作空间的文稿事件被过滤，不进入当前空间列表', async () => {
+    await render(renderBubble())
+
+    await act(async () => {
+      emitEvent(changedEvent(roomDocument({
+        id: 'doc-other',
+        title: '别的空间新文档',
+        version: 1,
+        workspaceId: 'ws-other',
+      })))
+    })
+    await settle(2)
+
+    expect(text('.wb-bubble-browser-list')).not.toContain('别的空间新文档')
+  })
+
+  it('没有 documents 桥时云文档行隐藏，文件列表不受影响', async () => {
     ;(window as unknown as { nxcore?: unknown }).nxcore = {
       files: { list: fileList, saveMarkdown, readText: vi.fn(), rename: vi.fn() },
     }
     await render(renderBubble())
 
-    expect(container.querySelector('[aria-label="云文档"]')).toBeNull()
+    expect(container.querySelector('.wb-bubble-cloud-doc-row')).toBeNull()
     expect(container.querySelector('.wb-bubble-browser-scopes')).not.toBeNull()
   })
 

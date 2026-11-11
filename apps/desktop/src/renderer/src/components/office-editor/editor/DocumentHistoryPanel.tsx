@@ -6,7 +6,7 @@ import type {
   RoomDocument,
 } from '@nxcore/agent-contract'
 import { Check, ChevronDown, Clock3, CloudDownload, History, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { showToast } from '@/state/toast'
 import { useLocale } from '@/i18n/LocaleContext'
 import { SourceIcon } from '@/components/pages/sources/SourceIcon'
@@ -59,6 +59,9 @@ export function DocumentHistoryPanel({
   onCloseDiff,
   closeSignal,
   refreshSignal,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
 }: {
   documentId: string
   currentDocument: RoomDocument | null
@@ -71,9 +74,19 @@ export function DocumentHistoryPanel({
   onCloseDiff: () => void
   closeSignal: number
   refreshSignal: number
+  /** 受控打开：外部（右上「···」菜单）负责开合时传入，不传则沿用面板自带触发按钮。 */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /** 受控场景下隐藏面板自带的「版本历史」按钮入口（由外部菜单项代替）。 */
+  hideTrigger?: boolean
 }) {
   const { locale, t } = useLocale()
-  const [open, setOpen] = useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = useCallback((next: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }, [controlledOpen, onOpenChange])
   const [versions, setVersions] = useState<DocumentVersionSummary[]>([])
   const [pendingImports, setPendingImports] = useState<PendingImportVersion[]>([])
   const [selected, setSelected] = useState<number | null>(null)
@@ -311,9 +324,18 @@ export function DocumentHistoryPanel({
 
   return (
     <>
-      <button type="button" aria-label={t('contextRoom:documentHistory.open')} title={t('contextRoom:documentHistory.open')} onClick={() => setOpen(true)}>
-        <History aria-hidden="true" />
-      </button>
+      {hideTrigger ? null : (
+        <button
+          type="button"
+          aria-label={t('contextRoom:documentHistory.open')}
+          title={t('contextRoom:documentHistory.open')}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => setOpen(true)}
+        >
+          <History aria-hidden="true" />
+        </button>
+      )}
       {open ? (
         <div
           className="context-room-history-overlay"

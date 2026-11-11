@@ -36,8 +36,10 @@ export function queryPlugins(
     inputSchema: EMPTY_INPUT_SCHEMA,
     annotations: annotations(true),
     execute: (_args, context) => {
+      // 工作台 run 只列本工作空间的文稿；非工作台 run（无 workspaceId）维持全库。
+      const workspaceId = context.workspaceId?.trim() || null;
       return success({
-        documents: backend.list().map((document) => ({
+        documents: backend.list(false, undefined, workspaceId).map((document) => ({
           id: document.id,
           title: document.title,
           version: document.version,

@@ -101,8 +101,8 @@ describe('DocumentGatewayBridge CRUD', () => {
     const bridge = new DocumentGatewayBridge(supervisor)
 
     await bridge.import({ id: 'doc-crud', roomId: 'room-crud', title: 'CRUD 文档', contentJson })
-    await expect(bridge.list('room-crud')).resolves.toHaveLength(1)
-    await expect(bridge.listTrash('room-crud')).resolves.toHaveLength(1)
+    await expect(bridge.list('ws-crud')).resolves.toHaveLength(1)
+    await expect(bridge.listTrash('ws-crud')).resolves.toHaveLength(1)
     await expect(bridge.get('doc-crud')).resolves.toMatchObject({ id: 'doc-crud', version: 1 })
     await bridge.listBlocks('doc-crud')
     await bridge.resolveBlockReferences({
@@ -120,8 +120,8 @@ describe('DocumentGatewayBridge CRUD', () => {
 
     expect(requests.map(({ method, path }) => [method, path])).toEqual([
       ['POST', '/v1/documents/import'],
-      ['GET', '/v1/documents?roomId=room-crud'],
-      ['GET', '/v1/documents?roomId=room-crud&trashed=true'],
+      ['GET', '/v1/documents?workspaceId=ws-crud'],
+      ['GET', '/v1/documents?trashed=true&workspaceId=ws-crud'],
       ['GET', '/v1/documents/doc-crud'],
       ['GET', '/v1/documents/doc-crud/blocks'],
       ['POST', '/v1/document-blocks/resolve'],
@@ -344,20 +344,20 @@ describe('DocumentGatewayBridge 工作区级文稿（P0-2）', () => {
     } as GatewaySupervisor)
   }
 
-  it('omits roomId when listing the whole workspace and keeps it when scoped', async () => {
+  it('omits workspaceId when listing the whole workspace and keeps it when scoped', async () => {
     const paths: string[] = []
     const bridge = await bridgeWithRecorder(paths)
 
     await bridge.list(null)
-    await bridge.list('room-1')
+    await bridge.list('ws-1')
     await bridge.listTrash(null)
-    await bridge.listTrash('room-1')
+    await bridge.listTrash('ws-1')
 
     expect(paths).toEqual([
       '/v1/documents',
-      '/v1/documents?roomId=room-1',
+      '/v1/documents?workspaceId=ws-1',
       '/v1/documents?trashed=true',
-      '/v1/documents?roomId=room-1&trashed=true',
+      '/v1/documents?trashed=true&workspaceId=ws-1',
     ])
   })
 

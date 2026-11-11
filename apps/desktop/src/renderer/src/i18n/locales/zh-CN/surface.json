@@ -33,6 +33,7 @@
   "agentChat.turnFileOpenTitle": "打开：{name}",
   "agentChat.turnFileOpenFailed": "打开失败，请到产物库中再试一次",
   "agentChat.turnFileOpenUnavailable": "文件服务未就绪，暂时无法打开",
+  "agentChat.turnCloudDocument": "云文档",
   "agentChat.writingAResponse": "正在生成回答...",
   "agentChat.shellApprovalTitle": "命令需要确认",
   "agentChat.shellApprovalDescription": "选择\"本会话允许\"后，本次对话中的后续命令将自动执行",

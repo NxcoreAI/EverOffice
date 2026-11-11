@@ -330,6 +330,7 @@
   "workspace.bubble.scope.output": "产物",
   "workspace.bubble.scopeLabel": "资料类型",
   "workspace.bubble.note": "最近 {shown} / 共 {total} 个",
+  "workspace.bubble.emptyBoth": "还没有文件或云文档",
   "workspace.plan.searchPlaceholder": "搜索任务",
   "workspace.plan.multiSelect": "多选",
   "workspace.plan.exitMultiSelect": "退出多选",

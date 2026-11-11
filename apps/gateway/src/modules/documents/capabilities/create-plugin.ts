@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DocumentOperation } from "@nxcore/agent-contract";
 import { DocumentServiceError } from "../errors.js";
 import type { DocumentOperationService } from "../operations/service.js";
+import { DEFAULT_DOCUMENT_WORKSPACE_ID } from "../workspace-index.js";
 import { annotations, contentHash, manifest, type CapabilityBackend } from "./shared.js";
 import {
   integerArg,
@@ -301,6 +302,12 @@ export function createPlugin(
         });
       const document = committed.document;
       if (!document) throw new DocumentServiceError("COMMIT_FAILED", "Document commit returned no document", 500);
+      // 提交成功后绑定到 run 所属工作空间（JSON 索引旁挂，不落库）：工作台侧栏 /
+      // Agent 列表按工作空间过滤；缺省（非工作台 run）归 default。
+      backend.bindDocumentWorkspace(
+        document.id,
+        (context.workspaceId ?? "").trim() || DEFAULT_DOCUMENT_WORKSPACE_ID,
+      );
       return success({
         operationId, state: "completed",
         roomId: document.roomId, docId: document.id,

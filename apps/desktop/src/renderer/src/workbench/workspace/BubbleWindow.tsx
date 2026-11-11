@@ -21,7 +21,7 @@ import type { RoomDocument } from '@nxcore/agent-contract'
 import { cn } from '../ui/cn'
 import { Hint, IconButton, Spinner } from '../ui/primitives'
 import { isArtifactFile } from './fileBrowser'
-import { useCloudDocuments, type CloudDocuments } from './useCloudDocuments'
+import { useCloudDocuments } from './useCloudDocuments'
 import { useFileLibrary } from './useFileLibrary'
 import {
   BUBBLE_DEFAULT_WIDTH,
@@ -367,11 +367,22 @@ const SCOPES: ReadonlyArray<{ key: BrowserScope; labelKey: string }> = [
   { key: 'output', labelKey: 'workbench:workspace.bubble.scope.output' },
 ]
 
+/** 混排列表的一行：文件库条目与工作空间云文档共用一个列表（无独立分组/标题）。 */
+type BrowserEntry =
+  | { key: string; updatedAt: string; file: RealOfficeFile }
+  | { key: string; updatedAt: string; document: RoomDocument }
+
+function entryUpdatedAt(entry: BrowserEntry): number {
+  const iso = 'document' in entry ? entry.document.updatedAt : entry.file.catalog.updatedAt
+  const parsed = Date.parse(iso)
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY
+}
+
 /**
- * 窄面板里的「资料与文件」列表：顶部一组工作空间云文档（documents 表）+
- * 资料/产物筛选的文件库列表；点开即进气泡标签。
- * workspaceId 传入时文件库部分按工作空间过滤（资料库/产物库独立）；缺省拉全库。
- * 云文档是工作区级文稿（`roomId === null`），不参与 资料/产物 归类，始终单列在最上方。
+ * 窄面板里的「资料与文件」列表：文件库条目 + 工作空间云文档（documents 表）
+ * 混排在同一份列表里，按更新时间倒序；点开即进气泡标签。
+ * workspaceId 传入时文件库与云文档都按工作空间过滤（资料库/产物库独立）。
+ * 「资料 / 产物」两个筛选只看文件，云文档只在「全部」里出现。
  */
 function BubbleBrowser({ onOpenFile, workspaceId }: {
   onOpenFile: (file: OfficeFile) => void
@@ -380,24 +391,43 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
   const { t } = useLocale()
   const library = useFileLibrary(workspaceId)
   // 云文档清单单独订阅工作区文稿频道：Agent 新建/改动云文档后列表自动刷新。
-  const cloudDocuments = useCloudDocuments()
+  const cloudDocuments = useCloudDocuments(workspaceId)
   const [scope, setScope] = useState<BrowserScope>('all')
 
-  const items = useMemo(() => {
+  const fileItems = useMemo(() => {
     if (scope === 'all') return library.items
     return library.items.filter((item) => isArtifactFile(item) === (scope === 'output'))
   }, [library.items, scope])
 
+  const entries = useMemo<BrowserEntry[]>(() => {
+    const files: BrowserEntry[] = fileItems.map((item) => ({
+      key: `file:${item.file.id}`,
+      updatedAt: item.catalog.updatedAt,
+      file: item,
+    }))
+    const cloud: BrowserEntry[] = scope === 'all' && cloudDocuments.available
+      ? cloudDocuments.documents.map((document) => ({
+          key: `cloud:${document.id}`,
+          updatedAt: document.updatedAt,
+          document,
+        }))
+      : []
+    return [...files, ...cloud].sort((left, right) => entryUpdatedAt(right) - entryUpdatedAt(left))
+  }, [cloudDocuments.available, cloudDocuments.documents, fileItems, scope])
+
+  // 「全部」计数包含云文档；资料/产物只统计文件。
   const counts = useMemo(() => ({
-    all: library.items.length,
+    all: library.items.length + (cloudDocuments.available ? cloudDocuments.documents.length : 0),
     material: library.items.filter((item) => !isArtifactFile(item)).length,
     output: library.items.filter((item) => isArtifactFile(item)).length,
-  }), [library.items])
+  }), [cloudDocuments.available, cloudDocuments.documents.length, library.items])
+
+  const loading = library.state === 'loading'
+    || (scope === 'all' && cloudDocuments.available && cloudDocuments.loading)
+  const showEmpty = !loading && library.state !== 'unavailable' && entries.length === 0
 
   return (
     <div className="wb-bubble-browser">
-      <CloudDocumentsGroup state={cloudDocuments} onOpenFile={onOpenFile} />
-
       <div className="wb-bubble-browser-scopes" role="group" aria-label={t('workbench:workspace.bubble.scopeLabel')}>
         {SCOPES.map((item) => (
           <button
@@ -414,17 +444,23 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
       </div>
 
       <div className="wb-bubble-browser-list" role="list">
-        {library.state === 'loading' ? (
+        {loading ? (
           <div className="wb-bubble-browser-state"><Spinner size={13} /></div>
         ) : null}
-        {library.state === 'unavailable' ? (
+        {!loading && library.state === 'unavailable' && entries.length === 0 ? (
           <div className="wb-bubble-browser-state">{t('workbench:workspace.common.filesUnavailable')}</div>
         ) : null}
-        {library.state === 'ready' && items.length === 0 ? (
-          <div className="wb-bubble-browser-state">{t('workbench:workspace.file.noMatches')}</div>
+        {showEmpty ? (
+          <div className="wb-bubble-browser-state">
+            {scope === 'all'
+              ? t('workbench:workspace.bubble.emptyBoth')
+              : t('workbench:workspace.file.noMatches')}
+          </div>
         ) : null}
-        {library.state === 'ready' ? items.map((item) => (
-          <BubbleBrowserRow key={item.file.id} item={item} onOpen={onOpenFile} />
+        {!loading ? entries.map((entry) => (
+          'document' in entry
+            ? <CloudDocumentBrowserRow key={entry.key} document={entry.document} onOpen={onOpenFile} />
+            : <BubbleBrowserRow key={entry.key} item={entry.file} onOpen={onOpenFile} />
         )) : null}
       </div>
 
@@ -437,41 +473,10 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
   )
 }
 
-/* ───────────────── 气泡内「云文档」分组（documents 表） ───────────────── */
+/* ───────────────── 云文档行（documents 表，与文件混排） ───────────────── */
 
-/** 工作空间云文档分组：标题 + 更新时间，点击把伪文件加进气泡标签并打开。 */
-function CloudDocumentsGroup({ state, onOpenFile }: {
-  state: CloudDocuments
-  onOpenFile: (file: OfficeFile) => void
-}) {
-  // 真实文稿桥不存在（旧版主进程 / 未恢复）时整组隐藏，不占位。
-  if (!state.available) return null
-
-  return (
-    <section className="wb-bubble-cloud-docs" aria-label="云文档">
-      <div className="wb-bubble-cloud-docs-head">
-        <span className="wb-bubble-cloud-docs-title">云文档</span>
-        {state.loading ? (
-          <Spinner size={12} />
-        ) : (
-          <span className="wb-bubble-cloud-docs-count">{state.documents.length}</span>
-        )}
-      </div>
-      {!state.loading && state.documents.length === 0 ? (
-        <div className="wb-bubble-cloud-docs-state">还没有云文档，可以让 Agent 写一篇</div>
-      ) : null}
-      {state.documents.length > 0 ? (
-        <div className="wb-bubble-cloud-docs-list" role="list">
-          {state.documents.map((document) => (
-            <CloudDocumentRow key={document.id} document={document} onOpen={onOpenFile} />
-          ))}
-        </div>
-      ) : null}
-    </section>
-  )
-}
-
-function CloudDocumentRow({ document, onOpen }: {
+/** 工作空间云文档行：标题 + 「云文档 · vN · 更新时间」，点击把伪文件加进气泡标签并打开。 */
+function CloudDocumentBrowserRow({ document, onOpen }: {
   document: RoomDocument
   onOpen: (file: OfficeFile) => void
 }) {

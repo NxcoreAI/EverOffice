@@ -39,12 +39,15 @@ export function documentRoutes(
           querystring: Type.Object({
             trashed: Type.Optional(Type.Union([Type.Literal("true"), Type.Literal("false")])),
             origin: Type.Optional(Type.Union([Type.Literal("native"), Type.Literal("import")])),
+            // 工作空间过滤（JSON 索引绑定）；省略 = 全部文稿（旧桌面兼容）。
+            workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
           }),
         },
       },
       async (request) => service.list(
         request.query.trashed === "true",
         request.query.origin,
+        request.query.workspaceId ?? null,
       ),
     );
 

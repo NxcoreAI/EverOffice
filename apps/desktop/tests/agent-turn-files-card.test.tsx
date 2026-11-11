@@ -168,6 +168,90 @@ describe('AgentTurnFilesCard in AgentChatView', () => {
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('renders a cloud document card from document_write_commit results (navigation.title)', async () => {
+    const tool = completedTool({
+      id: 'tool-cloud-1',
+      name: 'document_write_commit',
+      result: {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            operationId: 'op-1',
+            state: 'completed',
+            docId: 'doc-cloud-1',
+            navigation: { title: '季度总结云文档', action: 'created' },
+          }),
+        }],
+        structuredContent: {
+          operationId: 'op-1',
+          state: 'completed',
+          docId: 'doc-cloud-1',
+          navigation: { title: '季度总结云文档', action: 'created' },
+        },
+      },
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+
+    const buttons = turnFileButtons()
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.textContent).toContain('季度总结云文档')
+    // 云文档行副文案与文件卡区分。
+    expect(buttons[0]!.textContent).toContain('云文档')
+    // 云文档没有文件库条目：不挂「外部应用打开」分体控件。
+    expect(container.querySelector('.file-open-with')).toBeNull()
+    expect(listApplications).not.toHaveBeenCalled()
+  })
+
+  it('accepts documentId/title fields when navigation is absent', async () => {
+    const tool = completedTool({
+      id: 'tool-cloud-2',
+      name: 'document_write_commit',
+      result: JSON.stringify({ documentId: 'doc-cloud-2', title: '会议纪要云文档' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    const buttons = turnFileButtons()
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.textContent).toContain('会议纪要云文档')
+  })
+
+  it('dispatches everroom:open-cloud-document on cloud document card click', async () => {
+    const events: CustomEvent<{ documentId: string; title: string }>[] = []
+    const listener = (event: Event) => {
+      events.push(event as CustomEvent<{ documentId: string; title: string }>)
+    }
+    window.addEventListener('everroom:open-cloud-document', listener)
+    try {
+      const tool = completedTool({
+        id: 'tool-cloud-3',
+        name: 'document_write_commit',
+        result: JSON.stringify({
+          docId: 'doc-cloud-3',
+          navigation: { title: '产品周报云文档', action: 'created' },
+        }),
+      })
+      await renderView({
+        messages: [userMessage('run-1'), assistantMessage('run-1')],
+        toolCallsByRun: { 'run-1': [tool] },
+      })
+      await act(async () => {
+        turnFileButtons()[0]!.click()
+      })
+      expect(events).toHaveLength(1)
+      expect(events[0]!.detail).toEqual({
+        documentId: 'doc-cloud-3',
+        title: '产品周报云文档',
+      })
+    } finally {
+      window.removeEventListener('everroom:open-cloud-document', listener)
+    }
+  })
+
   it('renders an md file card for markdown_create results', async () => {
     const tool = completedTool({
       id: 'tool-1b',

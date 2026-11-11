@@ -612,6 +612,25 @@ export function cloudDocumentTitle(document: Pick<RoomDocument, 'title'>): strin
 }
 
 /**
+ * 仅凭 documentId / title 构造云文档「伪文件」：对话产物的云文档卡点击后走这条，
+ * 此时没有 documents 快照，更新时间/大小用占位符；正文仍由编辑器按 id 拉取。
+ */
+export function cloudDocumentToOfficeFileById(documentId: string, title?: string | null): OfficeFile {
+  const name = title?.trim() || '未命名云文档'
+  return {
+    id: `cloud-doc:${documentId}`,
+    name,
+    kind: 'cloud-doc',
+    roomId: null,
+    updatedLabel: '—',
+    sizeLabel: '—',
+    // 正文不在 OfficeFile 里：云文档打开时由 CloudDocumentEditor 从 documents 表取。
+    content: { type: 'md', source: '' },
+    cloudDocument: { documentId, title: name },
+  }
+}
+
+/**
  * 工作空间云文档 → 气泡窗里的「伪文件」。
  *
  * 云文档没有文件库条目，标签页/气泡窗只按 OfficeFile 的形状渲染；打开后
@@ -619,17 +638,10 @@ export function cloudDocumentTitle(document: Pick<RoomDocument, 'title'>): strin
  * 纯函数，供列表与测试共用。
  */
 export function cloudDocumentToOfficeFile(document: RoomDocument): OfficeFile {
-  const title = cloudDocumentTitle(document)
   return {
-    id: `cloud-doc:${document.id}`,
-    name: title,
-    kind: 'cloud-doc',
+    ...cloudDocumentToOfficeFileById(document.id, cloudDocumentTitle(document)),
     roomId: document.roomId,
     updatedLabel: updatedLabelFrom(document.updatedAt),
-    sizeLabel: '—',
-    // 正文不在 OfficeFile 里：云文档打开时由 CloudDocumentEditor 从 documents 表取。
-    content: { type: 'md', source: '' },
-    cloudDocument: { documentId: document.id, title },
   }
 }
 

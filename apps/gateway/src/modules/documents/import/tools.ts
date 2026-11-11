@@ -1,5 +1,7 @@
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { ExternalDocumentProvider } from "@nxcore/agent-contract";
+import type { DocumentService } from "../service.js";
+import { DEFAULT_DOCUMENT_WORKSPACE_ID } from "../workspace-index.js";
 import type { DocumentImportService } from "./service.js";
 import { ImportServiceError } from "./service.js";
 
@@ -7,8 +9,14 @@ import { ImportServiceError } from "./service.js";
  * Agent 侧导入工具（B-7，方案 §13）：搜索与预览经 OpenConnector 只读链路，
  * 提交（导入工作区文稿库）复用导入面板同款 commit 入口；能力不可用/连接缺失时
  * 返回结构化指引而不是裸错误。
+ *
+ * `documents` 用于提交成功后把新文稿绑定到 run 所属工作空间（JSON 索引旁挂）；
+ * 未注入时（部分单测）只提交不绑定。
  */
-export function createDocumentImportPiTools(imports: DocumentImportService): PiAgentRuntimeTool[] {
+export function createDocumentImportPiTools(
+  imports: DocumentImportService,
+  documents?: Pick<DocumentService, "bindDocumentWorkspace">,
+): PiAgentRuntimeTool[] {
   const providerOf = (value: unknown): ExternalDocumentProvider => {
     if (value === "feishu" || value === "notion") return value;
     throw new Error("provider 只支持 feishu 或 notion");
@@ -100,12 +108,18 @@ export function createDocumentImportPiTools(imports: DocumentImportService): PiA
         additionalProperties: false,
       } as unknown as Record<string, unknown>,
       executionMode: "sequential",
-      execute: async (_input, params) => {
+      execute: async (input, params) => {
         const roomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
         const result = await imports.commit({
           runId: String(params.runId).trim(),
           ...(roomId ? { roomId } : {}),
         });
+        // 提交成功后绑定到 run 所属工作空间（JSON 索引旁挂）：Agent 在工作台里导入的
+        // 云文档应出现在该工作空间侧栏；缺省归 default。
+        const workspaceId = typeof input.workspaceId === "string" && input.workspaceId.trim()
+          ? input.workspaceId.trim()
+          : DEFAULT_DOCUMENT_WORKSPACE_ID;
+        documents?.bindDocumentWorkspace(result.documentId, workspaceId);
         return { content: JSON.stringify(result), details: result };
       },
       classifyFailure: (error: unknown) => classify(error) as never,

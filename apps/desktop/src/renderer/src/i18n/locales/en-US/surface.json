@@ -33,6 +33,7 @@
   "agentChat.turnFileOpenTitle": "Open: {name}",
   "agentChat.turnFileOpenFailed": "Couldn't open it. Try again from the artifact library.",
   "agentChat.turnFileOpenUnavailable": "File service unavailable; can't open it right now",
+  "agentChat.turnCloudDocument": "Cloud document",
   "agentChat.writingAResponse": "Writing a response...",
   "agentChat.shellApprovalTitle": "Command needs approval",
   "agentChat.shellApprovalDescription": "Choose \"Allow for this session\" to auto-run later commands in this conversation",

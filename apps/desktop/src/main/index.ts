@@ -2550,8 +2550,8 @@ function registerDocumentHandlers(
     },
   } : null
   handleGroup(DOCUMENT_CHANNELS, {
-    list: (_event, roomId) => bridge.list(roomId),
-    listTrash: (_event, roomId) => bridge.listTrash(roomId),
+    list: (_event, workspaceId) => bridge.list(workspaceId),
+    listTrash: (_event, workspaceId) => bridge.listTrash(workspaceId),
     get: (_event, documentId) => bridge.get(documentId),
     readMarkdown: async (_event, documentId: string) => ({
       markdown: await bridge.documentMarkdown(documentId),
@@ -2648,7 +2648,9 @@ function registerDocumentHandlers(
       })
     },
     emptyTrash: async (_event, roomId: string | null | undefined) => {
-      const trashed = await bridge.listTrash(roomId)
+      // 网关回收站清空是整工作区语义（roomId 参数仅为旧契约占位）：先全量列出
+      // 再清空，确保被清掉文稿的本地资源也一并删除。
+      const trashed = await bridge.listTrash()
       await bridge.emptyTrash(roomId)
       await Promise.all(trashed.map((document) => assets.deleteDocument(document.id).catch((error) => {
         console.error('Failed to delete local document assets', { documentId: document.id, error })

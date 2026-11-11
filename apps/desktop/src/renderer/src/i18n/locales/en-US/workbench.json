@@ -330,6 +330,7 @@
   "workspace.bubble.scope.output": "Outputs",
   "workspace.bubble.scopeLabel": "File type",
   "workspace.bubble.note": "Showing {shown} of {total}",
+  "workspace.bubble.emptyBoth": "No files or cloud documents yet",
   "workspace.plan.searchPlaceholder": "Search tasks",
   "workspace.plan.multiSelect": "Select",
   "workspace.plan.exitMultiSelect": "Done",
