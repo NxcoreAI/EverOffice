@@ -241,6 +241,9 @@ export class DocumentUnderstandingService {
     return row?.markdown ?? null;
   }
 
+  /** 自动 OCR 防递归：同一版本在自动补 OCR 期间再次进入 parseVersion 时跳过自动分支。 */
+  private readonly autoOcrInFlight = new Set<string>();
+
   async parseVersion(fileEntryId: string, fileVersionId: string): Promise<ParsedDocumentResult | null> {
     const context = this.files.getVersionContext(fileEntryId, fileVersionId);
     if (!context) throw new Error("document_file_version_not_found");
@@ -249,11 +252,19 @@ export class DocumentUnderstandingService {
     // 产物落库键与 artifact 工具的查询口径保持一致。
     const versionId = context.version.id;
     const existing = this.get(versionId);
-    if (existing) return existing;
+    if (existing) {
+      // 已解析但原生文本覆盖过低（截图型 PDF）：补齐 VLM OCR 后再返回，避免下游
+      // 拿着几乎空的 markdown 生成内容（2026-11-11 实测营销 PDF 24 页零文本层）。
+      const ocrFilled = await this.maybeAutoOcr(fileEntryId, versionId, existing);
+      return ocrFilled
+    }
 
     const active = this.parseInFlight.get(versionId);
     if (active) return active;
-    const parsing = this.parseVersionOnce(fileEntryId, versionId, context);
+    const parsing = this.parseVersionOnce(fileEntryId, versionId, context).then(async (parsed) => {
+      const ocrFilled = await this.maybeAutoOcr(fileEntryId, versionId, parsed);
+      return ocrFilled
+    });
     this.parseInFlight.set(versionId, parsing);
     try {
       return await parsing;
@@ -435,6 +446,35 @@ export class DocumentUnderstandingService {
     const stored = this.get(versionId);
     if (!stored) throw new Error("document_artifact_persist_failed");
     return stored;
+  }
+
+  /**
+   * 低文本覆盖 PDF 的自动 OCR：截图型 PDF（营销页、扫描件）没有文字层，
+   * 原生解析只能产出几百字符，下游（LLM 生成/检索）等于拿不到材料。检测到
+   * nativeTextCoverage < 0.3 时自动走 VLM 逐页 OCR（与手动 document_analyze_visuals 同一条管线）。
+   * 环境变量 NXCORE_PDF_OCR_AUTO=0 可关闭；未配置视觉模型时静默跳过。
+   */
+  private async maybeAutoOcr(
+    fileEntryId: string,
+    fileVersionId: string,
+    parsed: ParsedDocumentResult,
+  ): Promise<ParsedDocumentResult> {
+    if ((process.env.NXCORE_PDF_OCR_AUTO ?? "1") === "0") return parsed;
+    if (parsed.artifact.document.format !== "pdf") return parsed;
+    if (!this.visual || !this.dataDir) return parsed;
+    if (this.autoOcrInFlight.has(fileVersionId)) return parsed;
+    const pages = parsed.artifact.pages.length;
+    const coverage = parsed.artifact.quality.nativeTextCoverage;
+    if (pages === 0 || coverage >= 0.3) return parsed;
+    this.autoOcrInFlight.add(fileVersionId);
+    try {
+      const ocr = await this.analyzePdfVisuals(fileEntryId, fileVersionId, "external_vlm_allowed");
+      return ocr;
+    } catch {
+      return parsed;
+    } finally {
+      this.autoOcrInFlight.delete(fileVersionId);
+    }
   }
 
   async analyzePdfVisuals(
