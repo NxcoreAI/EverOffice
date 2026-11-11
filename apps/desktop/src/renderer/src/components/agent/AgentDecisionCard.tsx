@@ -1,9 +1,10 @@
-import { memo, useState, type ReactNode } from 'react'
-import { Check, LoaderCircle, MessageCircleQuestion, ShieldAlert, X } from 'lucide-react'
+import { memo, useEffect, useState, type ReactNode } from 'react'
+import { Check, FileText, LoaderCircle, MessageCircleQuestion, ShieldAlert, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { dispatchOpenCloudDocument } from '@/workbench/shell/openAgentFile'
 
 import type { PendingShellApproval } from './agentShellApprovals'
 
@@ -60,7 +61,12 @@ const CardLineMarkdown = memo(function CardLineMarkdown({ text }: { text: string
  * 通用决策卡（agent_confirm 计划确认 / agent_ask_user 提问）。
  * 复用审批卡骨架样式；confirm 展示计划/色板/字体/要点并收「确认/取消+反馈」，
  * question 展示候选按钮与自由输入并收「选项/文本」。
+ *
+ * confirm 卡带 document（演示文稿计划已落成云文档）时，计划以云文档为主体展示：
+ * 卡片到达即自动打开计划文档一次，并给出「打开计划云文档」入口；完整步骤折叠，
+ * 避免把十几步计划摊成一面墙。同一 approvalId 只自动打开一次（重渲染/回放不重开）。
  */
+const autoOpenedPlanDocuments = new Set<string>()
 export function AgentDecisionCard({
   approval,
   busy,
@@ -78,6 +84,14 @@ export function AgentDecisionCard({
 
   const isConfirm = card.kind === 'confirm'
   const title = isConfirm ? t('surface:agentChat.cardConfirmTitle') : t('surface:agentChat.cardQuestionTitle')
+
+  const planDocument = card.document
+  useEffect(() => {
+    if (!planDocument) return
+    if (autoOpenedPlanDocuments.has(approval.approvalId)) return
+    autoOpenedPlanDocuments.add(approval.approvalId)
+    dispatchOpenCloudDocument({ documentId: planDocument.id, title: planDocument.title })
+  }, [planDocument, approval.approvalId])
 
   const submitAnswer = () => {
     const trimmed = answer.trim()
@@ -103,14 +117,36 @@ export function AgentDecisionCard({
         </span>
       </header>
 
+      {planDocument ? (
+        <button
+          type="button"
+          className="agent-decision-card-document"
+          onClick={() => dispatchOpenCloudDocument({ documentId: planDocument.id, title: planDocument.title })}
+        >
+          <FileText size={14} aria-hidden="true" />
+          <span>{t('surface:agentChat.cardOpenPlanDocument', { title: planDocument.title })}</span>
+        </button>
+      ) : null}
+
       {card.body ? <CardBodyMarkdown text={card.body} /> : null}
 
       {card.plan && card.plan.length > 0 ? (
-        <ol className="agent-decision-card-plan">
-          {card.plan.map((step, index) => (
-            <li key={index}><CardLineMarkdown text={step} /></li>
-          ))}
-        </ol>
+        planDocument ? (
+          <details className="agent-decision-card-steps">
+            <summary>{t('surface:agentChat.cardPlanSteps', { count: card.plan.length })}</summary>
+            <ol className="agent-decision-card-plan">
+              {card.plan.map((step, index) => (
+                <li key={index}><CardLineMarkdown text={step} /></li>
+              ))}
+            </ol>
+          </details>
+        ) : (
+          <ol className="agent-decision-card-plan">
+            {card.plan.map((step, index) => (
+              <li key={index}><CardLineMarkdown text={step} /></li>
+            ))}
+          </ol>
+        )
       ) : null}
 
       {card.palette && card.palette.length > 0 ? (

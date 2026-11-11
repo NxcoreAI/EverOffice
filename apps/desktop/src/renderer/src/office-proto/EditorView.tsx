@@ -9,7 +9,7 @@ import { Sparkles } from 'lucide-react'
 
 import { type OfficeFile } from './data'
 import { isMarkdownFileName } from './markdownFileText'
-import { CloudDocumentEditor } from './CloudDocumentEditor'
+import { CloudDocumentEditor, type CloudDocumentSelectionNote } from './CloudDocumentEditor'
 import { NativeEditorHost, type NativeSpec } from './NativeEditorHost'
 import { SidebarDocumentEditor } from './SidebarDocumentEditor'
 import { SideDock } from './SideDock'
@@ -21,13 +21,20 @@ interface EditorViewProps {
    *  （工作台的 AI 对话在项目空间主区，不再挂文件旁的停靠栏）。
    *  默认 false 仅供原型外壳（OfficeProto，测试用）保持旧行为。 */
   hideSideDock?: boolean
+  /** 工作台：云文档选区批注写进对话侧待发送队列（不传则云文档保留旧入口）。 */
+  onQueueCloudSelectionNote?: (note: CloudDocumentSelectionNote) => void
 }
 
 /** docx/xlsx/pptx/pdf 都由 GenOffice 原生编辑器承载；真实 .md/.markdown 走侧栏
  *  旧文稿（Tiptap cloud-document）编辑器的文件库宿主；mock 的 Markdown 仍保留
  *  原型编辑器（MdView）。工作空间云文档（documents 表伪文件）优先走
  *  `CloudDocumentEditor`，由真实 documents IPC 提供正文与保存。 */
-export function EditorView({ file, onToast, hideSideDock = false }: EditorViewProps) {
+export function EditorView({
+  file,
+  onToast,
+  hideSideDock = false,
+  onQueueCloudSelectionNote,
+}: EditorViewProps) {
   // 云文档（documents 表）伪文件：没有 mock content / realCatalog，必须先于其它
   // 分流判断，否则会落到 mock 的 MdView。
   if (file.cloudDocument) {
@@ -37,6 +44,7 @@ export function EditorView({ file, onToast, hideSideDock = false }: EditorViewPr
         documentId={file.cloudDocument.documentId}
         title={file.cloudDocument.title}
         onToast={onToast}
+        onQueueSelectionNote={onQueueCloudSelectionNote}
       />
     )
   }

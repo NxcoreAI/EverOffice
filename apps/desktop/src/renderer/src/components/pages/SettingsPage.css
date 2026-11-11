@@ -3209,3 +3209,95 @@
 .plan-overview-grant-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .plan-overview-grant-head span { color: var(--muted); font-size: 11px; }
 .plan-overview-grant-head strong { font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ===== 软件更新:安装包下载进度 =====
+   与套餐额度条共用一套元素语言：6px 圆角轨道 + 品牌色实心填充，
+   进度条只在「下载中 / 准备下载」时出现，不额外增加常驻占位。 */
+.settings-page .settings-update-progress-row {
+  align-items: stretch;
+}
+
+/* 选择器带 .settings-update-progress-row，避免被 `.reality-setting-row > div:first-child`
+   （display:grid; gap:4px）用更高特异性压掉 flex 布局。 */
+.settings-page .settings-update-progress-row > .settings-update-progress {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.settings-page .settings-update-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-page .settings-update-percent {
+  flex: none;
+  color: var(--ui-accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-page .settings-update-progress-track {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-sunken);
+}
+
+.settings-page .settings-update-progress-track > i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ui-accent-fill);
+  transition: width 0.18s ease-out;
+}
+
+/* 还没拿到字节进度时给一条循环滑动的条，避免「0%」看起来像卡死。 */
+.settings-page .settings-update-progress-track[data-indeterminate='true'] > i {
+  width: 32%;
+  animation: settings-update-progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes settings-update-progress-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(420%); }
+}
+
+.settings-page .settings-update-progress small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 完成/失败提示允许完整换行：网络错误信息截断后没法排查。
+   无空格的长 URL/路径也要能断行，否则会被卡片 overflow:hidden 直接裁掉。 */
+.settings-page .settings-update-notice {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.5;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.settings-page .settings-update-notice[data-tone='success'] { color: var(--ui-success); }
+.settings-page .settings-update-notice[data-tone='error'] { color: var(--ui-danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-page .settings-update-progress-track > i { transition: none; }
+  /* 静态保底段，不能铺满轨道——否则看起来像「已完成」。 */
+  .settings-page .settings-update-progress-track[data-indeterminate='true'] > i {
+    width: 32%;
+    opacity: 0.45;
+    transform: none;
+    animation: none;
+  }
+}

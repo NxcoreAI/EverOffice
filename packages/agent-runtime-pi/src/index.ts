@@ -89,6 +89,8 @@ export interface PiAgentCardRequest {
     fonts?: { heading?: string; body?: string };
     /** confirm：其他风格要点（如「深色封面 + 浅色内容页」）。 */
     notes?: string[];
+    /** confirm：计划已落成的工作空间云文档（卡片上提供「打开计划云文档」入口）。 */
+    document?: { id: string; title: string };
   };
   timeoutMs?: number;
 }

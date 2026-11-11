@@ -21,6 +21,8 @@ export interface PendingShellApproval {
     palette?: string[]
     fonts?: { heading?: string; body?: string }
     notes?: string[]
+    /** 计划云文档（PPT 计划卡落地后带）：点开走 everroom:open-cloud-document。 */
+    document?: { id: string; title: string }
   }
 }
 

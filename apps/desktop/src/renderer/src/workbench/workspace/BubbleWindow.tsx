@@ -5,10 +5,13 @@ import {
   Minus,
   X,
 } from 'lucide-react'
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { buildCloudDocumentAskMessage } from '@/components/agent/askDrafts'
+import { useWorkbenchStore } from '../state/store'
 import { EditorView } from '@/office-proto/EditorView'
+import type { CloudDocumentSelectionNote } from '@/office-proto/CloudDocumentEditor'
 import {
   cloudDocumentTitle,
   cloudDocumentToOfficeFile,
@@ -213,6 +216,31 @@ export function BubbleWindow({
   const browsing = bubble.activeFileId === null
   const active = bubble.files.find((file) => file.id === bubble.activeFileId) ?? null
 
+  /**
+   * 云文档选区「评论」：与其他 Office（Word/Excel/PPT 嵌入版）同一条链路——
+   * 批注进对话输入框上方的待发送队列（workbench store），由用户在对话区一起发送。
+   * 云文档没有文件库条目，不带 fileId（不参与原生编辑器内的锚点同步）。
+   */
+  const queueCloudSelectionNote = useCallback((note: CloudDocumentSelectionNote) => {
+    if (!workspaceId) throw new Error(t('workbench:shell.annotationNoWorkspace'))
+    useWorkbenchStore.getState().addAskDraft({
+      id: `cloud-doc-note:${crypto.randomUUID()}`,
+      workspaceId,
+      title: note.title,
+      instruction: note.instruction,
+      excerpt: note.excerpt,
+      message: buildCloudDocumentAskMessage({
+        documentId: note.documentId,
+        documentTitle: note.title,
+        instruction: note.instruction,
+        excerpt: note.excerpt,
+        blockId: note.blockId,
+      }),
+      displayMessage: note.instruction,
+      createdAt: new Date().toISOString(),
+    })
+  }, [t, workspaceId])
+
   return (
     <section
       ref={sectionRef}
@@ -346,7 +374,12 @@ export function BubbleWindow({
           <BubbleBrowser onOpenFile={onOpenFile} workspaceId={workspaceId} />
         ) : active ? (
           <div className="wb-bubble-doc" key={active.id}>
-            <EditorView file={active} onToast={onToast} hideSideDock />
+            <EditorView
+              file={active}
+              onToast={onToast}
+              hideSideDock
+              onQueueCloudSelectionNote={workspaceId ? queueCloudSelectionNote : undefined}
+            />
           </div>
         ) : (
           <div className="wb-bubble-empty">{t('workbench:workspace.bubble.empty')}</div>

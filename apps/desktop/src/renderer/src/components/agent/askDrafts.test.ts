@@ -1,7 +1,13 @@
 /** 批注草稿合批：技术指令与人话分开，单条不编号。 */
 import { describe, expect, it } from 'vitest'
 
-import { buildAskBatch, buildNoteCards, EMPTY_EXCERPT_PLACEHOLDER, type PendingAskDraft } from './askDrafts'
+import {
+  buildAskBatch,
+  buildCloudDocumentAskMessage,
+  buildNoteCards,
+  EMPTY_EXCERPT_PLACEHOLDER,
+  type PendingAskDraft,
+} from './askDrafts'
 
 function draft(overrides: Partial<PendingAskDraft> = {}): PendingAskDraft {
   return {
@@ -100,5 +106,44 @@ describe('buildNoteCards', () => {
     expect(a!.note).toBe('关于第 5 段：加粗')
     expect(b!.note).toBe('技术指令')
     expect(b).not.toHaveProperty('title')
+  })
+})
+
+describe('buildCloudDocumentAskMessage', () => {
+  it('云文档按 documentId + blockId 定位（document 工具只认这两个必填参数），原话压在句末', () => {
+    const message = buildCloudDocumentAskMessage({
+      documentId: 'doc-cloud-1',
+      documentTitle: '季度复盘',
+      blockId: 'block-abc',
+      instruction: '把这段压成一句。',
+      excerpt: '本报告统计飞书账号在 09-20 至 11-04 的消息、文档、任务与日程数据，共 430 条。',
+    })
+    expect(message).toContain('云文档《季度复盘》')
+    expect(message).toContain('documentId：doc-cloud-1')
+    expect(message).toContain('块 id：block-abc')
+    expect(message).toContain('原文摘要「本报告统计飞书账号')
+    expect(message.endsWith('：把这段压成一句。')).toBe(true)
+    // 定位信息只进技术指令，不把 title/blockId 塞进用户可见那句话（displayMessage 由草稿另存）。
+  })
+
+  it('无摘录/无块 id：只留 documentId 与标题', () => {
+    const message = buildCloudDocumentAskMessage({
+      documentId: 'doc-2',
+      documentTitle: '   ',
+      blockId: null,
+      instruction: '补一个结论段',
+    })
+    expect(message).toBe('我在云文档《未命名云文档》中选中了这段内容（documentId：doc-2）：补一个结论段。')
+  })
+
+  it('超长摘录截断到 120 字并加省略号', () => {
+    const message = buildCloudDocumentAskMessage({
+      documentId: 'doc-3',
+      documentTitle: '长文',
+      excerpt: '甲'.repeat(200),
+      instruction: '压缩',
+    })
+    expect(message).toContain('…」')
+    expect(message).not.toContain('甲'.repeat(121))
   })
 })
