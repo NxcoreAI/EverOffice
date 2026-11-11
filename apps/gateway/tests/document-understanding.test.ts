@@ -306,23 +306,26 @@ describe("DocumentUnderstandingService", () => {
       mime: "application/pdf",
     });
     const native = await test.service.parseVersion(imported.fileEntryId, imported.fileVersionId);
+    // 自动 OCR（ee58ebb7 起）：截图型 PDF 在 parseVersion 内即补 OCR，无需手动触发。
     expect(native?.artifact.pages[0]).toMatchObject({
       textLayerStatus: "absent",
-      ocrStatus: "not-run",
+      ocrStatus: "completed",
     });
+    expect(calls).toBe(1);
 
     await expect(test.service.analyzePdfVisuals(
       imported.fileEntryId,
       imported.fileVersionId,
       "local_only",
     )).rejects.toThrow("document_external_vlm_not_allowed");
-    expect(calls).toBe(0);
+    expect(calls).toBe(1);
 
     const analyzed = await test.service.analyzePdfVisuals(
       imported.fileEntryId,
       imported.fileVersionId,
       "external_vlm_allowed",
     );
+    // 全部页已完成：显式 analyze 不再产生新调用，直接返回既有产物。
     expect(calls).toBe(1);
     expect(analyzed.artifact.document).toMatchObject({
       visualRevision: "document-vlm-ocr@2",

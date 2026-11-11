@@ -139,6 +139,36 @@ describe('runAgentPptxScript', () => {
     if (!failed.ok) return
     expect(failed.warnings.join('\n')).toContain('回源失败')
   })
+
+  it('画布裁剪：页内图形原样、部分出界裁到画布内、完全出界不落盘', async () => {
+    // LAYOUT_WIDE = 12192000 × 6858000 EMU（13.33" × 7.5"）
+    const script = [
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const slide = pres.addSlide();',
+      'slide.addShape(pres.ShapeType.rect, { x: 0.5, y: 0.5, w: 2, h: 2, fill: { color: "FF0000" } });',
+      'slide.addShape(pres.ShapeType.rect, { x: 4, y: 3, w: 12, h: 2, fill: { color: "00FF00" } });',
+      'slide.addShape(pres.ShapeType.ellipse, { x: 8.4, y: -1.6, w: 6.6, h: 6.6, fill: { color: "FFFF00" } });',
+      'slide.addShape(pres.ShapeType.ellipse, { x: 20, y: 0, w: 2, h: 2, fill: { color: "0000FF" } });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n')
+    const run = await runAgentPptxScript(script)
+    expect(run.ok).toBe(true)
+    if (!run.ok) return
+    const xml = await (await JSZip.loadAsync(run.bytes)).file('ppt/slides/slide1.xml')!.async('string')
+    // 页内：原样
+    expect(xml).toContain('FF0000')
+    expect(xml).toContain('<a:off x="457200" y="457200"/><a:ext cx="1828800" cy="1828800"/>')
+    // 右边出界：w 裁到画布右缘（12192000 - 3657600 = 8534400）
+    expect(xml).toContain('00FF00')
+    expect(xml).toContain('cx="8534400"')
+    // 顶部 + 右侧出界的圆（真实案例坐标）：y 裁到 0，右/下裁到画布缘
+    expect(xml).toContain('FFFF00')
+    expect(xml).toContain('<a:off x="7680960" y="0"/><a:ext cx="4511040" cy="4572000"/>')
+    // 完全出界：整块跳过
+    expect(xml).not.toContain('0000FF')
+  })
 })
 
 describe('版式自查（layoutLint）', () => {

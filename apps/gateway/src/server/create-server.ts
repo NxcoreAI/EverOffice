@@ -1412,9 +1412,13 @@ export async function createServer(config: GatewayConfig) {
           if (row.format !== "pdf") continue;
           const artifact = row.artifact as Record<string, unknown> | null;
           const doc = artifact?.document as Record<string, unknown> | undefined;
-          if (!doc || doc.visualRevision) continue;
-          const coverage = Number((row.quality as Record<string, unknown> | null)?.nativeTextCoverage ?? 1);
+          if (!doc) continue;
+          const quality = row.quality as Record<string, unknown> | null;
+          const coverage = Number(quality?.nativeTextCoverage ?? 1);
+          const ocrCoverage = Number(quality?.ocrCoverage ?? 0);
           if (!Number.isFinite(coverage) || coverage >= 0.3) continue;
+          // 有失败页就重跑：analyzePdfVisuals 只处理未完成页，瘦身后单页 OCR 很便宜。
+          if (doc.visualRevision && ocrCoverage >= 0.95) continue;
           const fileEntryId = String(doc.fileEntryId ?? "");
           if (!fileEntryId) continue;
           try {

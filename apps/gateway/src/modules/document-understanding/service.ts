@@ -509,20 +509,31 @@ export class DocumentUnderstandingService {
 
     for (const page of candidates) {
       try {
-        const image = await renderPdfPage(buffer, page.pageNo);
+        // 1300px 宽即可支撑 OCR 文字识别；1800px 的密集营销页会让单页 VLM 调用撞 60s 超时
+        //（2026-11-11 实测 24 页有 12 页失败）。失败页再重试一次。
+        let image = await renderPdfPage(buffer, page.pageNo, 1_300);
+        let ocr = null as Awaited<ReturnType<NonNullable<typeof this.visual>["ocrDocumentPage"]>> | null;
+        for (let attempt = 0; attempt < 2 && ocr === null; attempt += 1) {
+          try {
+            ocr = await this.visual.ocrDocumentPage({ buffer: image, mime: "image/png" });
+          } catch (error) {
+            if (attempt === 1) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 800));
+          }
+        }
         const asset = await storePageAsset(this.dataDir, image, page.pageNo);
         artifact.assets = artifact.assets.filter((item) => item.pageNo !== page.pageNo || item.kind !== "page-image");
         artifact.assets.push(asset);
         page.imageAssetId = asset.id;
         page.renderStatus = "completed";
-        const ocr = await this.visual.ocrDocumentPage({ buffer: image, mime: "image/png" });
         artifact.blocks = artifact.blocks.filter((block) =>
           block.pageNo !== page.pageNo || block.source.method !== "vlm");
-        const ocrBlocks = ocr.blocks.length > 0 || !ocr.text
-          ? ocr.blocks
+        const ocrResult = ocr!
+        const ocrBlocks = ocrResult.blocks.length > 0 || !ocrResult.text
+          ? ocrResult.blocks
           : [{
               type: "paragraph" as const,
-              text: ocr.text,
+              text: ocrResult.text,
               bbox: [0, 0, 1, 1] as [number, number, number, number],
               confidence: 0.5,
             }];
@@ -552,9 +563,10 @@ export class DocumentUnderstandingService {
         }
         page.ocrStatus = "completed";
         analyzedPages.add(page.pageNo);
-      } catch {
+      } catch (error) {
         page.renderStatus = page.imageAssetId ? "completed" : "failed";
         page.ocrStatus = "failed";
+        page.ocrError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
         failedPages.add(page.pageNo);
       }
     }
@@ -583,6 +595,8 @@ export class DocumentUnderstandingService {
     if (failedPages.size > 0) {
       artifact.warnings.push("visual-ocr-partial-failure");
       artifact.warnings.push(`visual-ocr-failed-pages:${[...failedPages].sort((a, b) => a - b).join(",")}`);
+      const firstFailure = artifact.pages.find((page) => page.ocrStatus === "failed" && page.ocrError);
+      if (firstFailure) artifact.warnings.push(`visual-ocr-failure-reason:${firstFailure.pageNo}: ${firstFailure.ocrError}`);
     }
     artifact.warnings.push("advanced-layout-analysis-not-run");
     artifact.quality = {

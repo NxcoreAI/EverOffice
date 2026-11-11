@@ -30,6 +30,8 @@ export interface CanonicalDocumentPage {
   renderStatus: "not-run" | "completed" | "failed";
   textLayerStatus: "present" | "absent" | "low-confidence" | "not-applicable";
   ocrStatus: "not-needed" | "not-run" | "completed" | "failed";
+  /** 失败原因（截断）：单页 OCR 失败此前被 catch 静默吞掉，整轮失败时无从排查。 */
+  ocrError?: string;
 }
 
 export interface CanonicalDocumentBlock {
