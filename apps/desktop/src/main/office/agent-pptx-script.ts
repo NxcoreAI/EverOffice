@@ -36,11 +36,20 @@ export interface AgentPptxScriptOptions {
   timeoutMs?: number
   /** 每新增一页回调（addSlide 计数）：驱动生成进度展示。 */
   onSlide?: (slideCount: number) => void
+  /**
+   * 版式自查：页内元素几何重叠（文字互压、色块盖字/盖表）。缺省 true ——
+   * PresentBench 实测第 14 页标题压表格、大色块遮挡数据表，扣了整页 4 条分。
+   * 关闭只用于宿主想自行处理的情况。
+   */
+  layoutLint?: boolean
 }
 
 export type AgentPptxScriptRun =
   | { ok: true; bytes: Buffer; warnings: string[]; consoleTail: string[] }
   | { ok: false; error: string; warnings: string[]; consoleTail: string[] }
+
+/** 版式自查发现的页内几何问题（一行一条，供模型按页修）。 */
+export interface PptxLayoutIssue { slide: number; detail: string }
 
 /** 素材引用 → 本地文件：脚本里出现的 everroom-material:// 全部替换成临时目录里的真实文件。 */
 async function preResolveMaterials(
@@ -106,6 +115,130 @@ function capturedConsole(consoleTail: string[]): Pick<Console, 'log' | 'warn' | 
 }
 
 /**
+ * 记录一次 add* 调用的快照，供落盘前的版式自查。
+ * 必须在调用时立刻取数值：pptxgenjs 会把传入的 options 对象**原地**改成 EMU 整数
+ * （9600 EMU/px），事后读同一个对象拿到的是 548640 这种值，几何比较全部失效。
+ */
+interface RecordedOp {
+  name: string
+  rect: { x: number; y: number; w: number; h: number } | null
+  text: string
+  shapeType?: string
+  filled?: boolean
+}
+
+interface RectItem { label: string; x: number; y: number; w: number; h: number; order: number }
+
+function rectOf(options: Record<string, unknown>): RectItem | null {
+  const x = options.x, y = options.y, w = options.w, h = options.h
+  if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number") return null
+  if (w <= 0 || h <= 0) return null
+  return { label: "", x, y, w, h }
+}
+
+function snapshotText(textArg: unknown, options: Record<string, unknown>): string {
+  if (typeof textArg === "string") return textArg
+  if (Array.isArray(textArg)) {
+    return (textArg as Array<unknown>).map((r) => {
+      if (typeof r === "string") return r
+      if (r && typeof r === "object") return String((r as Record<string, unknown>).text ?? "")
+      return ""
+    }).join("")
+  }
+  if (Array.isArray(options.paragraphs)) {
+    return (options.paragraphs as Array<Record<string, unknown>>)
+      .map((p) => (Array.isArray(p.runs) ? (p.runs as Array<Record<string, unknown>>).map((r) => String(r?.text ?? "")).join("") : ""))
+      .join(" ")
+  }
+  return ""
+}
+
+function intersectionArea(a: RectItem, b: RectItem): number {
+  const left = Math.max(a.x, b.x)
+  const right = Math.min(a.x + a.w, b.x + b.w)
+  const top = Math.max(a.y, b.y)
+  const bottom = Math.min(a.y + a.h, b.y + b.h)
+  if (right <= left || bottom <= top) return 0
+  return (right - left) * (bottom - top)
+}
+
+const clip = (value: string, max: number) => (value.length > max ? `${value.slice(0, max)}…` : value)
+
+/**
+ * 版式自查（几何层，不依赖视觉模型）：文字互压、色块盖文字/盖表格。
+ * 阈值偏保守，只在明显不合理时报告（PresentBench FALCO 第 14 页那种整页不可读）。
+ */
+function lintSlideOps(ops: RecordedOp[]): string[] {
+  const issues: string[] = []
+  const texts: RectItem[] = []
+  const boxes: RectItem[] = []
+  const tables: RectItem[] = []
+  for (const [order, op] of ops.entries()) {
+    const rect = op.rect
+    if (!rect) continue
+    const label = clip(op.text.replace(/\s+/g, " ").trim(), 24)
+    if (op.name === "addText") {
+      texts.push({ ...rect, label, order })
+    } else if (op.name === "addTable") {
+      tables.push({ ...rect, label: "表格", order })
+    } else if (op.name === "addChart") {
+      // 图表与文字重叠多半是刻意压放（图表标题），不参与自查。
+    } else if (op.name === "addShape") {
+      const shapeType = op.shapeType ?? "rect"
+      // 带文字的形状按文字处理（按钮/标签），不当作覆盖块。
+      if (op.text.trim()) {
+        texts.push({ ...rect, label })
+      } else if (op.filled && shapeType !== "line" && shapeType !== "lineArrow") {
+        boxes.push({ ...rect, label: `色块(${shapeType})`, order })
+      }
+    }
+  }
+  // 1) 文字互压：交集 ≥ 较小文字面积的 15%。
+  for (let i = 0; i < texts.length; i += 1) {
+    for (let j = i + 1; j < texts.length; j += 1) {
+      const a = texts[i]!, b = texts[j]!
+      const inter = intersectionArea(a, b)
+      if (inter <= 0) continue
+      const minArea = Math.min(a.w * a.h, b.w * b.h)
+      if (minArea > 0 && inter / minArea >= 0.15) {
+        issues.push(`文字重叠：「${a.label || "文字框"}」与「${b.label || "文字框"}」重叠 ${Math.round(inter / minArea * 100)}%`)
+      }
+    }
+  }
+  // 2) 文字压表格：交集 ≥ 文字面积 15%。
+  for (const t of texts) {
+    for (const tb of tables) {
+      const inter = intersectionArea(t, tb)
+      if (inter > 0 && inter / (t.w * t.h) >= 0.15) {
+        issues.push(`文字压表格：「${t.label || "文字框"}」覆盖表格 ${Math.round(inter / (t.w * t.h) * 100)}%`)
+      }
+    }
+  }
+  // 3) 色块盖文字：仅当色块**画在文字之后**（z 序在上）且交集 ≥ 文字面积 80%。
+  // 卡片底板先画、文字后画是正常设计（文字在卡片内），不应报警。
+  for (const box of boxes) {
+    for (const t of texts) {
+      if (box.order < t.order) continue
+      const inter = intersectionArea(box, t)
+      if (inter > 0 && inter / (t.w * t.h) >= 0.8) {
+        issues.push(`${box.label}遮挡文字：「${t.label || "文字框"}」被盖住 ${Math.round(inter / (t.w * t.h) * 100)}%`)
+      }
+    }
+  }
+  // 4) 色块盖表格：仅当色块画在表格之后（z 序在上）且交集 ≥ 表格面积 50%。
+  for (const box of boxes) {
+    for (const tb of tables) {
+      if (box.order < tb.order) continue
+      const inter = intersectionArea(box, tb)
+      if (inter > 0 && inter / (tb.w * tb.h) >= 0.5) {
+        issues.push(`${box.label}遮挡表格 ${Math.round(inter / (tb.w * tb.h) * 100)}%`)
+      }
+    }
+  }
+  return issues.slice(0, 12)
+}
+
+/**
  * 包装 pptxgenjs 构造器：new 或直调均可；writeFile/write 一律重定向到临时目录的 deck.pptx。
  * writes 收集每次落盘 promise——脚本漏写 await 时外层收尾等待，避免 readFileSync 赢过写盘的竞态。
  */
@@ -113,11 +246,22 @@ function wrapPptxgen(
   RealPptxgen: unknown,
   deckPath: string,
   writes: Array<Promise<unknown>>,
-  onSlide?: (slideCount: number) => void,
+  onSlide: ((slideCount: number) => void) | undefined,
+  layoutIssues: string[],
 ): (new () => unknown) & Record<string, unknown> {
   let slideCount = 0
+  const slideOps = new Map<number, RecordedOp[]>()
+  let linted = false
+  const runLint = () => {
+    if (linted) return
+    linted = true
+    for (const [slideNo, ops] of slideOps) {
+      for (const issue of lintSlideOps(ops)) layoutIssues.push(`第 ${slideNo} 页：${issue}`)
+    }
+  }
   const Ctor = RealPptxgen as new () => Record<string, unknown>
   const writeFileTo = (target: Record<string, unknown>, opts?: string | Record<string, unknown>) => {
+    runLint()
     const promise = (target.writeFile as (o: Record<string, unknown>) => Promise<unknown>)({
       ...(typeof opts === 'string' ? { fileName: opts } : (opts as Record<string, unknown>) ?? {}),
       fileName: deckPath,
@@ -132,10 +276,52 @@ function wrapPptxgen(
       get(target: Record<string, unknown>, prop: string | symbol) {
         if (prop === 'addSlide') {
           const original = target[prop as string] as (...args: unknown[]) => unknown
-          return () => {
+          return (...args: unknown[]) => {
             slideCount += 1
-            onSlide?.(slideCount)
-            return original.apply(target)
+            const slideNo = slideCount
+            onSlide?.(slideNo)
+            slideOps.set(slideNo, [])
+            const slide = original.apply(target, args) as Record<string, unknown>
+            // 记录本页 add* 调用的几何与文案：落盘前做确定性版式自查。
+            return new Proxy(slide, {
+              get(slideTarget: Record<string, unknown>, slideProp: string | symbol) {
+                const value = slideTarget[slideProp as string]
+                if (typeof value !== 'function') return value
+                if (typeof slideProp === 'string' && ['addText', 'addShape', 'addTable', 'addChart', 'addImage'].includes(slideProp)) {
+                  return (...callArgs: unknown[]) => {
+                    // 各方法的签名不同：options 的位置要按方法取，否则几何全空、自查失效。
+                    const asRecord = (v: unknown): Record<string, unknown> =>
+                      (v && typeof v === 'object' && !Array.isArray(v)) ? v as Record<string, unknown> : {}
+                    let options: Record<string, unknown> = {}
+                    let textArg: unknown
+                    if (slideProp === 'addText') {
+                      textArg = callArgs[0]
+                      options = asRecord(callArgs[1])
+                    } else if (slideProp === 'addShape') {
+                      options = asRecord(callArgs[1])
+                      ;(options as Record<string, unknown>).shapeType = options.shapeType ?? callArgs[0]
+                    } else if (slideProp === 'addTable') {
+                      options = asRecord(callArgs[1])
+                    } else if (slideProp === 'addChart') {
+                      options = asRecord(callArgs[2])
+                    } else {
+                      options = asRecord(callArgs[0])
+                    }
+                    // 调用时立即快照：pptxgenjs 之后会把 options 原地改写为 EMU。
+                    const rect = rectOf(options)
+                    slideOps.get(slideNo)?.push({
+                      name: slideProp,
+                      rect: rect ? { x: rect.x, y: rect.y, w: rect.w, h: rect.h } : null,
+                      text: snapshotText(textArg, options),
+                      ...(slideProp === 'addShape' ? { shapeType: String(options.shapeType ?? 'rect') } : {}),
+                      ...(slideProp === 'addShape' ? { filled: Boolean(options.fill || options.gradient) } : {}),
+                    })
+                    return (value as (...a: unknown[]) => unknown).apply(slideTarget, callArgs)
+                  }
+                }
+                return (value as (...a: unknown[]) => unknown).bind(slideTarget)
+              },
+            })
           }
         }
         if (prop === 'writeFile') return (opts?: string | Record<string, unknown>) => writeFileTo(target, opts)
@@ -202,8 +388,9 @@ export async function runAgentPptxScript(
     scriptBody = await preResolveMaterials(script, dir, options.resolveMaterial, warnings)
     let applyTheme: Record<string, unknown> | null = null
     const writes: Array<Promise<unknown>> = []
+    const layoutIssues: string[] = []
     const sandboxRequire = (name: string): unknown => {
-      if (name === 'pptxgenjs') return wrapPptxgen(RealPptxgen, deckPath, writes, options.onSlide)
+      if (name === 'pptxgenjs') return wrapPptxgen(RealPptxgen, deckPath, writes, options.onSlide, layoutIssues)
       if (name === 'pptx/apply_theme.js') {
         if (!options.applyThemeJs) {
           throw new Error('apply_theme 不可用（宿主未提供 pptx/apply_theme.js）：请改用直接 hex 色，不用 SchemeColor/applyTheme')
@@ -252,6 +439,16 @@ export async function runAgentPptxScript(
     }
     if (bytes.byteLength < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
       return { ok: false, error: `${DECK_NAME} 不是合法的 pptx（zip 魔数校验失败）`, warnings, consoleTail }
+    }
+    if ((options.layoutLint ?? true) && layoutIssues.length > 0) {
+      // 版式自查硬拒收：重叠页交付后就是不可读的废页（PresentBench 实测整页视觉项全灭）。
+      // 让模型按页号修脚本重交，而不是把不可读页落进成品。
+      return {
+        ok: false,
+        error: `版式自查未通过（${layoutIssues.length} 处）：\n${layoutIssues.slice(0, 8).join("\n")}\n请按页号调整坐标/尺寸后重交。`,
+        warnings,
+        consoleTail,
+      }
     }
     return { ok: true, bytes, warnings, consoleTail }
   } catch (error) {

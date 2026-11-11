@@ -10,6 +10,7 @@ import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type Prep
 import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from './thesis-logo-backfill'
 import { selfCheckThesisDocx } from './thesis-selfcheck'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
+import { completeThemeFonts } from './pptx-theme-fonts'
 import type { OfficeAgentAskEvent, OfficeAskQueueAction } from '../../shared/office'
 
 /** 生成卡死兜底：渲染端 boot → 填充 → 静默保存正常在秒级完成。 */
@@ -1003,5 +1004,8 @@ export async function generatePptxFromAgentScript(
     throw new Error(`PPT 脚本生成失败：${run.error}${run.consoleTail.length > 0 ? `；脚本输出尾部：${run.consoleTail.slice(-5).join(' | ')}` : ''}`)
   }
   onPhase?.('saved')
-  return { filePath: await writeGeneratedTempFile(run.bytes, '.pptx'), bytes: run.bytes, title, warnings: run.warnings }
+  // 主题字体补全在这里兜底：agent 只设了 pres.theme、没调 applyTheme 时，中文仍会在 WPS（Hans=等线）
+  // 和 GenOffice（latin 字体）各按各的兜底显示成两种字体。
+  const bytes = await completeThemeFonts(run.bytes)
+  return { filePath: await writeGeneratedTempFile(bytes, '.pptx'), bytes, title, warnings: run.warnings }
 }

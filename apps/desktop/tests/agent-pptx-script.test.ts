@@ -140,3 +140,53 @@ describe('runAgentPptxScript', () => {
     expect(failed.warnings.join('\n')).toContain('回源失败')
   })
 })
+
+describe('版式自查（layoutLint）', () => {
+  it('标题压表格 + 色块盖表格 → 拒收并点名页号', async () => {
+    const run = await runAgentPptxScript([
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const s = pres.addSlide();',
+      // 标题与表格同区（标题压表格约 60% 表头）
+      's.addText("Privacy and realism on LFW", { x: 0.6, y: 1.0, w: 8, h: 0.6, fontSize: 28, isTextBox: true });',
+      's.addTable([[{ text: "Method", options: { bold: true } }, { text: "FID" }], ["FALCO", "12.3"]], { x: 0.6, y: 1.2, w: 6, h: 2.5, fontSize: 12 });',
+      // 大色块压在表格上
+      's.addShape("rect", { x: 0.7, y: 1.4, w: 5, h: 2, fill: { color: "22C55E" } });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n'))
+    expect(run.ok).toBe(false)
+    if (run.ok) return
+    expect(run.error).toContain('版式自查未通过')
+    expect(run.error).toMatch(/第 \d+ 页/)
+    expect(run.error).toMatch(/文字压表格|遮挡表格|遮挡文字/)
+  })
+
+  it('卡片底板先画、文字在卡片内 → 不误报（z 序：文字在块上）', async () => {
+    const run = await runAgentPptxScript([
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const s = pres.addSlide();',
+      's.addShape("roundRect", { x: 0.5, y: 1, w: 4, h: 2, rectRadius: 0.1, fill: { color: "EAF2F8" } });',
+      's.addText("01", { x: 0.8, y: 1.3, w: 1, h: 0.6, fontSize: 32, color: "0B5FFF", isTextBox: true });',
+      's.addText("卡片说明", { x: 2, y: 1.4, w: 2.2, h: 0.8, fontSize: 14, isTextBox: true });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n'))
+    expect(run.ok).toBe(true)
+  })
+
+  it('干净页面不被误杀', async () => {
+    const run = await runAgentPptxScript([
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const s = pres.addSlide();',
+      's.addText("标题", { x: 0.6, y: 0.4, w: 8, h: 0.8, fontSize: 32, isTextBox: true });',
+      's.addText("正文", { x: 0.6, y: 1.6, w: 8, h: 1.2, fontSize: 16, isTextBox: true });',
+      's.addShape("rect", { x: 9.5, y: 0.4, w: 3, h: 2, fill: { color: "EAF2F8" } });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n'))
+    expect(run.ok).toBe(true)
+  })
+})
