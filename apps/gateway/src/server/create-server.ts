@@ -91,6 +91,7 @@ import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createAgentCardTools } from "../modules/agent/agent-card-tools.js";
+import { createDeckPlanRecorder } from "../modules/agent/deck-plan-record.js";
 import { createWorkspaceFileCatalog, createWorkspaceFilePreviewTool, createWorkspaceImagesDescribeTool, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, createWorkspaceFilesReadBatchTool, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
@@ -852,6 +853,9 @@ export async function createServer(config: GatewayConfig) {
       });
     },
   });
+  // 演示文稿计划落地：agent_confirm 带 palette 的计划存成工作空间云文档 +
+  // 计划页任务（同一 run 重出卡复用同一份文档/卡片），见 deck-plan-record.ts。
+  const persistDeckPlan = createDeckPlanRecorder({ documents: documentService, plans: planService });
   // 概览「动态」：runs + 文件库 + 计划事件流的派生读模型（不建 feed 表）。
   const workspaceActivityService = new WorkspaceActivityService({ db });
   const planLeaseReaper = new PlanLeaseReaper({
@@ -898,7 +902,10 @@ export async function createServer(config: GatewayConfig) {
       // 图片按需视觉描述（VLM → 落库缓存）：descriptionMissing 的图一次补齐，
       // 终结「bash+PIL 挖图片字节」的替代行为。
       // 通用交互卡：计划确认（agent_confirm）与向用户提问（agent_ask_user）。
-      ...createAgentCardTools((runId, card) => agentService.requestAgentCard(runId, card)),
+      ...createAgentCardTools(
+        (runId, card) => agentService.requestAgentCard(runId, card),
+        { persistPlan: persistDeckPlan },
+      ),
       createWorkspaceImagesDescribeTool(
         () => filesService,
         (fileEntryId, fileVersionId) =>
