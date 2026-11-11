@@ -166,10 +166,13 @@ function cloudDocumentsFromCandidates(result: unknown): AgentTurnCloudDocument[]
   return [...byId.values()]
 }
 
-/** 云文档写入工具（旧数据里带 context_room_ 前缀的同名工具也认）。 */
+/** 云文档产出工具（旧数据里带 context_room_ 前缀的同名工具也认）。
+ *  agent_confirm 的演示文稿计划卡会落地一份计划云文档（details 带 documentId +
+ *  navigation.title），与 document_write_commit 同一套云文档卡展示。 */
 const CLOUD_DOCUMENT_TOOLS = new Set([
   'document_write_commit',
   'context_room_document_write_commit',
+  'agent_confirm',
 ])
 
 /** 单个工具调用产出的文件（非产出型工具为空数组）。

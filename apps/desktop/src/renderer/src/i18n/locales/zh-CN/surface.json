@@ -2289,5 +2289,7 @@
   "agentChat.cardAnswerPlaceholder": "输入你的回答…",
   "agentChat.cardConfirmFeedbackPlaceholder": "补充说明（可选，取消时反馈给 AI）…",
   "agentChat.cardFonts": "字体",
+  "agentChat.cardOpenPlanDocument": "打开计划云文档《{title}》",
+  "agentChat.cardPlanSteps": "展开完整步骤（{count} 步）",
   "agentChat.answerDetailsToggle": "查看详情"
 }

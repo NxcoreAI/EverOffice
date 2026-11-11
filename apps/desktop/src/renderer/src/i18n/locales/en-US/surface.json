@@ -2289,5 +2289,7 @@
   "agentChat.cardAnswerPlaceholder": "Type your answer…",
   "agentChat.cardConfirmFeedbackPlaceholder": "Additional note (optional, sent to the AI when cancelling)…",
   "agentChat.cardFonts": "Fonts",
+  "agentChat.cardOpenPlanDocument": "Open plan document \"{title}\"",
+  "agentChat.cardPlanSteps": "Show all {count} steps",
   "agentChat.answerDetailsToggle": "View details"
 }
