@@ -129,11 +129,11 @@ interface RecordedOp {
 
 interface RectItem { label: string; x: number; y: number; w: number; h: number; order: number }
 
-function rectOf(options: Record<string, unknown>): RectItem | null {
+function rectOf(options: Record<string, unknown>): NonNullable<RecordedOp['rect']> | null {
   const x = options.x, y = options.y, w = options.w, h = options.h
   if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number") return null
   if (w <= 0 || h <= 0) return null
-  return { label: "", x, y, w, h }
+  return { x, y, w, h }
 }
 
 function snapshotText(textArg: unknown, options: Record<string, unknown>): string {
@@ -228,7 +228,7 @@ function lintSlideOps(ops: RecordedOp[]): string[] {
       const shapeType = op.shapeType ?? "rect"
       // 带文字的形状按文字处理（按钮/标签），不当作覆盖块。
       if (op.text.trim()) {
-        texts.push({ ...rect, label })
+        texts.push({ ...rect, label, order })
       } else if (op.filled && shapeType !== "line" && shapeType !== "lineArrow") {
         boxes.push({ ...rect, label: `色块(${shapeType})`, order })
       }
@@ -360,7 +360,7 @@ function wrapPptxgen(
                     const rect = rectOf(options)
                     slideOps.get(slideNo)?.push({
                       name: slideProp,
-                      rect: rect ? { x: rect.x, y: rect.y, w: rect.w, h: rect.h } : null,
+                      rect,
                       text: snapshotText(textArg, options),
                       ...(slideProp === 'addShape' ? { shapeType: String(options.shapeType ?? 'rect') } : {}),
                       ...(slideProp === 'addShape' ? { filled: Boolean(options.fill || options.gradient) } : {}),

@@ -1,7 +1,10 @@
-import { useState } from 'react'
-import { Check, LoaderCircle, MessageCircleQuestion, ShieldAlert, X } from 'lucide-react'
+import { memo, useEffect, useState, type ReactNode } from 'react'
+import { Check, FileText, LoaderCircle, MessageCircleQuestion, ShieldAlert, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { dispatchOpenCloudDocument } from '@/workbench/shell/openAgentFile'
 
 import type { PendingShellApproval } from './agentShellApprovals'
 
@@ -14,11 +17,56 @@ export type AgentCardResolve = (
   text?: string,
 ) => void
 
+// 与气泡/详情区同口径：标题降级、链接新开、无图。卡片空间小，正文行内元素
+// 之外不支持块级列表/表格（body 由 gateway 裁到 2000 字，plan/notes 是单行条目）。
+const cardInlineMarkdownComponents = {
+  h1: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  h2: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  h3: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  h4: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  h5: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  h6: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+  p: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  a: ({ children, href }: { children?: ReactNode; href?: string }) => (
+    <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>
+  ),
+  img: () => null,
+} as const
+
+/** 卡片正文（body）：完整 Markdown 块级渲染；排版样式在 AgentChat.css 的
+ *  .agent-decision-card-body 一组规则里（不挂 agent-markdown——那套样式锚定在
+ *  .agent-message 气泡内，卡片套上拿不到样式反而误导）。 */
+const CardBodyMarkdown = memo(function CardBodyMarkdown({ text }: { text: string }) {
+  return (
+    <div className="agent-decision-card-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={cardInlineMarkdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
+})
+
+/** plan/notes 单行条目：按行内 Markdown 渲染（粗体/行内代码/链接），块级降级为行内。 */
+const CardLineMarkdown = memo(function CardLineMarkdown({ text }: { text: string }) {
+  return (
+    <span className="agent-decision-card-line">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={cardInlineMarkdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </span>
+  )
+})
+
 /**
  * 通用决策卡（agent_confirm 计划确认 / agent_ask_user 提问）。
  * 复用审批卡骨架样式；confirm 展示计划/色板/字体/要点并收「确认/取消+反馈」，
  * question 展示候选按钮与自由输入并收「选项/文本」。
+ *
+ * confirm 卡带 document（演示文稿计划已落成云文档）时，计划以云文档为主体展示：
+ * 卡片到达即自动打开计划文档一次，并给出「打开计划云文档」入口；完整步骤折叠，
+ * 避免把十几步计划摊成一面墙。同一 approvalId 只自动打开一次（重渲染/回放不重开）。
  */
+const autoOpenedPlanDocuments = new Set<string>()
 export function AgentDecisionCard({
   approval,
   busy,
@@ -36,6 +84,14 @@ export function AgentDecisionCard({
 
   const isConfirm = card.kind === 'confirm'
   const title = isConfirm ? t('surface:agentChat.cardConfirmTitle') : t('surface:agentChat.cardQuestionTitle')
+
+  const planDocument = card.document
+  useEffect(() => {
+    if (!planDocument) return
+    if (autoOpenedPlanDocuments.has(approval.approvalId)) return
+    autoOpenedPlanDocuments.add(approval.approvalId)
+    dispatchOpenCloudDocument({ documentId: planDocument.id, title: planDocument.title })
+  }, [planDocument, approval.approvalId])
 
   const submitAnswer = () => {
     const trimmed = answer.trim()
@@ -61,14 +117,36 @@ export function AgentDecisionCard({
         </span>
       </header>
 
-      {card.body ? <p className="agent-decision-card-body">{card.body}</p> : null}
+      {planDocument ? (
+        <button
+          type="button"
+          className="agent-decision-card-document"
+          onClick={() => dispatchOpenCloudDocument({ documentId: planDocument.id, title: planDocument.title })}
+        >
+          <FileText size={14} aria-hidden="true" />
+          <span>{t('surface:agentChat.cardOpenPlanDocument', { title: planDocument.title })}</span>
+        </button>
+      ) : null}
+
+      {card.body ? <CardBodyMarkdown text={card.body} /> : null}
 
       {card.plan && card.plan.length > 0 ? (
-        <ol className="agent-decision-card-plan">
-          {card.plan.map((step, index) => (
-            <li key={index}>{step}</li>
-          ))}
-        </ol>
+        planDocument ? (
+          <details className="agent-decision-card-steps">
+            <summary>{t('surface:agentChat.cardPlanSteps', { count: card.plan.length })}</summary>
+            <ol className="agent-decision-card-plan">
+              {card.plan.map((step, index) => (
+                <li key={index}><CardLineMarkdown text={step} /></li>
+              ))}
+            </ol>
+          </details>
+        ) : (
+          <ol className="agent-decision-card-plan">
+            {card.plan.map((step, index) => (
+              <li key={index}><CardLineMarkdown text={step} /></li>
+            ))}
+          </ol>
+        )
       ) : null}
 
       {card.palette && card.palette.length > 0 ? (
@@ -93,7 +171,7 @@ export function AgentDecisionCard({
       {card.notes && card.notes.length > 0 ? (
         <ul className="agent-decision-card-notes">
           {card.notes.map((note, index) => (
-            <li key={index}>{note}</li>
+            <li key={index}><CardLineMarkdown text={note} /></li>
           ))}
         </ul>
       ) : null}

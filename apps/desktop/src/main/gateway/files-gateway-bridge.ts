@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, shell } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdir, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, extname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
   FileDto,
@@ -49,6 +49,10 @@ const DEFAULT_IMPORT_EXTENSIONS = new Set([...DOCUMENT_IMPORT_EXTENSIONS, ...IMA
 const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp', '.bmp'])
 const AGENT_MAX_ATTACHMENTS = 5
 const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+/** 侧栏 Markdown 编辑器读写全文的字节上限（超限拒绝，避免主进程一次读入过大文件）。 */
+const MARKDOWN_EDITOR_MAX_BYTES = 8 * 1024 * 1024
+/** 侧栏 Markdown 编辑器认的扩展名：保存时原名没有这两个扩展名就补 .md。 */
+const MARKDOWN_EDITOR_EXTENSIONS = new Set(['.md', '.markdown'])
 
 function imageMime(extension: string): string {
   return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg'
@@ -262,6 +266,105 @@ export class FilesGatewayBridge {
     const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
     const bytes = Buffer.from(await response.arrayBuffer())
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
+  }
+
+  /**
+   * 文件本体原文按 UTF-8 解码（工作空间侧栏 Markdown 编辑器读正文）。
+   * 与 readDataUrl 同一条字节入口；编辑器上限 8 MB，超限明确拒绝而不是截断。
+   */
+  async readText(fileId: string): Promise<{ text: string }> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/files/${encodeURIComponent(fileId)}/content`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+      signal: AbortSignal.timeout(60_000),
+    })
+    if (!response.ok) throw new Error(`文件内容读取失败（${response.status}）`)
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.byteLength > MARKDOWN_EDITOR_MAX_BYTES) {
+      throw new Error(`文件过大（${bytes.byteLength} 字节），Markdown 编辑器最多支持 8 MB。`)
+    }
+    return { text: bytes.toString('utf8') }
+  }
+
+  /**
+   * 侧栏 Markdown 编辑器保存：把编辑内容写进同一 fileEntry 的新版本（不走新建条目），
+   * 返回版本 id 供渲染端回填。catalog 是 originalName/workspaceId 的权威来源——
+   * 渲染端只透传可选提示，真实扩展名与归属空间以网关为准。
+   */
+  async saveMarkdown(input: {
+    fileId: string
+    markdown: string
+    originalName?: string
+    workspaceId?: string
+  }): Promise<{ fileEntryId: string; fileVersionId: string; contentHash: string; originalName: string }> {
+    const fileId = typeof input?.fileId === 'string' ? input.fileId.trim() : ''
+    if (!fileId) throw new Error('缺少文件 id。')
+    if (typeof input?.markdown !== 'string') throw new Error('缺少 Markdown 内容。')
+    const markdownBytes = Buffer.byteLength(input.markdown, 'utf8')
+    if (markdownBytes > MARKDOWN_EDITOR_MAX_BYTES) {
+      throw new Error(`Markdown 内容过大（${markdownBytes} 字节），最多支持 8 MB。`)
+    }
+
+    const catalog = await this.catalogEntry(fileId)
+    const originalName = this.markdownFileName(catalog.originalName || input.originalName || '')
+    const workspaceId = input.workspaceId ?? catalog.workspaceId
+    // 网关拒绝 0 字节导入（文件内容为空）：用户把正文清空时用一个换行占位，
+    // 否则「清空文档」永远保存失败，重开还会读到旧内容。
+    const markdown = input.markdown.length === 0 ? '\n' : input.markdown
+
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-markdown-'))
+    try {
+      const filePath = join(directory, originalName)
+      await writeFile(filePath, markdown, 'utf8')
+      const accepted = await this.importAgentGeneratedFile({
+        filePath,
+        originalName,
+        sourceKey: `agent:markdown:edit:${fileId}`,
+        fileEntryId: fileId,
+        ...(workspaceId ? { workspaceId } : {}),
+      })
+      // local-folder 条目的 /content 读的是 entry.sourcePath 的原始磁盘文件（不是新版本
+      // blob）：只入库不回写的话，用户重开编辑器读到旧内容，编辑看起来「丢了」。
+      // 导入已成功后再回写，避免上传失败时改动用户的本地文件。
+      if (catalog.sourceKind === 'local-folder') {
+        try {
+          const sourcePath = await this.storagePath(fileId)
+          await this.writeBackMarkdown(sourcePath, input.markdown)
+        } catch (error) {
+          throw new Error(
+            `本地文件写回失败（${error instanceof Error ? error.message : String(error)}）`,
+            { cause: error },
+          )
+        }
+      }
+      return {
+        fileEntryId: accepted.fileEntryId,
+        fileVersionId: accepted.fileVersionId,
+        contentHash: accepted.contentHash,
+        originalName,
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+
+  /** 把编辑内容原子写回本地文件夹条目对应的磁盘文件（同目录临时文件 + rename）。 */
+  private async writeBackMarkdown(targetPath: string, markdown: string): Promise<void> {
+    const directory = dirname(targetPath)
+    const temporaryPath = join(directory, `.${basename(targetPath)}.${randomUUID()}.tmp`)
+    try {
+      await writeFile(temporaryPath, markdown, 'utf8')
+      await rename(temporaryPath, targetPath)
+    } catch (error) {
+      await rm(temporaryPath, { force: true }).catch(() => undefined)
+      throw error
+    }
+  }
+
+  /** 保存用的临时文件名：只取末段，保留真实 .md/.markdown 扩展名，否则补 .md。 */
+  private markdownFileName(name: string): string {
+    const safe = basename(name).trim() || 'untitled.md'
+    return MARKDOWN_EDITOR_EXTENSIONS.has(extname(safe).toLowerCase()) ? safe : `${safe}.md`
   }
 
   /** 本地素材库按内容哈希取图（PPT 打包 everroom-material:// 回源用）；404/失败返回 null。 */
