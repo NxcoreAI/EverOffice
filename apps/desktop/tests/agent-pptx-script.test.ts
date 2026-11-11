@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 
 import { runAgentPptxScript } from '../src/main/office/agent-pptx-script'
@@ -102,6 +103,14 @@ describe('runAgentPptxScript', () => {
     expect(run.ok).toBe(true)
     if (!run.ok) return
     expect(run.bytes[0]).toBe(0x50)
+    // 中文的字体必须同时写进 <a:ea> 与 Hans 脚本表：只写 latin 时 WPS/PowerPoint 用 Hans 兜底字体，
+    // 不读脚本表的渲染器（GenOffice）用 latin 字体，同一份 deck 会显示成两种中文字体。
+    const theme = await (await JSZip.loadAsync(run.bytes)).file('ppt/theme/theme1.xml')!.async('string')
+    for (const font of ['majorFont', 'minorFont']) {
+      const block = new RegExp(`<a:${font}>[\\s\\S]*?</a:${font}>`).exec(theme)![0]
+      expect(block).toContain('<a:ea typeface="Calibri"/>')
+      expect(block).toContain('<a:font script="Hans" typeface="Calibri"/>')
+    }
   })
 
   it('apply_theme 缺失 → require("pptx/apply_theme.js") 得到明确报错', async () => {
@@ -129,5 +138,55 @@ describe('runAgentPptxScript', () => {
     expect(failed.ok).toBe(true)
     if (!failed.ok) return
     expect(failed.warnings.join('\n')).toContain('回源失败')
+  })
+})
+
+describe('版式自查（layoutLint）', () => {
+  it('标题压表格 + 色块盖表格 → 拒收并点名页号', async () => {
+    const run = await runAgentPptxScript([
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const s = pres.addSlide();',
+      // 标题与表格同区（标题压表格约 60% 表头）
+      's.addText("Privacy and realism on LFW", { x: 0.6, y: 1.0, w: 8, h: 0.6, fontSize: 28, isTextBox: true });',
+      's.addTable([[{ text: "Method", options: { bold: true } }, { text: "FID" }], ["FALCO", "12.3"]], { x: 0.6, y: 1.2, w: 6, h: 2.5, fontSize: 12 });',
+      // 大色块压在表格上
+      's.addShape("rect", { x: 0.7, y: 1.4, w: 5, h: 2, fill: { color: "22C55E" } });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n'))
+    expect(run.ok).toBe(false)
+    if (run.ok) return
+    expect(run.error).toContain('版式自查未通过')
+    expect(run.error).toMatch(/第 \d+ 页/)
+    expect(run.error).toMatch(/文字压表格|遮挡表格|遮挡文字/)
+  })
+
+  it('卡片底板先画、文字在卡片内 → 不误报（z 序：文字在块上）', async () => {
+    const run = await runAgentPptxScript([
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const s = pres.addSlide();',
+      's.addShape("roundRect", { x: 0.5, y: 1, w: 4, h: 2, rectRadius: 0.1, fill: { color: "EAF2F8" } });',
+      's.addText("01", { x: 0.8, y: 1.3, w: 1, h: 0.6, fontSize: 32, color: "0B5FFF", isTextBox: true });',
+      's.addText("卡片说明", { x: 2, y: 1.4, w: 2.2, h: 0.8, fontSize: 14, isTextBox: true });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n'))
+    expect(run.ok).toBe(true)
+  })
+
+  it('干净页面不被误杀', async () => {
+    const run = await runAgentPptxScript([
+      'const pptxgen = require("pptxgenjs");',
+      'const pres = new pptxgen();',
+      'pres.layout = "LAYOUT_WIDE";',
+      'const s = pres.addSlide();',
+      's.addText("标题", { x: 0.6, y: 0.4, w: 8, h: 0.8, fontSize: 32, isTextBox: true });',
+      's.addText("正文", { x: 0.6, y: 1.6, w: 8, h: 1.2, fontSize: 16, isTextBox: true });',
+      's.addShape("rect", { x: 9.5, y: 0.4, w: 3, h: 2, fill: { color: "EAF2F8" } });',
+      'await pres.writeFile({ fileName: "deck.pptx" });',
+    ].join('\n'))
+    expect(run.ok).toBe(true)
   })
 })
