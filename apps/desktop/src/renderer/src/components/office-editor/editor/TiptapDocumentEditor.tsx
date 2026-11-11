@@ -31,7 +31,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 import { uiText } from '@/components/office-editor/adapters'
 import type { ContextRoomRecord, ContextRoomResource } from '@/components/office-editor/types'
 import { TiptapBlockHandle } from './TiptapBlockHandle'
-import { TiptapBubbleToolbar } from './TiptapBubbleToolbar'
+import { TiptapBubbleToolbar, type SelectionNoteInput } from './TiptapBubbleToolbar'
 import { TiptapContentScale } from './TiptapContentScale'
 import { TiptapDocumentActions } from './TiptapDocumentActions'
 import { TiptapSlashCommandMenu } from './TiptapSlashCommandMenu'
@@ -265,6 +265,7 @@ export function TiptapDocumentEditor({
   documentFocusRequestId,
   onSelectionTextChange,
   onChapterChange,
+  onAddSelectionNote,
 }: {
   room: ContextRoomRecord
   resource?: ContextRoomResource | null
@@ -277,6 +278,9 @@ export function TiptapDocumentEditor({
   onSelectionTextChange?: (text: string | null) => void
   /** 焦点系统：光标所在章节（标题+整节正文），无标题结构时=null。 */
   onChapterChange?: (chapter: EmergenceFocusChapter | null) => void
+  /** 云文档选区「评论」：交给宿主对话侧的待发送批注队列（Word/Excel 嵌入版同一条链路）。
+   *  传入后气泡工具条的 Ask AI 入口换成「评论」入口；不传保留旧的改写/写评论表行为。 */
+  onAddSelectionNote?: (note: SelectionNoteInput) => void
 }) {
   const { locale, t } = useLocale()
   const documentId = resource?.kind === 'cloud-doc' ? resource.binding.docId : room.cloudDoc.docId
@@ -334,6 +338,8 @@ export function TiptapDocumentEditor({
   const editorLockedForReviewRef = useRef(false)
   const backendRef = useRef(backendDocument)
   const editorRef = useRef<Editor | null>(null)
+  /** 编辑器根节点：气泡浮层挂在这里，而不是滚动容器内部（见 TiptapBubbleToolbar 注释）。 */
+  const editorRootRef = useRef<HTMLDivElement | null>(null)
   const onBackendChangeRef = useRef(onBackendDocumentChange)
   const versionRef = useRef(backendDocument?.version ?? 0)
   const appliedDocumentVersionRef = useRef(backendDocument?.version ?? 0)
@@ -1585,6 +1591,7 @@ export function TiptapDocumentEditor({
     || Boolean(operationStreamPending && streamingDocument?.chunks.length === 0)
   return (
     <div
+      ref={editorRootRef}
       className="context-room-embedded-cloud-doc context-room-tiptap-editor"
       data-block-dragging={String(blockDragging)}
       data-agent-writing={String(writing)}
@@ -1812,6 +1819,8 @@ export function TiptapDocumentEditor({
             documentId={documentId}
             sourceRoomId={room.id}
             onAskAi={selectionRewrite.requestRewrite}
+            onAddSelectionNote={onAddSelectionNote}
+            appendTo={() => editorRootRef.current ?? document.body}
           />
           <TiptapBlockHandle
             key={`block-handle-${String(outlineHandleEpoch)}`}

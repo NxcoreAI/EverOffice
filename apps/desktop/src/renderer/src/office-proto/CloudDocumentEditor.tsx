@@ -27,6 +27,7 @@ import {
   registerDocumentsApi,
   registerExternalDocumentsApi,
 } from '@/components/office-editor/documentApi'
+import type { SelectionNoteInput } from '@/components/office-editor/editor/TiptapBubbleToolbar'
 import { TiptapDocumentEditor } from '@/components/office-editor/editor/TiptapDocumentEditor'
 import { DocumentOperationProvider } from '@/components/office-editor/operations/DocumentOperationProvider'
 import { desktopOperationBridge } from '@/components/office-editor/operations/desktopOperationBridge'
@@ -35,12 +36,26 @@ import { ActiveDocumentProvider } from '@/state/ActiveDocumentContext'
 
 import './cloudDocumentEditor.css'
 
+/**
+ * 云文档选区批注（与 Word/Excel 嵌入版的「评论」同一条链路）：
+ * 由宿主把「原文 + 用户原话 + 块 id」收进对话侧的待发送批注队列。
+ */
+export interface CloudDocumentSelectionNote extends SelectionNoteInput {
+  documentId: string
+  title: string
+}
+
 export interface CloudDocumentEditorProps {
   /** documents 表的文稿 id。 */
   documentId: string
   /** 列表里已知的标题（加载完成前后都用它兜底展示）。 */
   title?: string
   onToast: (message: string) => void
+  /**
+   * 选区「评论」入口：传入后气泡工具条显示评论按钮，提交即交给宿主队列；
+   * 不传则保留旧的 Ask AI / 文稿评论表入口（原型与侧栏编辑器场景）。
+   */
+  onQueueSelectionNote?: (note: CloudDocumentSelectionNote) => void
 }
 
 type LoadPhase = 'loading' | 'ready' | 'error' | 'unavailable' | 'missing'
@@ -100,7 +115,12 @@ function syntheticWorkspaceRoom(documentId: string, title: string): ContextRoomR
   }
 }
 
-export function CloudDocumentEditor({ documentId, title, onToast }: CloudDocumentEditorProps) {
+export function CloudDocumentEditor({
+  documentId,
+  title,
+  onToast,
+  onQueueSelectionNote,
+}: CloudDocumentEditorProps) {
   // 同步清空文件库 shim（原因见文件头注释）。必须发生在渲染期、早于任何子组件
   // 的挂载 effect；`null` 的语义就是「回落到 window.nxcore.documents」。
   registerDocumentsApi(null)
@@ -112,6 +132,7 @@ export function CloudDocumentEditor({ documentId, title, onToast }: CloudDocumen
       documentId={documentId}
       initialTitle={title}
       onToast={onToast}
+      onQueueSelectionNote={onQueueSelectionNote}
     />
   )
 }
@@ -120,10 +141,12 @@ function CloudDocumentEditorDocument({
   documentId,
   initialTitle,
   onToast,
+  onQueueSelectionNote,
 }: {
   documentId: string
   initialTitle?: string
   onToast: (message: string) => void
+  onQueueSelectionNote?: (note: CloudDocumentSelectionNote) => void
 }) {
   const [phase, setPhase] = useState<LoadPhase>('loading')
   const [error, setError] = useState('')
@@ -246,6 +269,7 @@ function CloudDocumentEditorDocument({
               room={room}
               documentId={documentId}
               initialDocument={initialDocument}
+              onQueueSelectionNote={onQueueSelectionNote}
             />
           </DocumentOperationProvider>
         </ActiveDocumentProvider>
@@ -264,10 +288,12 @@ function CloudDocumentSurface({
   room,
   documentId,
   initialDocument,
+  onQueueSelectionNote,
 }: {
   room: ContextRoomRecord
   documentId: string
   initialDocument: RoomDocument
+  onQueueSelectionNote?: (note: CloudDocumentSelectionNote) => void
 }) {
   const { documents } = useWorkspaceDocuments()
   const [backendDocument, setBackendDocument] = useState<RoomDocument>(initialDocument)
@@ -286,11 +312,22 @@ function CloudDocumentSurface({
     setBackendDocument(document)
   }, [])
 
+  const documentTitle = backendDocument.title
+  const queueSelectionNote = useMemo(() => {
+    if (!onQueueSelectionNote) return undefined
+    return (note: SelectionNoteInput) => onQueueSelectionNote({
+      ...note,
+      documentId,
+      title: documentTitle,
+    })
+  }, [documentId, documentTitle, onQueueSelectionNote])
+
   return (
     <TiptapDocumentEditor
       room={room}
       backendDocument={backendDocument}
       onBackendDocumentChange={handleBackendDocumentChange}
+      onAddSelectionNote={queueSelectionNote}
     />
   )
 }

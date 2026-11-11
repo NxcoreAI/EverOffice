@@ -224,6 +224,13 @@
   color: #fff;
 }
 
+/* 选区「评论」输入（云文档，与其他 Office 的批注条同形态）：未输入时提交键置灰。 */
+.context-room-tiptap-bubble-note button[type='submit']:disabled {
+  background: var(--ui-hover-strong);
+  color: var(--cr-muted);
+  cursor: default;
+}
+
 .context-room-tiptap-rewrite-prompt {
   text-decoration-color: var(--cr-blue);
   text-decoration-line: underline;
@@ -1164,6 +1171,32 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   margin: 0 auto;
   padding: 20px clamp(24px, 6cqw, 72px) 72px;
   outline: 0;
+}
+
+/* 正文 contenteditable 不画焦点环。
+ *
+ * 工作台全局的 `.wb-root :focus-visible`（3px 系统蓝环 + 1px offset）与上一条
+ * `outline: 0` 特异性相同，而 workbench.css 在 bundle 里排在本文件之后，全局
+ * 焦点环反而把正文原有的取消盖掉了——点进云文档正文，整块可编辑区被套一圈
+ * 蓝框（与主题强调色无关的浏览器蓝）。正文的焦点由光标与选区表达，不该有外框；
+ * 这里用更高特异性（多一个 `:focus-visible`）显式复位，与样式加载顺序无关。 */
+.context-room-tiptap-scroll .tiptap:focus,
+.context-room-tiptap-scroll .tiptap:focus-visible {
+  outline: 0;
+  outline-offset: 0;
+}
+
+/* 文本输入框不画工作台全局焦点环。
+ *
+ * `:focus-visible` 对文本输入框（含 input/textarea/contenteditable）在鼠标聚焦时
+ * 也成立，所以点进选区「评论」的输入框、链接 / AI 改写输入框时，全局 3px 系统蓝
+ * 环会把整个输入区框成一个蓝框（浮层里看起来像多余描边）。这些字段都在小浮层里、
+ * 由光标与容器本身表达聚焦，这里统一复位（按钮类控件仍保留键盘焦点环）。 */
+.context-room-tiptap-editor input:focus-visible,
+.context-room-tiptap-editor textarea:focus-visible,
+.context-room-tiptap-bubble input:focus-visible {
+  outline: 0;
+  outline-offset: 0;
 }
 
 .context-room-document-cursor-completion {
