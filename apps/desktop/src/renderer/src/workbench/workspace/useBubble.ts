@@ -3,10 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OfficeFile } from '@/office-proto/data'
 
 import { closeOfficeFile, registerTabCloser } from '../state/store'
+import { BUBBLE_DEFAULT_WIDTH, BUBBLE_MIN_WIDTH } from './bubbleGeometry'
 
-export const BUBBLE_MIN_WIDTH = 360
-export const BUBBLE_MAX_WIDTH = 720
-export const BUBBLE_DEFAULT_WIDTH = 480
+// 宽度档位常量由几何模块持有（渲染宽度按容器收敛），这里再导出一次保持既有 import 不变。
+export { BUBBLE_DEFAULT_WIDTH, BUBBLE_MIN_WIDTH }
+
 
 /** 退场动画时长（与 bubble.css 的 keyframes 对齐，留 20ms 余量后再卸载 DOM）。 */
 const EXIT_MS = 240
@@ -16,6 +17,12 @@ export type BubbleExitKind = 'close' | 'minimize'
 export interface BubbleState {
   mode: 'closed' | 'open' | 'minimized'
   width: number
+  /**
+   * 用户是否已经把面板拖过「对话区保底宽度」这条线。
+   * 打开它之后渲染宽度才允许继续长到铺满整个工作区（对话区随之让位到 0）；
+   * 反向拖回线内自动关闭。
+   */
+  cover: boolean
   maximized: boolean
   files: OfficeFile[]
   /** null = 处于「浏览资料与文件」列表态（不挂载编辑器）。 */
@@ -25,6 +32,7 @@ export interface BubbleState {
 const CLOSED: BubbleState = {
   mode: 'closed',
   width: BUBBLE_DEFAULT_WIDTH,
+  cover: false,
   maximized: false,
   files: [],
   activeFileId: null,
@@ -110,8 +118,9 @@ export function useWorkspaceBubble(tabId: string) {
     exitTimer.current = window.setTimeout(() => {
       exitTimer.current = null
       // 关闭：退场动画期间保留内容，结束后再清空标签（避免文档瞬间变成文件列表）。
+      // 同时清掉「压满整页」档位，下次打开回到常规停靠宽度。
       if (kind === 'close') {
-        setBubble((current) => ({ ...current, files: [], activeFileId: null, maximized: false }))
+        setBubble((current) => ({ ...current, files: [], activeFileId: null, maximized: false, cover: false }))
       }
       setVisible(false)
       setExitKind(null)
@@ -155,10 +164,16 @@ export function useWorkspaceBubble(tabId: string) {
     setBubble((current) => ({ ...current, maximized: !current.maximized }))
   }, [])
 
-  const setWidth = useCallback((width: number) => {
+  /**
+   * 拖拽改宽：宽度只在这里收敛下限（上限由 BubbleWindow 按容器实测算好再传进来，
+   * 因为它才知道工作区还剩多少宽度）。cover 只在调用方明确给值时才改档位——
+   * 拖过阈值立即打开，反向拖回线内立即关闭。
+   */
+  const setWidth = useCallback((width: number, cover?: boolean) => {
     setBubble((current) => ({
       ...current,
-      width: Math.min(BUBBLE_MAX_WIDTH, Math.max(BUBBLE_MIN_WIDTH, width)),
+      width: Number.isFinite(width) ? Math.max(BUBBLE_MIN_WIDTH, width) : current.width,
+      cover: cover ?? current.cover,
     }))
   }, [])
 

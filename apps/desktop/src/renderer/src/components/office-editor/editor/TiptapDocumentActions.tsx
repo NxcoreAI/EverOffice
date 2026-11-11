@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { DocumentDiffResult, DocumentVersionSnapshot, RoomDocument } from '@nxcore/agent-contract'
 import type { Editor } from '@tiptap/react'
-import { ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, MessageSquare, Trash2 } from 'lucide-react'
+import { Check, ChevronRight, Download, Ellipsis, ExternalLink, FileDown, FileText, History, MessageSquare, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 
@@ -77,6 +77,7 @@ export function TiptapDocumentActions({
 }) {
   const { t } = useLocale()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   const [exportProvider, setExportProvider] = useState<'feishu' | 'notion' | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -151,8 +152,13 @@ export function TiptapDocumentActions({
   }
 
   const deleteDisabled = writing || saving || !backendDocument || !onDeleteDocument
+  const commentsDisabledReason = commentsDisabled
+    ? t('contextRoom:importedComments.unavailableInDiff')
+    : t('contextRoom:importedComments.open')
   return (
     <div className="context-room-document-actions">
+      {/* 版本历史面板不再自带入口按钮：右上只留一个「···」菜单，历史/评论/导出/删除
+          全部收进菜单，避免状态行右侧出现一排灰底按钮。 */}
       <DocumentHistoryPanel
         documentId={documentId}
         currentDocument={backendDocument}
@@ -161,10 +167,20 @@ export function TiptapDocumentActions({
         onCloseDiff={onCloseDiff}
         closeSignal={historyPanelCloseSignal}
         refreshSignal={historyRefreshSignal}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        hideTrigger
       />
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
-          <button type="button" aria-label={t('contextRoom:tiptapDocumentActions.moreDocumentActions')} title={t('contextRoom:tiptapDocumentActions.moreActions')}>
+          <button
+            type="button"
+            className="context-room-document-actions-trigger"
+            aria-label={t('contextRoom:tiptapDocumentActions.moreDocumentActions')}
+            aria-haspopup="menu"
+            data-active={historyOpen ? 'true' : undefined}
+            title={t('contextRoom:tiptapDocumentActions.moreActions')}
+          >
             <Ellipsis aria-hidden="true" />
           </button>
         </DropdownMenu.Trigger>
@@ -174,6 +190,27 @@ export function TiptapDocumentActions({
             sideOffset={6}
             align="end"
           >
+            <DropdownMenu.Item onSelect={() => setHistoryOpen(true)}>
+              <History aria-hidden="true" />
+              {t('contextRoom:documentHistory.open')}
+            </DropdownMenu.Item>
+            {onToggleComments ? (
+              <DropdownMenu.CheckboxItem
+                className="context-room-document-actions-toggle"
+                checked={Boolean(commentsOpen)}
+                disabled={commentsDisabled}
+                aria-label={t('contextRoom:importedComments.open')}
+                title={commentsDisabledReason}
+                onCheckedChange={() => onToggleComments()}
+              >
+                <MessageSquare aria-hidden="true" />
+                {t('contextRoom:importedComments.panelTitle')}
+                <DropdownMenu.ItemIndicator className="context-room-document-actions-check">
+                  <Check aria-hidden="true" />
+                </DropdownMenu.ItemIndicator>
+              </DropdownMenu.CheckboxItem>
+            ) : null}
+            <DropdownMenu.Separator className="context-room-document-actions-separator" />
             <DropdownMenu.Sub>
               <DropdownMenu.SubTrigger>
                 <Download aria-hidden="true" />
@@ -200,17 +237,19 @@ export function TiptapDocumentActions({
                 </DropdownMenu.SubContent>
               </DropdownMenu.Portal>
             </DropdownMenu.Sub>
-            <DropdownMenu.Separator className="context-room-document-actions-separator" />
-            {externalDocumentFeatures.feishuExport && (
-              <DropdownMenu.Item
-                disabled={!backendDocument}
-                onSelect={() => setExportProvider('feishu')}
-              >
-                <ExternalLink aria-hidden="true" />
-                {t('contextRoom:tiptapDocumentActions.exportToFeishu')}
-              </DropdownMenu.Item>
-            )}
-            {externalDocumentFeatures.notionExport && (
+            {externalDocumentFeatures.feishuExport && backendDocument?.roomId != null ? (
+              <>
+                <DropdownMenu.Separator className="context-room-document-actions-separator" />
+                <DropdownMenu.Item
+                  disabled={!backendDocument}
+                  onSelect={() => setExportProvider('feishu')}
+                >
+                  <ExternalLink aria-hidden="true" />
+                  {t('contextRoom:tiptapDocumentActions.exportToFeishu')}
+                </DropdownMenu.Item>
+              </>
+            ) : null}
+            {externalDocumentFeatures.notionExport && backendDocument?.roomId != null ? (
               <DropdownMenu.Item
                 disabled={!backendDocument}
                 onSelect={() => setExportProvider('notion')}
@@ -218,13 +257,13 @@ export function TiptapDocumentActions({
                 <ExternalLink aria-hidden="true" />
                 {t('contextRoom:tiptapDocumentActions.exportToNotion')}
               </DropdownMenu.Item>
-            )}
-            {externalDocumentFeatures.externalImport && (
+            ) : null}
+            {externalDocumentFeatures.externalImport && backendDocument?.roomId != null ? (
               <DropdownMenu.Item onSelect={() => setImportOpen(true)}>
                 <FileDown aria-hidden="true" />
                 {t('contextRoom:tiptapDocumentActions.importFromExternal')}
               </DropdownMenu.Item>
-            )}
+            ) : null}
             <DropdownMenu.Separator className="context-room-document-actions-separator" />
             <DropdownMenu.Item
               className="danger"
@@ -270,19 +309,6 @@ export function TiptapDocumentActions({
           roomId={backendDocument.roomId}
         />
       )}
-      {backendDocument && onToggleComments ? (
-        <button
-          type="button"
-          className={commentsOpen ? 'is-active' : ''}
-          aria-label={t('contextRoom:importedComments.open')}
-          title={commentsDisabled ? t('contextRoom:importedComments.unavailableInDiff') : t('contextRoom:importedComments.open')}
-          aria-pressed={Boolean(commentsOpen)}
-          disabled={commentsDisabled}
-          onClick={onToggleComments}
-        >
-          <MessageSquare aria-hidden="true" />
-        </button>
-      ) : null}
     </div>
   )
 }

@@ -636,14 +636,21 @@
   transition: box-shadow 0.15s ease;
 }
 .context-room-imported-comment-floating:hover {
-  box-shadow: 0 3px 12px rgb(15 23 42 / 0.14);
-  border-color: color-mix(in srgb, var(--accent, #3d6ff6) 45%, var(--border, #d8dee4));
+  box-shadow: var(--ui-shadow-md);
+  border-color: color-mix(in srgb, var(--ui-accent) 45%, var(--ui-border));
+  background: color-mix(in srgb, var(--ui-accent) 3%, var(--ui-surface));
 }
-/* 悬停卡片时正文锚点文本高亮（编辑器内元素类，由 JS 增删） */
+.context-room-imported-comment-floating:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+/* 悬停卡片时正文锚点文本高亮（编辑器内元素类，由 JS 增删）：
+   浅强调底 + 强调色下划线压深，和「当前选区」「手动下划线」都能区分开。 */
 .context-room-comment-anchor-hovering {
-  background: color-mix(in srgb, var(--accent, #3d6ff6) 12%, transparent) !important;
+  background: var(--ui-accent-soft) !important;
   border-radius: 3px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3d6ff6) 18%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ui-accent) 55%, transparent);
+  text-decoration-color: var(--ui-accent) !important;
 }
 .context-room-imported-comments-unanchored {
   /* 离底抬高一点：不再贴面板底边，视觉上是独立的兜底区。 */
@@ -672,11 +679,13 @@
 .context-room-imported-comments-unanchored-chevron { transition: transform 200ms ease; }
 .context-room-imported-comments-unanchored-chevron[data-collapsed='true'] { transform: rotate(-90deg); }
 .context-room-imported-comment {
-  border: 1px solid var(--border, #d8dee4);
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 12px;
-  background: var(--surface, #fff);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow-sm);
   margin-bottom: 10px;
 }
 .context-room-imported-comment[data-resolved='true'] { opacity: 0.65; }
@@ -695,8 +704,7 @@
 .context-room-imported-comment-ai-author svg { flex-shrink: 0; }
 .context-room-ai-review-spinning { animation: context-room-ai-review-spin 1s linear infinite; }
 @keyframes context-room-ai-review-spin { to { transform: rotate(360deg); } }
-/* 按钮激活态 */
-.context-room-document-actions button.is-active { color: var(--accent, #3d6ff6); }
+/* 右上操作簇只剩一个「···」按钮，旧的独立评论按钮激活态已并入菜单勾选态。 */
 /* 评论面板空态 */
 .context-room-imported-comments-empty {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -722,20 +730,31 @@
   font-size: 11px; color: var(--muted, #6a737d);
 }
 
-/* 评论锚点装饰（ProseMirror inline decoration）：黄色下划线，与手动 <u> 下划线（正文色）区分 */
+/* 评论锚点装饰（ProseMirror inline decoration）：主题强调色下划线 + 悬停浅强调底，
+   与手动 <u> 下划线（跟随正文墨色）明确区分。旧实现用硬编码 #ffe000 亮黄，
+   在暖纸主题里既刺眼又像荧光笔草稿。 */
 .context-room-comment-anchor {
   text-decoration: underline !important;
-  text-decoration-color: #ffe000 !important;
+  text-decoration-color: color-mix(in srgb, var(--ui-accent) 68%, transparent) !important;
   text-decoration-thickness: 2px !important;
   text-underline-offset: 3px !important;
+  text-decoration-skip-ink: none !important;
+  border-radius: 2px;
   cursor: pointer;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    text-decoration-color var(--ui-duration-fast) var(--ui-ease);
+}
+.context-room-comment-anchor:hover {
+  background: color-mix(in srgb, var(--ui-accent) 9%, transparent);
+  text-decoration-color: var(--ui-accent) !important;
 }
 /* 装饰范围包住自带 <u> 下划线格式时，u 自身装饰色会屏蔽外层传播（装饰传播规则），显式覆盖 */
-.context-room-comment-anchor u { text-decoration-color: #ffe000 !important; }
+.context-room-comment-anchor u { text-decoration-color: inherit !important; }
 /* 点击正文评论装饰后闪亮对应卡片 */
 @keyframes context-room-comment-card-flash {
-  0%, 100% { box-shadow: 0 3px 12px rgb(15 23 42 / 0); }
-  30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3d6ff6) 55%, transparent); }
+  0%, 100% { box-shadow: 0 3px 12px rgb(22 47 55 / 0); }
+  30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 42%, transparent); }
 }
 .context-room-imported-comment-floating.is-flash { animation: context-room-comment-card-flash 1.2s ease; }
 
@@ -769,3 +788,51 @@
 .context-room-external-export-scope-option[data-danger='true'][data-active='true'] { border-color: #c9372c; box-shadow: 0 0 0 2px color-mix(in srgb, #c9372c 14%, transparent); }
 .context-room-external-export-scope-option[data-danger='true'][data-active='true'] svg { color: #c9372c; }
 .context-room-external-export-scope-warning { margin: 0; padding: 7px 10px; border-radius: 6px; border: 1px solid color-mix(in srgb, #c9372c 30%, var(--border, #d8dee4)); background: color-mix(in srgb, #c9372c 6%, var(--surface, #fff)); color: #ae2e24; font-size: 10px; }
+
+/* 未定位评论折叠头：旧全局按钮复位丢失后它会变成一条灰底块，这里显式复位。 */
+.context-room-imported-comments-unanchored-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.context-room-imported-comments-unanchored-toggle:hover {
+  color: var(--ui-text);
+}
+
+.context-room-imported-comments-unanchored-toggle small {
+  margin-left: auto;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 外部导入/导出与候选 diff 的遮罩：`.evidence-dialog-backdrop` 由组件直接渲染，
+   旧 UI 的全局样式删除后没有替代规则，浮层会掉进文档流里。 */
+.evidence-dialog-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+  background: var(--ui-overlay);
+  backdrop-filter: blur(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evidence-dialog-backdrop {
+    backdrop-filter: none;
+  }
+}

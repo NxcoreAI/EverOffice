@@ -140,4 +140,42 @@ describe('气泡窗浏览态 / 文档态', () => {
     expect(api?.bubble.mode).toBe('open')
     expect(api?.bubble.maximized).toBe(true)
   })
+
+  it('左缘拖宽可以越过旧的 720 硬上限：铺满档位下宽度不被截断', async () => {
+    await renderProbe()
+    await act(async () => api?.openBrowser())
+    expect(api?.bubble.cover).toBe(false)
+
+    // 修复前 setWidth 把宽度硬截在 BUBBLE_MAX_WIDTH=720，用户永远拖不到整页；
+    // 现在宽度原样记住，由 BubbleWindow 按容器实测值收敛渲染。
+    await act(async () => api?.setWidth(1190, true))
+    expect(api?.bubble.width).toBe(1190)
+    expect(api?.bubble.cover).toBe(true)
+
+    // 反向拖回常规分栏：档位关闭，宽度正常记录。
+    await act(async () => api?.setWidth(700, false))
+    expect(api?.bubble.width).toBe(700)
+    expect(api?.bubble.cover).toBe(false)
+  })
+
+  it('拖宽不低于最小宽度（不传 cover 时不改档位）', async () => {
+    await renderProbe()
+    await act(async () => api?.openBrowser())
+    await act(async () => api?.setWidth(120))
+    expect(api?.bubble.width).toBe(360)
+    expect(api?.bubble.cover).toBe(false)
+  })
+
+  it('关闭后铺满档位清零，下次打开回到常规停靠态', async () => {
+    await renderProbe()
+    await act(async () => api?.openBrowser())
+    await act(async () => api?.setWidth(1190, true))
+    expect(api?.bubble.cover).toBe(true)
+
+    await act(async () => { await api?.closeAll() })
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 280) }) })
+    expect(api?.visible).toBe(false)
+    expect(api?.bubble.mode).toBe('closed')
+    expect(api?.bubble.cover).toBe(false)
+  })
 })

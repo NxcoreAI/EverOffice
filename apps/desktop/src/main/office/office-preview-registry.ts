@@ -1126,6 +1126,7 @@ export class OfficePreviewRegistry {
         open: this.listOpenOffice(),
       }
     }
+    this.notifyInstanceContentChanged(fileId, outcome.results)
     return {
       ok: true,
       results: outcome.results,
@@ -1220,6 +1221,7 @@ export class OfficePreviewRegistry {
         open: this.listOpenOffice(),
       }
     }
+    this.notifyInstanceContentChanged(fileId, outcome.results)
     return {
       ok: true,
       results: outcome.results,
@@ -1306,6 +1308,7 @@ export class OfficePreviewRegistry {
         open: this.listOpenOffice(),
       }
     }
+    this.notifyInstanceContentChanged(fileId, outcome.results)
     return {
       ok: true,
       results: outcome.results,
@@ -1440,10 +1443,26 @@ export class OfficePreviewRegistry {
       ...(writeBackPath ? { writeBackPath } : {}),
     })
     if (wasActive) this.setActive(fileId)
-    if (!window.webContents.isDestroyed()) {
-      window.webContents.send('office:instance-reloaded', { id: fileId, kind: instance.descriptor.kind })
-    }
+    this.notifyInstanceContentChanged(fileId)
     return { ok: true, contentHash: nextHash }
+  }
+
+  /**
+   * 「这份文件的内容变了，看它的视图需要重开」——渲染端收到 office:instance-reloaded
+   * 后会用最新 catalog + 磁盘现算的哈希重开一次，右侧文件区才会显示最新版本。
+   *
+   * 两类写入必须发：①applyAgentBytes 已重建了实例；②Agent 走**后台隐藏会话**
+   * 改文件（PDF 尤其如此：可见 PDF 是只读预览，编辑永远在隐藏会话里做），
+   * 此时可见实例仍指向旧内容，没有这条通知就是「agent 说改好了，右边还是旧的」。
+   * 只读批（results 全 mutated=false）不发，避免无谓重建/闪烁。
+   */
+  private notifyInstanceContentChanged(fileId: string, results?: GenOfficeAgentToolResult[]): void {
+    if (results && !results.some((row) => row.mutated === true)) return
+    const instance = this.instances.get(fileId)
+    if (!instance) return
+    const window = this.window
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+    window.webContents.send('office:instance-reloaded', { id: fileId, kind: instance.descriptor.kind })
   }
 
   /**

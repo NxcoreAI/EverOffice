@@ -11,6 +11,7 @@ import { Pencil, StickyNote, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 import type { PendingAskDraft } from '@/components/agent/askDrafts'
+import { useLocale } from '@/i18n/LocaleContext'
 
 import { useWorkbenchStore } from '../state/store'
 import './conversation.css'
@@ -29,6 +30,7 @@ export function NoteQueueChip({ workspaceId, drafts: draftsProp }: NoteQueueChip
   const storeDrafts = useWorkbenchStore((state) => state.askDrafts)
   const removeAskDraft = useWorkbenchStore((state) => state.removeAskDraft)
   const updateAskDraft = useWorkbenchStore((state) => state.updateAskDraft)
+  const { t } = useLocale()
 
   const drafts = draftsProp
     ?? (workspaceId ? storeDrafts.filter((draft) => draft.workspaceId === workspaceId) : [])
@@ -97,11 +99,11 @@ export function NoteQueueChip({ workspaceId, drafts: draftsProp }: NoteQueueChip
         onClick={togglePin}
       >
         <StickyNote aria-hidden="true" />
-        {drafts.length} 条注释
+        {t('workbench:conversation.annotationsCount', { count: drafts.length })}
       </button>
 
       {open ? (
-        <div className="wb-note-chip-popover" role="dialog" aria-label="待发送注释">
+        <div className="wb-note-chip-popover" role="dialog" aria-label={t('workbench:conversation.annotationsPending')}>
           <ul className="wb-note-chip-list">
             {drafts.map((draft) => (
               <li key={draft.id} className="wb-note-chip-item">
@@ -128,8 +130,8 @@ export function NoteQueueChip({ workspaceId, drafts: draftsProp }: NoteQueueChip
                       <button
                         type="button"
                         className="wb-note-chip-iconbtn"
-                        aria-label="修改这条注释"
-                        title="修改"
+                        aria-label={t('workbench:conversation.editAnnotationNamed')}
+                        title={t('workbench:conversation.edit')}
                         onClick={() => setEditingId(draft.id)}
                       >
                         <Pencil aria-hidden="true" />
@@ -137,8 +139,8 @@ export function NoteQueueChip({ workspaceId, drafts: draftsProp }: NoteQueueChip
                       <button
                         type="button"
                         className="wb-note-chip-iconbtn is-danger"
-                        aria-label="删除这条注释"
-                        title="删除"
+                        aria-label={t('workbench:conversation.deleteAnnotationNamed')}
+                        title={t('workbench:conversation.delete')}
                         onClick={() => removeAskDraft(draft.id)}
                       >
                         <Trash2 aria-hidden="true" />
@@ -165,6 +167,7 @@ function NoteChipEditor({
   onSave: (instruction: string) => void
   onCancel: () => void
 }) {
+  const { t } = useLocale()
   const [value, setValue] = useState(draft.instruction ?? draft.displayMessage ?? draft.message)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -190,12 +193,12 @@ function NoteChipEditor({
       <input
         ref={inputRef}
         value={value}
-        aria-label="修改注释"
+        aria-label={t('workbench:conversation.editAnnotation')}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onKeyDown}
         onBlur={() => { if (value.trim()) onSave(value) }}
       />
-      <span className="wb-note-chip-edit-hint">回车保存 · Esc 取消</span>
+      <span className="wb-note-chip-edit-hint">{t('workbench:conversation.noteEditorHint')}</span>
     </div>
   )
 }

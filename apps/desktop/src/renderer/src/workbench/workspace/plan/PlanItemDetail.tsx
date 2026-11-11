@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { PlanChecklistItem, PlanClaimPackage, PlanItem, PlanItemEvent } from '@nxcore/agent-contract'
 import { formatPlanClaimPackage } from '@nxcore/agent-contract'
 
+import { useLocale } from '@/i18n/LocaleContext'
+import { dispatchOpenCloudDocument } from '@/workbench/shell/openAgentFile'
+
 import { workbenchApi } from '../../api'
 import { relativeTimeLabel } from '../../types'
 import { Badge, Button, Field, IconButton, Spinner, TextArea, TextInput } from '../../ui/primitives'
@@ -26,18 +29,18 @@ export interface PlanItemDetailProps {
   onToast: (message: string) => void
 }
 
-const STATUS_LABEL: Record<PlanItem['status'], string> = {
-  todo: '待开始',
-  doing: '进行中',
-  done: '已完成',
-  dropped: '已取消',
+const STATUS_KEY: Record<PlanItem['status'], string> = {
+  todo: 'workbench:status.idle',
+  doing: 'workbench:status.running',
+  done: 'workbench:workspace.plan.status.done',
+  dropped: 'workbench:workspace.plan.status.dropped',
 }
 
-const PRIORITY_OPTIONS: Array<{ value: PlanItem['priority']; label: string }> = [
-  { value: 'low', label: '低' },
-  { value: 'normal', label: '常规' },
-  { value: 'high', label: '高' },
-  { value: 'urgent', label: '紧急' },
+const PRIORITY_OPTIONS: Array<{ value: PlanItem['priority']; labelKey: string }> = [
+  { value: 'low', labelKey: 'workbench:workspace.plan.priority.low' },
+  { value: 'normal', labelKey: 'workbench:workspace.plan.priority.normal' },
+  { value: 'high', labelKey: 'workbench:workspace.plan.priority.high' },
+  { value: 'urgent', labelKey: 'workbench:workspace.plan.priority.urgent' },
 ]
 
 function toDateInput(value: string | null): string {
@@ -63,10 +66,13 @@ export function PlanItemDetail({
   onOpenSession,
   onToast,
 }: PlanItemDetailProps) {
+  const { t } = useLocale()
   const [title, setTitle] = useState(item.title)
   const [detail, setDetail] = useState(item.detail ?? '')
   const [acceptance, setAcceptance] = useState(item.acceptance ?? '')
-  const [constraints, setConstraints] = useState(item.constraints.join('、'))
+  const [constraints, setConstraints] = useState(
+    item.constraints.join(t('workbench:workspace.common.separator')),
+  )
   const [events, setEvents] = useState<PlanItemEvent[] | null>(null)
   const [claimPackage, setClaimPackage] = useState<PlanClaimPackage | null>(null)
   const [busy, setBusy] = useState(false)
@@ -76,8 +82,8 @@ export function PlanItemDetail({
     setTitle(item.title)
     setDetail(item.detail ?? '')
     setAcceptance(item.acceptance ?? '')
-    setConstraints(item.constraints.join('、'))
-  }, [item.id, item.version, item.title, item.detail, item.acceptance, item.constraints])
+    setConstraints(item.constraints.join(t('workbench:workspace.common.separator')))
+  }, [item.id, item.version, item.title, item.detail, item.acceptance, item.constraints, t])
 
   useEffect(() => {
     let cancelled = false
@@ -101,7 +107,7 @@ export function PlanItemDetail({
     setBusy(true)
     try {
       const ok = await onSave(patch)
-      if (!ok) onToast('保存失败，已刷新为最新状态')
+      if (!ok) onToast(t('workbench:workspace.plan.saveFailed'))
       return ok
     } finally {
       setBusy(false)
@@ -115,20 +121,25 @@ export function PlanItemDetail({
   }
 
   return (
-    <aside className="wb-plan-detail" aria-label="任务详情">
+    <aside className="wb-plan-detail" aria-label={t('workbench:workspace.plan.detailLabel')}>
       <header className="wb-plan-detail-head">
         <div className="wb-plan-detail-heading">
           <span className={`wb-status-dot is-${item.status}`} aria-hidden="true" />
-          <span className="wb-plan-detail-status">{STATUS_LABEL[item.status]}</span>
+          <span className="wb-plan-detail-status">{t(STATUS_KEY[item.status])}</span>
         </div>
-        <IconButton label="关闭详情" size="sm" icon={<X size={15} />} onClick={onClose} />
+        <IconButton
+          label={t('workbench:workspace.plan.closeDetail')}
+          size="sm"
+          icon={<X size={15} />}
+          onClick={onClose}
+        />
       </header>
 
       <div className="wb-plan-detail-body">
         <TextInput
           className="wb-plan-detail-title"
           value={title}
-          aria-label="任务标题"
+          aria-label={t('workbench:workspace.plan.taskTitle')}
           onChange={(event) => setTitle(event.target.value)}
           onBlur={() => {
             const next = title.trim()
@@ -138,18 +149,18 @@ export function PlanItemDetail({
         />
 
         <div className="wb-plan-detail-grid">
-          <Field label="优先级">
+          <Field label={t('workbench:workspace.plan.field.priority')}>
             <select
               className="ui-input"
               value={item.priority}
               onChange={(event) => void save({ priority: event.target.value as PlanItem['priority'] })}
             >
               {PRIORITY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+                <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
               ))}
             </select>
           </Field>
-          <Field label="截止">
+          <Field label={t('workbench:workspace.plan.field.due')}>
             <TextInput
               type="date"
               value={toDateInput(item.dueAt)}
@@ -161,11 +172,11 @@ export function PlanItemDetail({
           </Field>
         </div>
 
-        <Field label="背景与要求">
+        <Field label={t('workbench:workspace.plan.field.detail')}>
           <TextArea
             rows={4}
             value={detail}
-            placeholder="为什么有这件事、上下文、注意事项…"
+            placeholder={t('workbench:workspace.plan.detailPlaceholder')}
             onChange={(event) => setDetail(event.target.value)}
             onBlur={() => {
               if (detail.trim() !== (item.detail ?? '')) void save({ detail: detail.trim() || null })
@@ -173,11 +184,11 @@ export function PlanItemDetail({
           />
         </Field>
 
-        <Field label="验收标准">
+        <Field label={t('workbench:workspace.plan.field.acceptance')}>
           <TextArea
             rows={3}
             value={acceptance}
-            placeholder="例：三页 PPT，含一张成本对比表"
+            placeholder={t('workbench:workspace.plan.acceptancePlaceholder')}
             onChange={(event) => setAcceptance(event.target.value)}
             onBlur={() => {
               if (acceptance.trim() !== (item.acceptance ?? '')) void save({ acceptance: acceptance.trim() || null })
@@ -185,29 +196,44 @@ export function PlanItemDetail({
           />
         </Field>
 
-        <Field label="硬约束">
+        <Field label={t('workbench:workspace.plan.field.constraints')}>
           <TextInput
             value={constraints}
-            placeholder="例：只用 2025 年数据、不要超过 800 字"
+            placeholder={t('workbench:workspace.plan.constraintsPlaceholder')}
             onChange={(event) => setConstraints(event.target.value)}
             onBlur={() => {
+              const separator = t('workbench:workspace.common.separator')
               const next = constraints.split(/[、,，]/).map((entry) => entry.trim()).filter(Boolean)
-              const current = item.constraints.join('、')
-              if (next.join('、') !== current) void save({ constraints: next })
+              const current = item.constraints.join(separator)
+              if (next.join(separator) !== current) void save({ constraints: next })
             }}
           />
         </Field>
 
         {item.refs.length ? (
           <div className="wb-plan-detail-block">
-            <div className="wb-plan-detail-block-head">材料（{item.refs.length}）</div>
+            <div className="wb-plan-detail-block-head">
+              {t('workbench:workspace.plan.materials', { count: item.refs.length })}
+            </div>
             <ul className="wb-plan-refs">
               {item.refs.map((ref) => (
                 <li key={`${ref.kind}:${ref.id}`}>
                   <Badge tone="neutral">{ref.kind}</Badge>
-                  <span className="wb-plan-ref-title">{ref.title}</span>
+                  {ref.kind === 'document' && ref.id ? (
+                    <button
+                      type="button"
+                      className="wb-plan-ref-title wb-plan-ref-link"
+                      title={ref.title}
+                      onClick={() => dispatchOpenCloudDocument({ documentId: ref.id, title: ref.title })}
+                    >
+                      <span className="wb-plan-ref-text">{ref.title}</span>
+                      <ExternalLink size={11} aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <span className="wb-plan-ref-title">{ref.title}</span>
+                  )}
                   <IconButton
-                    label="移除引用"
+                    label={t('workbench:workspace.plan.removeRef')}
                     size="sm"
                     icon={<X size={12} />}
                     onClick={() => void save({
@@ -221,7 +247,12 @@ export function PlanItemDetail({
         ) : null}
 
         <div className="wb-plan-detail-block">
-          <div className="wb-plan-detail-block-head">检查项（{item.checklist.filter((entry) => entry.done).length}/{item.checklist.length}）</div>
+          <div className="wb-plan-detail-block-head">
+            {t('workbench:workspace.plan.checklist', {
+              done: item.checklist.filter((entry) => entry.done).length,
+              total: item.checklist.length,
+            })}
+          </div>
           <ul className="wb-plan-checks">
             {item.checklist.map((entry) => (
               <li key={entry.id}>
@@ -230,7 +261,7 @@ export function PlanItemDetail({
                   <span className={entry.done ? 'is-done' : undefined}>{entry.text}</span>
                 </label>
                 <IconButton
-                  label="删除检查项"
+                  label={t('workbench:workspace.plan.deleteCheck')}
                   size="sm"
                   icon={<X size={12} />}
                   onClick={() => saveChecklist(item.checklist.filter((current) => current.id !== entry.id))}
@@ -240,7 +271,7 @@ export function PlanItemDetail({
           </ul>
           <TextInput
             value={newCheckText}
-            placeholder="加一条检查项，回车添加"
+            placeholder={t('workbench:workspace.plan.addCheckPlaceholder')}
             onChange={(event) => setNewCheckText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
@@ -255,7 +286,7 @@ export function PlanItemDetail({
         <div className="wb-plan-detail-actions">
           {item.status !== 'done' && item.status !== 'dropped' ? (
             <Button variant="primary" size="sm" icon={<Bot size={14} />} onClick={onAssign}>
-              交给 Agent
+              {t('workbench:workspace.plan.assign')}
             </Button>
           ) : null}
           {item.status === 'dropped' ? (
@@ -265,10 +296,12 @@ export function PlanItemDetail({
               icon={<RotateCcw size={14} />}
               onClick={onRestore}
             >
-              恢复
+              {t('workbench:workspace.plan.restore')}
             </Button>
           ) : (
-            <Button variant="ghost" size="sm" onClick={onRemove}>取消任务</Button>
+            <Button variant="ghost" size="sm" onClick={onRemove}>
+              {t('workbench:workspace.plan.cancelTask')}
+            </Button>
           )}
           {item.assigneeSessionId ? (
             <Button
@@ -277,25 +310,27 @@ export function PlanItemDetail({
               icon={<ExternalLink size={14} />}
               onClick={() => onOpenSession(item.assigneeSessionId!)}
             >
-              打开会话
+              {t('workbench:workspace.plan.openSession')}
             </Button>
           ) : null}
           {busy ? <Spinner /> : null}
         </div>
 
         <div className="wb-plan-detail-block">
-          <div className="wb-plan-detail-block-head">时间线</div>
+          <div className="wb-plan-detail-block-head">{t('workbench:workspace.plan.timeline')}</div>
           {events === null ? (
-            <p className="wb-plan-detail-muted">加载中…</p>
+            <p className="wb-plan-detail-muted">{t('workbench:workspace.common.loading')}</p>
           ) : events.length === 0 ? (
-            <p className="wb-plan-detail-muted">还没有记录。</p>
+            <p className="wb-plan-detail-muted">{t('workbench:workspace.plan.noEvents')}</p>
           ) : (
             <ol className="wb-plan-timeline">
               {[...events].reverse().map((event) => (
                 <li key={event.id}>
                   <span className="wb-plan-timeline-kind">{event.kind}</span>
                   <span className="wb-plan-timeline-summary">{event.summary}</span>
-                  <span className="wb-plan-timeline-time">{relativeTimeLabel(event.createdAt)}</span>
+                  <span className="wb-plan-timeline-time">
+                    {relativeTimeLabel(event.createdAt, t)}
+                  </span>
                 </li>
               ))}
             </ol>
@@ -303,8 +338,10 @@ export function PlanItemDetail({
         </div>
 
         <details className="wb-plan-detail-block wb-plan-claim">
-          <summary>认领包</summary>
-          {claimText ? <pre>{claimText}</pre> : <p className="wb-plan-detail-muted">认领包不可用。</p>}
+          <summary>{t('workbench:workspace.plan.claimPackage')}</summary>
+          {claimText
+            ? <pre>{claimText}</pre>
+            : <p className="wb-plan-detail-muted">{t('workbench:workspace.plan.claimUnavailable')}</p>}
         </details>
       </div>
     </aside>

@@ -71,9 +71,8 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
       localAgents={[]}
       rooms={[]}
       modelPreference={session.currentSession?.modelPreference ?? session.modelPreferenceDefault}
-      modelPreferenceLocked={Boolean(session.sessionId)}
       loadModelAvailability={async () => ({ lite: true, primary: true })}
-      onSelectModelPreference={session.setModelPreferenceDefault}
+      onSelectModelPreference={session.setSessionModelPreference}
       channelAgentId={null}
       thinkingLevel={session.sessionId ? session.currentSession?.thinkingLevel ?? null : session.thinkingLevelDefault}
       onSelectThinkingLevel={session.setSessionThinkingLevel}

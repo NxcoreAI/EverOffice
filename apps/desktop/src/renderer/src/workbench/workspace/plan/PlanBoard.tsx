@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import type { PlanItem, PlanStatus } from '@nxcore/agent-contract'
 
 import { PLAN_COLUMNS } from './planDrag'
@@ -29,6 +30,7 @@ export function PlanBoard({
   onCreate,
   onOpenCard,
 }: PlanBoardProps) {
+  const { t } = useLocale()
   const [dragId, setDragId] = useState<string | null>(null)
 
   return (
@@ -37,7 +39,7 @@ export function PlanBoard({
         <PlanColumn
           key={column.status}
           status={column.status}
-          label={column.label}
+          label={t(column.labelKey)}
           items={groups[column.status]}
           dragId={dragId}
           sessionTitles={sessionTitles}

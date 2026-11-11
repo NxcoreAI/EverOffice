@@ -11,6 +11,7 @@ import {
 import { useEffect, useState, type ReactNode } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { FileOpenWithControl } from '@/components/files/FileOpenWithControl'
 
 import type { DisplayAgentToolStatus } from './agentRunActivity'
 import { SlidesPageImagesReview } from './slides/SlidesPageImagesReview'
@@ -678,16 +679,25 @@ export function SlidesProgressCard({
           ) : null}
           <div className="agent-slides-actions">
             {state.fileEntryId ? (
-              <button
-                type="button"
-                className="agent-slides-action is-primary"
-                aria-label={t('surface:agentChat.SLIDES_OPEN_PPT_LABEL', { title })}
-                disabled={busy}
-                onClick={openDeck}
-              >
-                <Presentation aria-hidden="true" />
-                {t('surface:agentChat.SLIDES_OPEN_PPT')}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="agent-slides-action is-primary"
+                  aria-label={t('surface:agentChat.SLIDES_OPEN_PPT_LABEL', { title })}
+                  disabled={busy}
+                  onClick={openDeck}
+                >
+                  <Presentation aria-hidden="true" />
+                  {t('surface:agentChat.SLIDES_OPEN_PPT')}
+                </button>
+                <FileOpenWithControl
+                  fileId={state.fileEntryId}
+                  fileName={state.fileName ?? title}
+                  onError={setOpenError}
+                  compact
+                  className="agent-slides-open-with"
+                />
+              </>
             ) : null}
             <button
               type="button"
@@ -735,9 +745,18 @@ export function SlidesProgressCard({
               </button>
             ) : null}
             {state.fileEntryId ? (
-              <button type="button" className="agent-slides-action is-secondary" disabled={busy} onClick={openDeck}>
-                {t('surface:agentChat.SLIDES_OPEN_EXISTING')}
-              </button>
+              <>
+                <button type="button" className="agent-slides-action is-secondary" disabled={busy} onClick={openDeck}>
+                  {t('surface:agentChat.SLIDES_OPEN_EXISTING')}
+                </button>
+                <FileOpenWithControl
+                  fileId={state.fileEntryId}
+                  fileName={state.fileName ?? title}
+                  onError={setOpenError}
+                  compact
+                  className="agent-slides-open-with"
+                />
+              </>
             ) : null}
           </div>
           {openError ? <p className="agent-slides-error-note" role="alert">{openError}</p> : null}
@@ -781,14 +800,23 @@ export function SlidesProgressCard({
             </button>
           ) : null}
           {state.fileEntryId ? (
-            <button
-              type="button"
-              className={state.retryable ? 'agent-slides-action is-secondary' : 'agent-slides-action is-primary'}
-              disabled={busy}
-              onClick={openDeck}
-            >
-              {t('surface:agentChat.SLIDES_OPEN_EXISTING')}
-            </button>
+            <>
+              <button
+                type="button"
+                className={state.retryable ? 'agent-slides-action is-secondary' : 'agent-slides-action is-primary'}
+                disabled={busy}
+                onClick={openDeck}
+              >
+                {t('surface:agentChat.SLIDES_OPEN_EXISTING')}
+              </button>
+              <FileOpenWithControl
+                fileId={state.fileEntryId}
+                fileName={state.fileName ?? title}
+                onError={setOpenError}
+                compact
+                className="agent-slides-open-with"
+              />
+            </>
           ) : null}
         </div>
         {!state.retryable ? <p className="agent-slides-card-hint">{t('surface:agentChat.SLIDES_RETRY_HINT')}</p> : null}

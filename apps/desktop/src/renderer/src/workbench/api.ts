@@ -23,6 +23,8 @@ import type {
   UpdateAgentWorkspaceInput,
 } from '@nxcore/agent-contract'
 
+import i18n from '@/i18n/i18next'
+
 /**
  * 工作台渲染层的网关适配。
  *
@@ -35,19 +37,19 @@ import type {
 
 function workspaceBridge(): NonNullable<Window['nxcore']>['workspace'] {
   const bridge = window.nxcore?.workspace
-  if (!bridge) throw new Error('桌面服务工作区接口未就绪，请重启 EverOffice')
+  if (!bridge) throw new Error(i18n.t('workbench:api.workspaceBridgeUnavailable'))
   return bridge
 }
 
 function planBridge(): NonNullable<Window['nxcore']>['plan'] {
   const bridge = window.nxcore?.plan
-  if (!bridge) throw new Error('桌面服务计划接口未就绪，请重启 EverOffice')
+  if (!bridge) throw new Error(i18n.t('workbench:api.planBridgeUnavailable'))
   return bridge
 }
 
 function agentBridge(): NonNullable<Window['nxcore']>['agent'] {
   const bridge = window.nxcore?.agent
-  if (!bridge) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
+  if (!bridge) throw new Error(i18n.t('workbench:api.agentBridgeUnavailable'))
   return bridge
 }
 
@@ -58,7 +60,7 @@ export const workbenchApi = {
 
   async createWorkspace(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace> {
     const name = input.name.trim()
-    if (!name) throw new Error('工作区名称不能为空')
+    if (!name) throw new Error(i18n.t('workbench:api.workspaceNameRequired'))
     return workspaceBridge().create({ ...input, name })
   },
 
@@ -168,7 +170,7 @@ export const workbenchApi = {
 
   async createPlanItem(input: CreatePlanItemInput): Promise<PlanItem> {
     const title = input.title.trim()
-    if (!title) throw new Error('任务标题不能为空')
+    if (!title) throw new Error(i18n.t('workbench:api.planTitleRequired'))
     return planBridge().create({ ...input, title })
   },
 

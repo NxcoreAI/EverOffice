@@ -11,6 +11,7 @@ import {
   setCommentAnchorRanges,
 } from './commentAnchorDecorations'
 import './ExternalDocumentDialogs.css'
+import { documentsApi, externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 /**
  * 评论面板（飞书式锚定）：本地划词评论与导入的飞书评论统一按 quotedText 锚定
@@ -90,7 +91,7 @@ export function ImportedCommentsPanel({
   }, [editor])
 
   const reloadLocalComments = useCallback(() => {
-    void window.nxcore?.documents.listDocumentComments(documentId)
+    void documentsApi()?.listDocumentComments(documentId)
       .then((result) => setLocalComments(result.items))
       .catch(() => setLocalComments([]))
   }, [documentId])
@@ -98,7 +99,7 @@ export function ImportedCommentsPanel({
   useEffect(() => {
     let cancelled = false
     setComments(null)
-    void window.nxcore?.externalDocuments.importHistory(documentId)
+    void externalDocumentsApi()?.importHistory(documentId)
       .then((result) => {
         if (!cancelled) {
           setComments(result.comments)
@@ -126,7 +127,7 @@ export function ImportedCommentsPanel({
 
   // 服务端（agent）落评论经文档事件推送实时刷新。
   useEffect(() => {
-    const unsubscribe = window.nxcore?.documents.onEvent?.((frame) => {
+    const unsubscribe = documentsApi()?.onEvent?.((frame) => {
       const event = frame?.event
       if (!event || event.type !== 'document.comments.changed' || event.documentId !== documentId) return
       reloadLocalComments()
@@ -400,7 +401,7 @@ export function ImportedCommentsPanel({
 
   const resolveLocal = async (commentId: string, resolved: boolean) => {
     try {
-      await window.nxcore?.documents.resolveDocumentComment(documentId, commentId, resolved)
+      await documentsApi()?.resolveDocumentComment(documentId, commentId, resolved)
       reloadLocalComments()
     } catch {
       // 失败时下一轮打开面板会重新拉取。
@@ -409,7 +410,7 @@ export function ImportedCommentsPanel({
 
   const deleteLocal = async (commentId: string) => {
     try {
-      await window.nxcore?.documents.deleteDocumentComment(documentId, commentId)
+      await documentsApi()?.deleteDocumentComment(documentId, commentId)
       reloadLocalComments()
     } catch {
       // 同上。

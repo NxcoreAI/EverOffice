@@ -2,6 +2,7 @@ import type { DocumentOperationStatus, DocumentOperationSummary } from '@nxcore/
 import i18n from '@/i18n/i18next'
 
 import type { DocumentOperationListFilters, OperationBridge } from './types'
+import { documentsApi } from '@/components/office-editor/documentApi'
 
 function uniqueStatuses(statuses: DocumentOperationStatus[] | undefined): Array<DocumentOperationStatus | undefined> {
   return statuses?.length ? [...new Set(statuses)] : [undefined]
@@ -46,7 +47,7 @@ function unavailableOperationBridge(): OperationBridge {
 }
 
 export function desktopOperationBridge(): OperationBridge {
-  const documents = window.nxcore?.documents
+  const documents = documentsApi()
   return documents
     && typeof documents.listOperations === 'function'
     && typeof documents.startOperation === 'function'

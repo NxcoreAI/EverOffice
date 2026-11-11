@@ -82,3 +82,40 @@ export function buildNoteCards(drafts: readonly PendingAskDraft[]): AgentNoteCar
     ...(draft.title?.trim() ? { title: draft.title.trim() } : {}),
   }))
 }
+
+/** 云文档选区批注的定位事实（documentId 是 document_read/comment 工具的必填参数）。 */
+export interface CloudDocumentSelectionNote {
+  documentId: string
+  documentTitle: string
+  instruction: string
+  excerpt?: string
+  /** 选区所在块的稳定 id（云文档 document 工具按 blockId 定位），无块内选区时为空。 */
+  blockId?: string | null
+}
+
+function clipNoteText(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat
+}
+
+/**
+ * 云文档选区批注 → 注入 Agent 的技术指令。
+ *
+ * 云文档（工作空间 documents 表）按**稳定 blockId** 定位，不走 Word 的顶层块索引：
+ * 消息里点名《标题》与块 id，Agent 用 document_read 回读该块后再对照摘要定位选区。
+ * 用户可见气泡只放原话（displayMessage），标题/块 id 这层定位只进 message。
+ */
+export function buildCloudDocumentAskMessage(note: CloudDocumentSelectionNote): string {
+  const instruction = note.instruction.trim().replace(/[。.!！]+$/, '')
+  const title = note.documentTitle.trim() || '未命名云文档'
+  // document_read / document_comment_add 都只认 documentId（必填）与 blockId；
+  // 标题只是给人的定位词，Agent 真正能用的定位事实必须进技术指令。
+  const documentId = note.documentId.trim()
+  const facts = [
+    documentId ? `documentId：${documentId}` : '',
+    note.blockId?.trim() ? `块 id：${note.blockId.trim()}` : '',
+    note.excerpt?.trim() ? `原文摘要「${clipNoteText(note.excerpt, 120)}」` : '',
+  ].filter(Boolean)
+  const factsText = facts.length > 0 ? `（${facts.join('，')}）` : ''
+  return `我在云文档《${title}》中选中了这段内容${factsText}：${instruction}。`
+}

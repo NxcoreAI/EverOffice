@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentSession } from '@nxcore/agent-contract'
 
+import { translateZh, type Translate } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
 import { isArtifactSourceKind } from './artifactKind'
@@ -106,10 +107,10 @@ function sessionKindOf(session: SessionActivityInput): ActivityKind {
 }
 
 /** 动词按语义选，kind 只管视觉：同一 `work-created` 下「新建」与「更新」是两句话。 */
-function sessionVerbOf(session: SessionActivityInput): string {
-  if (session.status === 'running') return '开始了工作 '
-  if (session.status === 'closed' || session.status === 'interrupted') return '结束了工作 '
-  return isFreshlyCreated(session) ? '新建了工作 ' : '更新了工作 '
+function sessionVerbOf(session: SessionActivityInput, t: Translate): string {
+  if (session.status === 'running') return t('workbench:activity.workStarted')
+  if (session.status === 'closed' || session.status === 'interrupted') return t('workbench:activity.workDone')
+  return isFreshlyCreated(session) ? t('workbench:activity.workCreated') : t('workbench:activity.workUpdated')
 }
 
 function sessionTimeOf(session: SessionActivityInput): string {
@@ -117,23 +118,23 @@ function sessionTimeOf(session: SessionActivityInput): string {
   return session.createdAt
 }
 
-function sessionActivityOf(session: SessionActivityInput): ActivityItem {
+function sessionActivityOf(session: SessionActivityInput, t: Translate): ActivityItem {
   // 引用段只放 id：真正的名字由页面按 workId 实时解析，工作改名后历史文案自动跟随。
   return {
     id: `session:${session.id}`,
     kind: sessionKindOf(session),
-    segments: [{ text: sessionVerbOf(session) }, { workId: session.id }],
+    segments: [{ text: sessionVerbOf(session, t) }, { workId: session.id }],
     at: sessionTimeOf(session),
   }
 }
 
-function fileActivityOf(entry: RealOfficeFile): ActivityItem {
+function fileActivityOf(entry: RealOfficeFile, t: Translate): ActivityItem {
   // 判据与产物页共用（artifactKind.ts）：产物只出 output，其余一律算材料。
   const artifact = isArtifactSourceKind(entry.catalog.sourceKind)
   return {
     id: `file:${entry.catalog.id}`,
     kind: artifact ? 'output' : 'material',
-    segments: [{ text: artifact ? '生成了 ' : '添加了材料 ' }, { fileId: entry.catalog.id }],
+    segments: [{ text: artifact ? t('workbench:activity.generated') : t('workbench:activity.addedMaterial') }, { fileId: entry.catalog.id }],
     at: entry.catalog.updatedAt,
   }
 }
@@ -161,13 +162,15 @@ function compareActivities(left: ActivityItem, right: ActivityItem): number {
 export interface BuildActivitiesInput {
   sessions?: readonly SessionActivityInput[]
   files?: readonly RealOfficeFile[]
+  /** 翻译器；缺省 zh-CN（单测/离线默认）。 */
+  t?: Translate
 }
 
 /** 合并「本空间会话 + 文件库条目」，按时间倒序返回完整列表（截断交给 collapseActivities）。 */
-export function buildActivities({ sessions = [], files = [] }: BuildActivitiesInput = {}): ActivityItem[] {
+export function buildActivities({ sessions = [], files = [], t = translateZh }: BuildActivitiesInput = {}): ActivityItem[] {
   return [
-    ...sessions.map(sessionActivityOf),
-    ...files.map(fileActivityOf),
+    ...sessions.map((session) => sessionActivityOf(session, t)),
+    ...files.map((file) => fileActivityOf(file, t)),
   ].sort(compareActivities)
 }
 

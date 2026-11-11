@@ -1,6 +1,7 @@
 import { Loader2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { useLocale } from '@/i18n/LocaleContext'
 import { catalogToOfficeFile } from '@/office-proto/data'
 import { HomePageHost } from '../home/HomePageHost'
 import { useActiveTab, useWorkbenchStore } from '../state/store'
@@ -28,6 +29,7 @@ const SESSION_POLL_MS = 4000
  *      一律在归属工作空间的气泡窗里打开）
  */
 export function Workbench() {
+  const { t } = useLocale()
   const boot = useWorkbenchStore((state) => state.boot)
   const booted = useWorkbenchStore((state) => state.booted)
   const loading = useWorkbenchStore((state) => state.loading)
@@ -194,12 +196,12 @@ export function Workbench() {
     return office.onAgentAsk((event) => {
       const workspaceId = event.workspaceId ?? event.roomId ?? null
       if (!workspaceId) {
-        workbenchToast('这条批注没有归属工作空间，无法发送给 Agent')
+        workbenchToast(t('workbench:shell.annotationNoWorkspace'))
         return
       }
       const state = useWorkbenchStore.getState()
       if (!state.workspaces.some((workspace) => workspace.id === workspaceId)) {
-        workbenchToast('该文件所属的工作空间还没同步到工作台，请稍后重试')
+        workbenchToast(t('workbench:shell.workspaceNotSynced'))
         return
       }
       if (event.mode === 'queue') {
@@ -317,7 +319,7 @@ export function Workbench() {
         <div className="wb-boot">
           <div className="wb-boot-inner">
             <Loader2 size={15} className="ui-spin" aria-hidden="true" />
-            正在加载工作台…
+            {t('workbench:shell.loading')}
           </div>
         </div>
       </div>
@@ -331,10 +333,10 @@ export function Workbench() {
           <span className="wb-generation-progress-dot" aria-hidden="true" />
           <span>
             {generationProgress.phase === 'importing'
-              ? `正在入库：${generationProgress.title}`
+              ? t('workbench:shell.importing', { title: generationProgress.title })
               : generationProgress.slide
-                ? `正在生成：${generationProgress.title} · 第 ${generationProgress.slide} 页`
-                : `正在生成：${generationProgress.title}`}
+                ? t('workbench:shell.generatingPage', { title: generationProgress.title, page: generationProgress.slide })
+                : t('workbench:shell.generating', { title: generationProgress.title })}
           </span>
         </div>
       ) : null}
@@ -351,7 +353,7 @@ export function Workbench() {
             <div className="wb-errorbar" role="alert">
               <span>{error}</span>
               <button type="button" className="ui-btn ui-btn--ghost ui-btn--sm" onClick={() => setError(null)}>
-                <X size={13} /> 知道了
+                <X size={13} /> {t('workbench:shell.dismiss')}
               </button>
             </div>
           ) : null}
@@ -362,7 +364,7 @@ export function Workbench() {
               if (tab.kind === 'home') {
                 return (
                   <div key={tab.id} className={cn('wb-tabpane', active && 'is-active')} aria-hidden={!active}>
-                    <ErrorBoundary label="主页" resetKey={`home:${tab.page}`}>
+                    <ErrorBoundary label={t('workbench:common.home')} resetKey={`home:${tab.page}`}>
                       <HomePageHost page={tab.page} />
                     </ErrorBoundary>
                   </div>
@@ -371,7 +373,7 @@ export function Workbench() {
               if (tab.kind === 'workspace') {
                 return (
                   <div key={tab.id} className={cn('wb-tabpane', active && 'is-active')} aria-hidden={!active}>
-                    <ErrorBoundary label="工作空间" resetKey={tab.id}>
+                    <ErrorBoundary label={t('workbench:common.workspace')} resetKey={tab.id}>
                       <WorkspaceTabHost tab={tab} active={active} />
                     </ErrorBoundary>
                   </div>

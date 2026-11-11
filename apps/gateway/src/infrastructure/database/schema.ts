@@ -189,6 +189,8 @@ export const connectorTombstones = sqliteTable(
 export const agentWorkspaces = sqliteTable("agent_workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  /** 英文展示名：英文界面优先用它，留空回落到 name。 */
+  nameEn: text("name_en"),
   /** 空间描述（概览页展示）；未填写为 NULL。 */
   description: text("description"),
   /** 目标列表，以 JSON 文本存放；NULL/空数组都按 [] 暴露。 */

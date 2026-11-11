@@ -139,14 +139,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   localAgents: LocalAgentInstallation[]
   /** Room 引用候选（@ 弹层「房间」组；AgentPanel 已持有完整列表）。 */
   rooms?: AgentRoomReference[]
-  /** 当前生效档位：会话已存在＝会话锁定档，否则＝全局默认档。 */
+  /** 当前生效档位：会话已存在＝会话当前档，否则＝全局默认档。 */
   modelPreference: AgentModelPreference
   /** 实时上下文用量（context.usage 事件快照；缺省=未知，不渲染）。 */
   contextUsage?: AgentContextUsage | null
   /** 上下文压缩进行中（渲染动效提示）。 */
   contextCompacting?: boolean
-  /** 会话已创建 → 档位/渠道锁定在会话上，切换只影响下一个新会话。 */
-  modelPreferenceLocked?: boolean
   /** 打开选择器时拉取最新档位可用性（lite 未配置隐藏；primary 未配置点击时提示去设置）。 */
   loadModelAvailability: () => Promise<{ lite: boolean; primary: boolean }>
   onSelectModelPreference: (tier: AgentModelPreference) => void
@@ -195,7 +193,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   localAgents,
   rooms = [],
   modelPreference,
-  modelPreferenceLocked = false,
   contextUsage = null,
   contextCompacting = false,
   loadModelAvailability,
@@ -1195,9 +1192,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   <ChevronRight aria-hidden="true" className="agent-model-cell-chevron" />
                 </button>
               ) : null}
-              {modelPreferenceLocked ? (
-                <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
-              ) : null}
             </>
           ) : null}
           {modelPickerPane === 'model' ? (
@@ -1246,9 +1240,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     </button>
                   ))}
                 </div>
-              ) : null}
-              {modelPreferenceLocked ? (
-                <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
               ) : null}
             </>
           ) : null}

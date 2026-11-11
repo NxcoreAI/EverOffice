@@ -5,9 +5,9 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid #dde3ea;
-  background: #fff;
-  color: #374151;
+  border-bottom: 1px solid var(--cr-border);
+  background: var(--cr-surface);
+  color: var(--cr-text);
 }
 
 .document-continuation-toolbar {

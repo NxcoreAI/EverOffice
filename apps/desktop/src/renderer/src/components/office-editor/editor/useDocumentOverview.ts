@@ -2,6 +2,7 @@ import type { DocumentOverviewView, RoomDocument } from '@nxcore/agent-contract'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
+import { documentsApi } from '@/components/office-editor/documentApi'
 
 /**
  * 文档速览（文章级 AI 摘要）状态机：挂载 GET → 无速览且 eligible 且
@@ -55,7 +56,7 @@ export function useDocumentOverview({
   const lastEvaluatedVersionRef = useRef<number | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     if (!documents) return
     const seq = ++requestSeqRef.current
     try {
@@ -103,7 +104,7 @@ export function useDocumentOverview({
   }, [documentId])
 
   const generate = useCallback((): Promise<DocumentOverviewView | null> => {
-    const documents = window.nxcore?.documents
+    const documents = documentsApi()
     const existing = inFlightOverviews.get(documentId)
     if (existing) return existing
     const task = (async (): Promise<DocumentOverviewView | null> => {

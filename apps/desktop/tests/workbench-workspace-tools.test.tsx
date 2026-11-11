@@ -225,6 +225,40 @@ describe('计划看板', () => {
     expect(onOpenSession).not.toHaveBeenCalled()
   })
 
+  it('计划详情里的文档引用可点开计划云文档（文件引用仍是纯文本）', async () => {
+    installNxcore({
+      listPlanItems: async () => ({
+        items: [makePlanItem({
+          id: 't-plan-doc',
+          title: '产品介绍演示文稿制作计划',
+          refs: [
+            { kind: 'document', id: 'doc-plan-1', title: '产品介绍演示文稿制作计划' },
+            { kind: 'file', id: 'fe-1', title: '产品资料.docx' },
+          ],
+        })],
+      }),
+    })
+    const opened: Array<{ documentId: string; title: string }> = []
+    const listener = (event: Event) => opened.push((event as CustomEvent<{ documentId: string; title: string }>).detail)
+    window.addEventListener('everroom:open-cloud-document', listener)
+    try {
+      render(<PlanPage {...pageProps()} />)
+      await flush()
+      await click(document.querySelector('.wb-plan-task'))
+      await flush()
+
+      const links = document.querySelectorAll('.wb-plan-ref-link')
+      expect(links).toHaveLength(1)
+      await click(links[0])
+      expect(opened).toEqual([{ documentId: 'doc-plan-1', title: '产品介绍演示文稿制作计划' }])
+      // 文件类引用不冒充云文档入口
+      const titles = Array.from(document.querySelectorAll('.wb-plan-ref-title')).map((node) => node.textContent)
+      expect(titles).toContain('产品资料.docx')
+    } finally {
+      window.removeEventListener('everroom:open-cloud-document', listener)
+    }
+  })
+
   it('空计划也渲染四列，并保留「新建工作」入口', async () => {
     const onNewWork = vi.fn()
     installNxcore({ listPlanItems: async () => ({ items: [] }) })
