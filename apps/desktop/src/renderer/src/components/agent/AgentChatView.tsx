@@ -23,6 +23,7 @@ import {
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
+import { stripAgentAnswerMarker } from './answerTiering'
 import { agentTurnFilesFromTools } from './agentTurnFiles'
 import { AgentTurnFilesCard } from './AgentTurnFilesCard'
 import { parseAgentNavigationTarget } from './agentNavigation'
@@ -66,6 +67,11 @@ function reasoningTail(text: string | undefined): string | undefined {
   // 思考串会随流式无限变长，全量正则清洗每帧都跑；只清洗末尾一小段。
   const collapsed = text.slice(-2_000).replace(/\s+/g, ' ').trim()
   return collapsed ? collapsed.slice(-140) : undefined
+}
+
+/** 流式原文里的 [[details]] 标记行不能进气泡正文（详情分层见消息循环）。 */
+function cleanLinkedAnswer(value: string): string {
+  return value ? stripAgentAnswerMarker(value) : value
 }
 
 function getThinkingLabel(message: DisplayAgentMessage | undefined, tools: DisplayAgentToolCall[], t: Translate): string {
@@ -278,13 +284,15 @@ function LinkedRunProgress({ agentNamesById, state, failedRunIds }: {
   const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
-  const rawFinalContent = state.documentPending
+  // activity 的流式答案来自 delta 原文累计，[[details]] 标记行统一去除；
+  // 落库消息 content 已是 gateway 清洗后的文本，strip 直通零开销。
+  const rawFinalContent = cleanLinkedAnswer(state.documentPending
     ? ''
     : state.activity.hasTools
       ? state.activity.finalAnswer
         || state.activity.pendingAnswer
         || (state.activity.completed ? assistantMessage?.content || '' : '')
-      : assistantMessage?.content || ''
+      : assistantMessage?.content || '')
   const finalContent = localizeAgentAnswer(rawFinalContent, t)
 
   return (
@@ -935,18 +943,22 @@ export function AgentChatView({
             // 保守退化成整段展示，绝不丢内容）。流式期间照常流全文，run 完成
             // 切分级；无标记的消息 displayContent 为 undefined，行为不变。
             const tieredDisplay = activity?.finalDisplayContent ?? message.displayContent
-            let displayFinalContent = rawFinalContent
+            // rawFinalContent 可能来自 message.delta 原文累计（工具活动的流式
+            // 答案、未完成 run 的流式消息），[[details]] 标记行随流式透传——
+            // 统一去标记再进前缀校验，标记行绝不进正文或详情首行。
+            const rawFinalClean = stripAgentAnswerMarker(rawFinalContent)
+            let displayFinalContent = rawFinalClean
             let tieredDetails: string | undefined
             if (
               tieredDisplay !== undefined && tieredDisplay.trim()
-              && !message.streaming && rawFinalContent.trimStart().startsWith(tieredDisplay.trimEnd())
-              && rawFinalContent.trim().length > tieredDisplay.trim().length
+              && !message.streaming && rawFinalClean.trimStart().startsWith(tieredDisplay.trimEnd())
+              && rawFinalClean.trim().length > tieredDisplay.trim().length
             ) {
-              const prefixEnd = rawFinalContent.indexOf(tieredDisplay.trimEnd())
-              const rest = prefixEnd >= 0 ? rawFinalContent.slice(prefixEnd + tieredDisplay.trimEnd().length) : ''
+              const prefixEnd = rawFinalClean.indexOf(tieredDisplay.trimEnd())
+              const rest = prefixEnd >= 0 ? rawFinalClean.slice(prefixEnd + tieredDisplay.trimEnd().length) : ''
               if (rest.trim()) {
                 displayFinalContent = tieredDisplay
-                tieredDetails = rest
+                tieredDetails = rest.trim()
               }
             }
             const finalContent = localizeAgentAnswer(displayFinalContent, t)

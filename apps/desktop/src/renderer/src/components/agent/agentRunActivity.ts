@@ -5,6 +5,7 @@ import type {
   SubagentInvocationNode,
 } from '@nxcore/agent-contract'
 import type { Translate } from '@/i18n/LocaleContext'
+import { stripAgentAnswerMarker } from './answerTiering'
 import { isNoOpToolCall, noOpCommandSummary } from './noopToolCall'
 
 export type DisplayAgentToolStatus = 'pending' | 'running' | 'completed' | 'error' | 'stopped'
@@ -776,9 +777,14 @@ export function snapshotAgentRunActivity(acc: AgentRunActivityAccumulator): Agen
     }
   }
 
-  const pendingAnswer = acc.completed ? '' : (acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
+  // pendingText 是 message.delta 原文累计：[[details]] 标记行随流式透传，
+  // 展示侧统一去标记（completedContent/savedAnswer 已是 gateway 清洗后的
+  // 去标记文本，strip 对它们是零开销直通）。
+  const pendingAnswer = acc.completed
+    ? ''
+    : stripAgentAnswerMarker(acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
   const finalAnswer = acc.completed
-    ? (acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
+    ? stripAgentAnswerMarker(acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
     : ''
 
   return {
