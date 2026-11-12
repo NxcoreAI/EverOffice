@@ -1,6 +1,17 @@
 # 工作空间「概览 · 动态」对齐原型模型：实现方案
 
 > 状态：**P0 + P1 已实现**（2026-11-03，见 §4.6 / §5.7 落地记录）；P2 的 `work-review` 已按「活状态」口径实现（见 §6.1），无需建表。
+> **2026-11-12 信息密度改造**：用户反馈「动态栏太难用、信息密度太低」。根因有三：
+> ① §5.4 SQL 草稿里 run 事件的 `r.prompt AS brief` 落地时被丢弃——`agent_runs.prompt`（用户指令）、
+> `completedAt - startedAt`（耗时）、`error`（失败原因）都是现成数据但从未暴露；
+> ② 一次 run 拆「开始 + 结束」两行，时间轴位置翻倍而每行只有一句裸动词；
+> ③ 展示层浪费（26px 图标 + 8px 上下 padding ≈ 42px/行 只承载 10 个字）。
+> 改造：契约新增 `WorkspaceActivityDetail{brief, durationSec, error}`（可选字段，旧消费方零改动）；
+> 网关侧一次 run 合并为单行（id `run:<runId>`，不再有 `:start`/`:end`；`at` 取结束时刻优先），
+> 同行携带 prompt 首行摘要（≤120 字）、耗时（秒，向上取整）、失败原因；渲染层行结构升级为
+> 「主文案 + 次级行（brief/error，2xs 灰字单行省略，title 给全文）+ 行尾时长徽标」，
+> 图标 26→20px、行距 8→5px、默认折叠 8→12 条；本地回落派生用会话标题作 brief。
+> i18n 新增 `time.durationSeconds/Minutes/Hours`（zh-CN / en-US）。
 > 关联：`docs/design/everoffice-feature-inventory.zh-CN.md` §3.4（原型动态卡清单）、`docs/design/product-data-map.zh-CN.md` §9（意图：动态/洞察是派生数据，不建 feed 表）、`docs/workspace-plan-task-design.zh-CN.md`（`workspace_plan_items` 与它的**事件流表**）、`everoffice` 原型 `WorkspacePages.tsx:216-247`、`workspace.ts:105-146`。
 
 ---

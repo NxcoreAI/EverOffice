@@ -274,6 +274,9 @@ describe('概览动态派生（buildActivities / collapseActivities）', () => {
     expect(byId.get('session:s-done')?.segments).toEqual([{ text: '结束了工作 ' }, { workId: 's-done' }])
     expect(byId.get('session:s-created')?.segments).toEqual([{ text: '新建了工作 ' }, { workId: 's-created' }])
     expect(byId.get('session:s-updated')?.segments).toEqual([{ text: '更新了工作 ' }, { workId: 's-updated' }])
+    // 本地回落派生的信息密度：会话标题进 detail.brief（次级行）。
+    expect(byId.get('session:s-run')?.detail).toEqual({ brief: '跑数据核对' })
+    expect(byId.get('file:f-gen')?.detail).toBeUndefined()
     // kind 只管视觉分组：idle 会话的「新建 / 更新」共用 work-created，动词区分语义。
     expect(byId.get('session:s-created')?.kind).toBe('work-created')
     expect(byId.get('session:s-updated')?.kind).toBe('work-created')
@@ -308,7 +311,7 @@ describe('概览动态派生（buildActivities / collapseActivities）', () => {
     expect(activities.map((item) => item.id)).toEqual(['session:s-1', 'file:f-1', 'file:f-bad'])
   })
 
-  it('默认折叠 8 条、展开到 20 条', () => {
+  it('默认折叠 12 条、展开到 20 条', () => {
     const sessions = Array.from({ length: 25 }, (_, index) => sessionFixture({
       id: `s-${String(index).padStart(2, '0')}`,
       title: `工作 ${index}`,
@@ -321,8 +324,8 @@ describe('概览动态派生（buildActivities / collapseActivities）', () => {
 
     const collapsed = collapseActivities(activities, false)
     expect(collapsed.visible).toHaveLength(ACTIVITY_COLLAPSED_LIMIT)
-    expect(collapsed.visible).toHaveLength(8)
-    expect(collapsed.hiddenCount).toBe(17)
+    expect(collapsed.visible).toHaveLength(12)
+    expect(collapsed.hiddenCount).toBe(13)
 
     const expanded = collapseActivities(activities, true)
     expect(expanded.visible).toHaveLength(ACTIVITY_EXPANDED_LIMIT)
@@ -1050,11 +1053,12 @@ describe('概览页洞察状态', () => {
 
 describe('概览页动态（网关派生 + 游标）', () => {
   const doneRow = {
-    id: 'run:r1:end',
+    id: 'run:r1',
     kind: 'work-done',
     actor: 'agent',
     at: '2026-10-30T12:00:00.000Z',
     segments: [{ text: '结束了工作 ' }, { sessionId: 's-1' }],
+    detail: { brief: '把三个季度的销售数据整理成对比表', durationSec: 480 },
     source: { table: 'agent_runs', rowId: 'r1' },
   }
   const planRow = {
@@ -1066,7 +1070,7 @@ describe('概览页动态（网关派生 + 游标）', () => {
     source: { table: 'workspace_plan_item_events', rowId: 'e1' },
   }
 
-  it('桥可用时用网关派生事件：分段引用、计划行可点', async () => {
+  it('桥可用时用网关派生事件：分段引用、计划行可点、detail 次级行', async () => {
     const { nxcore } = installNxcore({
       activities: () => Promise.resolve({ items: [doneRow, planRow], nextBeforeAt: null, nextBeforeId: null }),
     })
@@ -1079,6 +1083,10 @@ describe('概览页动态（网关派生 + 游标）', () => {
     expect(rows).toHaveLength(2)
     // 契约里的 sessionId 段按 id 实时解析成名字（不是文案快照）。
     expect(rows[0]!.querySelector('.wb-ov-activity-ref')?.textContent).toBe('周报整理')
+    // 次级信息：brief 次级行 + 耗时徽标（run 的 prompt 摘要与时长，信息密度）。
+    expect(rows[0]!.querySelector('.wb-ov-activity-brief')?.textContent)
+      .toBe('把三个季度的销售数据整理成对比表')
+    expect(rows[0]!.querySelector('.wb-ov-activity-duration')?.textContent).toBe('8 分钟')
     expect(rows[1]!.textContent).toContain('移动到进行中')
     // 计划行的引用跳「计划」看板。
     expect(rows[1]!.querySelector('.wb-ov-activity-ref')?.textContent).toBe('计划项')
@@ -1088,29 +1096,29 @@ describe('概览页动态（网关派生 + 游标）', () => {
 
   it('「显示更早」按 (at, id) 游标续拉下一页', async () => {
     const page1 = {
-      items: Array.from({ length: 8 }, (_, index) => ({
+      items: Array.from({ length: 12 }, (_, index) => ({
         ...doneRow,
-        id: `run:r${index}:end`,
+        id: `run:r${index}`,
         at: `2026-10-30T1${index}:00:00.000Z`,
       })),
       nextBeforeAt: '2026-10-30T10:00:00.000Z',
-      nextBeforeId: 'run:r7:end',
+      nextBeforeId: 'run:r11',
     }
-    const page2 = { items: [{ ...doneRow, id: 'run:old:end', at: '2026-10-29T10:00:00.000Z' }], nextBeforeAt: null, nextBeforeId: null }
+    const page2 = { items: [{ ...doneRow, id: 'run:old', at: '2026-10-29T10:00:00.000Z' }], nextBeforeAt: null, nextBeforeId: null }
     const { nxcore } = installNxcore({
       activities: () => Promise.resolve(nxcore.workspace.activities.mock.calls.length === 1 ? page1 : page2),
     })
     await renderPage(pageProps({ sessions: [sessionFixture({ id: 's-1' })] }))
 
-    // 首屏 8 条正好等于折叠上限，但服务端还有更早的 → 仍给入口。
-    expect(container.querySelectorAll('.wb-ov-activity')).toHaveLength(8)
+    // 首屏 12 条正好等于折叠上限，但服务端还有更早的 → 仍给入口。
+    expect(container.querySelectorAll('.wb-ov-activity')).toHaveLength(12)
     await click(container.querySelector('.wb-ov-more'))
     expect(nxcore.workspace.activities).toHaveBeenLastCalledWith('ws-1', {
       limit: 20,
       beforeAt: page1.nextBeforeAt,
       beforeId: page1.nextBeforeId,
     })
-    expect(container.querySelectorAll('.wb-ov-activity')).toHaveLength(9)
+    expect(container.querySelectorAll('.wb-ov-activity')).toHaveLength(13)
   })
 
   it('网关不可用时回落本地派生，不显示空态', async () => {

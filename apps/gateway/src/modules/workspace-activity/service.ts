@@ -106,6 +106,25 @@ function workSegment(sessionId: string, text: string): WorkspaceActivitySegment[
   return [{ text }, { sessionId }];
 }
 
+/** brief 的长度上限：单行省略展示，超长截断（渲染层还有 CSS line-clamp 兜底）。 */
+const BRIEF_MAX_CHARS = 120;
+
+/** prompt 里最长的一行视为指令正文（跳过短行噪声如“继续”）。 */
+function briefOfPrompt(prompt: string | null): string | null {
+  if (!prompt) return null;
+  const firstLine = prompt.split(/\r?\n/, 1)[0]!.trim();
+  if (!firstLine) return null;
+  // 只截尾不加省略号：文案层的截断记号由渲染层统一负责（title 属性可看全文）。
+  return firstLine.length > BRIEF_MAX_CHARS ? `${firstLine.slice(0, BRIEF_MAX_CHARS)}…` : firstLine;
+}
+
+/** 结束 - 开始（秒，向上取整避免 0 秒）；缺任一时刻或倒挂返回 null。 */
+function durationSeconds(startedAt: Date | null, completedAt: Date | null): number | null {
+  if (!startedAt || !completedAt) return null;
+  const seconds = Math.ceil((completedAt.getTime() - startedAt.getTime()) / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
 export class WorkspaceActivityService {
   private readonly db: GatewayDatabase;
 
@@ -154,18 +173,23 @@ export class WorkspaceActivityService {
   }
 
   /**
-   * run 的开始 / 结束各算一条事件。
+   * 一次 run = 一行动态（结束时刻优先，没有结束时刻用开始时刻）。
    *
-   * 这正是「动态能表达历史」的关键：会话只存当前状态，`agent_runs` 才有开始/结束时刻，
-   * 所以同一次工作可以出现「开始了工作」和「结束了工作」两行（原型 task/done 的语义）。
+   * 曾经是「开始 / 结束各一行」：时间轴上一次工作占两个位置，而每行只有一句裸动词，
+   * 信息密度被稀释（用户反馈「动态栏太难用」的主因之一）。现在合并为单行，
+   * 开始/结束语义由 kind（work-run / work-done）与文案承载，并把同一行里读得出来的
+   * 事实放进 detail：prompt 摘要（用户让它干什么）、耗时、失败原因。
+   *
+   * id 保留 `run:<runId>`（不再有 :start/:end 后缀，一次 run 只有一个 id）。
    */
   private runActivities(workspaceId: string, before: Date | null, scanLimit: number): Candidate[] {
     const filters = [eq(agentSessions.workspaceId, workspaceId)];
     if (before) {
       // 用 <= 而不是 <：同一毫秒里可能有好几条，精确的「严格更早」由游标在内存里做。
+      // 结束时刻优先：合并行挂在「这件事定局」的时刻，游标翻页语义与旧行为一致。
       filters.push(or(
-        lte(agentRuns.startedAt, before),
         lte(agentRuns.completedAt, before),
+        lte(agentRuns.startedAt, before),
       )!);
     }
 
@@ -176,6 +200,9 @@ export class WorkspaceActivityService {
         startedAt: agentRuns.startedAt,
         completedAt: agentRuns.completedAt,
         sessionId: agentRuns.sessionId,
+        prompt: agentRuns.prompt,
+        error: agentRuns.error,
+        createdAt: agentRuns.createdAt,
       })
       .from(agentRuns)
       .innerJoin(agentSessions, eq(agentRuns.sessionId, agentSessions.id))
@@ -186,33 +213,29 @@ export class WorkspaceActivityService {
 
     const out: Candidate[] = [];
     for (const row of rows) {
-      const startedAt = toIso(row.startedAt);
-      if (startedAt) {
-        out.push({
-          activity: {
-            id: `run:${row.id}:start`,
-            kind: "work-run",
-            actor: "agent",
-            at: startedAt,
-            segments: workSegment(row.sessionId, "开始了工作 "),
-            source: { table: "agent_runs", rowId: row.id },
-          },
-        });
-      }
       const completedAt = toIso(row.completedAt);
-      if (completedAt) {
-        const failed = row.status === "failed";
-        out.push({
-          activity: {
-            id: `run:${row.id}:end`,
-            kind: "work-done",
-            actor: "agent",
-            at: completedAt,
-            segments: workSegment(row.sessionId, failed ? "执行失败 " : "结束了工作 "),
-            source: { table: "agent_runs", rowId: row.id },
+      const startedAt = toIso(row.startedAt);
+      const failed = row.status === "failed";
+      const brief = briefOfPrompt(row.prompt);
+      const durationSec = durationSeconds(row.startedAt, row.completedAt);
+      out.push({
+        activity: {
+          id: `run:${row.id}`,
+          kind: completedAt ? "work-done" : "work-run",
+          actor: "agent",
+          at: completedAt ?? startedAt ?? row.createdAt.toISOString(),
+          segments: workSegment(
+            row.sessionId,
+            !completedAt ? "开始了工作 " : failed ? "执行失败 " : "结束了工作 ",
+          ),
+          detail: {
+            ...(brief ? { brief } : {}),
+            ...(durationSec !== null ? { durationSec } : {}),
+            ...(failed && row.error ? { error: row.error } : {}),
           },
-        });
-      }
+          source: { table: "agent_runs", rowId: row.id },
+        },
+      });
     }
     return out;
   }

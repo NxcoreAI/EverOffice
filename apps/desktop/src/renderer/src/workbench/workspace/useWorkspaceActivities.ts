@@ -47,6 +47,7 @@ function toActivityItem(dto: WorkspaceActivity): ActivityItem {
     kind: dto.kind,
     at: dto.at,
     segments: dto.segments.map(toSegment),
+    detail: dto.detail,
   }
 }
 

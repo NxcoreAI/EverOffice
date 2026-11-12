@@ -21,7 +21,7 @@ import type { AgentSession } from '@nxcore/agent-contract'
 import type { OfficeFile } from '@/office-proto/data'
 
 import { useWorkbenchStore } from '../state/store'
-import { relativeTimeLabel, sessionDisplayTitle, shortDateLabel, workspaceDisplayName } from '../types'
+import { relativeTimeLabel, durationLabel, sessionDisplayTitle, shortDateLabel, workspaceDisplayName } from '../types'
 import { cn } from '../ui/cn'
 import { Badge, Button, EmptyState, IconButton, Spinner } from '../ui/primitives'
 import {
@@ -497,9 +497,22 @@ export function OverviewPage({
                   <span className={cn('wb-ov-activity-icon', `is-${ACTIVITY_TONE[item.kind]}`)}>
                     <ActivityGlyph kind={item.kind} />
                   </span>
-                  <span className="wb-ov-activity-label">
-                    {item.segments.map((segment, index) => renderSegment(segment, `${item.id}-${index}`))}
-                  </span>
+                  <div className="wb-ov-activity-body">
+                    <span className="wb-ov-activity-label">
+                      {item.segments.map((segment, index) => renderSegment(segment, `${item.id}-${index}`))}
+                    </span>
+                    {item.detail?.brief ? (
+                      <p className="wb-ov-activity-brief" title={item.detail.brief}>{item.detail.brief}</p>
+                    ) : null}
+                    {item.detail?.error ? (
+                      <p className="wb-ov-activity-error" title={item.detail.error}>{item.detail.error}</p>
+                    ) : null}
+                  </div>
+                  {item.detail?.durationSec !== undefined ? (
+                    <span className="wb-ov-activity-duration" title={absoluteTimeTitle(item.at)}>
+                      {durationLabel(item.detail.durationSec, t)}
+                    </span>
+                  ) : null}
                   {relativeTimeLabel(item.at, t) ? (
                     <time className="wb-ov-activity-time" dateTime={item.at} title={absoluteTimeTitle(item.at)}>
                       {relativeTimeLabel(item.at, t)}

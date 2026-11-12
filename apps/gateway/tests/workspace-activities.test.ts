@@ -147,7 +147,7 @@ afterEach(() => {
 });
 
 describe("workspace activities · 合并与语义", () => {
-  it("run 的开始与结束各一条事件，文件按产物/材料分流，计划事件带任务引用", () => {
+  it("一次 run 合并为一行（结束时刻优先），带 brief/时长；文件按产物/材料分流，计划事件带任务引用", () => {
     seedSession("s-1", "ws-1", at(0), "running");
     seedRun({ id: "run-1", sessionId: "s-1", startedAt: at(1), completedAt: at(9) });
     seedFile({ id: "f-gen", workspaceId: "ws-1", updatedAt: at(3), sourceKind: "agent-generated" });
@@ -158,18 +158,19 @@ describe("workspace activities · 合并与语义", () => {
 
     const page = service.list("ws-1");
     const ids = page.items.map((item) => item.id);
-    // 计划事件时间最晚（at(10)）→ 排第一；随后 run 结束 → 文件 → run 开始。
+    // 计划事件时间最晚（at(10)）→ 排第一；随后 run（挂在结束时刻 at(9)）→ 文件。
+    // run 不再有 :start/:end 两个 id：一次 run 一行，信息进 detail 而不是多占一行。
     expect(ids[0]).toMatch(/^plan:/);
-    expect(ids[1]).toBe("run:run-1:end");
+    expect(ids[1]).toBe("run:run-1");
     expect(ids[2]).toBe("file:f-gen");
     expect(ids[3]).toBe("file:f-conn");
-    expect(ids[4]).toBe("run:run-1:start");
+    expect(ids.filter((id) => id.startsWith("run:"))).toHaveLength(1);
 
     const byId = new Map(page.items.map((item) => [item.id, item]));
-    expect(byId.get("run:run-1:start")?.kind).toBe("work-run");
-    expect(byId.get("run:run-1:start")?.segments).toEqual([{ text: "开始了工作 " }, { sessionId: "s-1" }]);
-    expect(byId.get("run:run-1:end")?.kind).toBe("work-done");
-    expect(byId.get("run:run-1:end")?.at).toBe(at(9).toISOString());
+    expect(byId.get("run:run-1")?.kind).toBe("work-done");
+    expect(byId.get("run:run-1")?.at).toBe(at(9).toISOString());
+    // detail：prompt 摘要（用户让它干什么）+ 耗时（信息密度，见 §5.4 的 brief 设计）。
+    expect(byId.get("run:run-1")?.detail).toEqual({ brief: "干活", durationSec: 480 });
     expect(byId.get("file:f-gen")?.kind).toBe("output");
     expect(byId.get("file:f-gen")?.segments).toEqual([{ text: "生成了 " }, { fileId: "f-gen" }]);
     expect(byId.get("file:f-conn")?.kind).toBe("material");
@@ -185,11 +186,22 @@ describe("workspace activities · 合并与语义", () => {
     }
   });
 
-  it("失败的 run 出「执行失败」，仍是 work-done 视觉分组", () => {
+  it("运行中的 run 也出一行（work-run，无时长），结束后 kind 变 work-done", () => {
+    seedSession("s-1", "ws-1", at(0), "running");
+    seedRun({ id: "run-live", sessionId: "s-1", startedAt: at(1), status: "running" });
+
+    const live = service.list("ws-1").items.find((item) => item.id === "run:run-live");
+    expect(live?.kind).toBe("work-run");
+    expect(live?.segments).toEqual([{ text: "开始了工作 " }, { sessionId: "s-1" }]);
+    // 运行中：有 brief（prompt 摘要）但没有 durationSec（还没结束）。
+    expect(live?.detail).toEqual({ brief: "干活" });
+  });
+
+  it("失败的 run 出「执行失败」并带 error，仍是 work-done 视觉分组", () => {
     seedSession("s-1", "ws-1", at(0), "running");
     seedRun({ id: "run-bad", sessionId: "s-1", startedAt: at(1), completedAt: at(2), status: "failed" });
 
-    const end = service.list("ws-1").items.find((item) => item.id === "run:run-bad:end");
+    const end = service.list("ws-1").items.find((item) => item.id === "run:run-bad");
     expect(end?.kind).toBe("work-done");
     expect(end?.segments).toEqual([{ text: "执行失败 " }, { sessionId: "s-1" }]);
   });
