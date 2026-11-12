@@ -12,7 +12,7 @@
  * 写法与 tests/workbench-tabs.test.ts / office-proto-*.test.tsx 一致：
  * happy-dom + 手动 act/createRoot，不引入 testing-library。
  */
-import type { AgentWorkspace } from '@nxcore/agent-contract'
+import type { AgentWorkspace, RoomDocument } from '@nxcore/agent-contract'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -520,7 +520,7 @@ describe('产物页', () => {
     expect(opened.name).toBe(AGENT_OUTPUT.file.name)
   })
 
-  it('没有产物时：页头「去资料」只出现一次，空态只留「新建工作」', async () => {
+  it('没有产物时：页头不再有「去资料」按钮，空态只留「新建工作」', async () => {
     const props = pageProps()
     installFilesApi([MANUAL], 1)
     await act(async () => { root.render(<OutputsPage {...props} />) })
@@ -528,12 +528,10 @@ describe('产物页', () => {
 
     expect(container.textContent).toContain('还没有产物')
     expect(container.querySelector('.ui-empty-desc')).toBeNull()
-    // 空态不再重复页头的「去资料」
+    // 页头「去资料」按钮已按需求移除
     const libraryButtons = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .filter((button) => (button.textContent ?? '').trim().includes('去资料'))
-    expect(libraryButtons).toHaveLength(1)
-    await act(async () => { libraryButtons[0].click() })
-    expect(props.onOpenPage).toHaveBeenCalledWith('library')
+    expect(libraryButtons).toHaveLength(0)
 
     const newWorkButton = buttonByText('新建工作')
     await act(async () => { newWorkButton!.click() })
@@ -601,3 +599,126 @@ describe('资料目录树 / 搜索纯函数', () => {
     expect(searchLibrary(OPENABLE_KINDS, '   ')).toEqual({ folders: [], files: [] })
   })
 })
+
+describe('云文档（documents 表）混入资料 / 产物', () => {
+  function cloudDoc(over: Partial<RoomDocument> & { id: string }): RoomDocument {
+    return {
+      roomId: null,
+      title: `${over.id} 的文档`,
+      contentJson: { type: 'doc', content: [] },
+      contentSchemaVersion: 1,
+      version: 2,
+      status: 'active',
+      origin: 'native',
+      activeTransactionId: null,
+      createdAt: '2026-11-10T08:00:00.000Z',
+      updatedAt: '2026-11-10T09:00:00.000Z',
+      workspaceId: 'ws-1',
+      ...over,
+    }
+  }
+
+  /** 真实 documents 桥最小 mock：list 返回 seed，事件订阅可空。 */
+  function installDocumentsApi(documents: RoomDocument[]) {
+    const bridge = {
+      list: vi.fn().mockResolvedValue(documents),
+      subscribe: vi.fn().mockResolvedValue(undefined),
+      unsubscribe: vi.fn().mockResolvedValue(undefined),
+      onEvent: vi.fn(() => () => undefined),
+      onReady: vi.fn(() => () => undefined),
+    }
+    const nxcore = (window as unknown as { nxcore?: { documents?: unknown } }).nxcore ?? {}
+    ;(window as unknown as { nxcore: unknown }).nxcore = { ...nxcore, documents: bridge }
+    return bridge
+  }
+
+  it('资料页：云文档平铺在根目录文件行之间（无「云文档」文件夹），点开走 onOpenFile（伪文件）', async () => {
+    const doc = cloudDoc({ id: 'doc-1', title: 'Agent 写的云文档', updatedAt: '2026-11-10T09:00:00.000Z' })
+    const props = pageProps()
+    installFilesApi(OPENABLE_KINDS)
+    installDocumentsApi([doc])
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+
+    // 根目录：云文档行与普通文件/文件夹瓦片混排，不出现「云文档」文件夹瓦片
+    const tileNames = allText('.wb-lib-tile-name')
+    expect(tileNames).toContain('Agent 写的云文档')
+    const folderTiles = tileNames.filter((name) => name === '云文档')
+    expect(folderTiles).toHaveLength(0)
+    // 仍在根目录（面包屑只有「资料」）
+    expect(container.querySelector('.wb-lib-crumbs')?.textContent).not.toContain('云文档 /')
+
+    // 点开云文档行 → onOpenFile 收到 cloud-doc 伪文件（编辑页按 id 路由 CloudDocumentEditor）
+    // 瓦片 textContent 是「标题 + 更新时间标签」，按包含匹配标题。
+    const tile = [...container.querySelectorAll<HTMLButtonElement>('.wb-lib-tile')]
+      .find((el) => (el.textContent ?? '').includes('Agent 写的云文档'))
+    await act(async () => { tile!.click() })
+    await flush()
+    expect(props.onOpenFile).toHaveBeenCalledTimes(1)
+    const opened = (props.onOpenFile as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(opened.id).toBe('cloud-doc:doc-1')
+    expect(opened.cloudDocument).toMatchObject({ documentId: 'doc-1', title: 'Agent 写的云文档' })
+  })
+
+  it('资料页搜索：云文档按标题命中，与文件结果合并', async () => {
+    const doc = cloudDoc({ id: 'doc-1', title: '验收报告云文档' })
+    const props = pageProps()
+    installFilesApi(OPENABLE_KINDS)
+    installDocumentsApi([doc])
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+
+    await typeSearch('验收报告')
+    await flush()
+    const names = allText('.wb-lib-name')
+    expect(names).toContain('验收报告云文档')
+  })
+
+  it('产物页：云文档与文件产物按更新时间倒序混排，筛选 chip 有「云文档」', async () => {
+    const doc = cloudDoc({
+      id: 'doc-9',
+      title: '学生体质健康报告',
+      updatedAt: '2026-10-31T00:00:00.000Z',
+    })
+    const props = pageProps({ tab: { id: 'ws:ws-1', kind: 'workspace', workspaceId: 'ws-1', view: { kind: 'page', page: 'outputs' } } })
+    installFilesApi(OPENABLE_KINDS)
+    installDocumentsApi([doc])
+    await act(async () => { root.render(<OutputsPage {...props} />) })
+    await flush()
+
+    // 「全部产物」chip 计数含云文档（2 文件 + 1 云文档）
+    const allChip = [...container.querySelectorAll<HTMLButtonElement>('.wb-file-chip')]
+      .find((chip) => (chip.textContent ?? '').includes('全部产物'))
+    expect(allChip!.textContent).toContain('3')
+
+    // 混排按更新时间倒序：云文档（10-31）最前
+    expect(allText('.wb-lib-tile-name')).toEqual([
+      '学生体质健康报告',
+      AGENT_OUTPUT.file.name,
+      ARTIFACT_OUTPUT.file.name,
+    ])
+
+    // 「云文档」chip 只看云文档
+    const cloudChip = [...container.querySelectorAll<HTMLButtonElement>('.wb-file-chip')]
+      .find((chip) => (chip.textContent ?? '').includes('云文档'))
+    await act(async () => { cloudChip!.click() })
+    await flush()
+    expect(allText('.wb-lib-tile-name')).toEqual(['学生体质健康报告'])
+
+    // 点开 → 伪文件
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.wb-lib-tile')!.click()
+    })
+    const opened = (props.onOpenFile as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(opened.cloudDocument).toMatchObject({ documentId: 'doc-9' })
+  })
+
+  it('无 documents 桥时资料页退化为纯文件视图（不报错、不显示云文档文件夹）', async () => {
+    const props = pageProps()
+    installFilesApi(OPENABLE_KINDS)
+    await act(async () => { root.render(<LibraryPage {...props} />) })
+    await flush()
+    expect(container.textContent).not.toContain('云文档')
+  })
+})
+

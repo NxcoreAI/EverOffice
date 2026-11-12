@@ -72,6 +72,7 @@ import {
   createDocumentOverviewRuntime,
   createConversationSuggestionRuntime,
   createIndexBackfillRuntime,
+  createJournalRuntimeResolver,
   createMemoryRuntimeResolver,
   createSessionTitleRuntime,
   createVersionSummaryRuntime,
@@ -115,10 +116,12 @@ import { invokeRuntime } from "../modules/agent/invoke.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import {
   composeJournal,
+  createJournalSubmitTool,
   JournalScheduler,
   JournalService,
   journalRoutes,
   MEMORY_LIST_LIMIT as JOURNAL_MEMORY_LIST_LIMIT,
+  runJournalSubmit,
 } from "../modules/journal/index.js";
 import {
   createPlanPiTools,
@@ -1151,6 +1154,31 @@ export async function createServer(config: GatewayConfig) {
   }
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
+  // 云文档 md 备份（agent-file-backup）：document_write_commit 成功后把规范化
+  // markdown 落一份 .md 进文件库（sourceKind=agent-generated，同一工作空间）。
+  // 产物/资料页立即可见；幂等（内容指纹去重）；失败只记日志不影响云文档。
+  documentService.agentDocumentMarkdownBackupExporter = ({ documentId, title, markdown, workspaceId }) => {
+    const safeTitle = (title.trim() || "未命名云文档").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+    void (async () => {
+      try {
+        await filesService.importFile({
+          sourceKind: "agent-generated",
+          // 以 documentId 为 sourceKey：同一云文档重复提交产生新版本（内容变了），
+          // 不同云文档互不干扰。
+          sourceKey: `cloud-doc:${documentId}`,
+          originalName: `${safeTitle}.md`,
+          buffer: Buffer.from(markdown, "utf8"),
+          mime: "text/markdown",
+          workspaceId,
+        });
+      } catch (error) {
+        app.log.warn(
+          { err: error instanceof Error ? error.message : String(error), documentId },
+          "cloud document markdown backup failed",
+        );
+      }
+    })();
+  };
   // 回填工作区文件/图片目录：Agent 工具装配早于 filesService 创建（晚绑定）。
   // listCatalog 第 3 参是 options 对象：把目录接口的 (patterns, workspaceId) 适配过去。
   const workspaceFiles = createWorkspaceFileCatalog({
@@ -1588,14 +1616,28 @@ export async function createServer(config: GatewayConfig) {
   // 每日洞察（主页「今日洞察」卡）：当天新写的记忆条目 → 一段可读的日记。
   // 供料只接记忆（见 docs/daily-journal-plan.zh-CN.md §3 的取舍）；
   // 时区取本机时区（网关由桌面端 spawn，同机），显式覆盖走 NXCORE_JOURNAL_TIMEZONE。
+  // 写稿走「提交型」通道：模型调 submit_daily_journal 工具回传结构化参数
+  // （schema 带当天证据 id 的 enum，强制结构化输出），失败走模板兜底——
+  // 见 modules/journal/agent.ts。
   const journalTimezone = process.env.NXCORE_JOURNAL_TIMEZONE?.trim()
     || Intl.DateTimeFormat().resolvedOptions().timeZone
     || "UTC";
+  const journalSubmitTool = createJournalSubmitTool();
+  const resolveJournalRuntime = createJournalRuntimeResolver(config, journalSubmitTool.tool);
   const journalService = new JournalService({
     db,
     list: () => memoryService.list({ limit: JOURNAL_MEMORY_LIST_LIMIT }),
     compose: (input) => composeJournal(input, {
-      generate: generateMemoryText,
+      submit: async (composeInput) => {
+        // 档位未就绪 → runJournalSubmit 抛 MemoryModelUnavailableError，
+        // composeJournal 按不可用处理（模板兜底、不计重试）。
+        const runtime = resolveJournalRuntime();
+        if (!runtime) throw new MemoryModelUnavailableError();
+        const outcome = await runJournalSubmit(runtime, journalSubmitTool, composeInput, {
+          logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+        });
+        return outcome ? { composition: outcome.composition, model: "journal-submit" } : null;
+      },
       isModelUnavailable: isMemoryModelUnavailable,
       logger: (level, event, fields) => app.log[level](fields ?? {}, event),
     }),

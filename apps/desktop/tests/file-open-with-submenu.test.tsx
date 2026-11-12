@@ -150,6 +150,6 @@ describe('FileItemMenu / 用其他应用打开', () => {
     await openParentMenu()
 
     expect(menuItems().some((element) => (element.textContent ?? '').includes('用其他应用打开'))).toBe(false)
-    expect(menuItems().some((element) => (element.textContent ?? '').includes('在气泡窗打开'))).toBe(true)
+    expect(menuItems().some((element) => (element.textContent ?? '').includes('在侧栏打开'))).toBe(true)
   })
 })

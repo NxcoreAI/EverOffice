@@ -173,6 +173,17 @@ export function shortDateLabel(iso: string | null | undefined): string {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
+/** run 耗时（概览动态行尾的小徽标）：45s / 3 分钟 / 2.5 小时，向上取整。 */
+export function durationLabel(
+  seconds: number | null | undefined,
+  t: Translate = translateZh,
+): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return ''
+  if (seconds < 60) return t('workbench:time.durationSeconds', { count: Math.ceil(seconds) })
+  if (seconds < 3600) return t('workbench:time.durationMinutes', { count: Math.ceil(seconds / 60) })
+  return t('workbench:time.durationHours', { count: Math.round((seconds / 3600) * 10) / 10 })
+}
+
 /* ───────────────── 标签持久化 ───────────────── */
 
 export interface PersistedWorkspaceTab {

@@ -28,6 +28,20 @@ const ADVICE_LIMIT = 48;
 /** prompt 里证据正文的总预算。 */
 const PROMPT_BODY_LIMIT = 2400;
 
+/** 提交工具名（schema 在 agent.ts 的 buildSubmitToolSchema，与这组上限镜像）。 */
+export const JOURNAL_SUBMIT_TOOL_NAME = "submit_daily_journal";
+
+export {
+  HEADLINE_LIMIT,
+  SUMMARY_LIMIT,
+  BULLET_TEXT_LIMIT,
+  MAX_BULLETS,
+  MAX_ACTIONS,
+  ACTION_LABEL_LIMIT,
+  MAX_ADVICE,
+  ADVICE_LIMIT,
+};
+
 export interface ComposeJournalResult {
   composition: JournalComposition;
   /** 产出该稿的模型名；null = 模板兜底。 */
@@ -35,8 +49,12 @@ export interface ComposeJournalResult {
 }
 
 export interface ComposeJournalOptions {
-  /** 记忆提炼同款模型调用（`generateMemoryText`）。 */
-  generate: (prompt: string) => Promise<string>;
+  /**
+   * 提交型提炼（agent.ts 的 runJournalSubmit）：模型经工具参数回传结构化成稿。
+   * null = 没有拿到可用提交（没调工具/校验不过），走模板兜底；
+   * 抛错由这里分类：档位未就绪 → 模板（不计入重试），其余 → 模板 + error 日志。
+   */
+  submit: (input: { date: string; signals: readonly JournalSignal[] }) => Promise<ComposeJournalResult | null>;
   /** 档位未就绪时抛它（不计入重试、直接走模板兜底）。 */
   isModelUnavailable?: (error: unknown) => boolean;
   /** 模型名（写进条目，便于排查"这版是谁写的"）。 */
@@ -75,20 +93,19 @@ export function buildJournalPrompt(date: string, signals: readonly JournalSignal
 
 请基于这些条目写一段今日日记，只用下面给出的内容，不要补充任何未出现的事实、不要推测动机。
 
+产出方式（重要）：不要在回复正文里写日记，也不要输出 JSON 文本——直接调用工具 ${JOURNAL_SUBMIT_TOOL_NAME} 提交，参数即成稿。sourceIds / targetId 只能填下面出现过的 id（形如 memory:xxxx）。
+
 要求：
 1. headline：不超过 ${HEADLINE_LIMIT} 个字，概括今天记下的重点；不要写「今日总结」「值得记录」这类空话。
 2. summary：2–4 句，助理口吻（「你今天…」「我记下了…」），总结今天工作状态与内容的变化，
    点名具体内容；不要评价、不要夸奖。
 3. bullets：1–${MAX_BULLETS} 条，每条不超过 ${BULLET_TEXT_LIMIT} 个字，必须能在下面条目里找到依据，
-   并在 sourceIds 里回填对应条目的 id（形如 memory:xxxx）。
+   并在 sourceIds 里回填对应条目的 id。
 4. advice：0–${MAX_ADVICE} 条面向下一步的可执行建议，每条不超过 ${ADVICE_LIMIT} 个字。
    建议必须从当天条目自然得出（例如待办没闭环就提醒收尾、偏好刚记下就建议下次起草时用上），
    不要空泛的「继续保持」、不要客套；没有值得建议的就返回空数组。
 5. actions：0–${MAX_ACTIONS} 条，kind 只能是 "ask-agent"，targetId 必须是下面出现过的 id。
 6. 如果下面的条目彼此无关，宁可只说最重的那 1–2 条，不要硬拗成一段故事。
-
-只输出 JSON，不要代码块围栏、不要解释：
-{"headline":"…","summary":"…","bullets":[{"text":"…","sourceIds":["memory:xxx"]}],"advice":["…"],"actions":[{"label":"…","kind":"ask-agent","targetId":"memory:xxx"}]}
 
 今天的记忆条目（共 ${signals.length} 条）：
 ${lines.join("\n")}`;
@@ -215,7 +232,8 @@ export function templateComposition(
 }
 
 /**
- * 提炼入口：先试模型，失败/不可用/解析不出一律回退模板。
+ * 提炼入口：先走提交型通道（工具参数 = 强制结构化输出），失败/不可用/
+ * 没提交一律回退模板。
  *
  * 返回的 `model` 是"这稿到底谁写的"的唯一依据，不允许调用方猜。
  */
@@ -232,17 +250,9 @@ export async function composeJournal(
   if (input.signals.length === 0) return fallback();
 
   try {
-    const raw = await options.generate(buildJournalPrompt(input.date, input.signals));
-    const composition = parseJournalComposition(raw, input.signals);
-    if (!composition) {
-      logger("warn", "journal.compose.unparsable", {
-        date: input.date,
-        signals: input.signals.length,
-        chars: raw.length,
-      });
-      return fallback();
-    }
-    return { composition, model: options.modelName ?? "memory-slot" };
+    const submitted = await options.submit(input);
+    if (!submitted) return fallback();
+    return submitted;
   } catch (error) {
     const unavailable = options.isModelUnavailable?.(error) ?? false;
     logger(unavailable ? "warn" : "error", "journal.compose.failed", {

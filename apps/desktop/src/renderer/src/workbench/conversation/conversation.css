@@ -284,7 +284,7 @@
    `.wb-conversation .agent-composer-shell { padding: 12px var(--wb-gutter) 18px }`
    与旧的 `.wb-hero-input > .agent-composer-shell` 特异性相同（都是 2 个类）且位置
    更靠后，会把这里的 padding: 0 覆盖掉——hero 里输入框卡片因此被整体内缩一个
-   gutter，左边缘自然和上方「N 条注释」徽章对不齐。 */
+   gutter，左边缘自然和上方「N 条评论」徽章对不齐。 */
 .wb-conversation[data-state='empty'] .wb-hero-input > .agent-composer-shell {
   position: static;
   width: 100%;
@@ -1056,7 +1056,7 @@
 /* 新建工作（还没开始对话）的 hero 态：徽章在 .wb-hero-above-input 里，按流式
    排在输入框正上方。上面那套 absolute 只适用于会话态——hero 的
    --agent-composer-height 写在 .wb-hero-input 上（不是徽章的祖先），拿不到就
-   退化成 150px，正好把「1 条注释」压在居中的输入框上（遮挡对话框）。 */
+   退化成 150px，正好把「1 条评论」压在居中的输入框上（遮挡对话框）。 */
 .wb-conversation[data-state='empty'] .wb-note-chip {
   position: relative;
   bottom: auto;
@@ -1302,7 +1302,7 @@
   .wb-conversation .agent-chat-quick-prompts button:hover { transform: none; }
 }
 
-/* ── 待发送注释小徽章（Office「AI 修改」攒批注）──────────────────────────
+/* ── 待发送评论小徽章（Office「AI 修改」攒批注）──────────────────────────
  * 输入框上方一行的小 pill（宽度由内容决定，不占整行）；hover/点击展开
  * 卡片列表浮层（改写/删除/全部发送）。默认形态必须足够小——它常驻在
  * 输入框上方，占整行会把 composer 顶得忽高忽低。
@@ -1371,7 +1371,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* 最多同时露出 4 张卡片：单卡 ≈ 摘录行(10.5×1.45≈15) + 注释两行(11.5×1.5×2≈35)
+  /* 最多同时露出 4 张卡片：单卡 ≈ 摘录行(10.5×1.45≈15) + 评论两行(11.5×1.5×2≈35)
      + 卡内行距 2 + 上下内边距 10 ≈ 62px，外加卡片间 3×2px 间隙；更多滚动。 */
   max-height: calc(62px * 4 + 6px);
   overflow-y: auto;
@@ -1395,7 +1395,7 @@
   gap: 2px;
 }
 
-/* 原文摘录：灰色小字（截断到一行），先于注释出现 */
+/* 原文摘录：灰色小字（截断到一行），先于评论出现 */
 .wb-note-chip-excerpt {
   color: var(--ui-text-3);
   font-size: var(--ui-text-2xs);
@@ -1405,7 +1405,7 @@
   text-overflow: ellipsis;
 }
 
-/* 我的注释：正文色；限两行封顶（长注释截断），保证卡片行高稳定——
+/* 我的评论：正文色；限两行封顶（长评论截断），保证卡片行高稳定——
    列表的 4 行可视上限（max-height）依赖它。 */
 .wb-note-chip-note {
   color: var(--ui-text);

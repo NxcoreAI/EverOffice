@@ -78,10 +78,28 @@ export interface ActivityItem {
   segments: ActivitySegment[]
   /** ISO 时间；解析失败时排序沉底。相对时间由页面单独渲染。 */
   at: string
+  /**
+   * 次级信息（信息密度）：brief / durationSec / error。
+   * 服务端派生时来自网关（run 的 prompt 摘要与耗时）；本地回落派生时尽力而为。
+   * 缺失时行渲染退回单行文案，与旧版完全一致。
+   */
+  detail?: ActivityDetail
 }
 
-/** 概览动态默认最多 8 条，点「显示更早」最多展开到 20 条。 */
-export const ACTIVITY_COLLAPSED_LIMIT = 8
+/** 与契约 `WorkspaceActivityDetail` 同构；brief 是展示快照，不跟随改名。 */
+export interface ActivityDetail {
+  /** 结果摘要（AI 做完事的总结首行）：单行省略展示，title 给全文。 */
+  brief?: string
+  /** run 耗时（秒）；渲染层格式化为「3 分钟」等。 */
+  durationSec?: number
+  /** 失败原因（仅 failed 的 run）。 */
+  error?: string
+  /** 同一工作累计执行次数；>1 时出「N 次」徽标。 */
+  runCount?: number
+}
+
+/** 概览动态默认最多 12 条（信息密度优化后行高更紧凑，一屏可承载更多；旧值 8）。 */
+export const ACTIVITY_COLLAPSED_LIMIT = 12
 export const ACTIVITY_EXPANDED_LIMIT = 20
 
 /** 概览只需要会话的这几个字段，方便单测构造最小 fixture。 */
@@ -120,6 +138,7 @@ function sessionTimeOf(session: SessionActivityInput): string {
 
 function sessionActivityOf(session: SessionActivityInput, t: Translate): ActivityItem {
   // 引用段只放 id：真正的名字由页面按 workId 实时解析，工作改名后历史文案自动跟随。
+  // 本地回落派生拿不到 run 数据，没有 brief/runCount（网关派生时 brief 来自 AI 回复总结）。
   return {
     id: `session:${session.id}`,
     kind: sessionKindOf(session),

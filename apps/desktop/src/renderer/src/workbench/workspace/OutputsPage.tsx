@@ -1,8 +1,10 @@
-import { FolderOpen, PackageOpen, RefreshCw } from 'lucide-react'
+import { PackageOpen, RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import type { RoomDocument } from '@nxcore/agent-contract'
+
 import { useLocale } from '@/i18n/LocaleContext'
-import type { RealOfficeFile } from '@/office-proto/data'
+import { cloudDocumentToOfficeFile, cloudDocumentTitle, type RealOfficeFile } from '@/office-proto/data'
 
 import { Button, EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
@@ -17,28 +19,28 @@ import {
   type FileViewMode,
   type FileFilterOption,
 } from './fileBrowser'
-import { type FileItemActions } from './fileItemViews'
-import { folderLabel, folderOf, type LibraryRow } from './libraryTree'
+import { type FileItemActions, revealedToastKey } from './fileItemViews'
+import { cloudDocRows, folderLabel, folderOf, sortCloudDocsByUpdatedDesc, type LibraryRow } from './libraryTree'
 import { LibraryGrid, LibraryList } from './LibraryViews'
+import { useCloudDocuments } from './useCloudDocuments'
 import { useFileLibrary } from './useFileLibrary'
 import './library.css'
 
-type ArtifactFilter = 'all' | 'agent-generated' | 'artifact-imported'
+type ArtifactFilter = 'all' | 'agent-generated' | 'artifact-imported' | 'cloud-doc'
 
 /**
- * 产物页：本工作空间里 `sourceKind ∈ {agent-generated, artifact-imported}` 的文件。
+ * 产物页：本工作空间里 `sourceKind ∈ {agent-generated, artifact-imported}` 的文件，
+ * 加上网关 documents 表的工作空间云文档（Agent 用 document_write_* 链路生成的文稿）。
  *
- * Agent 生成的产物在入库时带其会话所属的 workspaceId，产物导入按当前空间归属；
- * 本页只拉 `workspace.id` 名下的产物，与资料同一套隔离口径。
- * 点开走注入的 onOpenFile → 气泡窗。
- *
- * 列表排序 UI 与资料页一致（以资料为主）：网格/列表复用 LibraryViews 的
- * 同一套瓦片与六列表格（表头「修改时间」带倒序指示），行序同为更新时间倒序；
- * 本页多出的只是来源筛选 chips（筛选不是排序）。
+ * 文件产物在入库时带其会话所属的 workspaceId，产物导入按当前空间归属；
+ * 云文档同样按 workspaceId 归属（documents-workspaces 索引）。两者按更新时间
+ * 倒序混排；筛选 chips 里「云文档」单独一类。
+ * 点开走注入的 onOpenFile → 气泡窗（云文档转伪文件进 CloudDocumentEditor）。
  */
 export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewWork }: WorkspacePageProps) {
   const { t } = useLocale()
   const library = useFileLibrary(workspace.id)
+  const cloudDocuments = useCloudDocuments(workspace.id)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ArtifactFilter>('all')
   const [view, setView] = useState<FileViewMode>('grid')
@@ -47,11 +49,17 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     () => sortFilesByUpdatedDesc(library.items.filter(isArtifactFile)),
     [library.items],
   )
+  // 云文档与文件产物同类：都是 Agent/用户在本空间产出的交付物。
+  const cloudArts = useMemo(
+    () => (cloudDocuments.available ? sortCloudDocsByUpdatedDesc(cloudDocuments.documents) : []),
+    [cloudDocuments.available, cloudDocuments.documents],
+  )
   const counts = useMemo(() => ({
-    all: artifacts.length,
+    all: artifacts.length + cloudArts.length,
     'agent-generated': artifacts.filter((item) => item.catalog.sourceKind === 'agent-generated').length,
     'artifact-imported': artifacts.filter((item) => item.catalog.sourceKind === 'artifact-imported').length,
-  }), [artifacts])
+    'cloud-doc': cloudArts.length,
+  }), [artifacts, cloudArts])
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -61,63 +69,72 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     })
   }, [artifacts, filter, query])
 
-  // 复用资料页的列表/网格：产物没有文件夹，全部行都是文件行，
-  // 位置列与资料同口径（relativePath 派生，根目录显示「资料」）。
-  const rows = useMemo(
-    () => filtered.map((item): LibraryRow => ({
-      kind: 'file',
+  // 云文档筛选：'all' 与 'cloud-doc' 时纳入；搜索按标题命中。
+  const filteredCloudDocs = useMemo(() => {
+    if (filter !== 'all' && filter !== 'cloud-doc') return []
+    const keyword = query.trim().toLowerCase()
+    return cloudArts.filter((document) => (
+      !keyword || cloudDocumentTitle(document).toLowerCase().includes(keyword)
+    ))
+  }, [cloudArts, filter, query])
+
+  // 复用资料页的列表/网格：文件行与云文档行混排，按更新时间倒序统一排序。
+  // 文件行位置列保持资料同口径（relativePath 派生），云文档行显示「云文档」。
+  const rows = useMemo(() => {
+    const fileRows: LibraryRow[] = filtered.map((item) => ({
+      kind: 'file' as const,
       item,
       location: folderLabel(folderOf(item), t),
-    })),
-    [filtered, t],
-  )
+    }))
+    const docRows = cloudDocRows(filteredCloudDocs, t)
+    return [...fileRows, ...docRows].sort((left, right) => {
+      const leftAt = left.kind === 'file'
+        ? Date.parse(left.item.catalog.updatedAt)
+        : left.kind === 'cloud-doc' ? Date.parse(left.document.updatedAt) : Number.NaN
+      const rightAt = right.kind === 'file'
+        ? Date.parse(right.item.catalog.updatedAt)
+        : right.kind === 'cloud-doc' ? Date.parse(right.document.updatedAt) : Number.NaN
+      if (!Number.isFinite(leftAt) || !Number.isFinite(rightAt)) return 0
+      return rightAt - leftAt
+    })
+  }, [filtered, filteredCloudDocs, t])
 
   const filters: ReadonlyArray<FileFilterOption<ArtifactFilter>> = [
     { key: 'all', label: t('workbench:workspace.outputs.filter.all'), count: counts.all },
     { key: 'agent-generated', label: t('workbench:workspace.outputs.filter.agent'), count: counts['agent-generated'] },
     { key: 'artifact-imported', label: t('workbench:workspace.outputs.filter.imported'), count: counts['artifact-imported'] },
+    { key: 'cloud-doc', label: t('workbench:workspace.outputs.filter.cloudDoc'), count: counts['cloud-doc'] },
   ]
 
-  const exportReveal = async (item: RealOfficeFile) => {
+  /** 在系统文件管理器中定位文件本体（mac=访达 / win=资源管理器）。 */
+  const revealFile = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
-    if (!api || typeof api.exportReveal !== 'function') {
+    if (!api || typeof api.reveal !== 'function') {
       onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
-      await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast(t('workbench:workspace.common.exported'))
+      await api.reveal(item.catalog.id)
+      onToast(t(revealedToastKey()))
     } catch {
-      onToast(t('workbench:workspace.common.exportFailed'))
-    }
-  }
-
-  const openOriginal = async (item: RealOfficeFile) => {
-    const api = window.nxcore?.files
-    if (!api || typeof api.openOriginal !== 'function') {
-      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
-      return
-    }
-    try {
-      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
-        workspaceId: workspace.id,
-      })
-      if (result.openedWith === 'office') {
-        onToast(t('workbench:workspace.common.openedInOffice', { name: item.file.name }))
-      } else {
-        onToast(t('workbench:workspace.common.openedDefaultApp'))
-      }
-    } catch {
-      onToast(t('workbench:workspace.common.openFailed'))
+      onToast(t('workbench:workspace.library.toast.revealFailed'))
     }
   }
 
   const actions: FileItemActions = {
     onOpen: (item) => onOpenFile(item.file),
-    onOpenOriginal: (item) => { void openOriginal(item) },
-    onExportReveal: (item) => { void exportReveal(item) },
+    onReveal: (item) => { void revealFile(item) },
     onError: onToast,
   }
+
+  // 云文档行点开：转伪文件走 onOpenFile（→ 气泡窗 CloudDocumentEditor），
+  // 与对话产物云文档卡/资料页同一条打开链路。
+  const openCloudDocument = (document: RoomDocument) => {
+    onOpenFile(cloudDocumentToOfficeFile(document))
+  }
+
+  // 综合空态：文件产物与云文档都为空才算「还没有产物」；工具条同理。
+  const totalCount = artifacts.length + cloudArts.length
 
   return (
     <div className="wb-wspage wb-outputs-page">
@@ -127,16 +144,13 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
           <IconButton
             label={t('workbench:workspace.outputs.refresh')}
             icon={<RefreshCw size={15} className={library.refreshing ? 'ui-spin' : undefined} />}
-            onClick={library.refresh}
+            onClick={() => { library.refresh(); cloudDocuments.refresh() }}
             disabled={library.refreshing}
           />
-          <Button variant="secondary" icon={<FolderOpen size={15} />} onClick={() => onOpenPage('library')}>
-            {t('workbench:workspace.outputs.goLibrary')}
-          </Button>
         </div>
       </header>
 
-      {library.state === 'ready' && artifacts.length > 0 ? (
+      {library.state === 'ready' && totalCount > 0 ? (
         <FileToolbar
           query={query}
           onQueryChange={setQuery}
@@ -153,7 +167,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
       {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
 
-      {library.state === 'ready' && artifacts.length === 0 ? (
+      {library.state === 'ready' && totalCount === 0 ? (
         <EmptyState
           className="wb-file-state"
           icon={<PackageOpen size={18} />}
@@ -166,15 +180,15 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
         />
       ) : null}
 
-      {library.state === 'ready' && artifacts.length > 0 && filtered.length === 0 ? (
+      {library.state === 'ready' && totalCount > 0 && rows.length === 0 ? (
         <FileNoMatches onClear={() => { setQuery(''); setFilter('all') }} />
       ) : null}
 
-      {library.state === 'ready' && filtered.length > 0 ? (
+      {library.state === 'ready' && rows.length > 0 ? (
         view === 'list' ? (
-          <LibraryList rows={rows} actions={actions} onEnterFolder={() => {}} onOpenFile={(item) => actions.onOpen(item)} />
+          <LibraryList rows={rows} actions={actions} onEnterFolder={() => {}} onOpenFile={(item) => actions.onOpen(item)} onOpenCloudDocument={openCloudDocument} />
         ) : (
-          <LibraryGrid rows={rows} actions={actions} onEnterFolder={() => {}} onOpenFile={(item) => actions.onOpen(item)} />
+          <LibraryGrid rows={rows} actions={actions} onEnterFolder={() => {}} onOpenFile={(item) => actions.onOpen(item)} onOpenCloudDocument={openCloudDocument} />
         )
       ) : null}
     </div>

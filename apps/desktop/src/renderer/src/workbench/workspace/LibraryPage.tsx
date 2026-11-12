@@ -1,8 +1,10 @@
 import { FilePlus2, FileText, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
+import type { RoomDocument } from '@nxcore/agent-contract'
+
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
-import type { RealOfficeFile } from '@/office-proto/data'
+import { cloudDocumentToOfficeFile, type RealOfficeFile } from '@/office-proto/data'
 
 import { workspaceDisplayName } from '../types'
 import { ConfirmModal } from '../ui/modal'
@@ -13,11 +15,13 @@ import {
   FileLibraryLoading,
   FileLibraryUnavailable,
 } from './fileBrowser'
-import type { FileItemActions } from './fileItemViews'
+import { type FileItemActions, revealedToastKey } from './fileItemViews'
 import { LibraryBrowser } from './LibraryBrowser'
+import { useCloudDocuments } from './useCloudDocuments'
 import { useFileLibrary } from './useFileLibrary'
 import { useScratchFiles } from './useScratchFiles'
 import { useLibraryDropZone } from './useLibraryDropZone'
+import { countFilesUnder } from './libraryTree'
 import './library.css'
 
 /**
@@ -53,8 +57,13 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
   const { t, locale } = useLocale()
   const library = useFileLibrary(workspace.id)
   const scratch = useScratchFiles(workspace.id)
+  // 云文档（documents 表）与文件库平级展示：挂在根目录「云文档」文件夹下。
+  const cloudDocuments = useCloudDocuments(workspace.id)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
   const [deleting, setDeleting] = useState(false)
+  /** 待删除的文件夹（虚拟目录）：path + name + 已加载文件计数。 */
+  const [pendingFolderDelete, setPendingFolderDelete] = useState<{ path: string; name: string } | null>(null)
+  const [deletingFolder, setDeletingFolder] = useState(false)
 
   /**
    * 在访达中定位 `.tmp/` 里的临时文件：scratch 清单只给相对路径，
@@ -78,37 +87,18 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     }
   }
 
-  const openOriginal = async (item: RealOfficeFile) => {
+  /** 在系统文件管理器中定位文件本体（mac=访达 / win=资源管理器）。 */
+  const revealFile = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
-    if (!api || typeof api.openOriginal !== 'function') {
+    if (!api || typeof api.reveal !== 'function') {
       onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
-      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
-        workspaceId: workspace.id,
-      })
-      if (result.openedWith === 'office') {
-        onToast(t('workbench:workspace.common.openedInOffice', { name: item.file.name }))
-      } else {
-        onToast(t('workbench:workspace.common.openedDefaultApp'))
-      }
+      await api.reveal(item.catalog.id)
+      onToast(t(revealedToastKey()))
     } catch {
-      onToast(t('workbench:workspace.common.openFailed'))
-    }
-  }
-
-  const exportReveal = async (item: RealOfficeFile) => {
-    const api = window.nxcore?.files
-    if (!api || typeof api.exportReveal !== 'function') {
-      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
-      return
-    }
-    try {
-      await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast(t('workbench:workspace.common.exported'))
-    } catch {
-      onToast(t('workbench:workspace.common.exportFailed'))
+      onToast(t('workbench:workspace.library.toast.revealFailed'))
     }
   }
 
@@ -131,6 +121,39 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       onToast(t('workbench:workspace.library.toast.deleteFailed'))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  /**
+   * 删除文件夹（虚拟目录）：该前缀下全部文件进空间回收站（可恢复），DB 行与
+   * 解析产物级联清理。失败互不影响（网关逐条回报），部分失败时提示剩余数量。
+   */
+  const confirmDeleteFolder = async () => {
+    const target = pendingFolderDelete
+    if (!target) return
+    const api = window.nxcore?.files
+    if (!api || typeof api.deleteFolder !== 'function') {
+      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
+      setPendingFolderDelete(null)
+      return
+    }
+    setDeletingFolder(true)
+    try {
+      const result = await api.deleteFolder(workspace.id, target.path)
+      if (result.failed > 0) {
+        onToast(t('workbench:workspace.library.toast.folderPartiallyDeleted', {
+          name: target.name,
+          failed: result.failed,
+        }))
+      } else {
+        onToast(t('workbench:workspace.library.toast.folderDeleted', { name: target.name }))
+      }
+      setPendingFolderDelete(null)
+      library.refresh()
+    } catch {
+      onToast(t('workbench:workspace.library.toast.folderDeleteFailed'))
+    } finally {
+      setDeletingFolder(false)
     }
   }
 
@@ -199,11 +222,23 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
 
   const actions: FileItemActions = {
     onOpen: (item) => onOpenFile(item.file),
-    onOpenOriginal: (item) => { void openOriginal(item) },
-    onExportReveal: (item) => { void exportReveal(item) },
+    onReveal: (item) => { void revealFile(item) },
     onSetThesisTemplate: (item) => { void setThesisTemplate(item) },
     onDelete: (item) => setPendingDelete(item),
     onError: onToast,
+  }
+
+  // 文件夹删除确认的文件计数：只有「全部已加载」时才如实展示（总数十计数器
+  // 覆盖了库里全部文件时才可信；有未加载页时展示会误导，退回不写数量的文案）。
+  const allLoaded = library.total <= library.items.length
+  const folderActions = {
+    onDelete: (row: { path: string; name: string }) => setPendingFolderDelete(row),
+  }
+
+  // 云文档行点开：转伪文件走 onOpenFile（→ 气泡窗 CloudDocumentEditor），
+  // 与对话产物云文档卡/气泡窗列表同一条打开链路。
+  const openCloudDocument = (document: RoomDocument) => {
+    onOpenFile(cloudDocumentToOfficeFile(document))
   }
 
   // 访达拖放：落点是页面根节点——空库/加载/不可用态也能拖，不只在有内容的浏览器里。
@@ -230,7 +265,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
 
-      {library.state === 'ready' && library.items.length === 0 ? (
+      {library.state === 'ready' && library.items.length === 0 && !cloudDocuments.available ? (
         <EmptyState
           className="wb-file-state"
           icon={<FileText size={18} />}
@@ -240,12 +275,16 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         />
       ) : null}
 
-      {library.state === 'ready' && library.items.length > 0 ? (
+      {(library.state === 'ready' && library.items.length > 0)
+        || (library.state !== 'unavailable' && cloudDocuments.available && cloudDocuments.documents.length > 0) ? (
         <LibraryBrowser
           items={library.items}
           actions={actions}
+          folderActions={folderActions}
           scratch={scratch.state === 'ready' ? scratch.listing : null}
           onRevealScratch={(relativePath) => { void revealScratch(relativePath) }}
+          cloudDocuments={cloudDocuments.available ? cloudDocuments.documents : []}
+          onOpenCloudDocument={openCloudDocument}
         />
       ) : null}
 
@@ -273,6 +312,25 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
           : t('workbench:workspace.library.delete')}
         busy={deleting}
         onConfirm={() => { void confirmDelete() }}
+      />
+
+      {/* 文件夹删除确认：计数只在全库已加载时展示（分页未加载完时数字会偏小误导）。 */}
+      <ConfirmModal
+        open={pendingFolderDelete !== null}
+        onOpenChange={(open) => { if (!open && !deletingFolder) setPendingFolderDelete(null) }}
+        title={pendingFolderDelete
+          ? t('workbench:workspace.library.folderDeleteTitle', { name: pendingFolderDelete.name })
+          : t('workbench:workspace.library.folderDeleteTitleGeneric')}
+        description={pendingFolderDelete && allLoaded
+          ? t('workbench:workspace.library.folderDeleteDescriptionCounted', {
+              count: countFilesUnder(library.items, pendingFolderDelete.path),
+            })
+          : t('workbench:workspace.library.folderDeleteDescription')}
+        confirmLabel={deletingFolder
+          ? t('workbench:workspace.library.deleting')
+          : t('workbench:workspace.library.delete')}
+        busy={deletingFolder}
+        onConfirm={() => { void confirmDeleteFolder() }}
       />
     </div>
   )

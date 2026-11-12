@@ -5,6 +5,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown as cmMarkdown } from '@codemirror/lang-markdown'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkCjkFriendly } from '@/lib/markdown/remarkCjkFriendly'
 import { Sparkles } from 'lucide-react'
 
 import { type OfficeFile } from './data'
@@ -160,7 +161,7 @@ function MdView({
         <div className="op-ed-body md-body">
           <div className="op-md-src" ref={hostRef} />
           <div className="op-md-preview">
-            <Markdown remarkPlugins={[remarkGfm]}>{source}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{source}</Markdown>
           </div>
         </div>
       </div>

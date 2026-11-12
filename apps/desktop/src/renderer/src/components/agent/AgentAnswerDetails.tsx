@@ -1,6 +1,7 @@
 import { memo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkCjkFriendly } from '@/lib/markdown/remarkCjkFriendly'
 import { useLocale } from '@/i18n/LocaleContext'
 
 // 与 AgentChatView 一致的气泡内降级标题/链接/无图渲染。
@@ -31,7 +32,7 @@ export const AgentAnswerDetails = memo(function AgentAnswerDetails({ details }: 
     <details className="agent-answer-details">
       <summary>{t('surface:agentChat.answerDetailsToggle')}</summary>
       <div className="agent-markdown agent-answer-details-body">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={detailMarkdownComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]} components={detailMarkdownComponents}>
           {text}
         </ReactMarkdown>
       </div>

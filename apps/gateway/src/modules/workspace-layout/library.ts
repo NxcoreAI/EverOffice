@@ -159,6 +159,56 @@ export class SpaceLibraryWriter {
   }
 
   /**
+   * 空间资料库内条目的绝对路径（`reveal`/外部打开的定位目标）：
+   * 相对路径存在且盘上还在 → 空间目录里的真身；否则 null（回落对象库 hash 路径）。
+   */
+  absoluteLibraryPath(workspaceId: string, relPath: string | null): string | null {
+    if (!relPath) return null;
+    const target = this.targetOf(workspaceId);
+    if (!target) return null;
+    const absolute = this.absolute(target, relPath);
+    return existsSync(absolute) ? absolute : null;
+  }
+
+  /**
+   * 删除资料库里的一个空目录树（资料页「删除文件夹」收尾用）。
+   *
+   * 只在目录（及其全部子目录）都不含文件时才移除；任何一层还有文件（包括
+   * 未入库的用户自有文件与点文件）都直接放弃，保持磁盘现状。返回是否移除。
+   */
+  async removeEmptyLibraryDirs(workspaceId: string, relPath: string): Promise<boolean> {
+    const target = this.targetOf(workspaceId);
+    if (!target) return false;
+    const root = this.absolute(target, relPath);
+    let rootStat;
+    try {
+      rootStat = await stat(root);
+    } catch {
+      return false;
+    }
+    if (!rootStat.isDirectory()) return false;
+    const isEmpty = async (absolute: string): Promise<boolean> => {
+      let entries;
+      try {
+        entries = await readdir(absolute, { withFileTypes: true });
+      } catch {
+        return false;
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (!(await isEmpty(join(absolute, entry.name)))) return false;
+        } else {
+          return false;
+        }
+      }
+      return true;
+    };
+    if (!(await isEmpty(root))) return false;
+    await rm(root, { recursive: true, force: true });
+    return true;
+  }
+
+  /**
    * 确保 `objects/<hash>` 存在：优先用空间内的，其次从遗留对象库补一份。
    * 返回 blob 绝对路径；两处都没有则 null。
    */

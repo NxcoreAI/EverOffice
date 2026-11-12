@@ -2,6 +2,7 @@ import { memo, useEffect, useState, type ReactNode } from 'react'
 import { Check, FileText, LoaderCircle, MessageCircleQuestion, ShieldAlert, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkCjkFriendly } from '@/lib/markdown/remarkCjkFriendly'
 
 import { useLocale } from '@/i18n/LocaleContext'
 import { dispatchOpenCloudDocument } from '@/workbench/shell/openAgentFile'
@@ -39,7 +40,7 @@ const cardInlineMarkdownComponents = {
 const CardBodyMarkdown = memo(function CardBodyMarkdown({ text }: { text: string }) {
   return (
     <div className="agent-decision-card-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={cardInlineMarkdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]} components={cardInlineMarkdownComponents}>
         {text}
       </ReactMarkdown>
     </div>
@@ -50,7 +51,7 @@ const CardBodyMarkdown = memo(function CardBodyMarkdown({ text }: { text: string
 const CardLineMarkdown = memo(function CardLineMarkdown({ text }: { text: string }) {
   return (
     <span className="agent-decision-card-line">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={cardInlineMarkdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]} components={cardInlineMarkdownComponents}>
         {text}
       </ReactMarkdown>
     </span>

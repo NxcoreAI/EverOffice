@@ -840,6 +840,12 @@ export class FilesService {
       }
       return entry.sourcePath;
     }
+    // 已落盘的空间条目优先给资料库真身（真实文件名、用户可见的目录位置）：
+    // 「在访达中打开」定位到用户认识的那份文件，而不是对象库里的 hash 名副本。
+    if (this.spaceLibrary && entry.workspaceId) {
+      const materialized = this.spaceLibrary.absoluteLibraryPath(entry.workspaceId, entry.relativePath);
+      if (materialized) return materialized;
+    }
     const row = this.db.select({ storagePath: fileBlobs.storagePath }).from(fileVersions)
       .innerJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
       .where(eq(fileVersions.id, entry.currentVersionId!)).get();
@@ -981,6 +987,63 @@ export class FilesService {
     }).where(eq(fileEntries.id, fileEntryId)).run();
     enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
+  }
+
+  /**
+   * 按前缀收集目录下的文件条目（资料页「删除文件夹」用）。
+   *
+   * 资料页的文件夹是纯虚拟目录：由 `file_entries.relative_path` 派生，磁盘上没有
+   * 文件夹实体。这里的口径与渲染层 libraryTree 派生完全一致——`docs/api` 命中
+   * `docs/api/**` 与 `docs/api/**` 下的直接文件，不命中 `docs/apiary/x`（段边界，
+   * 非字符串前缀）。空串/`.` 归一化为非法（根目录不可整删）。
+   */
+  private folderEntryIds(workspaceId: string, folderPath: string): string[] {
+    const normalized = folderPath.replace(/\\/gu, "/").replace(/^\/+|\/+$/gu, "");
+    if (!normalized || normalized === "." || normalized.includes("//")) return [];
+    const prefix = `${normalized}/`;
+    // 工作区口径与 listCatalog 一致：default 空间连带 NULL 归属的存量行
+    // （回填前的老条目），避免「资料页看得到、删不掉」。
+    const workspaceFilter = workspaceId === DEFAULT_FILE_WORKSPACE_ID
+      ? or(eq(fileEntries.workspaceId, workspaceId), isNull(fileEntries.workspaceId))!
+      : eq(fileEntries.workspaceId, workspaceId);
+    const rows = this.db.select({
+      id: fileEntries.id,
+      relativePath: fileEntries.relativePath,
+    }).from(fileEntries)
+      .where(and(
+        isNull(fileEntries.deletedAt),
+        workspaceFilter,
+      )).all();
+    return rows
+      .filter((row) => row.relativePath && (row.relativePath === normalized || row.relativePath.startsWith(prefix)))
+      .map((row) => row.id);
+  }
+
+  /**
+   * 删除资料页的一个文件夹（虚拟目录）：把该前缀下的全部文件条目按
+   * `deleteCatalogEntry` 逐条删除（磁盘文件进空间回收站，可恢复；DB 行与
+   * 解析产物级联清理）。全部条目删完后顺手移除磁盘上的空目录树。
+   */
+  async deleteFolderByPrefix(
+    workspaceId: string,
+    folderPath: string,
+  ): Promise<{ deleted: number; failed: number; removedEmptyDirs: boolean }> {
+    const ids = this.folderEntryIds(workspaceId, folderPath);
+    let deleted = 0;
+    let failed = 0;
+    for (const id of ids) {
+      const result = await this.deleteCatalogEntry(id).catch(() => null);
+      if (result) deleted += 1;
+      else failed += 1;
+    }
+    // 条目全删干净后清掉磁盘空目录（条目仍存在=用户目录里还有别的文件，不动）。
+    let removedEmptyDirs = false;
+    if (this.spaceLibrary && failed === 0) {
+      removedEmptyDirs = await this.spaceLibrary
+        .removeEmptyLibraryDirs(workspaceId, folderPath)
+        .catch(() => false);
+    }
+    return { deleted, failed, removedEmptyDirs };
   }
 
   async deleteCatalogEntry(fileEntryId: string): Promise<FileDeletionResult | null> {

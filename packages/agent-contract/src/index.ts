@@ -2626,6 +2626,24 @@ export interface WorkspaceActivitySegment {
   planItemId?: string;
 }
 
+/**
+ * 动态行的次级信息：一句话主文案之外能直接从来源行读出的事实。
+ *
+ * 全部可选：不是每个事件都有（文件行有 brief 没有时长；running 的 run 有 brief 没有结束时刻）。
+ * 摘要类字段是**展示快照**而非引用 id——brief 是历史事实（“当时让它干什么”），
+ * 不需要跟随工作/文件改名，这与 segments 的 id 引用语义有意不同。
+ */
+export interface WorkspaceActivityDetail {
+  /** 结果摘要（该工作最新一条 assistant 回复的首行）：回答「做了什么」，单行省略展示。 */
+  brief?: string;
+  /** run 从开始到结束的耗时（秒）；运行中/无结束时刻的事件没有。 */
+  durationSec?: number;
+  /** 失败原因（仅 failed 的 run；渲染层截断展示）。 */
+  error?: string;
+  /** 该工作（会话）累计执行次数；>1 时渲染层出「N 次」徽标（同工作多次 run 折叠为一行）。 */
+  runCount?: number;
+}
+
 /** 概览动态的一条事件（由 runs / 文件库 / 计划事件流派生，不是独立存储的实体）。 */
 export interface WorkspaceActivity {
   id: string;
@@ -2634,6 +2652,11 @@ export interface WorkspaceActivity {
   /** ISO 时间。 */
   at: string;
   segments: WorkspaceActivitySegment[];
+  /**
+   * 次级信息（信息密度）：不占时间轴位置的事实放这里，
+   * 渲染层以次级行/徽标呈现，缺失时行为与旧契约完全一致。
+   */
+  detail?: WorkspaceActivityDetail;
   /** 派生来源（排查用；渲染层不依赖）。 */
   source: {
     table:

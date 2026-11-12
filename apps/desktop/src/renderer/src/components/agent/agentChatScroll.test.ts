@@ -5,10 +5,10 @@ import {
   AGENT_CHAT_REPIN_DISTANCE_PX,
   AGENT_CHAT_WHEEL_UP_DETACH_PX,
   canConsumeVerticalWheel,
+  isAtScrollBottom,
   isGeometryClampScroll,
   isNestedScrollerWheel,
   isScrolledToBottom,
-  wheelDownChaseBand,
 } from './agentChatScroll'
 
 function element(geometry: { scrollHeight: number; scrollTop: number; clientHeight: number }): HTMLElement {
@@ -128,13 +128,19 @@ describe('nested scroller wheel guard', () => {
   })
 })
 
-describe('wheelDownChaseBand（流式爆发时的下滚追赶带）', () => {
-  it('轻滚不放宽（保持 32px），随位移比例放款，上限 400px', () => {
-    expect(wheelDownChaseBand(0.5)).toBe(32)
-    expect(wheelDownChaseBand(10)).toBe(32)
-    expect(wheelDownChaseBand(40)).toBe(120)
-    expect(wheelDownChaseBand(120)).toBe(360)
-    expect(wheelDownChaseBand(500)).toBe(400)
-    expect(wheelDownChaseBand(-120)).toBe(360)
+describe('isAtScrollBottom（手势回吸的唯一判定：真到底，无宽带）', () => {
+  const total = 1_000
+  const view = 400
+
+  it('距底 ≤1px（亚像素容差）才算到底', () => {
+    expect(isAtScrollBottom(element({ scrollHeight: total, scrollTop: total - view, clientHeight: view }))).toBe(true)
+    expect(isAtScrollBottom(element({ scrollHeight: total, scrollTop: total - view - 0.5, clientHeight: view }))).toBe(true)
+  })
+
+  it('距底 2px 起不算到底——不存在「距底 N px 提前吸附」的宽带', () => {
+    expect(isAtScrollBottom(element({ scrollHeight: total, scrollTop: total - view - 2, clientHeight: view }))).toBe(false)
+    // 尾部 composer 留白 ≥166px，触控板惯性经常停在里面：绝不能被预判吸附。
+    expect(isAtScrollBottom(element({ scrollHeight: total, scrollTop: total - view - 32, clientHeight: view }))).toBe(false)
+    expect(isAtScrollBottom(element({ scrollHeight: total, scrollTop: total - view - 200, clientHeight: view }))).toBe(false)
   })
 })

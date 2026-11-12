@@ -277,13 +277,8 @@ export function createIndexBackfillRuntime(config: GatewayConfig): AgentRuntime 
  */
 export function createMemoryInternalRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake") return null;
-  const candidates = [config.litePi, config.backgroundPi, config.pi]
-    .filter((candidate): candidate is PiRuntimeConfig => isPiRuntimeConfigured(candidate));
-  if (candidates.length === 0) return null;
-  // SaaS 激活时槽位 baseUrl 会被 rewriteSlotsForRelay 改写到 /ai-relay 出口；
-  // 只要存在这类槽位就只用它们，避免记忆任务落到用户自配的本地模型上。
-  const relayRouted = candidates.filter((candidate) => isRelayRouted(candidate));
-  const slot = (relayRouted.length > 0 ? relayRouted : candidates)[0]!;
+  const slot = memorySlot(config);
+  if (!slot) return null;
   const { mcp: _mcp, ...pi } = slot;
   return new PiAgentRuntime({
     ...pi,
@@ -297,14 +292,25 @@ export function createMemoryInternalRuntime(config: GatewayConfig): AgentRuntime
   });
 }
 
-/** 记忆档位签名：选中槽位的连接四要素 + 模型。档位被热更新时签名变化，runtime 必须重建。 */
-function memorySlotSignature(config: GatewayConfig): string | null {
-  if (config.agentRuntime === "fake") return null;
+/**
+ * 记忆系槽位选择（lite → background → primary，relay 出口优先）。
+ * 抽成公共函数：journal runtime 与 memory runtime 同一判据，避免两处漂移。
+ */
+function memorySlot(config: GatewayConfig): PiRuntimeConfig | null {
   const candidates = [config.litePi, config.backgroundPi, config.pi]
     .filter((candidate): candidate is PiRuntimeConfig => isPiRuntimeConfigured(candidate));
   if (candidates.length === 0) return null;
+  // SaaS 激活时槽位 baseUrl 会被 rewriteSlotsForRelay 改写到 /ai-relay 出口；
+  // 只要存在这类槽位就只用它们，避免内部任务落到用户自配的本地模型上。
   const relayRouted = candidates.filter((candidate) => isRelayRouted(candidate));
-  const slot = (relayRouted.length > 0 ? relayRouted : candidates)[0]!;
+  return (relayRouted.length > 0 ? relayRouted : candidates)[0]!;
+}
+
+/** 记忆档位签名：选中槽位的连接四要素 + 模型。档位被热更新时签名变化，runtime 必须重建。 */
+function memorySlotSignature(config: GatewayConfig): string | null {
+  if (config.agentRuntime === "fake") return null;
+  const slot = memorySlot(config);
+  if (!slot) return null;
   return [slot.provider, slot.model, slot.baseUrl, slot.api, slot.apiKey].join("\u0000");
 }
 
@@ -334,6 +340,56 @@ export function createMemoryRuntimeResolver(config: GatewayConfig): () => AgentR
       runtime = createMemoryInternalRuntime(config);
       signature = runtime ? next : null;
       // 旧实例换连接前释放（内部 runtime 无并发 run，失败也不影响新实例）。
+      if (previous && previous !== runtime) void previous.dispose().catch(() => undefined);
+    }
+    return runtime;
+  };
+}
+
+/**
+ * 今日洞察的内部 runtime：与 memory runtime 同一档位选择（lite → background
+ * → primary，relay 优先），差异只有两点——
+ * 1. 挂一个提交工具（`submit_daily_journal`，参数 schema 带当天证据 id 的
+ *    enum），成稿从工具参数取：这是「强制结构化输出」的实现层（见
+ *    modules/journal/agent.ts，不用 MCP 的理由也写在那里）；
+ * 2. reasoning 关闭：单工具提交是机器对机器的短输出，不需要思考段。
+ *
+ * 同款惰性解析器语义：档位未就绪 → null（调用方走模板兜底）；签名变化 →
+ * 重建实例。submit 工具实例由调用方持有（跨 run 复用、按次 begin() 换 schema），
+ * 重建 runtime 时工具对象原样带入——pi 每次 start() 都重读 tool.parameters。
+ */
+export function createJournalRuntimeResolver(
+  config: GatewayConfig,
+  submitTool: PiAgentRuntimeTool,
+): () => AgentRuntime | null {
+  let runtime: AgentRuntime | null = null;
+  let signature: string | null = null;
+  const build = (): AgentRuntime | null => {
+    if (config.agentRuntime === "fake") return null;
+    const slot = memorySlot(config);
+    if (!slot) return null;
+    const { mcp: _mcp, ...pi } = slot;
+    return new PiAgentRuntime({
+      ...pi,
+      includeBashTool: false,
+      builtinTools: [],
+      maxToolCallsPerRun: 2,
+      runtimeRole: "internal",
+      reasoning: "off",
+      sessionsDir: join(pi.sessionsDir, "journal"),
+      workingDirectory: join(pi.workingDirectory, "journal"),
+      agentDirectory: join(pi.agentDirectory, "journal"),
+    }, {
+      tools: [submitTool],
+    });
+  };
+  return () => {
+    const next = memorySlotSignature(config);
+    if (next === null) return null;
+    if (runtime === null || next !== signature) {
+      const previous = runtime;
+      runtime = build();
+      signature = runtime ? next : null;
       if (previous && previous !== runtime) void previous.dispose().catch(() => undefined);
     }
     return runtime;
@@ -439,7 +495,12 @@ export function createAgentResolver(config: GatewayConfig, agentDebugStore?: Age
         runtimeId: BUILTIN_AGENT_IDS.webSearch,
         ...webSearch,
         systemPrompt: bundle.systemPrompt,
-        requestOptions: { enable_search: true },
+        // forced_search 是强制触发检索的开关；enable_search 对新版 qwen-plus
+        // 已被服务端静默忽略（2026-11 实测：裸 enable_search 不搜索，模型拿
+        // 训练截止的旧知识冒充检索结果且不报错），两个都带兜底旧渠道。
+        requestOptions: { enable_search: true, search_options: { forced_search: true } },
+        // 校验响应 search_info：检索被上游静默跳过时显式报错，不让旧知识冒充。
+        requireSearch: true,
         includeProviderErrorBody: false,
         ...directories,
       });
@@ -467,7 +528,8 @@ export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config:
       runtimeId: BUILTIN_AGENT_IDS.webSearch,
       ...webSearch,
       systemPrompt: bundle.systemPrompt,
-      requestOptions: { enable_search: true },
+      requestOptions: { enable_search: true, search_options: { forced_search: true } },
+      requireSearch: true,
       includeProviderErrorBody: false,
       ...directories,
     });

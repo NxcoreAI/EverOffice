@@ -1993,3 +1993,83 @@ describe("doc-writer 引用透传（doc-writer-subagent-plan M3/V2）", () => {
     expect(String(secondContent.markdown)).toHaveLength(Math.min(20_000, total - nextOffset));
   });
 });
+
+describe("云文档 md 备份（agent-file-backup）", () => {
+  it("commit 成功后把规范化 markdown 交给备份导出器，带工作空间归属", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-cloud-doc-backup-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const broker = new DocumentEventBroker();
+    const documents = new DocumentService(database.db, broker);
+    const operations = new DocumentOperationService(database.db, broker);
+    // 备份导出器：create-server 里装配的 filesService.importFile 薄 mock。
+    const backups: Array<{ documentId: string; title: string; markdown: string; workspaceId: string }> = [];
+    documents.agentDocumentMarkdownBackupExporter = (input) => {
+      backups.push(input);
+    };
+    const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
+    disposables.push(() => database.sqlite.close());
+    const context = { agentSessionId: "session-backup", runId: "run-backup", workspaceId: "ws-backup" };
+
+    const started = await registry.execute("document_write_begin", {
+      mode: "create", title: "伦理治理综述", format: "markdown",
+    }, context);
+    const opId = String(started.structuredContent.operationId);
+    await registry.execute("document_write_append", {
+      operationId: opId, sequence: 1, text: "## 治理框架\n\n第一段正文",
+    }, context);
+    const committed = await registry.execute("document_write_commit", {
+      operationId: opId, finalSequence: 1,
+    }, context);
+    const documentId = String(committed.structuredContent.docId);
+
+    // 备份收到：documentId + 标题 + 规范化 markdown（标题被提出 H1，正文以 ## 起）
+    expect(backups).toHaveLength(1);
+    expect(backups[0]).toMatchObject({
+      documentId,
+      title: "伦理治理综述",
+      workspaceId: "ws-backup",
+    });
+    expect(backups[0]!.markdown).toContain("## 治理框架");
+    expect(backups[0]!.markdown).toContain("第一段正文");
+    expect(backups[0]!.markdown).not.toMatch(/^#\s/);
+  });
+
+  it("空文档（finalSequence=0）与未装配导出器时都不备份", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-cloud-doc-backup-skip-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const broker = new DocumentEventBroker();
+    const documents = new DocumentService(database.db, broker);
+    const operations = new DocumentOperationService(database.db, broker);
+    const backups: Array<{ documentId: string }> = [];
+    documents.agentDocumentMarkdownBackupExporter = (input) => {
+      backups.push(input);
+    };
+    const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
+    disposables.push(() => database.sqlite.close());
+    const context = { agentSessionId: "session-skip", runId: "run-skip" };
+
+    // 空文档：begin 后立即 commit（finalSequence=0）
+    const started = await registry.execute("document_write_begin", {
+      mode: "create", title: "空文档", format: "markdown",
+    }, context);
+    await registry.execute("document_write_commit", {
+      operationId: String(started.structuredContent.operationId), finalSequence: 0,
+    }, context);
+    expect(backups).toHaveLength(0);
+
+    // 未装配导出器：有正文也不备份、不抛错
+    documents.agentDocumentMarkdownBackupExporter = null;
+    const second = await registry.execute("document_write_begin", {
+      mode: "create", title: "有正文", format: "markdown",
+    }, context);
+    const opId = String(second.structuredContent.operationId);
+    await registry.execute("document_write_append", {
+      operationId: opId, sequence: 1, text: "## 章节\n\n正文",
+    }, context);
+    await expect(registry.execute("document_write_commit", {
+      operationId: opId, finalSequence: 1,
+    }, context)).resolves.toBeTruthy();
+  });
+});

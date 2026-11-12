@@ -1,6 +1,16 @@
 # 工作空间「概览 · 动态」对齐原型模型：实现方案
 
 > 状态：**P0 + P1 已实现**（2026-11-03，见 §4.6 / §5.7 落地记录）；P2 的 `work-review` 已按「活状态」口径实现（见 §6.1），无需建表。
+> **2026-11-12 信息密度改造（第二轮，用户反馈迭代）**：
+> 第一轮修了「行高浪费 + brief 缺失」（图标 26→20px、默认 8→12 条、契约加 `detail`），
+> 但用户试后仍不满意，两点反馈都指向「行内容是模板 + 用户输入回显，不是发生了什么」：
+> ① **重复**：同一会话多次 run 各出一行「结束了工作 X」× N——改为**按会话聚合**：
+> 一个工作 = 一行（id `work:<sessionId>`），`at` 取最近一次 run 的结束时刻，
+> `runCount` 带执行次数（>1 出「N 次」徽标），`durationSec` 为累计耗时；文案改「完成了工作 / 正在执行 / 执行失败」。
+> ② **brief 复述 prompt 毫无意义**（用户自己知道发了什么）——brief 改为提取该会话**最新一条
+> assistant 回复**的首行（`agent_messages` 按 `role='assistant'` 倒序取 3 条，`displayContent ?? content`，
+> 剥 markdown 记号且跳过 `## 处理完成` 这类 ≤10 字的标题残骸）：AI 做完事的总结，回答「做了什么」。
+> 本地回落派生拿不到消息表，不再给会话行造 brief（宁缺毋假）。
 > 关联：`docs/design/everoffice-feature-inventory.zh-CN.md` §3.4（原型动态卡清单）、`docs/design/product-data-map.zh-CN.md` §9（意图：动态/洞察是派生数据，不建 feed 表）、`docs/workspace-plan-task-design.zh-CN.md`（`workspace_plan_items` 与它的**事件流表**）、`everoffice` 原型 `WorkspacePages.tsx:216-247`、`workspace.ts:105-146`。
 
 ---

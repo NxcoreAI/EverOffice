@@ -104,9 +104,20 @@ weight = 新近度(0.5→1.0，按小时线性衰减) × 类别基线 × 强度�
 
 **截断**：memory 6 条 / file 5 条 / session 4 条 / schedule 3 条，总计 ≤ 12 条进 prompt，prompt 正文 ≤ 4000 字。
 
-### 4.3 第三层：模型提炼（严格 JSON + 硬校验）
+### 4.3 第三层：模型提炼（提交工具 + 硬校验）
 
-输出契约（解析层逐字段校验，不满足就丢，不靠模型自觉）：
+> 2026-11-12 更新：原实现的「prompt 里要求只输出 JSON + 裸文本解析」已升级为
+> **提交型工具调用**（强制结构化输出）。模型不写自由文本，而是调用
+> `submit_daily_journal` 工具，成稿从工具参数里取；`sourceIds`/`targetId`
+> 的取值被编译成**只含当次证据 id 的 enum**——受限解码的 provider 在解码层
+> 就生成不了集合外的 id，防编造从「事后过滤」升级为「schema 层不可能」。
+> 实现见 `modules/journal/agent.ts`；为它建 MCP 服务是被否决的方案（journal
+> 是网关进程内的函数调用，没有跨进程边界，结构化保证来自工具参数 schema
+> 而非传输协议）。宽松 provider 仍由解析层复核（`parseJournalComposition`
+> 是最后一道闸）；模型没调工具但正文是 JSON 时走文本降级；完全没提交走
+> 模板兜底（`model = null`），语义与旧的「解析失败走模板」一致。
+
+输出契约（schema 与解析层逐字段校验，不满足就丢，不靠模型自觉）：
 
 ```json
 {
@@ -289,13 +300,15 @@ journal: {
 | 迁移 | `apps/gateway/drizzle/0097_daily_journal.sql` + `drizzle/meta/_journal.json` | 语句全部 `IF NOT EXISTS`（可重放） |
 | 采集 | `apps/gateway/src/modules/journal/collector.ts` | 本地日界 + 权重 + 标签聚类 + 指纹 |
 | 提炼 | `apps/gateway/src/modules/journal/composer.ts` | prompt / 严格解析 / 模板兜底 |
+| 提交通道 | `apps/gateway/src/modules/journal/agent.ts` | `submit_daily_journal` 工具（schema 带证据 id enum）/ 提交捕获 / 文本降级 |
+| 提炼 runtime | `apps/gateway/src/modules/agent/runtime-factory.ts`（`createJournalRuntimeResolver`） | 与 memory 同档位选择的隔离内部 runtime（单工具、reasoning off） |
 | 编排 | `apps/gateway/src/modules/journal/service.ts` | 日行、版本、指纹跳过、失败记录、版本裁剪 |
 | 调度 | `apps/gateway/src/modules/journal/scheduler.ts` | 去抖 45s / 最小间隔 5min / 单飞行 / 每日上限 24 / 跨日 tick |
 | 路由 | `apps/gateway/src/modules/journal/routes.ts` | `GET /v1/journal/today`、`POST /v1/journal/refresh` |
 | 装配 | `apps/gateway/src/server/create-server.ts` | 构造 + `setOnRemembered` 挂钩 + `journalScheduler.start()` + 退出 `stop()` |
 | IPC | `apps/desktop/src/shared/sources.ts`、`main/index.ts`（`JOURNAL_CHANNELS`）、`main/gateway/agent-gateway-bridge.ts`、`preload/index.ts` | `nxcore.journal.today/refresh` |
 | UI | `apps/desktop/src/renderer/src/workbench/home/{useDailyJournal.ts,DailyJournalCard.tsx,RecentPage.tsx,home.css}` | 卡片 + 60s 轮询 + 打字机 + 动作 |
-| 测试 | `apps/gateway/tests/journal.test.ts`（17 例）、`apps/desktop/tests/daily-journal-card.test.tsx`（7 例） | 见下 |
+| 测试 | `apps/gateway/tests/journal.test.ts`（31 例）、`apps/desktop/tests/daily-journal-card.test.tsx`（7 例） | 见下 |
 
 ### 12.1 验收记录（2026-11-03）
 

@@ -44,6 +44,9 @@ const PAGE_ICONS: Record<string, React.ReactNode> = {
 
 type DeleteTarget = { kind: 'workspace'; id: string; title: string } | { kind: 'session'; id: string; title: string }
 
+/** 工作列表默认折叠：只显示最靠前的几条（运行中/最新优先），其余靠「显示全部」展开。 */
+const WORK_LIST_COLLAPSED_LIMIT = 6
+
 /** 工作空间标签的侧栏：空间标题 + 功能菜单 + 工作列表（= 该空间的会话）。 */
 export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
   const { t, locale } = useLocale()
@@ -62,17 +65,32 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [aliasOpen, setAliasOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** 工作列表展开态：默认折叠（只显示前 N 条），「显示全部」后本空间内保持展开。 */
+  const [workListExpanded, setWorkListExpanded] = useState(false)
+
+  // 当前打开的会话 id（提前算：下面的自动展开 effect 必须在 early return 之前）。
+  const activeSessionId = tab.view.kind === 'session' ? tab.view.sessionId : null
 
   useEffect(() => {
+    // 切换空间标签 = 换了上下文，展开态不跨空间携带；重新折叠。
     setRenamingWorkspace(false)
     setRenamingSessionId(null)
+    setWorkListExpanded(false)
   }, [tab.workspaceId])
+
+  // 当前打开的会话被折叠窗口藏住时（从概览/命令面板点开旧工作、或轮询后排序
+  // 变化）自动展开：正在看的工作在侧栏必须可见。
+  useEffect(() => {
+    if (!activeSessionId) return
+    const hidden = sessions.length > WORK_LIST_COLLAPSED_LIMIT
+      && !sessions.slice(0, WORK_LIST_COLLAPSED_LIMIT).some((session) => session.id === activeSessionId)
+    if (hidden) setWorkListExpanded(true)
+  }, [activeSessionId, sessions])
 
   if (!workspace) return null
 
   const workspaceName = workspaceDisplayName(workspace, locale)
   const activePage = tab.view.kind === 'page' ? tab.view.page : null
-  const activeSessionId = tab.view.kind === 'session' ? tab.view.sessionId : null
 
   const beginRenameWorkspace = () => {
     setWorkspaceDraft(workspace.name)
@@ -97,6 +115,11 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
     const existingDraft = tab.view.kind === 'draft'
     if (!existingDraft) setWorkspaceView(tab.id, { kind: 'draft' })
   }
+
+  // 折叠态只显示排序后的前 N 条（运行中优先、最新在前）；展开则显示全部。
+  const visibleSessions = workListExpanded
+    ? sessions
+    : sessions.slice(0, WORK_LIST_COLLAPSED_LIMIT)
 
   /** 在访达中打开空间目录（原概览「空间目录」卡的能力，卡删除后收进这里）。 */
   const saveEnglishName = async (nameEn: string | null): Promise<boolean> => {
@@ -204,7 +227,7 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
           {sessions.length === 0 && tab.view.kind !== 'draft' ? (
             <div className="wb-ws-work-empty">{t('workbench:workspaceSidebar.noWork')}</div>
           ) : null}
-          {sessions.map((session) => (
+          {visibleSessions.map((session) => (
             <WorkRow
               key={session.id}
               session={session}
@@ -217,6 +240,18 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
               onDelete={() => setDeleteTarget({ kind: 'session', id: session.id, title: sessionDisplayTitle(session, t) })}
             />
           ))}
+          {sessions.length > WORK_LIST_COLLAPSED_LIMIT ? (
+            <button
+              type="button"
+              className="wb-ws-work-toggle"
+              aria-expanded={workListExpanded}
+              onClick={() => setWorkListExpanded((expanded) => !expanded)}
+            >
+              {workListExpanded
+                ? t('workbench:workspaceSidebar.collapse')
+                : t('workbench:workspaceSidebar.showAll', { count: sessions.length })}
+            </button>
+          ) : null}
         </div>
       </div>
 
