@@ -427,7 +427,7 @@ export function NativeEditorHost({
             <div className="op-native-error-hint">
               {real
                 ? '请确认文件已成功导入且本地文件完整；可在「所有文件」重新导入后再试。'
-                : '请确认 EverOffice 仓库已执行 prepare:genoffice，或设置 GENOFFICE_RUNTIME_ROOT 指向 genoffice-runtime 目录。'}
+                : '请重新安装或更新 EverOffice（运行时资源缺失）；开发环境请执行 prepare:genoffice，或用 GENOFFICE_RUNTIME_ROOT 指向 genoffice-runtime 目录。'}
             </div>
           </div>
         )}

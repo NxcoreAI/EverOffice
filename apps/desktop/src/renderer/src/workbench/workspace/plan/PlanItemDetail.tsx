@@ -5,6 +5,7 @@ import type { PlanChecklistItem, PlanClaimPackage, PlanItem, PlanItemEvent } fro
 import { formatPlanClaimPackage } from '@nxcore/agent-contract'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { dispatchOpenCloudDocument } from '@/workbench/shell/openAgentFile'
 
 import { workbenchApi } from '../../api'
 import { relativeTimeLabel } from '../../types'
@@ -218,7 +219,19 @@ export function PlanItemDetail({
               {item.refs.map((ref) => (
                 <li key={`${ref.kind}:${ref.id}`}>
                   <Badge tone="neutral">{ref.kind}</Badge>
-                  <span className="wb-plan-ref-title">{ref.title}</span>
+                  {ref.kind === 'document' && ref.id ? (
+                    <button
+                      type="button"
+                      className="wb-plan-ref-title wb-plan-ref-link"
+                      title={ref.title}
+                      onClick={() => dispatchOpenCloudDocument({ documentId: ref.id, title: ref.title })}
+                    >
+                      <span className="wb-plan-ref-text">{ref.title}</span>
+                      <ExternalLink size={11} aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <span className="wb-plan-ref-title">{ref.title}</span>
+                  )}
                   <IconButton
                     label={t('workbench:workspace.plan.removeRef')}
                     size="sm"

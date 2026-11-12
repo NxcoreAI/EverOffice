@@ -16,6 +16,10 @@ import {
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { roomScopeId } from "../room-scope.js";
+import {
+  DEFAULT_DOCUMENT_WORKSPACE_ID,
+  type DocumentWorkspaceIndex,
+} from "../workspace-index.js";
 
 export type DocumentRow = typeof documents.$inferSelect;
 export type DocumentVersionRow = typeof documentVersions.$inferSelect;
@@ -24,9 +28,12 @@ export type DocumentVersionRow = typeof documentVersions.$inferSelect;
  * `roomId` 恒为 null：Phase 2i 去掉 Room 维度后 documents 只剩工作区级文稿，
  * 但 `RoomDocument` 的 DTO 字段由 @nxcore/agent-contract 固定，桌面端按
  * 「null = 工作区级文稿」渲染，因此保留该字段作为稳定的工作区级契约占位。
+ *
+ * `workspaceId` 来自 JSON 索引旁挂绑定：索引未装配（部分单测/无桌面场景）时
+ * 省略该字段（契约可选），装配后 null = 旧版未绑定文稿。
  */
-export function toRoomDocument(row: DocumentRow): RoomDocument {
-  return {
+export function toRoomDocument(row: DocumentRow, workspaceId?: string | null): RoomDocument {
+  const document: RoomDocument = {
     id: row.id,
     roomId: null,
     title: row.title,
@@ -40,13 +47,22 @@ export function toRoomDocument(row: DocumentRow): RoomDocument {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+  return workspaceId === undefined ? document : { ...document, workspaceId };
 }
 
 export class DocumentRepository {
-  constructor(readonly db: GatewayDatabase) {}
+  constructor(
+    readonly db: GatewayDatabase,
+    private readonly workspaceIndex?: DocumentWorkspaceIndex,
+  ) {}
 
-  /** 列出工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。 */
-  list(trashed = false, origin?: "native" | "import"): RoomDocument[] {
+  /**
+   * 列出工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。
+   *
+   * 传 workspaceId 时按 JSON 索引过滤；`default` 额外包含旧版未绑定文稿
+   * （索引上线前的历史数据兜底）。不传 = 全部文稿（内部调用/旧桌面兼容）。
+   */
+  list(trashed = false, origin?: "native" | "import", workspaceId?: string | null): RoomDocument[] {
     const conditions = [trashed ? isNotNull(documents.deletedAt) : isNull(documents.deletedAt)];
     if (origin) conditions.push(eq(documents.origin, origin));
     const rows = this.db.select({ document: documents })
@@ -54,7 +70,7 @@ export class DocumentRepository {
       .where(and(...conditions))
       .orderBy(asc(documents.createdAt))
       .all()
-      .map(({ document }) => toRoomDocument(document));
+      .map(({ document }) => document);
     // 外部更新候选是版本面板导入历史的临时物化，不作为普通文档出现在 Room
     // 文档列表（应用/未应用均隐藏；diff 与内容查看走导入历史和文档直取）。
     const candidateIds = new Set(
@@ -64,9 +80,23 @@ export class DocumentRepository {
         .all()
         .map((row) => row.id),
     );
-    return candidateIds.size > 0
-      ? rows.filter((document) => !candidateIds.has(document.id))
+    const visibleRows = candidateIds.size > 0
+      ? rows.filter((row) => !candidateIds.has(row.id))
       : rows;
+    const index = this.workspaceIndex;
+    if (!index) return visibleRows.map((row) => toRoomDocument(row));
+    const scope = typeof workspaceId === "string" ? workspaceId.trim() : "";
+    const scopedIds = scope ? index.listIds(scope) : null;
+    const cache = new Map<string, string | null>();
+    const workspaceOf = (documentId: string): string | null => {
+      if (!cache.has(documentId)) cache.set(documentId, index.workspaceOf(documentId));
+      return cache.get(documentId)!;
+    };
+    const scoped = scopedIds
+      ? visibleRows.filter((row) => scopedIds.has(row.id)
+        || (scope === DEFAULT_DOCUMENT_WORKSPACE_ID && workspaceOf(row.id) === null))
+      : visibleRows;
+    return scoped.map((row) => toRoomDocument(row, workspaceOf(row.id)));
   }
 
   get(documentId: string): RoomDocument | null {
@@ -74,7 +104,12 @@ export class DocumentRepository {
       .from(documents)
       .where(eq(documents.id, documentId))
       .get();
-    return result ? toRoomDocument(result.document) : null;
+    return result
+      ? toRoomDocument(
+        result.document,
+        this.workspaceIndex ? this.workspaceIndex.workspaceOf(result.document.id) : undefined,
+      )
+      : null;
   }
 
   updateVersionChangeSummary(

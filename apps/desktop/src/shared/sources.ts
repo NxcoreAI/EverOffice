@@ -835,6 +835,21 @@ export interface JournalTodayDto {
   lastError: string | null
 }
 
+/**
+ * 系统文件关联里的一个可打开应用（macOS 用 LaunchServices 查询；
+ * 其他平台暂不提供关联列表，返回空数组、界面不出现外部打开入口）。
+ */
+export interface FileApplication {
+  /** 应用绝对路径（.app bundle）——打开时原样回传主进程，主进程再按注册表校验。 */
+  id: string
+  /** 系统显示名（如「WPS Office.app」）。 */
+  name: string
+  /** 是否系统为该文件类型登记的默认应用。 */
+  default: boolean
+  /** 32px PNG data URL（供菜单项与卡片按钮图标）；取不到图标时为 null。 */
+  icon: string | null
+}
+
 export interface NxcoreDesktopApi {
   platform: string
   app: {
@@ -1263,8 +1278,9 @@ export interface NxcoreDesktopApi {
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
   documents: {
-    list(roomId: string): Promise<RoomDocument[]>
-    listTrash(roomId: string): Promise<RoomDocument[]>
+    /** workspaceId 传 null/省略 = 整个工作区（工作区级文稿，P0-2）；传 workspaceId 时按工作空间过滤。 */
+    list(workspaceId?: string | null): Promise<RoomDocument[]>
+    listTrash(workspaceId?: string | null): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
     readMarkdown(documentId: string): Promise<{ markdown: string }>
     listBlocks(documentId: string): Promise<DocumentBlockList>
@@ -1302,12 +1318,15 @@ export interface NxcoreDesktopApi {
     moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
     restore(documentId: string): Promise<RoomDocument>
     deletePermanently(documentId: string): Promise<void>
-    emptyTrash(roomId: string): Promise<void>
+    /** roomId 传 null/省略 = 清空整个工作区回收站。 */
+    emptyTrash(roomId?: string | null): Promise<void>
     exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
-    subscribe(roomId: string): Promise<void>
-    unsubscribe(roomId?: string): Promise<void>
+    /** 订阅文稿事件流；roomId 传 null/省略 = 工作区频道（WORKSPACE_DOCUMENT_CHANNEL）。 */
+    subscribe(roomId?: string | null): Promise<void>
+    unsubscribe(roomId?: string | null): Promise<void>
     onEvent(listener: (frame: DocumentEventFrame) => void): () => void
     onOperationChanged(listener: (operationId: string) => void): () => void
+    /** 每次（重）连接触发：事件流有损，渲染层需据此重拉 REST 基线。 */
     onReady(listener: (roomId: string) => void): () => void
   }
   externalDocuments: {
@@ -1404,6 +1423,15 @@ export interface NxcoreDesktopApi {
     /** 解析产物 markdown（未进过链路的裸上传 404）。 */
     readMarkdown(fileId: string, options?: { waitMs?: number; pollMs?: number }): Promise<{ markdown: string }>
     readDataUrl(fileId: string): Promise<{ dataUrl: string }>
+    /** 文件本体按 UTF-8 解码后的原始文本（工作空间侧栏的 Markdown 编辑器用）。 */
+    readText(fileId: string): Promise<{ text: string }>
+    /** 把侧栏 Markdown 编辑器的内容存回同一 fileEntry 的新版本（编辑回填）。 */
+    saveMarkdown(input: { fileId: string; markdown: string; originalName?: string; workspaceId?: string }): Promise<{
+      fileEntryId: string
+      fileVersionId: string
+      contentHash: string
+      originalName: string
+    }>
     rename(fileId: string, displayName: string): Promise<FileCatalogDto>
     /** 删除：级联 knowledge cleanup + 对象库 GC。 */
     delete(fileId: string): Promise<{
@@ -1428,6 +1456,11 @@ export interface NxcoreDesktopApi {
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
       | { openedWith: 'external'; legacyFallback?: boolean }
     >
+    /** 该文件在本机可用的外部应用（按系统优先级；当前仅 macOS 提供，其他平台返回空数组）。 */
+    listApplications(fileId: string): Promise<FileApplication[]>
+    /** 用外部应用打开文件：applicationId 来自 listApplications；省略 = 系统默认应用。
+     *  应用路径会被主进程重新按系统文件关联校验，不在列表里的直接拒绝。 */
+    openWithApplication(fileId: string, applicationId?: string): Promise<{ openedWith: 'external' }>
     /** 统一导入：选择框 → /v1/files → /v1/ingest（逐文件结果）。roomId（Room 内上传）= 显式归属直达该 Room；
      * workspaceId = 归属工作空间（资料库/产物库按空间隔离，缺省归 default）。 */
     pickAndImport(options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }): Promise<FileImportOutcome[]>

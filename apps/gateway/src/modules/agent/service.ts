@@ -45,6 +45,7 @@ import {
   MODEL_PREFERENCE_AGENT_IDS,
   MODEL_TIER_AGENT_IDS,
   channelAgentIdFromAgentId,
+  isAgentModelPreference,
   isAgentThinkingLevel,
   modelPreferenceFromAgentId,
 } from "@nxcore/agent-contract";
@@ -1498,8 +1499,9 @@ export class AgentService {
 
   createSession(input: CreateAgentSessionInput): AgentSession {
     const now = new Date();
-    // 档位在创建时锁定为 activeAgentId；lite 未配置（tier resolver 缺席）
-    // 静默回落 smart，之后 startRun 一路走 session.activeAgentId。
+    // 档位映射为 activeAgentId；lite/primary 未配置（tier resolver 缺席）时
+    // 静默回落 smart，之后 startRun 一路走 session.activeAgentId（会话内可随时
+    // PATCH 切换档位，updateSession 回写同一个字段）。
     let activeAgentId: string = MAIN_AGENT_ID;
     if (input.channelAgentId) {
       // 渠道会话：activeAgentId 直接锁定为本机 CLI Agent（如 codex:/…），
@@ -1663,9 +1665,34 @@ export class AgentService {
     return updated ? toSessionLink(updated) : null;
   }
 
+  /**
+   * 更新会话：标题 / 模型档位。
+   *
+   * 模型档位不锁定在创建时：这里直接回写 `activeAgentId`（与 createSession 同口径，
+   * 目标档位 runtime 不可用时回落 smart），下一轮 startRun 立即按新档位选运行时。
+   * 运行中的会话拒绝切换（agent_session_busy）——正在跑的 run 无法中途换运行时，
+   * 也避免 UI 标签与实际执行者错位。渠道会话切回档位＝退出渠道，顺手撤销渠道侧会话。
+   */
   updateSession(sessionId: string, input: UpdateAgentSessionInput): AgentSession | null {
+    const existing = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    if (!existing) return null;
+    const patch: Partial<typeof agentSessions.$inferInsert> = { updatedAt: new Date() };
+    if (input.title !== undefined) patch.title = input.title.trim();
+    if (input.modelPreference !== undefined) {
+      if (existing.status === "running") throw new Error("agent_session_busy");
+      if (!isAgentModelPreference(input.modelPreference)) throw new Error("agent_model_preference_invalid");
+      const requested = MODEL_PREFERENCE_AGENT_IDS[input.modelPreference];
+      const tierRuntime = requested === MAIN_AGENT_ID
+        ? this.runtime
+        : this.resolveTierRuntime?.(requested) ?? null;
+      patch.activeAgentId = tierRuntime ? requested : MAIN_AGENT_ID;
+      if (channelAgentIdFromAgentId(existing.activeAgentId)) {
+        const revoke = this.revokeChannelSession;
+        if (revoke) void revoke(sessionId).catch(() => undefined);
+      }
+    }
     const updated = this.db.update(agentSessions)
-      .set({ title: input.title.trim(), updatedAt: new Date() })
+      .set(patch)
       .where(eq(agentSessions.id, sessionId))
       .returning()
       .get();
@@ -1971,7 +1998,14 @@ export class AgentService {
       && (run.status === "accepted" || run.status === "running")
       && execution
       && execution.sessionId === input.agentSessionId);
-    if (!session || !run || !activeContextMatches) {
+    const completedSelectionRewriteMatches = Boolean(session
+      && run?.status === "completed"
+      && input.capabilityId === "document.selection-rewrite"
+      && execution?.sessionId === input.agentSessionId
+      && run.completedAt
+      && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
+    if (!session || !run
+      || (!activeContextMatches && !completedSelectionRewriteMatches)) {
       throw new Error("agent_operation_context_invalid");
     }
   }
@@ -2036,18 +2070,19 @@ export class AgentService {
       ?? openFiles?.find((file) => file.active)
       ?? undefined;
 
-    // 档位（main/main-direct/main-lite）在会话创建时锁定：会话已锁档位时
-    // 请求另一个档位不生效（静默沿用会话档位）；local agent 切换不受影响。
-    const lockedTier = MODEL_TIER_AGENT_IDS.includes(session.activeAgentId ?? MAIN_AGENT_ID)
+    // 档位（main/main-direct/main-lite）以会话当前的 activeAgentId 为准：用户切换
+    // 档位时 PATCH 已回写该值，这里立即按新目标选运行时；请求里带另一个档位视为
+    // 陈旧意图，静默沿用会话档位。local agent 切换不受影响。
+    const currentTier = MODEL_TIER_AGENT_IDS.includes(session.activeAgentId ?? MAIN_AGENT_ID)
       ? session.activeAgentId ?? MAIN_AGENT_ID
       : null;
     let selectedAgentId = input.targetAgentId ?? session.activeAgentId ?? MAIN_AGENT_ID;
-    if (lockedTier && MODEL_TIER_AGENT_IDS.includes(selectedAgentId) && selectedAgentId !== lockedTier) {
+    if (currentTier && MODEL_TIER_AGENT_IDS.includes(selectedAgentId) && selectedAgentId !== currentTier) {
       this.logger.info(
-        { event: "agent_tier_locked", sessionId, requested: selectedAgentId, locked: lockedTier },
-        "agent model tier locked at session creation",
+        { event: "agent_tier_mismatch", sessionId, requested: selectedAgentId, current: currentTier },
+        "agent model tier request ignored in favor of session's current tier",
       );
-      selectedAgentId = lockedTier;
+      selectedAgentId = currentTier;
     }
     const isBuiltinTier = MODEL_TIER_AGENT_IDS.includes(selectedAgentId);
     const invocationMode = input.invocationMode ?? "explicit_switch";
@@ -2122,6 +2157,10 @@ export class AgentService {
       ? allMessages.filter((message) => Date.parse(message.createdAt) > participant!.lastSeenAt!.getTime())
       : allMessages;
     const priorMessages = unseenMessages.slice(-(LOCAL_AGENT_HISTORY_MESSAGE_LIMIT + 1));
+    // 换档/换 Agent 后的首个 run：新 runtime 还没有自己的会话文件（同一个档位的
+    // pi 会话文件按档位隔离），把「该 Agent 没见过的历史消息」作为 handoff 注入，
+    // 避免切换档位后失忆；同档位续聊时 unseen 为空，不额外注入。
+    const handoffPrompt = participantHandoffPrompt(priorMessages);
 
     const now = new Date();
     const runId = randomUUID();
@@ -2318,7 +2357,7 @@ export class AgentService {
         prompt: runtimePrompt(
           input,
           runPageLabel,
-          !isBuiltinTier ? participantHandoffPrompt(priorMessages) : null,
+          handoffPrompt,
           externalContext,
         ),
         ...(attachments.length ? { attachments } : {}),

@@ -119,6 +119,34 @@ describe('toolTurnFiles', () => {
     })
     expect(toolTurnFiles(call)[0]?.format).toBe('docx')
   })
+
+  it('extracts the plan cloud document from agent_confirm (deck plan card) results', () => {
+    const call = tool({
+      id: 't11',
+      name: 'agent_confirm',
+      result: {
+        content: [{ type: 'text', text: JSON.stringify({ choice: 'approved', plan: { documentId: 'doc-plan-1' } }) }],
+        details: {
+          documentId: 'doc-plan-1',
+          documentTitle: '产品介绍演示文稿制作计划',
+          navigation: { title: '产品介绍演示文稿制作计划', action: 'created', objectType: 'document' },
+          planItemId: 'plan-item-1',
+        },
+      },
+    })
+    expect(toolTurnFiles(call)).toEqual([
+      { kind: 'cloud-doc', documentId: 'doc-plan-1', title: '产品介绍演示文稿制作计划', origin: 'created' },
+    ])
+  })
+
+  it('agent_confirm without a plan document stays out of the file card', () => {
+    const call = tool({
+      id: 't12',
+      name: 'agent_confirm',
+      result: successResult({ choice: 'approved' }),
+    })
+    expect(toolTurnFiles(call)).toEqual([])
+  })
 })
 
 describe('agentTurnFilesFromTools', () => {

@@ -5,19 +5,33 @@ import {
   Minus,
   X,
 } from 'lucide-react'
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
+import { buildCloudDocumentAskMessage } from '@/components/agent/askDrafts'
+import { useWorkbenchStore } from '../state/store'
 import { EditorView } from '@/office-proto/EditorView'
-import type { OfficeFile, RealOfficeFile } from '@/office-proto/data'
+import type { CloudDocumentSelectionNote } from '@/office-proto/CloudDocumentEditor'
+import {
+  cloudDocumentTitle,
+  cloudDocumentToOfficeFile,
+  type OfficeFile,
+  type RealOfficeFile,
+} from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
+import { FileOpenWithControl } from '@/components/files/FileOpenWithControl'
+import type { RoomDocument } from '@nxcore/agent-contract'
 import { cn } from '../ui/cn'
 import { Hint, IconButton, Spinner } from '../ui/primitives'
 import { isArtifactFile } from './fileBrowser'
+import { useCloudDocuments } from './useCloudDocuments'
 import { useFileLibrary } from './useFileLibrary'
-import { BUBBLE_DEFAULT_WIDTH, type BubbleExitKind, type BubbleState } from './useBubble'
-/** 对话区最小宽度：与 workspace.css 的 .wb-ws-main min-width 同步。 */
-const CHAT_MIN_WIDTH = 240
+import {
+  BUBBLE_DEFAULT_WIDTH,
+  resolveBubbleDrag,
+  resolveBubbleGeometry,
+} from './bubbleGeometry'
+import type { BubbleExitKind, BubbleState } from './useBubble'
 
 import './bubble.css'
 
@@ -31,17 +45,21 @@ import './bubble.css'
  * 最大化态切到绝对定位覆盖层铺满整个工作区，对话区在其下整块隐藏（wb-ws 的
  * has-max-bubble），还原时回到停靠宽度。
  *
+ * 拖宽：左缘把手能把面板拖到「铺满整个工作区」——越过对话区保底宽度后进入 cover 档，
+ * 对话区让位到 0、面板去掉停靠留白与卡片描边，视觉上等同最大化覆盖层；反向拖回
+ * 恢复常规停靠分栏。渲染宽度按容器实测宽度收敛（窗口变窄/变宽后拖拽也不会跳）。
+ *
  * 原生编辑器（WebContentsView）永远盖在 DOM 之上：切文件/切浏览态时旧宿主卸载 → 矩形归零 →
  * 主进程隐藏旧实例；同时分发一次 resize 事件让新宿主立刻重报矩形，避免迟到的 ZERO 把新实例也藏掉。
  */
 export function BubbleWindow({
   bubble, exiting = null, onResize, onMinimize, onToggleMax, onClose,
-  onActivateFile, onCloseFile, onBrowse, onOpenFile, onToast, workspaceId,
+  onActivateFile, onCloseFile, onBrowse, onOpenFile, onToast, workspaceId, onFullChange,
 }: {
   bubble: BubbleState
   /** 退场动画中：DOM 保留但禁用交互，动画结束后由宿主卸载（'close' 关闭 / 'minimize' 收起）。 */
   exiting?: BubbleExitKind | null
-  onResize: (width: number) => void
+  onResize: (width: number, cover?: boolean) => void
   onMinimize: () => void
   onToggleMax: () => void
   onClose: () => void
@@ -54,6 +72,11 @@ export function BubbleWindow({
   onToast: (message: string) => void
   /** 浏览列表按工作空间过滤（资料库/产物库独立）。 */
   workspaceId?: string
+  /**
+   * 是否已经铺满整个工作区（铺满态视觉等同最大化覆盖层）。
+   * 宿主据此把对话区 visibility 关掉，避免键盘/读屏还能 Tab 进宽度为 0 的不可见控件。
+   */
+  onFullChange?: (full: boolean) => void
 }) {
   const { t } = useLocale()
   const [resizing, setResizing] = useState(false)
@@ -66,29 +89,83 @@ export function BubbleWindow({
   const sectionRef = useRef<HTMLElement>(null)
   const [freezeWidth, setFreezeWidth] = useState<number | null>(null)
 
+  /**
+   * 工作区可用宽度（section 的父级 .wb-ws）：拖宽上限、铺满宽度都由它决定。
+   * 窗口变窄/变宽、侧栏收展都会改它，实测后重算渲染宽度，记忆宽度不跟着跳。
+   */
+  const [containerWidth, setContainerWidth] = useState(0)
+  /**
+   * 容器刚在变化（拖窗口 / 侧栏收展）：这段时间里渲染宽度是被动重排，必须关掉
+   * 240ms 宽度过渡，否则面板会缓动追着窗口走（橡皮筋）。用状态而不是 rAF 改 style：
+   * 连续 resize 期间一直保持，稳定一小会儿后再交还给 CSS 过渡。
+   */
+  const [containerAdjusting, setContainerAdjusting] = useState(false)
+  useLayoutEffect(() => {
+    const container = sectionRef.current?.parentElement
+    if (!container) return undefined
+    const measure = () => {
+      setContainerWidth(container.clientWidth)
+      setContainerAdjusting(true)
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(measure)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!containerAdjusting) return undefined
+    // 容器尺寸稳定 140ms 后恢复 CSS 过渡（交互式 resize 期间会不断重新计时）。
+    const timer = window.setTimeout(() => setContainerAdjusting(false), 140)
+    return () => window.clearTimeout(timer)
+  }, [containerAdjusting, containerWidth])
+
+  // 渲染宽度 = 记忆宽度按容器收敛；cover 档位下允许继续长到铺满整个工作区。
+  const geometry = resolveBubbleGeometry({
+    width: bubble.width || BUBBLE_DEFAULT_WIDTH,
+    containerWidth,
+    cover: bubble.cover,
+  })
+
+  // 铺满态视觉等同最大化覆盖层：通知宿主把对话区 visibility 关掉。
+  // 只把对话区压到 width 0 挡不住键盘 Tab / 读屏，visibility:hidden 才能让出无障碍树。
+  useEffect(() => {
+    onFullChange?.(!bubble.maximized && geometry.full)
+    return () => onFullChange?.(false)
+  }, [bubble.maximized, geometry.full, onFullChange])
+
+  /** 最新几何：冻结宽度要取「当前实际渲染宽度」，但冻结时机只跟面板自身宽度变化走。 */
+  const geometryRef = useRef(geometry)
+  geometryRef.current = geometry
+
   // 退场：dock 态直接用已知宽度冻结（别量，能量到动画第一帧的中间值 → 内层会跳一下）；
   // 最大化覆盖层退场走整体淡出（宽度不可插值），内层保持 100% 宽，不需要冻结。
+  // 依赖故意用 bubble.width（记忆宽度）而不是 geometry.width：窗口缩放时渲染宽度会被
+  // 容器收敛，但那是「被动重新布局」，不该触发冻结（is-settling 会隐藏原生编辑器 280ms）。
   useLayoutEffect(() => {
     if (!exiting) return
     if (!bubble.maximized) {
-      setFreezeWidth(bubble.width)
+      setFreezeWidth(geometryRef.current.width)
       return
     }
     setFreezeWidth(null)
   }, [exiting, bubble.maximized, bubble.width])
 
-  // 宽度过渡（展开 / 还原）期间把内层冻结成「目标宽度」，
+  // 宽度过渡（展开 / 还原 / 拖拽改宽）期间把内层冻结成「目标宽度」，
   // 面板只做裁剪动画，列表/文字不逐帧重排，避免动画中的抖动。
   // 最大化是绝对定位全屏覆盖（无宽度动画），解冻让内层跟随 100% 宽。
+  // 同样只跟记忆宽度/容器「主动改宽」走，窗口缩放带来的容器收敛不冻结（见上）。
   useEffect(() => {
     if (exiting) return
     if (bubble.maximized) {
       setFreezeWidth(null)
       return
     }
-    setFreezeWidth(bubble.width)
+    setFreezeWidth(geometryRef.current.width)
     const timer = window.setTimeout(() => setFreezeWidth(null), 280)
     return () => window.clearTimeout(timer)
+    // 依赖只用记忆宽度与最大化/退场：容器缩放是被动重排，不触发冻结。
   }, [exiting, bubble.maximized, bubble.width])
 
   const startResize = (event: React.PointerEvent) => {
@@ -97,10 +174,22 @@ export function BubbleWindow({
     resizingRef.current = true
     setResizing(true)
     const startX = event.clientX
-    const startWidth = bubble.width
+    /**
+     * 拖拽起点必须用「实测渲染宽度」而不是状态里的记忆宽度：窗口被拖窄/拖宽后
+     * 面板实际宽度已被容器收敛，从记忆宽度起算会在第一次 pointermove 时跳一下。
+     */
+    const measured = sectionRef.current?.getBoundingClientRect().width ?? 0
+    const startWidth = measured > 0 ? measured : geometry.width
+    const drag = (deltaX: number) => resolveBubbleDrag({
+      startWidth,
+      deltaX,
+      softMax: geometry.softMax,
+      coverWidth: geometry.coverWidth,
+    })
     const onMove = (moveEvent: PointerEvent) => {
-      const next = startWidth + (startX - moveEvent.clientX)
-      onResize(next)
+      // deltaX 以「向右为正」：向左拖 deltaX 为负，面板变宽。
+      const next = drag(moveEvent.clientX - startX)
+      onResize(next.width, next.cover)
     }
     const onUp = () => {
       resizingRef.current = false
@@ -127,6 +216,31 @@ export function BubbleWindow({
   const browsing = bubble.activeFileId === null
   const active = bubble.files.find((file) => file.id === bubble.activeFileId) ?? null
 
+  /**
+   * 云文档选区「评论」：与其他 Office（Word/Excel/PPT 嵌入版）同一条链路——
+   * 批注进对话输入框上方的待发送队列（workbench store），由用户在对话区一起发送。
+   * 云文档没有文件库条目，不带 fileId（不参与原生编辑器内的锚点同步）。
+   */
+  const queueCloudSelectionNote = useCallback((note: CloudDocumentSelectionNote) => {
+    if (!workspaceId) throw new Error(t('workbench:shell.annotationNoWorkspace'))
+    useWorkbenchStore.getState().addAskDraft({
+      id: `cloud-doc-note:${crypto.randomUUID()}`,
+      workspaceId,
+      title: note.title,
+      instruction: note.instruction,
+      excerpt: note.excerpt,
+      message: buildCloudDocumentAskMessage({
+        documentId: note.documentId,
+        documentTitle: note.title,
+        instruction: note.instruction,
+        excerpt: note.excerpt,
+        blockId: note.blockId,
+      }),
+      displayMessage: note.instruction,
+      createdAt: new Date().toISOString(),
+    })
+  }, [t, workspaceId])
+
   return (
     <section
       ref={sectionRef}
@@ -134,15 +248,24 @@ export function BubbleWindow({
         'wb-bubble',
         bubble.maximized && 'is-maximized',
         resizing && 'is-resizing',
+        // 拖过对话区保底宽度后：对话区继续让位；铺满时去掉停靠留白与卡片描边，
+        // 视觉上与最大化覆盖层一致（但仍是停靠态，左缘把手可以再拖回来）。
+        !bubble.maximized && geometry.covering && 'is-covering',
+        !bubble.maximized && geometry.full && 'is-full-cover',
         // 宽度过渡（入场/最大化/还原）期间的原生区由 CSS 隐藏：native view 跟随 IPC
         // 重定位会滞后，否则会短暂画到对话区上（视口遮挡）。
         freezeWidth !== null && 'is-settling',
         exiting === 'close' && 'is-closing',
         exiting === 'minimize' && 'is-minimizing',
       )}
-      // 宽度按容器收敛：对话区至少保留 CHAT_MIN_WIDTH，窄窗口下不再让两者最小宽度
-      // 之和超过容器（flex 溢出会让原生视图画到对话区上，见 NativeEditorHost 的裁剪兜底）。
-      style={bubble.maximized ? undefined : { width: bubble.width || BUBBLE_DEFAULT_WIDTH, maxWidth: `calc(100% - ${CHAT_MIN_WIDTH}px)` }}
+      // 宽度按容器实测值收敛（不用 CSS max-width：铺满态要能长到容器宽度，且窗口
+      // 变化后渲染宽度必须跟着重算，否则拖拽起点会比实际宽、第一次拖动跳一下）。
+      style={bubble.maximized
+        ? undefined
+        : {
+            width: geometry.width,
+            ...(containerAdjusting || containerWidth <= 0 ? { transition: 'none' } : null),
+          }}
       aria-label={t('workbench:workspace.bubble.title')}
     >
       {!bubble.maximized ? (
@@ -204,6 +327,14 @@ export function BubbleWindow({
             </div>
           ))}
         </div>
+        {!browsing && active?.realCatalog ? (
+          <FileOpenWithControl
+            fileId={active.realCatalog.id}
+            fileName={active.name}
+            compact
+            className="wb-bubble-open-with"
+          />
+        ) : null}
         <div className="wb-bubble-ctl">
           <Hint label={t('workbench:workspace.bubble.minimize')}>
             <IconButton
@@ -243,7 +374,12 @@ export function BubbleWindow({
           <BubbleBrowser onOpenFile={onOpenFile} workspaceId={workspaceId} />
         ) : active ? (
           <div className="wb-bubble-doc" key={active.id}>
-            <EditorView file={active} onToast={onToast} hideSideDock />
+            <EditorView
+              file={active}
+              onToast={onToast}
+              hideSideDock
+              onQueueCloudSelectionNote={workspaceId ? queueCloudSelectionNote : undefined}
+            />
           </div>
         ) : (
           <div className="wb-bubble-empty">{t('workbench:workspace.bubble.empty')}</div>
@@ -264,9 +400,22 @@ const SCOPES: ReadonlyArray<{ key: BrowserScope; labelKey: string }> = [
   { key: 'output', labelKey: 'workbench:workspace.bubble.scope.output' },
 ]
 
+/** 混排列表的一行：文件库条目与工作空间云文档共用一个列表（无独立分组/标题）。 */
+type BrowserEntry =
+  | { key: string; updatedAt: string; file: RealOfficeFile }
+  | { key: string; updatedAt: string; document: RoomDocument }
+
+function entryUpdatedAt(entry: BrowserEntry): number {
+  const iso = 'document' in entry ? entry.document.updatedAt : entry.file.catalog.updatedAt
+  const parsed = Date.parse(iso)
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY
+}
+
 /**
- * 窄面板里的文件库列表：资料/产物筛选 + 点开即进气泡标签。
- * workspaceId 传入时按工作空间过滤（资料库/产物库独立）；缺省拉全库。
+ * 窄面板里的「资料与文件」列表：文件库条目 + 工作空间云文档（documents 表）
+ * 混排在同一份列表里，按更新时间倒序；点开即进气泡标签。
+ * workspaceId 传入时文件库与云文档都按工作空间过滤（资料库/产物库独立）。
+ * 「资料 / 产物」两个筛选只看文件，云文档只在「全部」里出现。
  */
 function BubbleBrowser({ onOpenFile, workspaceId }: {
   onOpenFile: (file: OfficeFile) => void
@@ -274,18 +423,41 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
 }) {
   const { t } = useLocale()
   const library = useFileLibrary(workspaceId)
+  // 云文档清单单独订阅工作区文稿频道：Agent 新建/改动云文档后列表自动刷新。
+  const cloudDocuments = useCloudDocuments(workspaceId)
   const [scope, setScope] = useState<BrowserScope>('all')
 
-  const items = useMemo(() => {
+  const fileItems = useMemo(() => {
     if (scope === 'all') return library.items
     return library.items.filter((item) => isArtifactFile(item) === (scope === 'output'))
   }, [library.items, scope])
 
+  const entries = useMemo<BrowserEntry[]>(() => {
+    const files: BrowserEntry[] = fileItems.map((item) => ({
+      key: `file:${item.file.id}`,
+      updatedAt: item.catalog.updatedAt,
+      file: item,
+    }))
+    const cloud: BrowserEntry[] = scope === 'all' && cloudDocuments.available
+      ? cloudDocuments.documents.map((document) => ({
+          key: `cloud:${document.id}`,
+          updatedAt: document.updatedAt,
+          document,
+        }))
+      : []
+    return [...files, ...cloud].sort((left, right) => entryUpdatedAt(right) - entryUpdatedAt(left))
+  }, [cloudDocuments.available, cloudDocuments.documents, fileItems, scope])
+
+  // 「全部」计数包含云文档；资料/产物只统计文件。
   const counts = useMemo(() => ({
-    all: library.items.length,
+    all: library.items.length + (cloudDocuments.available ? cloudDocuments.documents.length : 0),
     material: library.items.filter((item) => !isArtifactFile(item)).length,
     output: library.items.filter((item) => isArtifactFile(item)).length,
-  }), [library.items])
+  }), [cloudDocuments.available, cloudDocuments.documents.length, library.items])
+
+  const loading = library.state === 'loading'
+    || (scope === 'all' && cloudDocuments.available && cloudDocuments.loading)
+  const showEmpty = !loading && library.state !== 'unavailable' && entries.length === 0
 
   return (
     <div className="wb-bubble-browser">
@@ -305,17 +477,23 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
       </div>
 
       <div className="wb-bubble-browser-list" role="list">
-        {library.state === 'loading' ? (
+        {loading ? (
           <div className="wb-bubble-browser-state"><Spinner size={13} /></div>
         ) : null}
-        {library.state === 'unavailable' ? (
+        {!loading && library.state === 'unavailable' && entries.length === 0 ? (
           <div className="wb-bubble-browser-state">{t('workbench:workspace.common.filesUnavailable')}</div>
         ) : null}
-        {library.state === 'ready' && items.length === 0 ? (
-          <div className="wb-bubble-browser-state">{t('workbench:workspace.file.noMatches')}</div>
+        {showEmpty ? (
+          <div className="wb-bubble-browser-state">
+            {scope === 'all'
+              ? t('workbench:workspace.bubble.emptyBoth')
+              : t('workbench:workspace.file.noMatches')}
+          </div>
         ) : null}
-        {library.state === 'ready' ? items.map((item) => (
-          <BubbleBrowserRow key={item.file.id} item={item} onOpen={onOpenFile} />
+        {!loading ? entries.map((entry) => (
+          'document' in entry
+            ? <CloudDocumentBrowserRow key={entry.key} document={entry.document} onOpen={onOpenFile} />
+            : <BubbleBrowserRow key={entry.key} item={entry.file} onOpen={onOpenFile} />
         )) : null}
       </div>
 
@@ -328,23 +506,59 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
   )
 }
 
+/* ───────────────── 云文档行（documents 表，与文件混排） ───────────────── */
+
+/** 工作空间云文档行：标题 + 「云文档 · vN · 更新时间」，点击把伪文件加进气泡标签并打开。 */
+function CloudDocumentBrowserRow({ document, onOpen }: {
+  document: RoomDocument
+  onOpen: (file: OfficeFile) => void
+}) {
+  // 与气泡标签共用同一套伪文件转换：id / 更新时间 / 文案只在 data.ts 定义一次。
+  const file = cloudDocumentToOfficeFile(document)
+  const title = cloudDocumentTitle(document)
+  const meta = [
+    '云文档',
+    document.version ? `v${document.version}` : null,
+    file.updatedLabel,
+  ].filter((part): part is string => Boolean(part)).join(' · ')
+
+  return (
+    <div role="listitem" className="wb-bubble-browser-row wb-bubble-cloud-doc-row" title={title}>
+      <button
+        type="button"
+        className="wb-bubble-browser-row-main"
+        aria-label={`打开云文档 ${title}`}
+        onClick={() => onOpen(file)}
+      >
+        <FileTypeIcon kind={file.kind} size={24} />
+        <span className="wb-bubble-browser-row-copy">
+          <span className="wb-bubble-browser-row-name">{title}</span>
+          <span className="wb-bubble-browser-row-meta">{meta}</span>
+        </span>
+      </button>
+    </div>
+  )
+}
+
 function BubbleBrowserRow({ item, onOpen }: { item: RealOfficeFile; onOpen: (file: OfficeFile) => void }) {
   const meta = [item.catalog.sourceLabel, item.file.updatedLabel, item.file.sizeLabel]
     .filter((part) => part && part !== '—')
     .join(' · ')
   return (
-    <button
-      type="button"
-      role="listitem"
-      className="wb-bubble-browser-row"
-      title={item.file.name}
-      onClick={() => onOpen(item.file)}
-    >
-      <FileTypeIcon kind={item.file.kind} size={24} />
-      <span className="wb-bubble-browser-row-main">
-        <span className="wb-bubble-browser-row-name">{item.file.name}</span>
-        <span className="wb-bubble-browser-row-meta">{meta}</span>
-      </span>
-    </button>
+    <div role="listitem" className="wb-bubble-browser-row" title={item.file.name}>
+      <button
+        type="button"
+        className="wb-bubble-browser-row-main"
+        aria-label={`打开 ${item.file.name}`}
+        onClick={() => onOpen(item.file)}
+      >
+        <FileTypeIcon kind={item.file.kind} size={24} />
+        <span className="wb-bubble-browser-row-copy">
+          <span className="wb-bubble-browser-row-name">{item.file.name}</span>
+          <span className="wb-bubble-browser-row-meta">{meta}</span>
+        </span>
+      </button>
+      <FileOpenWithControl fileId={item.catalog.id} fileName={item.file.name} compact />
+    </div>
   )
 }

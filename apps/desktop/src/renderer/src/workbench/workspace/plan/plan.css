@@ -361,6 +361,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 文档引用可点开：计划页 → 计划云文档（与对话里的云文档卡同一入口）。
+   只给文档类引用加链接语义，文件/链接类引用仍是纯文本。 */
+.wb-plan-ref-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-accent, inherit);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wb-plan-ref-link .wb-plan-ref-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-plan-ref-link:hover .wb-plan-ref-text {
+  text-decoration: underline;
+}
+.wb-plan-ref-link:focus-visible {
+  outline: 2px solid var(--ui-accent, currentColor);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 .wb-plan-checks label {
   display: flex;
   flex: 1;

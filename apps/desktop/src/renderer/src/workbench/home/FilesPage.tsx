@@ -112,6 +112,7 @@ export function FilesPage() {
     onOpen: (item) => openFileInWorkspace(item.file),
     onExportReveal: (item) => { void exportReveal(item) },
     onDelete: (item) => setPendingDelete(item),
+    onError: workbenchToast,
   }
 
   /** 工具行左侧的类型标签（原型 `Seg`：胶囊裸标签，不带计数徽标）。 */

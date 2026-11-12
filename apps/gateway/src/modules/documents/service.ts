@@ -60,6 +60,11 @@ import {
   sectionPlainText,
 } from "./section-preview.js";
 import type { SelectionRewriteContentResolver } from "./capabilities/selection-rewrite-content.js";
+import type { DocWriterDraftResolver } from "./capabilities/doc-writer-content.js";
+import {
+  DEFAULT_DOCUMENT_WORKSPACE_ID,
+  type DocumentWorkspaceIndex,
+} from "./workspace-index.js";
 
 export { DocumentServiceError } from "./errors.js";
 
@@ -246,6 +251,13 @@ export class DocumentService {
    */
   resolveSelectionRewriteContent: SelectionRewriteContentResolver | null = null;
 
+  /**
+   * doc-writer 引用透传（doc-writer-subagent-plan M3/V2）：
+   * write_append / patch_hunk 携带 invocationId 时的草稿内容解析器。
+   * 由 create-server 装配注入（orchestrator 取数 + run 绑定授权）。
+   */
+  resolveDocWriterDraft: DocWriterDraftResolver | null = null;
+
   constructor(
     private readonly db: GatewayDatabase,
     readonly broker: DocumentEventBroker,
@@ -253,8 +265,13 @@ export class DocumentService {
     private readonly onDocumentRewriteApplied?: DocumentRewriteAppliedHandler,
     private readonly onDocumentVersionCommitted?: DocumentVersionCommittedHandler,
     private readonly onAfterCommitError?: DocumentAfterCommitErrorHandler,
+    /**
+     * 云文档 ↔ 工作空间绑定索引（JSON 旁挂，见 workspace-index.ts）。
+     * 可选：未装配时（部分单测/无桌面场景）list 不按工作空间过滤、DTO 省略 workspaceId。
+     */
+    private readonly workspaceIndex?: DocumentWorkspaceIndex,
   ) {
-    this.repository = new DocumentRepository(db);
+    this.repository = new DocumentRepository(db, workspaceIndex);
     this.contentEngine = new DocumentContentEngine();
     this.yjsHistory = new YjsHistoryService();
     this.commitService = new DocumentCommitService(db, this.repository, this.contentEngine, {}, this.yjsHistory);
@@ -272,19 +289,52 @@ export class DocumentService {
         "document.changed",
         { document },
       ),
-      deleted: (document) => this.publish(
-        document.id,
-        null,
-        "document.deleted",
-        { documentId: document.id },
-      ),
+      deleted: (document) => {
+        this.publish(
+          document.id,
+          null,
+          "document.deleted",
+          { documentId: document.id },
+        );
+        // 永久删除才解绑；进回收站保留绑定（回收站恢复后仍在原工作空间）。
+        this.workspaceIndex?.unbind(document.id);
+      },
     });
     this.normalizeStoredDocuments();
   }
 
-  /** 列出工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。 */
-  list(trashed = false, origin?: "native" | "import"): RoomDocument[] {
-    return this.queryService.list(trashed, origin);
+  /**
+   * 列出工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。
+   * 传 workspaceId 时按工作空间绑定过滤（default 额外含旧版未绑定文稿）。
+   */
+  list(trashed = false, origin?: "native" | "import", workspaceId?: string | null): RoomDocument[] {
+    return this.queryService.list(trashed, origin, workspaceId);
+  }
+
+  /**
+   * 绑定/解绑文稿与工作空间（JSON 索引旁挂，不落库）。
+   * `workspaceId` 为空 = 解绑；未装配索引时为空操作（单测无桌面场景兼容）。
+   */
+  bindDocumentWorkspace(documentId: string, workspaceId: string | null): void {
+    if (!this.workspaceIndex) return;
+    const id = typeof documentId === "string" ? documentId.trim() : "";
+    if (!id) return;
+    const workspace = typeof workspaceId === "string" ? workspaceId.trim() : "";
+    if (!workspace) {
+      this.workspaceIndex.unbind(id);
+      return;
+    }
+    this.workspaceIndex.bind(id, workspace);
+  }
+
+  /** 旧数据迁移入口（create-server 启动时调用一次）：返回迁入 default 的文稿数。 */
+  migrateLegacyDocumentWorkspaces(): number {
+    if (!this.workspaceIndex) return 0;
+    const documentIds = [
+      ...this.list(false).map((document) => document.id),
+      ...this.list(true).map((document) => document.id),
+    ];
+    return this.workspaceIndex.migrateLegacyUnbound(documentIds, DEFAULT_DOCUMENT_WORKSPACE_ID);
   }
 
   get(documentId: string): RoomDocument | null {

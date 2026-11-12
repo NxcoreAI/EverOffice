@@ -9,6 +9,7 @@ import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
 import { MarkdownBody } from '@/components/office-editor/MarkdownBody'
 import './ExternalDocumentDialogs.css'
+import { externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 /**
  * "从飞书 / Notion 导入" 面板（OpenConnector 只读通道）。文档列表与连接器页
@@ -41,7 +42,7 @@ export function ExternalImportDialog({
   const [previewing, setPreviewing] = useState(false)
   const [committing, setCommitting] = useState(false)
 
-  const external = window.nxcore?.externalDocuments
+  const external = externalDocumentsApi()
 
   // 打开/切换平台：重置过滤与预览态（列表由缓存回显 effect 填充）。
   useEffect(() => {

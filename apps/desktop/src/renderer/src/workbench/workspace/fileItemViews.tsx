@@ -9,6 +9,7 @@ import {
 
 import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
+import { FileOpenWithSubmenu } from '@/components/files/FileOpenWithSubmenu'
 
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 
@@ -17,7 +18,8 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/m
  * 产物页与资料页复用同一套视图）。
  *
  * 只做纯展示 + 点开回调；打开文件一律通过 `FileItemActions.onOpen`
- * （页面转交 WorkspacePageProps.onOpenFile → 气泡窗），本模块不碰任何 IPC。
+ * （页面转交 WorkspacePageProps.onOpenFile → 气泡窗）。「用其他应用打开」
+ * 子菜单是自包含组件（内部走 preload 的文件关联接口），页面只注入失败提示。
  */
 
 /* ───────────────── 行操作菜单 ───────────────── */
@@ -30,6 +32,8 @@ export interface FileItemActions {
   /** 把资料库文件设为当前工作区的论文排版模版（AI 面板「排版」里可见）。 */
   onSetThesisTemplate?: (item: RealOfficeFile) => void
   onDelete?: (item: RealOfficeFile) => void
+  /** 行内操作失败提示（用其他应用打开/定位失败）。 */
+  onError?: (message: string) => void
 }
 
 /** 论文模版只收 Word/PDF（与网关 thesis-format 解析入口一致）。 */
@@ -65,6 +69,7 @@ export function FileItemMenu({ item, actions, align = 'end' }: {
             {t('workbench:workspace.file.menu.openOriginal')}
           </MenuItem>
         ) : null}
+        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} label="用其他应用打开" />
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
             {t('workbench:workspace.file.menu.exportReveal')}

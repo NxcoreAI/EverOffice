@@ -82,14 +82,23 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
   background: transparent;
   color: var(--cr-muted);
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
 }
 
 .context-room-tiptap-bubble > button:hover:not(:disabled) {
   background: var(--cr-surface-hover);
   color: var(--cr-text);
+}
+
+.context-room-tiptap-bubble > button:active:not(:disabled) {
+  background: var(--ui-hover-strong);
 }
 
 .context-room-tiptap-bubble > button[data-active='true'] {
@@ -139,9 +148,10 @@
   gap: 2px;
   padding: 4px;
   border: 1px solid var(--cr-border);
-  border-radius: 7px;
+  border-radius: var(--ui-radius-md);
   background: var(--cr-surface);
-  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
+  color: var(--cr-text);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .context-room-tiptap-editor[data-block-dragging='true'] .context-room-tiptap-bubble {
@@ -192,7 +202,9 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
   background: transparent;
   color: var(--cr-muted);
 }
@@ -210,6 +222,13 @@
 .context-room-tiptap-bubble-ai button[type='submit']:hover {
   background: color-mix(in srgb, var(--cr-blue) 88%, #000);
   color: #fff;
+}
+
+/* 选区「评论」输入（云文档，与其他 Office 的批注条同形态）：未输入时提交键置灰。 */
+.context-room-tiptap-bubble-note button[type='submit']:disabled {
+  background: var(--ui-hover-strong);
+  color: var(--cr-muted);
+  cursor: default;
 }
 
 .context-room-tiptap-rewrite-prompt {
@@ -239,7 +258,7 @@
   border: 1px solid rgba(34, 197, 94, 0.35);
   border-radius: 7px;
   background: #f7fff9;
-  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+  box-shadow: var(--ui-shadow-md);
   color: var(--cr-text);
 }
 
@@ -391,8 +410,9 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   flex: 1;
   padding: 0 8px;
   border: 1px solid var(--cr-border);
-  border-radius: 5px;
+  border-radius: var(--ui-radius-xs);
   outline: 0;
+  background: var(--cr-surface);
   color: var(--cr-text);
   font-size: 12px;
 }
@@ -403,9 +423,10 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 
 .context-room-tiptap-bubble-link button {
   padding: 0 10px;
-  border-radius: 5px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
   background: var(--cr-blue);
-  color: #fff;
+  color: var(--ui-accent-contrast);
   font-size: 12px;
 }
 
@@ -419,7 +440,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border: 1px solid var(--cr-border);
   border-radius: 7px;
   background: var(--cr-surface);
-  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .context-room-tiptap-slash-title {
@@ -574,7 +595,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border: 1px solid var(--cr-border);
   border-radius: 6px;
   background: var(--cr-surface);
-  box-shadow: 0 4px 12px rgba(22, 27, 38, 0.12);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .context-room-tiptap-block-controls > button {
@@ -612,7 +633,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border: 1px solid var(--cr-border);
   border-radius: 7px;
   background: var(--cr-surface);
-  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .context-room-tiptap-block-menu > span {
@@ -1150,6 +1171,32 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   margin: 0 auto;
   padding: 20px clamp(24px, 6cqw, 72px) 72px;
   outline: 0;
+}
+
+/* 正文 contenteditable 不画焦点环。
+ *
+ * 工作台全局的 `.wb-root :focus-visible`（3px 系统蓝环 + 1px offset）与上一条
+ * `outline: 0` 特异性相同，而 workbench.css 在 bundle 里排在本文件之后，全局
+ * 焦点环反而把正文原有的取消盖掉了——点进云文档正文，整块可编辑区被套一圈
+ * 蓝框（与主题强调色无关的浏览器蓝）。正文的焦点由光标与选区表达，不该有外框；
+ * 这里用更高特异性（多一个 `:focus-visible`）显式复位，与样式加载顺序无关。 */
+.context-room-tiptap-scroll .tiptap:focus,
+.context-room-tiptap-scroll .tiptap:focus-visible {
+  outline: 0;
+  outline-offset: 0;
+}
+
+/* 文本输入框不画工作台全局焦点环。
+ *
+ * `:focus-visible` 对文本输入框（含 input/textarea/contenteditable）在鼠标聚焦时
+ * 也成立，所以点进选区「评论」的输入框、链接 / AI 改写输入框时，全局 3px 系统蓝
+ * 环会把整个输入区框成一个蓝框（浮层里看起来像多余描边）。这些字段都在小浮层里、
+ * 由光标与容器本身表达聚焦，这里统一复位（按钮类控件仍保留键盘焦点环）。 */
+.context-room-tiptap-editor input:focus-visible,
+.context-room-tiptap-editor textarea:focus-visible,
+.context-room-tiptap-bubble input:focus-visible {
+  outline: 0;
+  outline-offset: 0;
 }
 
 .context-room-document-cursor-completion {
@@ -1782,7 +1829,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border: 1px solid var(--cr-border);
   background: var(--cr-surface);
   color: var(--cr-muted);
-  box-shadow: 0 4px 14px rgba(22, 27, 38, 0.12);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .context-room-tiptap-table-handle {
@@ -1858,7 +1905,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border: 1px solid var(--cr-border);
   border-radius: 7px;
   background: var(--cr-surface);
-  box-shadow: 0 12px 32px rgba(22, 27, 38, 0.16);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .context-room-tiptap-table-menu > button {
@@ -1923,8 +1970,12 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   text-decoration-color: currentColor;
 }
 
+/* 正文选区：主题强调色的半透明底 + 墨色文字。半透明（而不是不透明的浅块）
+   保证选区不盖掉评论锚点的强调色下划线，也能透过它看见评论锚点的浅底。 */
 .context-room-tiptap-content ::selection {
-  background: var(--cr-blue-soft);
+  background: color-mix(in srgb, var(--ui-accent) 24%, transparent);
+  color: var(--ui-text);
+  -webkit-text-fill-color: var(--ui-text);
 }
 
 @container context-room-shell (max-width: 620px) {
@@ -1973,17 +2024,22 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   min-width: 180px;
   font-size: 12px;
   padding: 5px 9px;
-  border: 1px solid var(--border, #d8dee4);
-  border-radius: 7px;
-  background: var(--bg, #fff);
-  color: inherit;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--ui-radius-xs);
+  background: var(--cr-surface);
+  color: var(--cr-text);
   font-family: inherit;
+}
+.context-room-tiptap-bubble-comment input:focus {
+  outline: 0;
+  border-color: var(--cr-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cr-blue) 12%, transparent);
 }
 .context-room-tiptap-bubble-comment button {
   border: none;
-  border-radius: 7px;
-  background: var(--accent, #3d6ff6);
-  color: #fff;
+  border-radius: var(--ui-radius-xs);
+  background: var(--cr-blue);
+  color: var(--ui-accent-contrast);
   font-size: 12px;
   padding: 5px 11px;
   cursor: pointer;
@@ -2008,7 +2064,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 }
 
 .context-room-doc-status-title:hover:not(:disabled) {
-  background: var(--cr-surface-secondary);
+  background: var(--cr-surface-hover);
 }
 
 .context-room-doc-status-title:disabled {
@@ -2084,7 +2140,7 @@ textarea.context-room-tiptap-rewrite-text:disabled {
   border: 1px solid var(--cr-border);
   border-radius: 8px;
   background: var(--cr-surface);
-  box-shadow: 0 8px 24px rgba(22, 27, 38, 0.14);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .context-room-find-bar-row {
@@ -2196,4 +2252,1203 @@ textarea.context-room-tiptap-rewrite-text:disabled {
 .context-room-find-match.is-current {
   background: rgb(255 176 7 / 55%);
   box-shadow: 0 0 0 1px rgb(202 138 4 / 55%);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   云文档编辑器外壳（顶部状态行 / 右上操作菜单 / 历史版本面板 / 对话框）
+
+   这一层规则随旧 ContextRoom.css 一起被删除后没有恢复：状态行没有布局，
+   右上「历史 / 评论 / ··· / 保存状态」退回浏览器默认灰底按钮，叠成一条灰带；
+   版本历史面板、卡片菜单、对话框则完全没有表面色，浮层透明、白字白底。
+   这里按当前暖纸主题（--cr-* 已在 tokens.css 映射到 --ui-*）补回最小集合。
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── 顶部状态行：纯透明，只保留标题 + 保存态小徽标 + 右侧单个「···」 ── */
+.context-room-embedded-cloud-doc {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.context-room-embedded-doc-status {
+  display: flex;
+  min-height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 保存态 / 只读提示：唯一保留的浅色胶囊，信息性徽标而非操作按钮。 */
+.context-room-embedded-doc-status > b {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: var(--ui-radius-xs);
+  background: var(--cr-surface-secondary);
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 右上操作簇：容器无底色，整个簇只渲染一个「···」触发器。 */
+.context-room-document-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.context-room-document-actions > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+
+.context-room-document-actions > button:hover:not(:disabled),
+.context-room-document-actions > button[data-state='open'] {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+/* 版本历史面板开启时触发器保持点亮（强调色浅底，不是灰底）。 */
+.context-room-document-actions > button[data-active='true'] {
+  border-color: color-mix(in srgb, var(--cr-blue) 30%, var(--cr-border));
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+}
+
+.context-room-document-actions > button:active:not(:disabled) {
+  background: var(--ui-hover-strong);
+}
+
+.context-room-document-actions > button:focus-visible {
+  outline: var(--ui-focus-ring-width) solid var(--ui-focus-ring-color);
+  outline-offset: 1px;
+}
+
+.context-room-document-actions > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── 下拉菜单（Radix portal 到 body，不能依赖 .op-root 的按钮复位） ── */
+.context-room-card-menu {
+  z-index: 1000;
+  min-width: 184px;
+  padding: 6px;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  box-shadow: var(--ui-shadow-md);
+  font-family: var(--ui-font-sans);
+  font-size: var(--ui-text-sm);
+}
+
+.context-room-card-menu [role='menuitem'],
+.context-room-card-menu [role='menuitemcheckbox'],
+.context-room-card-menu [role='menuitemradio'] {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  outline: 0;
+  background: transparent;
+  color: var(--cr-text);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  user-select: none;
+}
+
+.context-room-card-menu [role='menuitem']:focus,
+.context-room-card-menu [role='menuitem'][data-highlighted],
+.context-room-card-menu [role='menuitemcheckbox']:focus,
+.context-room-card-menu [role='menuitemcheckbox'][data-highlighted],
+.context-room-card-menu [role='menuitemradio']:focus,
+.context-room-card-menu [role='menuitemradio'][data-highlighted] {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-card-menu [role='menuitem'][data-state='open'],
+.context-room-card-menu [role='menuitem'][aria-expanded='true'] {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-card-menu [role='menuitem'].danger,
+.context-room-card-menu [role='menuitem'][data-danger='true'] {
+  color: var(--cr-danger);
+}
+
+.context-room-card-menu [role='menuitem'].danger:focus,
+.context-room-card-menu [role='menuitem'].danger[data-highlighted] {
+  background: var(--ui-danger-soft);
+  color: var(--cr-danger);
+}
+
+.context-room-card-menu [data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.context-room-card-menu [data-disabled]:focus,
+.context-room-card-menu [data-disabled][data-highlighted] {
+  background: transparent;
+}
+
+.context-room-card-menu svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.context-room-document-actions-menu {
+  min-width: 176px;
+}
+
+.context-room-document-actions-submenu-icon {
+  width: 13px !important;
+  height: 13px !important;
+  margin-left: auto;
+}
+
+.context-room-document-actions-check {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--cr-blue);
+}
+
+.context-room-document-actions-separator {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--cr-border);
+}
+
+/* 评论开关选中态：菜单项保持文字色，仅勾选标记用主题色。 */
+.context-room-document-actions-toggle[data-state='checked'] {
+  color: var(--cr-text);
+  font-weight: 600;
+}
+
+/* 旧 shared.tsx 的筛选胶囊菜单（与本 UI 同风格兜底）。 */
+.context-room-filter-menu {
+  min-width: 168px;
+}
+
+.context-room-filter-menu-check {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--cr-blue);
+}
+
+.context-room-filter-menu-check svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── 版本历史面板：右侧滑入的导航面，非遮罩（编辑器仍可交互） ── */
+.context-room-history-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.context-room-history-panel {
+  display: flex;
+  width: min(380px, 92vw);
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--cr-border-strong) 72%, transparent);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  box-shadow: -18px 0 42px rgb(22 47 55 / 16%);
+  pointer-events: auto;
+  animation: context-room-history-slide-in 180ms var(--ui-ease-out);
+}
+
+@keyframes context-room-history-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.context-room-history-panel > header {
+  display: flex;
+  min-height: 64px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--cr-border);
+  background: color-mix(in srgb, var(--cr-surface-secondary) 52%, var(--cr-surface));
+}
+
+.context-room-history-panel > header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+}
+
+.context-room-history-panel > header button:hover {
+  border-color: var(--cr-border);
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-history-panel > header button:focus-visible {
+  outline: 2px solid var(--cr-blue);
+  outline-offset: 2px;
+}
+
+.context-room-history-panel > header svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-history-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.context-room-history-heading-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 28%, var(--cr-border));
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--cr-blue-soft) 72%, var(--cr-surface));
+  color: var(--cr-blue);
+}
+
+.context-room-history-heading-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.context-room-history-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-history-heading strong {
+  color: var(--cr-text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.context-room-history-heading small {
+  color: var(--cr-muted);
+  font-size: 11px;
+}
+
+.context-room-history-body {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.context-room-history-body > aside {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+  padding: 14px 10px 12px;
+  border-bottom: 0;
+  background: color-mix(in srgb, var(--cr-surface-secondary) 34%, var(--cr-surface));
+}
+
+.context-room-history-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 8px 8px;
+  color: var(--cr-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.context-room-history-list-heading small {
+  display: grid;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: var(--ui-radius-full);
+  background: var(--cr-surface-hover);
+  color: var(--cr-muted);
+  font-size: 10px;
+}
+
+.context-room-history-import-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--cr-surface);
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.context-room-history-import-check:hover:not(:disabled) {
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+
+.context-room-history-import-check:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.context-room-history-import-check svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-history-import-check-spin {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--cr-border-strong);
+  border-top-color: var(--cr-blue);
+  border-radius: 50%;
+  animation: context-room-agent-write-spin 0.8s linear infinite;
+}
+
+.context-room-history-date-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-bottom: 8px;
+}
+
+.context-room-history-date-group::before {
+  position: absolute;
+  top: 34px;
+  bottom: 18px;
+  left: 20px;
+  width: 1px;
+  background: var(--cr-border);
+  content: '';
+}
+
+.context-room-history-date-group[data-collapsed='true']::before {
+  display: none;
+}
+
+.context-room-history-date-toggle {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--cr-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.context-room-history-date-toggle:hover {
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+}
+
+.context-room-history-date-toggle svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 140ms var(--ui-ease);
+}
+
+.context-room-history-date-toggle[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}
+
+.context-room-history-date-toggle span {
+  flex: 1;
+}
+
+.context-room-history-date-toggle small {
+  color: var(--cr-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.context-room-history-version {
+  display: grid;
+  width: 100%;
+  min-height: 66px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--cr-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    border-color 140ms var(--ui-ease),
+    background-color 140ms var(--ui-ease);
+}
+
+.context-room-history-version:hover {
+  border-color: var(--cr-border);
+  background: var(--cr-surface);
+}
+
+.context-room-history-version.is-selected {
+  border-color: color-mix(in srgb, var(--cr-blue) 36%, var(--cr-border));
+  background: color-mix(in srgb, var(--cr-blue-soft) 78%, var(--cr-surface));
+  box-shadow: 0 2px 8px rgb(22 47 55 / 8%);
+}
+
+.context-room-history-version:focus-visible {
+  outline: 2px solid var(--cr-blue);
+  outline-offset: 2px;
+}
+
+.context-room-history-version-rail {
+  display: flex;
+  width: 24px;
+  min-width: 24px;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 6px;
+}
+
+.context-room-history-version-rail i {
+  position: relative;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--cr-surface-secondary);
+  border-radius: 50%;
+  background: var(--cr-muted);
+  box-shadow: 0 0 0 1px var(--cr-border);
+}
+
+.context-room-history-version.is-selected .context-room-history-version-rail i {
+  width: 9px;
+  height: 9px;
+  border-color: var(--cr-blue-soft);
+  background: var(--cr-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cr-blue) 18%, transparent);
+}
+
+.context-room-history-version[data-current='true'] .context-room-history-version-rail i {
+  background: var(--ui-success);
+}
+
+.context-room-history-version-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.context-room-history-version-topline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.context-room-history-version-topline em {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--ui-success);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.context-room-history-version-topline em svg {
+  width: 11px;
+  height: 11px;
+}
+
+.context-room-history-version-title {
+  overflow: hidden;
+  color: var(--cr-text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-history-version-summary {
+  position: relative;
+  overflow: hidden;
+  color: var(--cr-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.context-room-history-version-summary[data-loaded='false'] {
+  min-height: 13px;
+}
+
+.context-room-history-summary-skeleton {
+  display: block;
+  width: 76%;
+  height: 8px;
+  margin: 3px 0;
+  border-radius: var(--ui-radius-full);
+  background: color-mix(in srgb, var(--cr-border-strong) 45%, transparent);
+  animation: context-room-overview-pulse 1.2s ease-in-out infinite;
+}
+
+.context-room-history-version-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cr-tertiary);
+  font-size: 10px;
+}
+
+.context-room-history-version-meta svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0.72;
+}
+
+.context-room-history-version.context-room-history-import-version {
+  border: 1px solid color-mix(in srgb, var(--cr-blue) 28%, var(--cr-border));
+}
+
+.context-room-history-import-version .context-room-history-version-rail.is-import {
+  display: grid;
+  place-items: center;
+  color: var(--cr-blue);
+}
+
+.context-room-history-import-version .context-room-history-version-rail.is-import svg {
+  width: 13px;
+  height: 13px;
+}
+
+.context-room-history-import-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--ui-radius-full);
+  background: var(--cr-blue-soft);
+  color: var(--cr-blue);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.context-room-history-import-badge svg,
+.context-room-history-import-badge img {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-history-import-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.context-room-history-import-title-row .context-room-history-version-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.context-room-history-load-more {
+  width: calc(100% - 16px);
+  margin: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--cr-surface-hover);
+  color: var(--cr-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.context-room-history-load-more:hover:not(:disabled) {
+  border-color: var(--cr-border-strong);
+  background: var(--cr-surface);
+}
+
+.context-room-history-load-more:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.context-room-history-empty {
+  padding: 22px 12px;
+  color: var(--cr-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.context-room-history-loading {
+  display: grid;
+  gap: 7px;
+  padding: 5px 8px;
+}
+
+.context-room-history-loading span {
+  display: block;
+  height: 54px;
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--cr-surface-hover) 80%, transparent);
+  animation: context-room-history-pulse 1.2s ease-in-out infinite;
+}
+
+.context-room-history-loading span:nth-child(2) { animation-delay: 100ms; }
+.context-room-history-loading span:nth-child(3) { animation-delay: 200ms; }
+
+@keyframes context-room-history-pulse {
+  50% { opacity: 0.45; }
+}
+
+/* ── 历史 diff：编辑器内的对比模式（横幅 + 正文 diff） ── */
+.context-room-history-diff-banner {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ui-warning) 46%, var(--cr-border));
+  background: color-mix(in srgb, var(--ui-warning-soft) 72%, var(--cr-surface));
+  color: var(--ui-warning);
+  font-size: 12px;
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.context-room-history-diff-context {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+}
+
+.context-room-history-diff-context-icon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 34%, transparent);
+  border-radius: var(--ui-radius-xs);
+  background: color-mix(in srgb, var(--cr-surface) 64%, transparent);
+  color: var(--ui-warning);
+}
+
+.context-room-history-diff-context-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-history-diff-context > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.context-room-history-diff-context strong {
+  color: var(--ui-warning);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.context-room-history-diff-context small {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--ui-warning) 78%, var(--cr-text));
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-room-history-diff-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 2px;
+}
+
+.context-room-history-diff-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cr-muted);
+  font-size: 10px;
+}
+
+.context-room-history-diff-legend i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.context-room-history-diff-legend .is-added i { background: var(--ui-success); }
+.context-room-history-diff-legend .is-removed i { background: var(--ui-danger); }
+
+.context-room-history-diff-banner button {
+  display: inline-flex;
+  min-height: 29px;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: var(--ui-radius-xs);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.context-room-history-diff-banner button:hover:not(:disabled) {
+  border-color: var(--cr-blue);
+  color: var(--cr-blue);
+}
+
+.context-room-history-diff-banner button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.context-room-history-diff-banner button.context-room-history-diff-restore {
+  border-color: var(--cr-blue);
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+}
+
+.context-room-history-diff-banner button.context-room-history-diff-restore:hover:not(:disabled) {
+  background: var(--ui-accent-fill-hover);
+  color: var(--ui-accent-contrast);
+}
+
+.context-room-history-diff-banner svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-room-history-diff-view {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--cr-surface);
+  color: var(--cr-text);
+}
+
+.context-room-history-diff-column-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--cr-border);
+  background: color-mix(in srgb, var(--cr-surface-secondary) 68%, var(--cr-surface));
+  color: var(--cr-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.context-room-history-diff-content {
+  width: min(100%, var(--cr-doc-column, 720px));
+  min-height: 0;
+  flex: 1;
+  margin: 0 auto;
+  padding: 10px 18px 28px;
+}
+
+.context-room-history-diff-title-block {
+  width: min(100%, var(--cr-doc-column, 720px));
+  margin: 0 auto;
+  padding: 36px 18px 0;
+}
+
+.context-room-history-diff-title-block h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--cr-border-strong) 55%, transparent);
+  border-left: 3px solid transparent;
+  color: var(--cr-text);
+  font-size: 32px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.context-room-history-diff-title-block h1.is-added {
+  border-left-color: var(--ui-success);
+  background: color-mix(in srgb, var(--ui-success-soft) 72%, var(--cr-surface));
+}
+
+.context-room-history-diff-title-block h1.is-removed {
+  border-left-color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger-soft) 72%, var(--cr-surface));
+  text-decoration: line-through;
+}
+
+.context-room-history-diff-block {
+  position: relative;
+  margin: 0 0 8px;
+  padding: 8px 12px 8px 32px;
+  overflow: auto;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--cr-border) 72%, transparent);
+}
+
+.context-room-history-diff-block::before {
+  position: absolute;
+  top: 9px;
+  left: 11px;
+  width: 13px;
+  color: var(--cr-muted);
+  content: '';
+  font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
+.context-room-history-diff-block.is-added {
+  border-left-color: var(--ui-success);
+  background: color-mix(in srgb, var(--ui-success-soft) 72%, var(--cr-surface));
+}
+
+.context-room-history-diff-block.is-added::before {
+  color: var(--ui-success);
+  content: '+';
+}
+
+.context-room-history-diff-block.is-removed {
+  border-left-color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger-soft) 72%, var(--cr-surface));
+}
+
+.context-room-history-diff-block.is-removed::before {
+  color: var(--ui-danger);
+  content: '-';
+}
+
+.context-room-history-diff-block.is-modified {
+  border-left-color: var(--ui-warning);
+  background: transparent;
+}
+
+.context-room-history-diff-block.is-modified::before {
+  color: var(--ui-warning);
+  content: '~';
+}
+
+.context-room-history-diff-block.is-unchanged {
+  border-left-color: color-mix(in srgb, var(--cr-border) 70%, transparent);
+  background: transparent;
+}
+
+.context-room-history-diff-empty {
+  min-height: 42px;
+  border: 1px dashed color-mix(in srgb, var(--cr-border) 80%, transparent);
+  background: color-mix(in srgb, var(--cr-surface-hover) 50%, transparent);
+}
+
+.context-room-history-editor-source {
+  display: none;
+}
+
+.context-room-tiptap-content .document-history-diff-added {
+  border-left: 3px solid var(--ui-success);
+  background: color-mix(in srgb, var(--ui-success-soft) 72%, var(--cr-surface));
+}
+
+.context-room-tiptap-content .document-history-diff-modified {
+  border-left: 3px solid var(--ui-warning);
+  background: color-mix(in srgb, var(--ui-warning-soft) 72%, var(--cr-surface));
+}
+
+.document-history-diff-inline {
+  display: inline;
+  margin: 0;
+  padding: 1px 2px;
+  border-radius: 2px;
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0;
+  white-space: inherit;
+}
+
+.document-history-diff-inline.is-inserted {
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+  text-decoration: none;
+}
+
+.document-history-diff-inline.is-deleted {
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+@media (max-width: 720px) {
+  .context-room-history-diff-banner { flex-wrap: wrap; }
+  .context-room-history-diff-context { flex-basis: calc(100% - 4px); }
+  .context-room-history-diff-legend { margin-left: 36px; }
+  .context-room-history-diff-banner button.context-room-history-diff-exit { margin-left: auto; }
+}
+
+@media (max-width: 640px) {
+  .context-room-history-panel { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-room-history-panel,
+  .context-room-history-version,
+  .context-room-history-loading span,
+  .context-room-history-summary-skeleton { animation: none; transition: none; }
+}
+
+/* ── 确认对话框（删除文档等）：Radix Dialog 没有默认表面色，必须显式给 ── */
+.context-room-dialog-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  background: var(--ui-overlay);
+  backdrop-filter: blur(2px);
+}
+
+.context-room-dialog-content {
+  position: fixed;
+  z-index: 1001;
+  top: 50%;
+  left: 50%;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  border: 1px solid var(--cr-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  box-shadow: var(--ui-shadow-lg);
+  transform: translate(-50%, -50%);
+  font-family: var(--ui-font-sans);
+}
+
+.context-room-dialog-close {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  display: none;
+}
+
+.context-room-action-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+}
+
+.context-room-action-confirm header h2 {
+  margin: 0;
+  color: var(--cr-text);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.context-room-action-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.context-room-action-confirm-body > p {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.context-room-action-confirm-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--cr-border) 84%, transparent);
+  font-size: 12px;
+}
+
+.context-room-action-confirm-row > span {
+  flex: 0 0 auto;
+  color: var(--cr-muted);
+}
+
+.context-room-action-confirm-row > b {
+  min-width: 0;
+  color: var(--cr-text);
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.context-room-action-confirm-risk {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 24%, var(--cr-border));
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.context-room-action-confirm-risk svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.context-room-action-confirm footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.context-room-ghost,
+.context-room-primary,
+.context-room-danger-button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  border: 1px solid var(--cr-border-strong);
+  border-radius: var(--ui-radius-sm);
+  background: var(--cr-surface);
+  color: var(--cr-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.context-room-ghost:hover {
+  background: var(--cr-surface-hover);
+}
+
+.context-room-primary {
+  border-color: var(--ui-accent-fill);
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+}
+
+.context-room-primary:hover {
+  border-color: var(--ui-accent-fill-hover);
+  background: var(--ui-accent-fill-hover);
+}
+
+.context-room-danger-button {
+  border-color: color-mix(in srgb, var(--ui-danger) 72%, #000);
+  background: var(--ui-danger);
+  color: var(--ui-accent-contrast);
+}
+
+.context-room-danger-button:hover {
+  background: var(--ui-danger-hover);
+}
+
+.context-room-ghost:focus-visible,
+.context-room-primary:focus-visible,
+.context-room-danger-button:focus-visible {
+  outline: var(--ui-focus-ring-width) solid var(--ui-focus-ring-color);
+  outline-offset: 2px;
 }

@@ -30,3 +30,23 @@ export function isWorkspaceBubbleTarget(
 ): boolean {
   return detail.tabId === tabId
 }
+
+/**
+ * 「从对话里打开工作空间云文档」：Agent 回复的云文档卡点击后派发，当前激活的
+ * 工作空间标签（WorkspaceTabHost）收到后用伪 OfficeFile 在气泡窗打开编辑器。
+ *
+ * 云文档没有文件库条目，也没有 tabId：事件不带目标，只有激活标签消费（后台标签
+ * 收到也不抢，避免在不可见的空间气泡窗里开文件）。
+ */
+export const OPEN_CLOUD_DOCUMENT_EVENT = 'everroom:open-cloud-document'
+
+export interface OpenCloudDocumentDetail {
+  /** documents 表文稿 id。 */
+  documentId: string
+  /** 展示标题（伪文件标签/编辑器标题）。 */
+  title: string
+}
+
+export function dispatchOpenCloudDocument(detail: OpenCloudDocumentDetail): void {
+  window.dispatchEvent(new CustomEvent<OpenCloudDocumentDetail>(OPEN_CLOUD_DOCUMENT_EVENT, { detail }))
+}

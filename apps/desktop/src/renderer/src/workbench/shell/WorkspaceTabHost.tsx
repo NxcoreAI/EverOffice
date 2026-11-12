@@ -1,10 +1,10 @@
 import { FolderOpen } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { AgentWorkspace } from '@nxcore/agent-contract'
 
 import { useLocale } from '@/i18n/LocaleContext'
-import type { OfficeFile } from '@/office-proto/data'
+import { cloudDocumentToOfficeFileById, type OfficeFile } from '@/office-proto/data'
 
 import { ConversationPane } from '../conversation/ConversationPane'
 import { useWorkbenchStore, useWorkspaceSessions, useWorkspace } from '../state/store'
@@ -23,7 +23,13 @@ import { PlanPage } from '../workspace/PlanPage'
 import { useWorkspaceBubble } from '../workspace/useBubble'
 import type { WorkspacePageProps } from '../workspace/contracts'
 import { workbenchToast } from '../shell/toast'
-import { isWorkspaceBubbleTarget, OPEN_AGENT_FILE_EVENT, type OpenAgentFileDetail } from '../shell/openAgentFile'
+import {
+  isWorkspaceBubbleTarget,
+  OPEN_AGENT_FILE_EVENT,
+  OPEN_CLOUD_DOCUMENT_EVENT,
+  type OpenAgentFileDetail,
+  type OpenCloudDocumentDetail,
+} from '../shell/openAgentFile'
 import '../workspace/workspace.css'
 
 /**
@@ -38,6 +44,8 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
   const sessions = useWorkspaceSessions(tab.workspaceId)
   const setWorkspaceView = useWorkbenchStore((state) => state.setWorkspaceView)
   const bubble = useWorkspaceBubble(tab.id)
+  /** 气泡窗是否已拖到铺满整个工作区（由 BubbleWindow 实测容器后回报）。 */
+  const [bubbleFull, setBubbleFull] = useState(false)
 
   // ⌘J：面板收起时打开「资料与文件」浏览（没有文件也能开），已展开时收起。
   useEffect(() => {
@@ -63,6 +71,20 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
     window.addEventListener(OPEN_AGENT_FILE_EVENT, onOpenAgentFile)
     return () => window.removeEventListener(OPEN_AGENT_FILE_EVENT, onOpenAgentFile)
   }, [active, bubble, tab.id])
+
+  // Agent 回复里的云文档卡：点击派发窗口事件（不带 tabId）。当前激活标签把它换成
+  // 伪 OfficeFile 交给气泡窗——云文档没有文件库条目，打开后由 EditorView 路由到
+  // 云文档编辑器。后台标签收到也不抢，避免在不可见空间里开文件。
+  useEffect(() => {
+    const onOpenCloudDocument = (event: Event) => {
+      if (!active) return
+      const detail = (event as CustomEvent<OpenCloudDocumentDetail>).detail
+      if (!detail?.documentId) return
+      bubble.openFile(cloudDocumentToOfficeFileById(detail.documentId, detail.title))
+    }
+    window.addEventListener(OPEN_CLOUD_DOCUMENT_EVENT, onOpenCloudDocument)
+    return () => window.removeEventListener(OPEN_CLOUD_DOCUMENT_EVENT, onOpenCloudDocument)
+  }, [active, bubble])
 
   // 「在工作空间里打开文件」（openFileInWorkspace 写入 store 的交接载荷）：
   // 挂载/激活时取走一次并交给气泡窗。非激活标签不抢——store 里只有一份，
@@ -125,6 +147,11 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
       // 让对话区随覆盖层淡出逐渐显现。仅会话/草稿视图有对话区可覆盖，
       // 功能页（资料库/产物/计划）下面同样被盖住，行为一致。
       bubble.bubble.maximized && bubble.visible && !bubble.exitKind && 'has-max-bubble',
+      // 气泡窗被拖过「对话区保底宽度」后，对话区需要能继续让位到 0（铺满整页时完全不可见）。
+      // 退场期间保持放开，否则面板还在收窄、对话区却已恢复 min-width 会把布局顶溢出。
+      bubble.bubble.cover && bubble.visible && 'has-bubble-cover',
+      // 铺满态 = 视觉上完全盖住对话区（同最大化覆盖层）：对话区让出无障碍树。
+      bubble.visible && bubbleFull && 'has-full-bubble',
     )}>
       <div className="wb-ws-main">
         {view.kind === 'page' ? renderPage() : null}
@@ -190,6 +217,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
           onOpenFile={bubble.openFile}
           onToast={workbenchToast}
           workspaceId={workspace.id}
+          onFullChange={setBubbleFull}
         />
       ) : null}
     </div>

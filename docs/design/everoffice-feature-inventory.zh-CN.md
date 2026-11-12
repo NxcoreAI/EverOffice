@@ -259,7 +259,7 @@
 - 会话隔离键 = `file.name`（pageLabel）；同一文件名的任务会话共享（`AgentChatDock.tsx:54`、`workspace.ts:71-76`）。
 - 工具栏：会话切换器（新建/重命名/删除/选择）、连接状态、当前标题（`AgentChatDock.tsx:103-121`）。
 - 空会话显示按文件类型预置的 3 条开场建议（`AgentChatDock.tsx:55`、`AgentChatDock.tsx:132`、`data.ts:574-580`）；点建议填入输入框不发送。
-- 输入框：Enter 发送、Shift+Enter 换行、IME 组合态保护、空态建议 Tab/Enter 采纳、斜杠选择器、模型档位（有 session 后锁定）、权限模式、排队发送、停止运行、@提及（`AgentComposer.tsx:347-425`）。
+- 输入框：Enter 发送、Shift+Enter 换行、IME 组合态保护、空态建议 Tab/Enter 采纳、斜杠选择器、模型档位（会话内可随时切换、下一轮生效）、权限模式、排队发送、停止运行、@提及（`AgentComposer.tsx:347-425`）。
 - `onFirstSend` 只在实例首条消息触发一次，用于草稿落成任务（`AgentChatDock.tsx:57-67`、`WorkspaceView.tsx:315`）。
 - 工作空间任务 pane 里面板铺满高度但 `max-width:820` 居中，停靠栏内则铺满；EverOffice 的 toast 事件桥到外壳 toast（`office-proto.css:905-921`、`AgentChatDock.tsx:34-36`）。
 

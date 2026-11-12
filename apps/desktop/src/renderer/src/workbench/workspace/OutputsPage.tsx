@@ -116,6 +116,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     onOpen: (item) => onOpenFile(item.file),
     onOpenOriginal: (item) => { void openOriginal(item) },
     onExportReveal: (item) => { void exportReveal(item) },
+    onError: onToast,
   }
 
   return (

@@ -3,6 +3,7 @@ import { Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import './ExternalDocumentDialogs.css'
+import { externalDocumentsApi } from '@/components/office-editor/documentApi'
 
 interface DiffView {
   candidateTitle: string
@@ -34,7 +35,7 @@ export function CandidateDiffDialog({
 
   useEffect(() => {
     let cancelled = false
-    void window.nxcore?.externalDocuments.importDiff(roomImportId)
+    void externalDocumentsApi()?.importDiff(roomImportId)
       .then((result) => {
         if (!cancelled) setView(result as DiffView)
       })

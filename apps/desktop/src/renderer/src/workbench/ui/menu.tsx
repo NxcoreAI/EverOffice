@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { ChevronRight } from 'lucide-react'
 import React from 'react'
 
 import { cn } from './cn'
@@ -59,4 +60,33 @@ export function MenuSeparator() {
 
 export function MenuLabel({ children }: { children: React.ReactNode }) {
   return <DropdownMenu.Label className="ui-menu-label-text">{children}</DropdownMenu.Label>
+}
+
+/** 子菜单根：挂在 MenuContent 内，SubContent 单独 Portal 以免被父菜单裁剪。 */
+export const MenuSub = DropdownMenu.Sub
+
+export function MenuSubTrigger({
+  children, icon, disabled,
+}: {
+  children: React.ReactNode
+  icon?: React.ReactNode
+  disabled?: boolean
+}) {
+  return (
+    <DropdownMenu.SubTrigger className="ui-menu-item ui-menu-sub-trigger" disabled={disabled}>
+      {icon ? <span className="ui-menu-icon" aria-hidden="true">{icon}</span> : null}
+      <span className="ui-menu-label">{children}</span>
+      <ChevronRight size={12} className="ui-menu-chevron" aria-hidden="true" />
+    </DropdownMenu.SubTrigger>
+  )
+}
+
+export function MenuSubContent({ children }: { children: React.ReactNode }) {
+  return (
+    <DropdownMenu.Portal>
+      <DropdownMenu.SubContent className="ui-menu ui-menu-sub" sideOffset={4}>
+        {children}
+      </DropdownMenu.SubContent>
+    </DropdownMenu.Portal>
+  )
 }

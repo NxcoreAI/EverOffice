@@ -27,6 +27,15 @@
    覆盖层不透明铺满，DOM 保留（收起后状态不丢），visibility 关闭即可让出无障碍树。 */
 .wb-ws.has-max-bubble .wb-ws-main { visibility: hidden; }
 
+/* 气泡窗拖宽越过「对话区保底宽度」后进入压满整页档：对话区允许继续让位到 0
+   （铺满时完全不可见）；常规停靠态仍由 .wb-ws-main 的 240px 保底兜住。
+   退场期间宿主会保留这个 class，避免面板还在收窄时对话区先恢复 min-width 顶出溢出。 */
+.wb-ws.has-bubble-cover .wb-ws-main { min-width: 0; }
+
+/* 气泡窗已经铺满（宽度=容器宽）：对话区不仅让位到 0，还要让出无障碍树/焦点，
+   与最大化覆盖层一致（只压宽度挡不住键盘 Tab 和读屏）。 */
+.wb-ws.has-full-bubble .wb-ws-main { visibility: hidden; }
+
 .wb-ws-missing {
   display: grid;
   place-items: center;

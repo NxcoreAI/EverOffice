@@ -122,6 +122,38 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
 }
 
 /**
+ * Agent 在界面打开文件（gateway file_open → /v1/office-open）。
+ * 桌面端走 openFileInAppPreview（与资料库「打开」同一条路）并补预览通知，
+ * 让工作台开标签接管实例；非 Office 形态交给系统默认应用。
+ */
+export interface OfficeOpenRequest {
+  fileId: string
+  /** 打开方式：editable = 以可编辑实例打开，缺省只读预览。 */
+  editable?: boolean
+  /** 归属工作区（预览实例归属；缺省按目录条目回查）。 */
+  workspaceId?: string | null
+}
+
+function validOpenBody(value: unknown): value is OfficeOpenRequest {
+  if (!value || typeof value !== 'object') return false
+  const input = value as Partial<OfficeOpenRequest>
+  if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
+  if (input.editable !== undefined && typeof input.editable !== 'boolean') return false
+  if (input.workspaceId !== undefined && input.workspaceId !== null && typeof input.workspaceId !== 'string') return false
+  return true
+}
+
+/** /v1/office-open 的结果：office = 应用内预览实例；external = 系统默认应用。 */
+export interface OfficeOpenResult {
+  ok: true
+  openedWith: 'office' | 'external'
+  fileId: string
+  originalName: string
+  /** 应用内实例形态（openedWith=office 时有）。 */
+  kind?: string
+}
+
+/**
  * Agent 导出 Word 为 PDF（gateway word_export_pdf → /v1/office-export-pdf）。
  * 桌面端用 LibreOffice 把 catalog 里的 docx 转成 PDF，再作为新文件入库。
  */
@@ -348,6 +380,13 @@ export class OfficeBridgeServer {
         | { ok: false; message: string }
       >)
       | null = () => null,
+    /** 在界面打开文件（index.ts 注入 openFileInAppPreview 封装；未注入 = 工具不可用）。 */
+    private readonly openFileInUi: () =>
+      | ((req: OfficeOpenRequest) => Promise<
+    | OfficeOpenResult
+    | { ok: false; code: 'not_found' | 'error'; message: string }
+  >)
+      | null = () => null,
   ) {}
 
   /** 排版成品落库后回调（index.ts 注入；晚于构造注入，故用 setter）。 */
@@ -406,6 +445,7 @@ export class OfficeBridgeServer {
       || request.url === '/v1/office-apply-bytes'
       || request.url === '/v1/office-agent-tools'
       || request.url === '/v1/office-export-pdf'
+      || request.url === '/v1/office-open'
     if (!known) {
       return { status: 404, body: { message: 'Not found' } }
     }
@@ -435,6 +475,10 @@ export class OfficeBridgeServer {
     if (request.url === '/v1/office-export-pdf') {
       if (!validExportPdfBody(read.parsed)) return { status: 422, body: { message: 'Invalid office export-pdf request' } }
       return this.exportPdfRoute(read.parsed)
+    }
+    if (request.url === '/v1/office-open') {
+      if (!validOpenBody(read.parsed)) return { status: 422, body: { message: 'Invalid office open request' } }
+      return this.openRoute(read.parsed)
     }
     if (request.url === '/v1/office-edit') {
       if (!validEditBody(read.parsed)) return { status: 422, body: { message: 'Invalid office edit request' } }
@@ -526,6 +570,25 @@ export class OfficeBridgeServer {
     })
     if (!outcome.ok) {
       return { status: 422, body: { code: 'export_failed', message: outcome.message } }
+    }
+    return { status: 200, body: { data: outcome } }
+  }
+
+  /**
+   * /v1/office-open：在界面打开文件库里的任意文件（Agent 的 file_open 工具）。
+   * 具体打开动作由 index.ts 注入（openFileInAppPreview + 预览通知封装）：
+   * Office 形态开应用内预览页签并把主窗口提到前台，非 Office 形态交系统默认应用。
+   */
+  private async openRoute(req: OfficeOpenRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+    const openInUi = this.openFileInUi()
+    if (!openInUi) return { status: 503, body: { message: 'EverRoom Office 打开能力尚未就绪' } }
+    const outcome = await openInUi({
+      fileId: req.fileId.trim(),
+      ...(req.editable === true ? { editable: true } : {}),
+      ...(req.workspaceId?.trim() ? { workspaceId: req.workspaceId.trim() } : {}),
+    })
+    if (!outcome.ok) {
+      return { status: 422, body: { code: outcome.code, message: outcome.message } }
     }
     return { status: 200, body: { data: outcome } }
   }

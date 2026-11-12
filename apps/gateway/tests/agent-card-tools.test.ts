@@ -1,7 +1,7 @@
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import type { PiAgentCardDecision, PiAgentCardRequest } from "@nxcore/agent-runtime-pi";
 import { describe, expect, it } from "vitest";
-import { createAgentCardTools } from "../src/modules/agent/agent-card-tools.js";
+import { createAgentCardTools, type AgentConfirmPlanDraft } from "../src/modules/agent/agent-card-tools.js";
 
 function runInput(): StartRuntimeRunInput {
   return {
@@ -104,5 +104,110 @@ describe("createAgentCardTools（通用决策卡工具面）", () => {
     const { confirm, askUser } = harness({ choice: "approved" });
     await expect(confirm.execute(runInput(), {})).rejects.toThrow("title");
     await expect(askUser.execute(runInput(), {})).rejects.toThrow("question");
+  });
+});
+
+describe("createAgentCardTools · 计划落地（云文档 + 计划页）", () => {
+  function persistHarness(decision: PiAgentCardDecision) {
+    const requested: PiAgentCardRequest["card"][] = [];
+    const drafts: AgentConfirmPlanDraft[] = [];
+    const persistPlan = async (_input: StartRuntimeRunInput, draft: AgentConfirmPlanDraft) => {
+      drafts.push(draft);
+      return {
+        documentId: "doc-plan-1",
+        documentTitle: draft.planTitle,
+        planItemId: "plan-item-1",
+        planItemTitle: draft.planTitle,
+      };
+    };
+    const tools = createAgentCardTools(async (_runId, card) => {
+      requested.push(card);
+      return decision;
+    }, { persistPlan });
+    return { requested, drafts, confirm: tools.find((tool) => tool.name === "agent_confirm")! };
+  }
+
+  it("带 palette 的计划卡自动落地，并在卡片正文里给出回执", async () => {
+    const { requested, drafts, confirm } = persistHarness({ choice: "approved" });
+
+    const result = await confirm.execute(runInput(), {
+      title: "将生成 8 页产品介绍演示文稿",
+      planTitle: "产品介绍演示文稿制作计划",
+      plan: ["读取材料", "写脚本", "生成 pptx"],
+      palette: ["#0B5FFF", "#F5F7FA", "#FF6B35"],
+      fonts: { heading: "Source Han Sans", body: "PingFang SC" },
+      notes: ["深色封面 + 浅色内容页"],
+      body: "素材来自工作区 3 份文档",
+    });
+
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({
+      planTitle: "产品介绍演示文稿制作计划",
+      plan: ["读取材料", "写脚本", "生成 pptx"],
+      palette: ["#0b5fff", "#f5f7fa", "#ff6b35"],
+      fonts: { heading: "Source Han Sans", body: "PingFang SC" },
+      notes: ["深色封面 + 浅色内容页"],
+      body: "素材来自工作区 3 份文档",
+    });
+    expect(requested[0]!.body).toContain("计划已存为云文档《产品介绍演示文稿制作计划》");
+    expect(requested[0]!.body).toContain("并已加入计划页");
+    expect(requested[0]!.document).toEqual({
+      id: "doc-plan-1",
+      title: "产品介绍演示文稿制作计划",
+    });
+    const payload = JSON.parse(result.content) as {
+      choice: string;
+      plan?: { documentId: string; planItemId: string };
+      planHint?: string;
+    };
+    expect(payload.plan).toMatchObject({ documentId: "doc-plan-1", planItemId: "plan-item-1" });
+    expect(payload.planHint).toContain("planItemId=plan-item-1");
+    expect(result.details).toMatchObject({
+      documentId: "doc-plan-1",
+      navigation: { title: "产品介绍演示文稿制作计划" },
+    });
+  });
+
+  it("无色板的长任务卡默认不落地", async () => {
+    const { drafts, confirm } = persistHarness({ choice: "approved" });
+
+    await confirm.execute(runInput(), { title: "批量改写 10 篇文档", plan: ["逐篇改写"] });
+
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("persistPlan=false 可显式关闭落地", async () => {
+    const { drafts, confirm } = persistHarness({ choice: "approved" });
+
+    await confirm.execute(runInput(), {
+      title: "将生成 8 页演示文稿",
+      palette: ["#0B5FFF"],
+      persistPlan: false,
+    });
+
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("落地失败不拦出卡：错误如实回传，不谎报已保存", async () => {
+    const requested: PiAgentCardRequest["card"][] = [];
+    const tools = createAgentCardTools(
+      async (_runId, card) => {
+        requested.push(card);
+        return { choice: "approved" };
+      },
+      { persistPlan: async () => { throw new Error("document busy"); } },
+    );
+    const confirm = tools.find((tool) => tool.name === "agent_confirm")!;
+
+    const result = await confirm.execute(runInput(), {
+      title: "将生成 8 页演示文稿",
+      palette: ["#0B5FFF"],
+    });
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]!.body ?? "").not.toContain("已存为云文档");
+    const payload = JSON.parse(result.content) as { planSaveError?: string; planHint?: string };
+    expect(payload.planSaveError).toBe("document busy");
+    expect(payload.planHint).toContain("如实告知");
   });
 });

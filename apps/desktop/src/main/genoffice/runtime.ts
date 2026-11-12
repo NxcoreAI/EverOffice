@@ -2,7 +2,10 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
+import { app } from 'electron'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
+
+import { resolveGenOfficeRuntimeRoot } from '../runtime/genoffice-root'
 
 /**
  * GenOffice 原生编辑器运行时的宿主接口（类型裁剪自 EverOffice apps/desktop 的
@@ -71,16 +74,25 @@ export interface PreparedGenOfficeRuntime {
   root: string
 }
 
-/** 运行时由本仓库 submodule（vendor/genoffice）经 scripts/prepare-genoffice-runtime.mjs 构建到 build/genoffice-runtime；可用环境变量换源。 */
-export const GENOFFICE_RUNTIME_ROOT =
-  process.env.GENOFFICE_RUNTIME_ROOT ??
-  join(__dirname, '..', '..', 'build', 'genoffice-runtime')
+/**
+ * 运行时根目录：开发态读 apps/desktop/build/genoffice-runtime（prepare:genoffice 产物），
+ * 打包态读 extraResources 落点 <app>/Contents/Resources/genoffice；GENOFFICE_RUNTIME_ROOT
+ * 可显式覆盖（指向 EverOffice 的 build/genoffice-runtime）。
+ */
+function genOfficeRuntimeRoot(): string {
+  return resolveGenOfficeRuntimeRoot({
+    envRoot: process.env.GENOFFICE_RUNTIME_ROOT,
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+  })
+}
 
 let cached: PreparedGenOfficeRuntime | null = null
 
 export function loadGenOfficeRuntime(): PreparedGenOfficeRuntime {
   if (cached) return cached
-  const root = GENOFFICE_RUNTIME_ROOT
+  const root = genOfficeRuntimeRoot()
   const docsMain = join(root, 'docs', 'main', 'embed.js')
   const docsPreload = join(root, 'docs', 'preload', 'index.js')
   const docsRenderer = join(root, 'docs', 'renderer', 'index.html')
@@ -102,7 +114,11 @@ export function loadGenOfficeRuntime(): PreparedGenOfficeRuntime {
     sidecar,
   ]) {
     if (!existsSync(path)) {
-      throw new Error(`GenOffice runtime 不完整（缺 ${path}）。可用 GENOFFICE_RUNTIME_ROOT 指向 EverOffice 的 build/genoffice-runtime。`)
+      throw new Error(
+        app.isPackaged
+          ? `GenOffice runtime 不完整（缺 ${path}）。安装包资源不完整，请重新安装 EverOffice；也可用 GENOFFICE_RUNTIME_ROOT 指向 EverOffice 的 build/genoffice-runtime。`
+          : `GenOffice runtime 不完整（缺 ${path}）。可用 GENOFFICE_RUNTIME_ROOT 指向 EverOffice 的 build/genoffice-runtime。`,
+      )
     }
   }
 
