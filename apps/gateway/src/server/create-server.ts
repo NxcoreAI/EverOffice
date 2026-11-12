@@ -72,6 +72,7 @@ import {
   createDocumentOverviewRuntime,
   createConversationSuggestionRuntime,
   createIndexBackfillRuntime,
+  createJournalRuntimeResolver,
   createMemoryRuntimeResolver,
   createSessionTitleRuntime,
   createVersionSummaryRuntime,
@@ -115,10 +116,12 @@ import { invokeRuntime } from "../modules/agent/invoke.js";
 import { memoryRoutes } from "../modules/memory/routes.js";
 import {
   composeJournal,
+  createJournalSubmitTool,
   JournalScheduler,
   JournalService,
   journalRoutes,
   MEMORY_LIST_LIMIT as JOURNAL_MEMORY_LIST_LIMIT,
+  runJournalSubmit,
 } from "../modules/journal/index.js";
 import {
   createPlanPiTools,
@@ -1546,14 +1549,28 @@ export async function createServer(config: GatewayConfig) {
   // 每日洞察（主页「今日洞察」卡）：当天新写的记忆条目 → 一段可读的日记。
   // 供料只接记忆（见 docs/daily-journal-plan.zh-CN.md §3 的取舍）；
   // 时区取本机时区（网关由桌面端 spawn，同机），显式覆盖走 NXCORE_JOURNAL_TIMEZONE。
+  // 写稿走「提交型」通道：模型调 submit_daily_journal 工具回传结构化参数
+  // （schema 带当天证据 id 的 enum，强制结构化输出），失败走模板兜底——
+  // 见 modules/journal/agent.ts。
   const journalTimezone = process.env.NXCORE_JOURNAL_TIMEZONE?.trim()
     || Intl.DateTimeFormat().resolvedOptions().timeZone
     || "UTC";
+  const journalSubmitTool = createJournalSubmitTool();
+  const resolveJournalRuntime = createJournalRuntimeResolver(config, journalSubmitTool.tool);
   const journalService = new JournalService({
     db,
     list: () => memoryService.list({ limit: JOURNAL_MEMORY_LIST_LIMIT }),
     compose: (input) => composeJournal(input, {
-      generate: generateMemoryText,
+      submit: async (composeInput) => {
+        // 档位未就绪 → runJournalSubmit 抛 MemoryModelUnavailableError，
+        // composeJournal 按不可用处理（模板兜底、不计重试）。
+        const runtime = resolveJournalRuntime();
+        if (!runtime) throw new MemoryModelUnavailableError();
+        const outcome = await runJournalSubmit(runtime, journalSubmitTool, composeInput, {
+          logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+        });
+        return outcome ? { composition: outcome.composition, model: "journal-submit" } : null;
+      },
       isModelUnavailable: isMemoryModelUnavailable,
       logger: (level, event, fields) => app.log[level](fields ?? {}, event),
     }),

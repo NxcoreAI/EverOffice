@@ -6,6 +6,12 @@ export interface InvokeAgentOptions {
   sessionId?: string;
   pageLabel?: string;
   timeoutMs?: number;
+  /**
+   * 允许正文为空完成（默认 false）。结构化提交型调用（结果经工具参数回传，
+   * 见 journal/agent.ts）成功后通常没有正文，「空正文」不是失败——开启后跳过
+   * 空内容检查，由调用方自行判断是否拿到了提交结果。
+   */
+  allowEmptyContent?: boolean;
 }
 
 export async function invokeAgent(
@@ -18,13 +24,15 @@ export async function invokeAgent(
     sessionId: options.sessionId ?? `${agentId}:${randomUUID()}`,
     pageLabel: options.pageLabel ?? agentId,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.allowEmptyContent === undefined ? {} : { allowEmptyContent: options.allowEmptyContent }),
   });
 }
 
 export async function invokeRuntime(
   runtime: AgentRuntime,
   prompt: string,
-  options: Required<Pick<InvokeAgentOptions, "sessionId" | "pageLabel">> & Pick<InvokeAgentOptions, "timeoutMs">,
+  options: Required<Pick<InvokeAgentOptions, "sessionId" | "pageLabel">>
+    & Pick<InvokeAgentOptions, "timeoutMs" | "allowEmptyContent">,
 ): Promise<string> {
   const runId = randomUUID();
   const controller = new AbortController();
@@ -63,7 +71,9 @@ export async function invokeRuntime(
         throw new Error(typeof message === "string" ? message : `Agent invocation failed: ${options.pageLabel}`);
       }
     }
-    if (!content.trim()) throw new Error(`Agent returned empty content: ${options.pageLabel}`);
+    if (!content.trim() && options.allowEmptyContent !== true) {
+      throw new Error(`Agent returned empty content: ${options.pageLabel}`);
+    }
     return content;
   } finally {
     if (timeout) clearTimeout(timeout);
