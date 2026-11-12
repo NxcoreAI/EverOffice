@@ -14,6 +14,17 @@ export const AGENT_CHAT_REPIN_DISTANCE_PX = AGENT_CHAT_PIN_THRESHOLD_PX
  * 也不会让「极慢上滑」永远离不开底部（每帧流式增长都会把视图拽回）。 */
 export const AGENT_CHAT_WHEEL_UP_DETACH_PX = 2
 
+/** 「真正到达底部」的亚像素容差：Chromium 分数布局下 scrollTop 与
+ * scrollHeight-clientHeight 可能差零点几像素，≤1px 仍视为贴底。
+ * 注意这是唯一的手势回吸判定——不存在任何「距底 N px 就提前吸附」的宽带
+ * （宽带有磁吸/滚动条被收起的既往问题，见 AgentChatView onScroll 注释）。 */
+export const AGENT_CHAT_BOTTOM_EPSILON_PX = 1
+
+/** 是否已真正滚动到底部（唯一的手势回吸条件；亚像素容差内算到底）。 */
+export function isAtScrollBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= AGENT_CHAT_BOTTOM_EPSILON_PX
+}
+
 export interface ScrollGeometrySample {
   lastScrollTop: number
   scrollTop: number
@@ -86,19 +97,4 @@ export function isScrolledToBottom(
   threshold: number = AGENT_CHAT_PIN_THRESHOLD_PX,
 ): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold
-}
-
-/** 下滚追赶带上限：触控板惯性单次位移可达数百像素，上限内不吸底防磁吸复发。 */
-export const AGENT_CHAT_WHEEL_CHASE_MAX_PX = 400
-
-/**
- * 下滚回吸的追赶带宽度。流式爆发（整段工具结果/长思考一次插入，数百上千像素）时
- * 底部跑得比滚轮快，固定 32px 阈值在用户明确向下滚时也永远追不上（2026-11-05 实测
- * 「生成进行中滑不到底」）。带宽随本次滚轮位移放款：强甩到接近底部即视为想跟回；
- * 轻滚（小 deltaY）仍是原 32px，历史上的宽阈值磁吸/回弹问题不会复发（旧问题是
- * 静态内容 + 固定 160px 宽带；这里是位移比例带，只对高速下滚放宽）。
- */
-export function wheelDownChaseBand(deltaY: number): number {
-  const distance = Math.abs(deltaY)
-  return Math.min(AGENT_CHAT_WHEEL_CHASE_MAX_PX, Math.max(AGENT_CHAT_REPIN_DISTANCE_PX, distance * 3))
 }

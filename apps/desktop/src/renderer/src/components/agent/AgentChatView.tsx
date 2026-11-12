@@ -15,11 +15,10 @@ import {
 import { slidesFailureSuppressed } from './slides/slidesState'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import {
-  AGENT_CHAT_REPIN_DISTANCE_PX,
   AGENT_CHAT_WHEEL_UP_DETACH_PX,
+  isAtScrollBottom,
   isGeometryClampScroll,
   isNestedScrollerWheel,
-  wheelDownChaseBand,
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
@@ -883,20 +882,22 @@ export function AgentChatView({
           // 上滑初段必然还在回吸阈值内，落进回吸判定就会被逐步拽回底部
           //（表现为在底部上滑时抖动、慢扫离不开底部），只有明确向下才回吸。
           if (element.scrollTop <= lastTop + 1) return
-          // 到过「上一帧的底部」即算跟到底：同一帧里流式插入会推高当前底部，
-          // 用当前几何判定会被顶出阈值（概率性吸不上），上一帧高度没有这个问题。
-          // 还没有任何内容批次时（初始为 0）退回当前高度，避免误判成「到底了」。
-          const referenceHeight = lastScrollHeightRef.current || element.scrollHeight
-          const reachedPreviousBottom = element.scrollTop
-            >= referenceHeight - element.clientHeight - AGENT_CHAT_REPIN_DISTANCE_PX
-          if (reachedPreviousBottom && !pinnedToBottomRef.current) attachChatScroll(element)
+          // 手势回吸只认「真正到达底部」（≤1px 亚像素容差）。此前这里有 32px 宽带
+          // 判定（还引用上一帧 scrollHeight），触控板惯性收尾恰好停在距底 ≤32px 时
+          // 会被「补」到底——尾部 composer 留白 ≥166px，惯性经常停进去，表现为
+          // 偶发的轻吸附（2026-11-12 用户二次反馈：不需要任何自动吸附）。原生滚动
+          // 下任何把手势推到底的滚动都会被浏览器 clamp 到最大 scrollTop，天然满足
+          // 「真到底」，不需要预判式宽带。用户主动回底部的三个入口保持不变：
+          // 发新消息、点「回到最新」、切会话。
+          if (isAtScrollBottom(element) && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
         onWheel={(event) => {
           // wheel 先于 scroll 事件：向上立即解除吸底，向上滚动不会被下一次
-          // 强制滚底吃掉；向下且确实已到可见底部附近才视为「想跟回」。
-          // 触控板慢扫/平滑滚动收尾是 ±0.5px 级亚像素步进：向上按方向累计到
-          // 2px 才脱离（单发不闪按钮，极慢扫也能累计脱离），向下的亚像素/横向
-          // 滚动（deltaY≈0）不做任何回吸。731c430b 只修了 onScroll，这里补齐。
+          // 强制滚底吃掉。触控板慢扫/平滑滚动收尾是 ±0.5px 级亚像素步进：
+          // 向上按方向累计到 2px 才脱离（单发不闪按钮，极慢扫也能累计脱离），
+          // 向下不做任何回吸——没有「距底 N px 就吸附」的追赶带（既往的磁吸/
+          // 突然吸附/滚动条被收起问题都源于宽带回吸，2026-11-12 用户确认
+          // 不需要自动吸附）；推到底由 onScroll 的真到底判定恢复吸底。
           // 内层可滚动块（工具输出、房间选择列表）吃掉的手势不改写外层状态。
           const element = conversationRef.current
           if (!element) return
@@ -909,15 +910,6 @@ export function AgentChatView({
             return
           }
           wheelUpAccumRef.current = 0
-          if (event.deltaY < 1) {
-            // 极小的向下分量/纯横向滚动不构成反向手势：只衰减上滑累计，
-            // 避免斜向慢扫或触控板噪声把「正在上滑」的累计直接清零。
-            wheelUpAccumRef.current = Math.max(0, wheelUpAccumRef.current - event.deltaY)
-            return
-          }
-          const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-          // 追赶带随本次位移放款：流式爆发时固定 32px 永远追不上底部（生成进行中滑不到底）。
-          if (distance <= wheelDownChaseBand(event.deltaY) && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
       >
           {incomingLink ? (
