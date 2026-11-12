@@ -617,6 +617,37 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
       },
     );
 
+    // 资料页「删除文件夹」：文件夹是 relative_path 派生的虚拟目录，删除 = 把该
+    // 前缀下的全部文件条目逐条删除（磁盘进回收站可恢复 + 级联清理），空目录树移除。
+    app.delete(
+      "/v1/files/folders",
+      {
+        schema: {
+          tags: ["files"],
+          querystring: Type.Object({
+            workspaceId: Type.String({ minLength: 1, maxLength: 100 }),
+            folderPath: Type.String({ minLength: 1, maxLength: 1000 }),
+          }),
+          response: {
+            200: Type.Object({
+              deleted: Type.Integer(),
+              failed: Type.Integer(),
+              removedEmptyDirs: Type.Boolean(),
+            }),
+            400: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const normalized = request.query.folderPath
+          .replace(/\\/gu, "/").replace(/^\/+|\/+$/gu, "");
+        if (!normalized || normalized === "." || normalized.includes("..")) {
+          return reply.code(400).send(errorOf("invalid_folder_path"));
+        }
+        return service.deleteFolderByPrefix(request.query.workspaceId, normalized);
+      },
+    );
+
     app.post(
       "/v1/files/gc",
       {

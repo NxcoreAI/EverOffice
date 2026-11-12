@@ -577,6 +577,8 @@ const FILES_CHANNELS = {
   saveMarkdown: 'files:save-markdown',
   rename: 'files:rename',
   delete: 'files:delete',
+  /** 删除资料页文件夹（虚拟目录）：按 relativePath 前缀批量删除文件条目。 */
+  deleteFolder: 'files:delete-folder',
   reveal: 'files:reveal',
   exportReveal: 'files:export-reveal',
   openOriginal: 'files:open-original',
@@ -3081,6 +3083,11 @@ function registerFilesHandlers(
   handle(FILES_CHANNELS.rename, (_event, fileId: string, displayName: string) =>
     bridge.rename(fileId, displayName))
   handle(FILES_CHANNELS.delete, (_event, fileId: string) => bridge.delete(fileId))
+  handle(FILES_CHANNELS.deleteFolder, (_event, workspaceId?: unknown, folderPath?: unknown) => {
+    if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('缺少工作空间 id。')
+    if (typeof folderPath !== 'string' || !folderPath.trim()) throw new Error('缺少文件夹路径。')
+    return bridge.deleteFolder(workspaceId.trim(), folderPath)
+  })
   handle(FILES_CHANNELS.reveal, (_event, fileId: string) => bridge.reveal(fileId))
   handle(FILES_CHANNELS.exportReveal, (_event, fileId: string, originalName: string) =>
     bridge.exportReveal(fileId, originalName))

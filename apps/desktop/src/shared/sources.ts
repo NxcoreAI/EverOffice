@@ -1439,6 +1439,13 @@ export interface NxcoreDesktopApi {
       knowledgeCleanup: boolean
       blobCollected: boolean
     }>
+    /** 删除资料页文件夹（虚拟目录）：该前缀下全部文件进空间回收站（可恢复），
+     *  DB 行与解析产物级联清理；failed>0 表示部分文件未删掉（目录保留）。 */
+    deleteFolder(workspaceId: string, folderPath: string): Promise<{
+      deleted: number
+      failed: number
+      removedEmptyDirs: boolean
+    }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
     /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */

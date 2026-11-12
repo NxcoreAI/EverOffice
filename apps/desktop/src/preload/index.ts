@@ -857,6 +857,8 @@ const api: NxcoreDesktopApi = {
       invoke('files:save-markdown', input),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
     delete: (fileId: string) => invoke('files:delete', fileId),
+    deleteFolder: (workspaceId: string, folderPath: string) =>
+      invoke('files:delete-folder', workspaceId, folderPath),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
     exportReveal: (fileId: string, originalName: string) =>
       invoke('files:export-reveal', fileId, originalName),

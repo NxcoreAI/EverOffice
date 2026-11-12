@@ -474,6 +474,23 @@ export class FilesGatewayBridge {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
   }
 
+  /**
+   * 删除资料页的一个文件夹（虚拟目录）：该前缀下全部文件进空间回收站（可恢复），
+   * DB 行与解析产物级联清理，磁盘空目录树移除。failed>0 时部分文件未删掉，保留目录。
+   */
+  deleteFolder(workspaceId: string, folderPath: string): Promise<{
+    deleted: number
+    failed: number
+    removedEmptyDirs: boolean
+  }> {
+    const normalized = folderPath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    if (!normalized || normalized === '.' || normalized.includes('..')) {
+      return Promise.reject(new Error('非法的文件夹路径'))
+    }
+    const query = `workspaceId=${encodeURIComponent(workspaceId)}&folderPath=${encodeURIComponent(normalized)}`
+    return this.request(`/v1/files/folders?${query}`, { method: 'DELETE' })
+  }
+
   /** 在系统文件管理器中定位文件本体（对象库 files/sha256/…）。 */
   async reveal(fileId: string): Promise<void> {
     const storagePath = await this.storagePath(fileId)
