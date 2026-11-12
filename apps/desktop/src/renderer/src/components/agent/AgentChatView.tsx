@@ -28,6 +28,7 @@ import { AgentTurnFilesCard } from './AgentTurnFilesCard'
 import { parseAgentNavigationTarget } from './agentNavigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkCjkFriendly } from '@/lib/markdown/remarkCjkFriendly'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { MentionedItem } from './agentMentions'
@@ -124,7 +125,7 @@ const runTurnFiles = agentTurnFilesFromTools
 const FormattedAgentText = memo(function FormattedAgentText({ content }: { content: string }) {
   return (
     <div className="agent-markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={agentMarkdownComponents}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]} components={agentMarkdownComponents}>
         {content}
       </ReactMarkdown>
     </div>

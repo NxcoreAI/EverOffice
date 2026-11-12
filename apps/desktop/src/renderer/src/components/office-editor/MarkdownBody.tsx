@@ -1,5 +1,6 @@
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkCjkFriendly } from '@/lib/markdown/remarkCjkFriendly';
 
 /** 双链拦截 scheme：[[目标]] 预处理产物，渲染层点击不走外链。 */
 const WIKI_LINK_SCHEME = 'everroom-wiki:';
@@ -65,7 +66,7 @@ export function MarkdownBody({ markdown, onWikiLink }: {
   return (
     <div className="context-room-wiki-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkCjkFriendly]}
         urlTransform={(url) => (url.startsWith(WIKI_LINK_SCHEME) ? url : defaultUrlTransform(url))}
         components={{
           // Wiki 正文位于页面标题之下，延续原有的视觉标题层级。
