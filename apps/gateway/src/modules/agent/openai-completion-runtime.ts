@@ -25,6 +25,17 @@ export interface OpenAiCompletionAgentConfig {
   timeoutMs?: number;
   requestOptions?: Record<string, unknown>;
   includeProviderErrorBody?: boolean;
+  /**
+   * 服务端搜索校验：开启后若响应显示搜索没真发生（usage.prompt_tokens
+   * 与裸 prompt 长度相当、即没有检索结果注入），抛错而非放行——防止
+   * 上游静默跳过搜索参数时模型拿训练截止的旧知识冒充检索结果（HTTP
+   * 仍 200，2026-11 实测中转渠道即如此）。
+   *
+   * 判定信号用 prompt_tokens 而非 search_info 字段：compatible-mode 的
+   * chat/completions 即使真搜索了也不返回 search_info（2026-11-12 实测），
+   * 真搜索时检索结果注入 prompt，prompt_tokens 从 ~20 涨到 ~2000+。
+   */
+  requireSearch?: boolean;
   sessionsDir: string;
   workingDirectory: string;
   agentDirectory: string;
@@ -37,6 +48,29 @@ interface ActiveRun {
 
 /** length 重试的预算封顶（4 倍重试封顶）。 */
 const LENGTH_RETRY_MAX_TOKENS = 32_768;
+
+/**
+ * 搜索注入判定：真搜索时检索结果会被注入 prompt，prompt_tokens 显著超过
+ * 裸 prompt 的量级（实测中文 260 字符裸 prompt ≈ 280 token，搜索后 2100~6800）。
+ * 估算按 CJK ≈1.1 token/字、ASCII ≈1/3.5 token/字符；阈值取估算 2 倍，
+ * 落在「裸 prompt」与「裸 prompt+注入」之间（注入观察值 ≥2000 token）。
+ */
+export function searchResultsInjected(
+  systemPrompt: string,
+  prompt: string,
+  usage: { prompt_tokens?: number } | undefined,
+): boolean {
+  const reported = usage?.prompt_tokens;
+  if (typeof reported !== "number") return true; // 无 usage 可判时保守放行
+  let cjk = 0;
+  let ascii = 0;
+  for (const ch of systemPrompt + prompt) {
+    if (ch.charCodeAt(0) > 0x2e80) cjk += 1;
+    else ascii += 1;
+  }
+  const bareEstimate = cjk * 1.1 + ascii / 3.5;
+  return reported >= bareEstimate * 2;
+}
 
 /** AgentRuntime adapter for providers whose extra request fields are not supported by Pi. */
 export class OpenAiCompletionAgentRuntime implements AgentRuntime {
@@ -199,6 +233,7 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
     }
     const payload = await response.json() as {
       choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
+      usage?: { prompt_tokens?: number };
     };
     const choice = payload.choices?.[0];
     const finishReason = choice?.finish_reason ?? "unknown";
@@ -207,6 +242,12 @@ export class OpenAiCompletionAgentRuntime implements AgentRuntime {
       if (finishReason === "length") return { content: null, finishReason };
       throw new Error(`${this.id} provider returned no content (finish_reason=${finishReason})`);
     }
+    if (this.config.requireSearch && !searchResultsInjected(this.systemPromptFor(input), input.prompt, payload.usage)) {
+      // 200 + 正文 + prompt_tokens 无搜索注入量 = 检索被上游静默跳过（参数被
+      // 忽略/中转剥参）。放行会让模型拿训练截止的旧知识冒充联网结果，宁可报错。
+      throw new Error(
+        `${this.id} search was requested but no search results were injected (prompt_tokens=${payload.usage?.prompt_tokens ?? "?"}; search silently skipped upstream)`,
+      );    }
     return { content, finishReason };
   }
 

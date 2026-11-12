@@ -8,7 +8,9 @@ import {
 
 /**
  * 百炼（DashScope）联网搜索工具：走 compatible-mode chat completions，
- * 开启 enable_search 让模型基于实时检索结果回答。
+ * 请求带 enable_search + search_options.forced_search 强制检索（裸
+ * enable_search 已被新版 qwen-plus 服务端静默忽略），并由 runtime 侧
+ * requireSearchInfo 校验响应里确实发生了搜索。
  */
 export function createWebSearchPiTools(
   resolver: AgentResolver,

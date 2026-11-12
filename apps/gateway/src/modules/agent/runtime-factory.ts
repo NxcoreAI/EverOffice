@@ -495,7 +495,12 @@ export function createAgentResolver(config: GatewayConfig, agentDebugStore?: Age
         runtimeId: BUILTIN_AGENT_IDS.webSearch,
         ...webSearch,
         systemPrompt: bundle.systemPrompt,
-        requestOptions: { enable_search: true },
+        // forced_search 是强制触发检索的开关；enable_search 对新版 qwen-plus
+        // 已被服务端静默忽略（2026-11 实测：裸 enable_search 不搜索，模型拿
+        // 训练截止的旧知识冒充检索结果且不报错），两个都带兜底旧渠道。
+        requestOptions: { enable_search: true, search_options: { forced_search: true } },
+        // 校验响应 search_info：检索被上游静默跳过时显式报错，不让旧知识冒充。
+        requireSearch: true,
         includeProviderErrorBody: false,
         ...directories,
       });
@@ -523,7 +528,8 @@ export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config:
       runtimeId: BUILTIN_AGENT_IDS.webSearch,
       ...webSearch,
       systemPrompt: bundle.systemPrompt,
-      requestOptions: { enable_search: true },
+      requestOptions: { enable_search: true, search_options: { forced_search: true } },
+      requireSearch: true,
       includeProviderErrorBody: false,
       ...directories,
     });

@@ -96,8 +96,16 @@ describe("Agent runtime isolation", () => {
     temporaryDirectories.push(root);
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      expect(body).toMatchObject({ model: "search-model", enable_search: true });
-      return new Response(JSON.stringify({ choices: [{ message: { content: "search result" } }] }), {
+      expect(body).toMatchObject({
+        model: "search-model",
+        enable_search: true,
+        search_options: { forced_search: true },
+      });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "search result" } }],
+        // 真搜索：检索结果注入 prompt，prompt_tokens 远超裸 prompt 量级。
+        usage: { prompt_tokens: 2156, total_tokens: 2200 },
+      }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -116,7 +124,8 @@ describe("Agent runtime isolation", () => {
       apiKey: "secret",
       model: "search-model",
       systemPrompt: "Search",
-      requestOptions: { enable_search: true },
+      requestOptions: { enable_search: true, search_options: { forced_search: true } },
+      requireSearch: true,
       sessionsDir: join(root, "sessions"),
       workingDirectory: join(root, "workspace"),
       agentDirectory: join(root, "config"),
@@ -129,6 +138,48 @@ describe("Agent runtime isolation", () => {
       "https://search.example/v1/chat/completions",
       expect.objectContaining({ method: "POST" }),
     );
+    await resolver.dispose();
+  });
+
+  it("rejects silently-skipped searches (no search results injected)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-agent-nosearch-"));
+    temporaryDirectories.push(root);
+    // 200 + 正文但 prompt_tokens 等于裸 prompt 量级：上游静默跳过检索（如
+    // enable_search 被忽略/中转剥参），模型会拿训练知识冒充检索结果——必须
+    // 报错而不是放行。（真实场景：中文系统提示词 ~260 字符 ≈280 token，
+    // 搜索注入后 2100~6800。）
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "stale training-data answer" } }],
+      // 裸 prompt 量级（本用例 system+prompt 为短 ASCII，≈5 token）：
+      // 无搜索注入时 prompt_tokens 就该是这个量级。
+      usage: { prompt_tokens: 8, total_tokens: 28 },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+    const resolver = new AgentResolver();
+    resolver.register({
+      id: BUILTIN_AGENT_IDS.webSearch,
+      name: "Web Search Agent",
+      description: "Search",
+      configDirectory: join(root, "config"),
+      kind: "builtin",
+    }, () => new OpenAiCompletionAgentRuntime({
+      runtimeId: BUILTIN_AGENT_IDS.webSearch,
+      baseUrl: "https://search.example/v1",
+      apiKey: "secret",
+      model: "search-model",
+      systemPrompt: "Search",
+      requestOptions: { enable_search: true, search_options: { forced_search: true } },
+      requireSearch: true,
+      sessionsDir: join(root, "sessions"),
+      workingDirectory: join(root, "workspace"),
+      agentDirectory: join(root, "config"),
+    }));
+
+    await expect(invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, "EverOffice", {
+      pageLabel: "search",
+    })).rejects.toThrow(/no search results were injected/);
     await resolver.dispose();
   });
 
