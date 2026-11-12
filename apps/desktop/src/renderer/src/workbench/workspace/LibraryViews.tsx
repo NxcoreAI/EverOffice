@@ -5,7 +5,7 @@ import type { RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon, FolderGlyphIcon } from '@/office-proto/pages/parts'
 import type { FileKind } from '@/office-proto/data'
 
-import { FileItemMenu, type FileItemActions } from './fileItemViews'
+import { FileItemMenu, FolderItemMenu, type FileItemActions, type FolderItemActions } from './fileItemViews'
 import { LIBRARY_ROOT_KEY, TMP_FOLDER_PATH, type LibraryRow } from './libraryTree'
 
 /**
@@ -20,12 +20,14 @@ import { LIBRARY_ROOT_KEY, TMP_FOLDER_PATH, type LibraryRow } from './libraryTre
  * 产物页复用这两个视图（同一套表头/行结构/排序，见 OutputsPage）。
  *
  * `.tmp/`（scratch）行：文件图标 + 「在访达中显示」动作，不支持打开/删除
- * （过程缓存随时被 GC，只读浏览）。
+ * （过程缓存随时被 GC，只读浏览）；`.tmp` 文件夹本身也是只读（无删除菜单）。
  */
 
 export interface LibraryViewProps {
   rows: readonly LibraryRow[]
   actions: FileItemActions
+  /** 文件夹行操作（删除文件夹）；不传 = 文件夹无菜单。 */
+  folderActions?: FolderItemActions
   onEnterFolder: (path: string) => void
   onOpenFile: (item: RealOfficeFile) => void
   /** scratch 行的「在访达中显示」（参数为相对 `.tmp` 根的路径）。 */
@@ -70,31 +72,49 @@ function scratchKindOf(name: string): FileKind {
 
 /* ───────────────── 网格 ───────────────── */
 
-export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
+export function LibraryGrid({ rows, actions, folderActions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
   const { t } = useLocale()
   const rootLabel = t(LIBRARY_ROOT_KEY)
   return (
     <ul className="wb-lib-grid">
       {rows.map((row) => (
         row.kind === 'folder' ? (
-          <li key={`folder:${row.path}`}>
-            <button
-              type="button"
-              className="wb-lib-tile"
-              title={row.path === TMP_FOLDER_PATH
-                ? t('workbench:workspace.library.tmpFolderTitle', { name: TMP_FOLDER_PATH })
-                : row.path}
-              onClick={() => onEnterFolder(row.path)}
-            >
-              <FolderGlyphIcon size={44} />
-              <span className="wb-lib-tile-name">{row.name}</span>
-              <span className="wb-lib-tile-meta">
-                {row.path === TMP_FOLDER_PATH
-                  ? t('workbench:workspace.library.tmpFolderMeta')
-                  : t('workbench:workspace.library.itemCount', { count: row.fileCount })}
-              </span>
-            </button>
-          </li>
+          row.path === TMP_FOLDER_PATH || !folderActions ? (
+            <li key={`folder:${row.path}`}>
+              <button
+                type="button"
+                className="wb-lib-tile"
+                title={row.path === TMP_FOLDER_PATH
+                  ? t('workbench:workspace.library.tmpFolderTitle', { name: TMP_FOLDER_PATH })
+                  : row.path}
+                onClick={() => onEnterFolder(row.path)}
+              >
+                <FolderGlyphIcon size={44} />
+                <span className="wb-lib-tile-name">{row.name}</span>
+                <span className="wb-lib-tile-meta">
+                  {row.path === TMP_FOLDER_PATH
+                    ? t('workbench:workspace.library.tmpFolderMeta')
+                    : t('workbench:workspace.library.itemCount', { count: row.fileCount })}
+                </span>
+              </button>
+            </li>
+          ) : (
+            <li key={`folder:${row.path}`} className="wb-lib-tile-wrap">
+              <button
+                type="button"
+                className="wb-lib-tile"
+                title={row.path}
+                onClick={() => onEnterFolder(row.path)}
+              >
+                <FolderGlyphIcon size={44} />
+                <span className="wb-lib-tile-name">{row.name}</span>
+                <span className="wb-lib-tile-meta">
+                  {t('workbench:workspace.library.itemCount', { count: row.fileCount })}
+                </span>
+              </button>
+              <FolderItemMenu row={row} actions={folderActions} align="start" />
+            </li>
+          )
         ) : row.kind === 'scratch' ? (
           <li key={`scratch:${row.path}`} className="wb-lib-tile-wrap">
             <div className="wb-lib-tile wb-lib-tile-static" title={`${row.name}\n${row.location}`}>
@@ -126,12 +146,17 @@ export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onReveal
 /* ───────────────── 列表 ───────────────── */
 
 function FolderRow({
-  row, onEnterFolder,
+  row, onEnterFolder, folderActions,
 }: {
   row: Extract<LibraryRow, { kind: 'folder' }>
   onEnterFolder: (path: string) => void
+  folderActions?: FolderItemActions
 }) {
   const { t } = useLocale()
+  // `.tmp` 文件夹只读（Agent 过程缓存）：不给删除菜单。
+  const menu = row.path !== TMP_FOLDER_PATH && folderActions
+    ? <FolderItemMenu row={row} actions={folderActions} />
+    : <ChevronRight size={14} className="wb-lib-enter" aria-hidden="true" />
   return (
     <li className="wb-lib-row">
       <button
@@ -148,7 +173,7 @@ function FolderRow({
           {t('workbench:workspace.library.itemCount', { count: row.fileCount })}
         </span>
       </button>
-      <ChevronRight size={14} className="wb-lib-enter" aria-hidden="true" />
+      {menu}
     </li>
   )
 }
@@ -202,7 +227,7 @@ function ScratchRow({
   )
 }
 
-export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
+export function LibraryList({ rows, actions, folderActions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
   const { t } = useLocale()
   return (
     <div className="wb-lib-list">
@@ -219,7 +244,7 @@ export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onReveal
       <ul className="wb-lib-rows">
         {rows.map((row) => (
           row.kind === 'folder' ? (
-            <FolderRow key={`folder:${row.path}`} row={row} onEnterFolder={onEnterFolder} />
+            <FolderRow key={`folder:${row.path}`} row={row} onEnterFolder={onEnterFolder} folderActions={folderActions} />
           ) : row.kind === 'scratch' ? (
             <ScratchRow key={`scratch:${row.path}`} row={row} onReveal={onRevealScratch} />
           ) : (

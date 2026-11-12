@@ -17,7 +17,7 @@ import {
   type FileViewMode,
   type FileFilterOption,
 } from './fileBrowser'
-import { type FileItemActions } from './fileItemViews'
+import { type FileItemActions, revealedToastKey } from './fileItemViews'
 import { folderLabel, folderOf, type LibraryRow } from './libraryTree'
 import { LibraryGrid, LibraryList } from './LibraryViews'
 import { useFileLibrary } from './useFileLibrary'
@@ -78,44 +78,24 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     { key: 'artifact-imported', label: t('workbench:workspace.outputs.filter.imported'), count: counts['artifact-imported'] },
   ]
 
-  const exportReveal = async (item: RealOfficeFile) => {
+  /** 在系统文件管理器中定位文件本体（mac=访达 / win=资源管理器）。 */
+  const revealFile = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
-    if (!api || typeof api.exportReveal !== 'function') {
+    if (!api || typeof api.reveal !== 'function') {
       onToast(t('workbench:workspace.common.desktopFileUnavailable'))
       return
     }
     try {
-      await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast(t('workbench:workspace.common.exported'))
+      await api.reveal(item.catalog.id)
+      onToast(t(revealedToastKey()))
     } catch {
-      onToast(t('workbench:workspace.common.exportFailed'))
-    }
-  }
-
-  const openOriginal = async (item: RealOfficeFile) => {
-    const api = window.nxcore?.files
-    if (!api || typeof api.openOriginal !== 'function') {
-      onToast(t('workbench:workspace.common.desktopFileUnavailable'))
-      return
-    }
-    try {
-      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash, {
-        workspaceId: workspace.id,
-      })
-      if (result.openedWith === 'office') {
-        onToast(t('workbench:workspace.common.openedInOffice', { name: item.file.name }))
-      } else {
-        onToast(t('workbench:workspace.common.openedDefaultApp'))
-      }
-    } catch {
-      onToast(t('workbench:workspace.common.openFailed'))
+      onToast(t('workbench:workspace.library.toast.revealFailed'))
     }
   }
 
   const actions: FileItemActions = {
     onOpen: (item) => onOpenFile(item.file),
-    onOpenOriginal: (item) => { void openOriginal(item) },
-    onExportReveal: (item) => { void exportReveal(item) },
+    onReveal: (item) => { void revealFile(item) },
     onError: onToast,
   }
 

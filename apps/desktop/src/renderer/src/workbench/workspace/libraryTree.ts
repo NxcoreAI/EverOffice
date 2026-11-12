@@ -78,6 +78,21 @@ export function folderCrumbs(path: string): LibraryCrumb[] {
   }))
 }
 
+/**
+ * 文件夹（含子文件夹）下的已加载文件总数（递归）——删除确认框的计数口径，
+ * 与网关按前缀删除的语义一致（段边界：`docs/api` 不含 `docs/apiary`）。
+ * 只统计当前页已加载条目；库里有未加载文件时调用方不应展示该计数。
+ */
+export function countFilesUnder(items: readonly RealOfficeFile[], folderPath: string): number {
+  const folder = normalizeFolderPath(folderPath)
+  if (!folder) return items.length
+  const prefix = `${folder}/`
+  return items.filter((item) => {
+    const parent = folderOf(item)
+    return parent === folder || parent.startsWith(prefix)
+  }).length
+}
+
 /** 位置列的展示文案：`docs/api` → `docs / api`，根目录 → 「资料」。 */
 export function folderLabel(path: string, t: Translate = translateZh): string {
   const normalized = normalizeFolderPath(path)

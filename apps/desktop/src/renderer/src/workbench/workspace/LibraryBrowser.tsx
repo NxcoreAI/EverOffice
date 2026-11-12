@@ -7,7 +7,7 @@ import type { RealOfficeFile } from '@/office-proto/data'
 
 import { IconButton } from '../ui/primitives'
 import type { FileViewMode } from './fileBrowser'
-import type { FileItemActions } from './fileItemViews'
+import type { FileItemActions, FolderItemActions } from './fileItemViews'
 import {
   buildLibraryLevel,
   folderCrumbs,
@@ -34,10 +34,13 @@ import { LibraryGrid, LibraryList } from './LibraryViews'
  * 只读派生，不入文件库索引；里面的文件不能打开/删除，只支持在访达中定位。
  *
  * 访达拖放的落点在页面根节点（LibraryPage），空库/加载态也能拖；本组件只管浏览。
+ * 文件夹行操作（删除文件夹）通过 folderActions 交给页面，`.tmp` 保留文件夹除外。
  */
-export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
+export function LibraryBrowser({ items, actions, folderActions, scratch, onRevealScratch }: {
   items: readonly RealOfficeFile[]
   actions: FileItemActions
+  /** 文件夹行操作；不传 = 文件夹无菜单。 */
+  folderActions?: FolderItemActions
   /** `.tmp/` 只读清单；null = 桥不可用/未绑定目录（不显示 .tmp 入口）。 */
   scratch: AgentScratchListing | null
   /** 在访达中定位 `.tmp` 里的文件（参数为相对 `.tmp` 根的路径）。 */
@@ -93,6 +96,7 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
   const viewProps = {
     rows,
     actions,
+    folderActions,
     onEnterFolder: goTo,
     onOpenFile: (item: RealOfficeFile) => actions.onOpen(item),
     onRevealScratch: (row: Extract<LibraryRow, { kind: 'scratch' }>) => onRevealScratch(
