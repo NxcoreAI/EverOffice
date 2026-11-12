@@ -1151,6 +1151,31 @@ export async function createServer(config: GatewayConfig) {
   }
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
+  // 云文档 md 备份（agent-file-backup）：document_write_commit 成功后把规范化
+  // markdown 落一份 .md 进文件库（sourceKind=agent-generated，同一工作空间）。
+  // 产物/资料页立即可见；幂等（内容指纹去重）；失败只记日志不影响云文档。
+  documentService.agentDocumentMarkdownBackupExporter = ({ documentId, title, markdown, workspaceId }) => {
+    const safeTitle = (title.trim() || "未命名云文档").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+    void (async () => {
+      try {
+        await filesService.importFile({
+          sourceKind: "agent-generated",
+          // 以 documentId 为 sourceKey：同一云文档重复提交产生新版本（内容变了），
+          // 不同云文档互不干扰。
+          sourceKey: `cloud-doc:${documentId}`,
+          originalName: `${safeTitle}.md`,
+          buffer: Buffer.from(markdown, "utf8"),
+          mime: "text/markdown",
+          workspaceId,
+        });
+      } catch (error) {
+        app.log.warn(
+          { err: error instanceof Error ? error.message : String(error), documentId },
+          "cloud document markdown backup failed",
+        );
+      }
+    })();
+  };
   // 回填工作区文件/图片目录：Agent 工具装配早于 filesService 创建（晚绑定）。
   // listCatalog 第 3 参是 options 对象：把目录接口的 (patterns, workspaceId) 适配过去。
   const workspaceFiles = createWorkspaceFileCatalog({
