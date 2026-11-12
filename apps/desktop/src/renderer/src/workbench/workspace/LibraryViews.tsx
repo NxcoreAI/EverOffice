@@ -1,7 +1,9 @@
 import { ChevronDown, ChevronRight, FolderOpen } from 'lucide-react'
 
+import type { RoomDocument } from '@nxcore/agent-contract'
+
 import { useLocale } from '@/i18n/LocaleContext'
-import type { RealOfficeFile } from '@/office-proto/data'
+import { cloudDocumentToOfficeFile, cloudDocumentTitle, type RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon, FolderGlyphIcon } from '@/office-proto/pages/parts'
 import type { FileKind } from '@/office-proto/data'
 
@@ -30,6 +32,8 @@ export interface LibraryViewProps {
   onOpenFile: (item: RealOfficeFile) => void
   /** scratch 行的「在访达中显示」（参数为相对 `.tmp` 根的路径）。 */
   onRevealScratch?: (row: Extract<LibraryRow, { kind: 'scratch' }>) => void
+  /** 云文档行点开：把云文档伪文件交给页面（→ 气泡窗云文档编辑器）。 */
+  onOpenCloudDocument?: (document: RoomDocument) => void
 }
 
 /** scratch 文件的操作按钮（网格瓦片角标 / 列表行尾共用）。 */
@@ -68,9 +72,66 @@ function scratchKindOf(name: string): FileKind {
   return 'md'
 }
 
+/* ───────────────── 云文档行（documents 表） ───────────────── */
+
+function cloudDocMeta(document: RoomDocument, t: (key: string) => string): string {
+  return [
+    t('workbench:workspace.library.cloudDocKind'),
+    document.version ? `v${document.version}` : null,
+  ].filter((part): part is string => Boolean(part)).join(' · ')
+}
+
+function CloudDocTile({ document, onOpen }: {
+  document: RoomDocument
+  onOpen: (document: RoomDocument) => void
+}) {
+  const { t } = useLocale()
+  const file = cloudDocumentToOfficeFile(document)
+  const title = cloudDocumentTitle(document)
+  return (
+    <li className="wb-lib-tile-wrap">
+      <button
+        type="button"
+        className="wb-lib-tile"
+        title={`${title}\n${t('workbench:workspace.library.cloudDocKind')}`}
+        onClick={() => onOpen(document)}
+      >
+        <FileTypeIcon kind={file.kind} size={46} />
+        <span className="wb-lib-tile-name">{title}</span>
+        <span className="wb-lib-tile-meta">{file.updatedLabel}</span>
+      </button>
+    </li>
+  )
+}
+
+function CloudDocRow({ document, onOpen }: {
+  document: RoomDocument
+  onOpen: (document: RoomDocument) => void
+}) {
+  const { t } = useLocale()
+  const file = cloudDocumentToOfficeFile(document)
+  const title = cloudDocumentTitle(document)
+  return (
+    <li className="wb-lib-row">
+      <button
+        type="button"
+        className="wb-lib-row-main"
+        title={`${title}\n${t('workbench:workspace.library.cloudDocKind')}`}
+        onClick={() => onOpen(document)}
+      >
+        <FileTypeIcon kind={file.kind} size={36} />
+        <span className="wb-lib-name">{title}</span>
+        <span className="wb-lib-loc">{cloudDocMeta(document, t)}</span>
+        <span className="wb-lib-time">{file.updatedLabel}</span>
+        <span className="wb-lib-size">{t('workbench:workspace.library.cloudDocKind')}</span>
+      </button>
+    </li>
+  )
+}
+
 /* ───────────────── 网格 ───────────────── */
 
-export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
+export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch, onOpenCloudDocument }: LibraryViewProps) {
   const { t } = useLocale()
   const rootLabel = t(LIBRARY_ROOT_KEY)
   return (
@@ -103,6 +164,8 @@ export function LibraryGrid({ rows, actions, onEnterFolder, onOpenFile, onReveal
               <ScratchRevealButton row={row} onReveal={onRevealScratch} />
             </div>
           </li>
+        ) : row.kind === 'cloud-doc' ? (
+          <CloudDocTile key={`cloud:${row.document.id}`} document={row.document} onOpen={onOpenCloudDocument ?? (() => {})} />
         ) : (
           <li key={row.item.file.id} className="wb-lib-tile-wrap">
             <button
@@ -202,7 +265,7 @@ function ScratchRow({
   )
 }
 
-export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch }: LibraryViewProps) {
+export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onRevealScratch, onOpenCloudDocument }: LibraryViewProps) {
   const { t } = useLocale()
   return (
     <div className="wb-lib-list">
@@ -222,6 +285,8 @@ export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onReveal
             <FolderRow key={`folder:${row.path}`} row={row} onEnterFolder={onEnterFolder} />
           ) : row.kind === 'scratch' ? (
             <ScratchRow key={`scratch:${row.path}`} row={row} onReveal={onRevealScratch} />
+          ) : row.kind === 'cloud-doc' ? (
+            <CloudDocRow key={`cloud:${row.document.id}`} document={row.document} onOpen={onOpenCloudDocument ?? (() => {})} />
           ) : (
             <FileRow key={row.item.file.id} row={row} actions={actions} onOpenFile={onOpenFile} />
           )

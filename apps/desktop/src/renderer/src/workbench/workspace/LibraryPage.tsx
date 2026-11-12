@@ -1,8 +1,10 @@
 import { FilePlus2, FileText, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
+import type { RoomDocument } from '@nxcore/agent-contract'
+
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
-import type { RealOfficeFile } from '@/office-proto/data'
+import { cloudDocumentToOfficeFile, type RealOfficeFile } from '@/office-proto/data'
 
 import { workspaceDisplayName } from '../types'
 import { ConfirmModal } from '../ui/modal'
@@ -15,6 +17,7 @@ import {
 } from './fileBrowser'
 import type { FileItemActions } from './fileItemViews'
 import { LibraryBrowser } from './LibraryBrowser'
+import { useCloudDocuments } from './useCloudDocuments'
 import { useFileLibrary } from './useFileLibrary'
 import { useScratchFiles } from './useScratchFiles'
 import { useLibraryDropZone } from './useLibraryDropZone'
@@ -53,6 +56,8 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
   const { t, locale } = useLocale()
   const library = useFileLibrary(workspace.id)
   const scratch = useScratchFiles(workspace.id)
+  // 云文档（documents 表）与文件库平级展示：挂在根目录「云文档」文件夹下。
+  const cloudDocuments = useCloudDocuments(workspace.id)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -206,6 +211,12 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     onError: onToast,
   }
 
+  // 云文档行点开：转伪文件走 onOpenFile（→ 气泡窗 CloudDocumentEditor），
+  // 与对话产物云文档卡/气泡窗列表同一条打开链路。
+  const openCloudDocument = (document: RoomDocument) => {
+    onOpenFile(cloudDocumentToOfficeFile(document))
+  }
+
   // 访达拖放：落点是页面根节点——空库/加载/不可用态也能拖，不只在有内容的浏览器里。
   const { dragActive, dragProps } = useLibraryDropZone((files) => { void handleDropFiles(files) })
 
@@ -230,7 +241,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
 
-      {library.state === 'ready' && library.items.length === 0 ? (
+      {library.state === 'ready' && library.items.length === 0 && !cloudDocuments.available ? (
         <EmptyState
           className="wb-file-state"
           icon={<FileText size={18} />}
@@ -240,12 +251,15 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         />
       ) : null}
 
-      {library.state === 'ready' && library.items.length > 0 ? (
+      {(library.state === 'ready' && library.items.length > 0)
+        || (library.state !== 'unavailable' && cloudDocuments.available && cloudDocuments.documents.length > 0) ? (
         <LibraryBrowser
           items={library.items}
           actions={actions}
           scratch={scratch.state === 'ready' ? scratch.listing : null}
           onRevealScratch={(relativePath) => { void revealScratch(relativePath) }}
+          cloudDocuments={cloudDocuments.available ? cloudDocuments.documents : []}
+          onOpenCloudDocument={openCloudDocument}
         />
       ) : null}
 

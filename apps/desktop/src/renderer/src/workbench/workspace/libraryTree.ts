@@ -1,5 +1,7 @@
+import type { RoomDocument } from '@nxcore/agent-contract'
+
 import { translateZh, type Translate } from '@/i18n/LocaleContext'
-import type { RealOfficeFile } from '@/office-proto/data'
+import { cloudDocumentTitle, type RealOfficeFile } from '@/office-proto/data'
 
 import { directoryOf, fileSearchText } from './fileBrowser'
 
@@ -42,6 +44,8 @@ export interface LibraryLevel {
 export type LibraryRow =
   | { kind: 'folder'; path: string; name: string; fileCount: number; location: string }
   | { kind: 'file'; item: RealOfficeFile; location: string }
+  /** 工作空间云文档（documents 表）：无文件夹层级、无文件库条目，点开走云文档编辑器。 */
+  | { kind: 'cloud-doc'; document: RoomDocument; name: string; location: string }
   /** scratch（`.tmp/`）里的临时文件：不入库索引，只读浏览 + 访达定位。 */
   | { kind: 'scratch'; path: string; name: string; location: string; sizeLabel: string; modifiedLabel: string }
 
@@ -269,4 +273,74 @@ export function searchLibrary(
     }))
 
   return { folders: folderRows, files: fileRows }
+}
+
+/* ───────────────── 云文档（documents 表）行 ───────────────── */
+
+/**
+ * 云文档行放在「云文档」保留文件夹下（与 .tmp 同款的虚拟目录）：它们没有
+ * relativePath 层级，挂进根目录的一个固定分组，不与真实文件夹命名空间冲突。
+ */
+export const CLOUD_DOC_FOLDER_PATH = '云文档'
+
+/** 云文档在资料树的挂载目录是否启用（无云文档时不显示该文件夹）。 */
+export function cloudDocRows(
+  documents: readonly RoomDocument[],
+  t: Translate = translateZh,
+): LibraryRow[] {
+  return documents.map((document): LibraryRow => ({
+    kind: 'cloud-doc',
+    document,
+    name: cloudDocumentTitle(document),
+    location: folderLabel(CLOUD_DOC_FOLDER_PATH, t),
+  }))
+}
+
+/** 云文档行加入某个目录层级的行列表：只在根目录挂「云文档」文件夹，目录内平铺行。 */
+export function withCloudDocs(
+  rows: readonly LibraryRow[],
+  documents: readonly RoomDocument[],
+  path: string,
+  t: Translate = translateZh,
+): LibraryRow[] {
+  const current = normalizeFolderPath(path)
+  if (current === normalizeFolderPath(CLOUD_DOC_FOLDER_PATH)) {
+    // 「云文档」目录内：文件夹段（不存在）+ 云文档行。
+    return cloudDocRows(documents, t)
+  }
+  if (current) return [...rows]
+  // 根目录：在普通目录前/后挂「云文档」文件夹行（有云文档才显示）。
+  if (documents.length === 0) return [...rows]
+  const folderRow: LibraryRow = {
+    kind: 'folder',
+    path: CLOUD_DOC_FOLDER_PATH,
+    name: CLOUD_DOC_FOLDER_PATH,
+    fileCount: documents.length,
+    location: folderLabel('', t),
+  }
+  return [...rows, folderRow]
+}
+
+/** 云文档搜索命中（按标题，全库搜索范围与文件一致）。 */
+export function searchCloudDocs(
+  documents: readonly RoomDocument[],
+  keyword: string,
+  t: Translate = translateZh,
+): LibraryRow[] {
+  const query = keyword.trim().toLowerCase()
+  if (!query) return []
+  return cloudDocRows(
+    documents.filter((document) => cloudDocumentTitle(document).toLowerCase().includes(query)),
+    t,
+  )
+}
+
+/** 云文档按更新时间倒序（与文件行同一排序口径）。 */
+export function sortCloudDocsByUpdatedDesc(documents: readonly RoomDocument[]): RoomDocument[] {
+  return [...documents].sort((left, right) => {
+    const leftAt = Date.parse(left.updatedAt)
+    const rightAt = Date.parse(right.updatedAt)
+    if (!Number.isFinite(leftAt) || !Number.isFinite(rightAt)) return 0
+    return rightAt - leftAt
+  })
 }

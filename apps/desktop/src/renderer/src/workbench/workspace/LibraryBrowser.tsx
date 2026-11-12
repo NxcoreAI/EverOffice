@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, LayoutGrid, List, Search, X } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 
-import type { AgentScratchListing } from '@nxcore/agent-contract'
+import type { AgentScratchListing, RoomDocument } from '@nxcore/agent-contract'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
@@ -15,10 +15,13 @@ import {
   levelRows,
   LIBRARY_ROOT_KEY,
   searchLibrary,
+  searchCloudDocs,
   buildScratchLevel,
   scratchRows,
   TMP_FOLDER_PATH,
   isTmpPath,
+  withCloudDocs,
+  CLOUD_DOC_FOLDER_PATH,
   type LibraryRow,
 } from './libraryTree'
 import { LibraryGrid, LibraryList } from './LibraryViews'
@@ -33,15 +36,22 @@ import { LibraryGrid, LibraryList } from './LibraryViews'
  * `.tmp/`（Agent 过程缓存）作为根目录下的保留文件夹展示：scratch 由清单接口
  * 只读派生，不入文件库索引；里面的文件不能打开/删除，只支持在访达中定位。
  *
+ * 云文档（documents 表）同样挂在根目录的「云文档」保留文件夹下：与文件库
+ * 平级浏览，点开走云文档编辑器（onOpenCloudDocument）。
+ *
  * 访达拖放的落点在页面根节点（LibraryPage），空库/加载态也能拖；本组件只管浏览。
  */
-export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
+export function LibraryBrowser({ items, actions, scratch, onRevealScratch, cloudDocuments, onOpenCloudDocument }: {
   items: readonly RealOfficeFile[]
   actions: FileItemActions
   /** `.tmp/` 只读清单；null = 桥不可用/未绑定目录（不显示 .tmp 入口）。 */
   scratch: AgentScratchListing | null
   /** 在访达中定位 `.tmp` 里的文件（参数为相对 `.tmp` 根的路径）。 */
   onRevealScratch: (relativePath: string) => void
+  /** 工作空间云文档（documents 表）；空数组 = 无云文档（不显示该文件夹）。 */
+  cloudDocuments?: readonly RoomDocument[]
+  /** 云文档行点开（页面转交气泡窗云文档编辑器）。 */
+  onOpenCloudDocument?: (document: RoomDocument) => void
 }) {
   const { t } = useLocale()
   const [path, setPath] = useState('')
@@ -51,6 +61,7 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
   const keyword = query.trim()
   const searching = keyword.length > 0
   const inTmp = isTmpPath(path)
+  const inCloudDocs = path === CLOUD_DOC_FOLDER_PATH
   const level = useMemo(() => buildLibraryLevel(items, path), [items, path])
   const levelRowsList = useMemo(() => levelRows(level, t), [level, t])
   const scratchEntries = useMemo(
@@ -65,6 +76,10 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
     () => (searching ? searchLibrary(items, keyword, t) : null),
     [items, keyword, searching, t],
   )
+  const cloudHits = useMemo(
+    () => (searching ? searchCloudDocs(cloudDocuments ?? [], keyword, t) : []),
+    [cloudDocuments, keyword, searching, t],
+  )
 
   // 根目录额外挂 .tmp 文件夹（scratch 根存在且有内容时），排在普通目录前。
   const tmpFolderRow: LibraryRow[] = !inTmp && !searching && scratchEntries.length > 0
@@ -76,12 +91,27 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
         location: t(LIBRARY_ROOT_KEY),
       }]
     : []
+  // 根目录额外挂「云文档」文件夹（有云文档时）；进入后平铺云文档行。
+  const cloudFolderRow: LibraryRow[] = !inTmp && !inCloudDocs && !searching
+    && cloudDocuments && cloudDocuments.length > 0
+    ? [{
+        kind: 'folder',
+        path: CLOUD_DOC_FOLDER_PATH,
+        name: CLOUD_DOC_FOLDER_PATH,
+        fileCount: cloudDocuments.length,
+        location: t(LIBRARY_ROOT_KEY),
+      }]
+    : []
   const rows: LibraryRow[] = hits
-    ? [...hits.folders, ...hits.files]
+    ? [...hits.folders, ...hits.files, ...cloudHits]
     : inTmp && scratchLevel
       ? scratchRows(scratchLevel, t)
-      : [...tmpFolderRow, ...levelRowsList]
-  const crumbs = useMemo(() => folderCrumbs(level.path), [level.path])
+      : inCloudDocs
+        ? withCloudDocs([], cloudDocuments ?? [], path, t)
+        : [...tmpFolderRow, ...cloudFolderRow, ...withCloudDocs(levelRowsList, cloudDocuments ?? [], path, t)]
+  // 面包屑跟当前实际所在目录（state path）：云文档/.tmp 是树外保留目录，
+  // level.path 只覆盖文件目录，这里以 state 为准才能显示「资料 / 云文档」。
+  const crumbs = useMemo(() => folderCrumbs(path), [path])
 
   // 任何目录跳转（进入 / 返回 / 面包屑）都顺手清掉搜索词：
   // 搜索是全库结果，跳目录后再停在搜索态会让人以为看到的是该目录内容。
@@ -98,6 +128,9 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
     onRevealScratch: (row: Extract<LibraryRow, { kind: 'scratch' }>) => onRevealScratch(
       row.path.slice(TMP_FOLDER_PATH.length + 1),
     ),
+    onOpenCloudDocument: onOpenCloudDocument
+      ? (document: RoomDocument) => onOpenCloudDocument(document)
+      : undefined,
   }
 
   return (
@@ -108,8 +141,8 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
           className="wb-lib-back"
           title={t('workbench:workspace.library.back')}
           aria-label={t('workbench:workspace.library.back')}
-          disabled={!level.path || searching}
-          onClick={() => goTo(parentFolderOf(level.path))}
+          disabled={!path || searching}
+          onClick={() => goTo(parentFolderOf(path))}
         >
           <ChevronLeft size={15} />
         </button>
@@ -196,7 +229,9 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch }: {
             ? t('workbench:workspace.library.searchNoMatch', { keyword })
             : inTmp
               ? t('workbench:workspace.library.tmpEmpty')
-              : t('workbench:workspace.library.folderEmpty')}
+              : inCloudDocs
+                ? t('workbench:workspace.library.cloudDocEmpty')
+                : t('workbench:workspace.library.folderEmpty')}
         </p>
       )}
     </div>
