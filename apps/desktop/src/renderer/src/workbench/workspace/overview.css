@@ -265,7 +265,8 @@
   font-weight: 650;
 }
 
-/* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
+/* 与主页「今日洞察」图标（home.css .wb-journal-icon）同款：香槟暖色渐变 + 白色星火，
+   顶部内高光 + 柔投影（垂直柔和渐变叠加 45% 高光层）。 */
 .wb-ov-insight-ai {
   display: grid;
   place-items: center;
@@ -273,9 +274,13 @@
   width: 36px;
   height: 36px;
   border-radius: 26%;
-  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(180deg, #e0bd96, #a8754a);
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 6px rgba(140, 95, 50, 0.2);
 }
 
 .wb-ov-insight-text {
@@ -486,13 +491,17 @@
 }
 .wb-ov-timeline li + li { border-top: 1px solid var(--ui-border-subtle); }
 
-/* 行是容器不是按钮：一行可能带多个引用，每个引用各自可聚焦（按钮不能嵌套）。 */
+/* 行是容器不是按钮：一行可能带多个引用，每个引用各自可聚焦（按钮不能嵌套）。
+ *
+ * 信息密度：主文案行 + 可选的次级行（brief / error）双行结构；
+ * 行距压缩到 5px、图标 20px——一句裸动词的时代一行 ~42px 只承载 10 个字，
+ * 现在同样的高度能装「动词 + 引用 + 指令摘要 + 时长」。 */
 .wb-ov-activity {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 9px;
   width: 100%;
-  padding: 8px 6px;
+  padding: 5px 6px;
   border-radius: var(--ui-radius-sm);
   color: var(--ui-text-2);
   font-size: var(--ui-text-sm);
@@ -500,13 +509,22 @@
 }
 .wb-ov-activity:hover { background: var(--ui-hover); }
 
+.wb-ov-activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
 .wb-ov-activity-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
   border-radius: var(--ui-radius-sm);
   background: var(--ui-surface-alt);
   color: var(--ui-text-2);
@@ -534,8 +552,30 @@
 
 /* 文案允许换行：一行里可能既有工作引用又有文件引用，截断会丢掉半个句子。 */
 .wb-ov-activity-label {
-  flex: 1;
   min-width: 0;
+}
+
+/* 次级行：指令摘要（prompt 首行）。单行省略，title 给全文；
+ * 字号降一档、颜色降一级——它是对主文案的解释，不是并列信息。 */
+.wb-ov-activity-brief {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-3);
+}
+
+/* 失败原因：与 brief 同一位置（一条 run 只会取其一，error 优先展示在 brief 之后）。 */
+.wb-ov-activity-error {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-danger);
 }
 
 /* 引用：只存 id、名字实时解析，样式与正文区分（强调色 + 600 字重 + 悬停下划线）。 */
@@ -561,6 +601,18 @@
   white-space: nowrap;
   font-size: var(--ui-text-2xs);
   color: var(--ui-text-3);
+}
+
+/* run 耗时徽标：行尾、相对时间左侧，胶囊底与正文的 2xs 同族但可扫读。 */
+.wb-ov-activity-duration {
+  flex: none;
+  margin-top: 1px;
+  padding: 0 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-alt);
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  white-space: nowrap;
 }
 
 .wb-ov-more {

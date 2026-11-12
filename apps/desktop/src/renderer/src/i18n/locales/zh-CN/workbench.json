@@ -99,6 +99,8 @@
   "workspaceSidebar.noWork": "还没有工作",
   "workspaceSidebar.renameWork": "重命名",
   "workspaceSidebar.delete": "删除",
+  "workspaceSidebar.showAll": "显示全部 {count} 条",
+  "workspaceSidebar.collapse": "收起",
   "palette.loading": "正在读取资料…",
   "palette.noFiles": "资料暂无文件",
   "palette.browseAll": "在「所有文件」中继续浏览",

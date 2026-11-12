@@ -99,6 +99,8 @@
   "workspaceSidebar.noWork": "No work yet",
   "workspaceSidebar.renameWork": "Rename",
   "workspaceSidebar.delete": "Delete",
+  "workspaceSidebar.showAll": "Show all {count}",
+  "workspaceSidebar.collapse": "Show less",
   "palette.loading": "Loading files…",
   "palette.noFiles": "No files yet",
   "palette.browseAll": "Continue in All Files",
