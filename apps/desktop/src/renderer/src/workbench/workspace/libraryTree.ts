@@ -278,12 +278,9 @@ export function searchLibrary(
 /* ───────────────── 云文档（documents 表）行 ───────────────── */
 
 /**
- * 云文档行放在「云文档」保留文件夹下（与 .tmp 同款的虚拟目录）：它们没有
- * relativePath 层级，挂进根目录的一个固定分组，不与真实文件夹命名空间冲突。
+ * 云文档行：没有 relativePath 层级，直接平铺在资料根目录的文件行之间
+ * （kind='cloud-doc'），不做保留文件夹——用户明确不要额外的「云文档」目录。
  */
-export const CLOUD_DOC_FOLDER_PATH = '云文档'
-
-/** 云文档在资料树的挂载目录是否启用（无云文档时不显示该文件夹）。 */
 export function cloudDocRows(
   documents: readonly RoomDocument[],
   t: Translate = translateZh,
@@ -292,33 +289,8 @@ export function cloudDocRows(
     kind: 'cloud-doc',
     document,
     name: cloudDocumentTitle(document),
-    location: folderLabel(CLOUD_DOC_FOLDER_PATH, t),
-  }))
-}
-
-/** 云文档行加入某个目录层级的行列表：只在根目录挂「云文档」文件夹，目录内平铺行。 */
-export function withCloudDocs(
-  rows: readonly LibraryRow[],
-  documents: readonly RoomDocument[],
-  path: string,
-  t: Translate = translateZh,
-): LibraryRow[] {
-  const current = normalizeFolderPath(path)
-  if (current === normalizeFolderPath(CLOUD_DOC_FOLDER_PATH)) {
-    // 「云文档」目录内：文件夹段（不存在）+ 云文档行。
-    return cloudDocRows(documents, t)
-  }
-  if (current) return [...rows]
-  // 根目录：在普通目录前/后挂「云文档」文件夹行（有云文档才显示）。
-  if (documents.length === 0) return [...rows]
-  const folderRow: LibraryRow = {
-    kind: 'folder',
-    path: CLOUD_DOC_FOLDER_PATH,
-    name: CLOUD_DOC_FOLDER_PATH,
-    fileCount: documents.length,
     location: folderLabel('', t),
-  }
-  return [...rows, folderRow]
+  }))
 }
 
 /** 云文档搜索命中（按标题，全库搜索范围与文件一致）。 */

@@ -1,4 +1,4 @@
-import { FolderOpen, PackageOpen, RefreshCw } from 'lucide-react'
+import { PackageOpen, RefreshCw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import type { RoomDocument } from '@nxcore/agent-contract'
@@ -167,9 +167,6 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
             onClick={() => { library.refresh(); cloudDocuments.refresh() }}
             disabled={library.refreshing}
           />
-          <Button variant="secondary" icon={<FolderOpen size={15} />} onClick={() => onOpenPage('library')}>
-            {t('workbench:workspace.outputs.goLibrary')}
-          </Button>
         </div>
       </header>
 

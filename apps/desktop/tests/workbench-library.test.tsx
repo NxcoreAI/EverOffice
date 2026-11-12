@@ -520,7 +520,7 @@ describe('产物页', () => {
     expect(opened.name).toBe(AGENT_OUTPUT.file.name)
   })
 
-  it('没有产物时：页头「去资料」只出现一次，空态只留「新建工作」', async () => {
+  it('没有产物时：页头不再有「去资料」按钮，空态只留「新建工作」', async () => {
     const props = pageProps()
     installFilesApi([MANUAL], 1)
     await act(async () => { root.render(<OutputsPage {...props} />) })
@@ -528,12 +528,10 @@ describe('产物页', () => {
 
     expect(container.textContent).toContain('还没有产物')
     expect(container.querySelector('.ui-empty-desc')).toBeNull()
-    // 空态不再重复页头的「去资料」
+    // 页头「去资料」按钮已按需求移除
     const libraryButtons = [...container.querySelectorAll<HTMLButtonElement>('button')]
       .filter((button) => (button.textContent ?? '').trim().includes('去资料'))
-    expect(libraryButtons).toHaveLength(1)
-    await act(async () => { libraryButtons[0].click() })
-    expect(props.onOpenPage).toHaveBeenCalledWith('library')
+    expect(libraryButtons).toHaveLength(0)
 
     const newWorkButton = buttonByText('新建工作')
     await act(async () => { newWorkButton!.click() })
@@ -634,7 +632,7 @@ describe('云文档（documents 表）混入资料 / 产物', () => {
     return bridge
   }
 
-  it('资料页：根目录挂「云文档」文件夹，进入后平铺云文档行，点开走 onOpenFile（伪文件）', async () => {
+  it('资料页：云文档平铺在根目录文件行之间（无「云文档」文件夹），点开走 onOpenFile（伪文件）', async () => {
     const doc = cloudDoc({ id: 'doc-1', title: 'Agent 写的云文档', updatedAt: '2026-11-10T09:00:00.000Z' })
     const props = pageProps()
     installFilesApi(OPENABLE_KINDS)
@@ -642,17 +640,13 @@ describe('云文档（documents 表）混入资料 / 产物', () => {
     await act(async () => { root.render(<LibraryPage {...props} />) })
     await flush()
 
-    // 根目录出现「云文档」保留文件夹（与 .tmp 同款），带数量计数
-    const folderTile = [...container.querySelectorAll<HTMLButtonElement>('.wb-lib-tile')]
-      .find((tile) => (tile.textContent ?? '').includes('云文档'))
-    expect(folderTile).toBeDefined()
-    await act(async () => { folderTile!.click() })
-    await flush()
-
-    // 文件夹内平铺云文档行；「云文档」文件夹瓦片也在此层（保留文件夹行）
-    expect(allText('.wb-lib-tile-name')).toEqual(['云文档', 'Agent 写的云文档'])
-    // 面包屑显示当前目录
-    expect(container.querySelector('.wb-lib-crumbs')?.textContent).toContain('云文档')
+    // 根目录：云文档行与普通文件/文件夹瓦片混排，不出现「云文档」文件夹瓦片
+    const tileNames = allText('.wb-lib-tile-name')
+    expect(tileNames).toContain('Agent 写的云文档')
+    const folderTiles = tileNames.filter((name) => name === '云文档')
+    expect(folderTiles).toHaveLength(0)
+    // 仍在根目录（面包屑只有「资料」）
+    expect(container.querySelector('.wb-lib-crumbs')?.textContent).not.toContain('云文档 /')
 
     // 点开云文档行 → onOpenFile 收到 cloud-doc 伪文件（编辑页按 id 路由 CloudDocumentEditor）
     // 瓦片 textContent 是「标题 + 更新时间标签」，按包含匹配标题。

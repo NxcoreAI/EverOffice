@@ -16,12 +16,11 @@ import {
   LIBRARY_ROOT_KEY,
   searchLibrary,
   searchCloudDocs,
+  cloudDocRows,
   buildScratchLevel,
   scratchRows,
   TMP_FOLDER_PATH,
   isTmpPath,
-  withCloudDocs,
-  CLOUD_DOC_FOLDER_PATH,
   type LibraryRow,
 } from './libraryTree'
 import { LibraryGrid, LibraryList } from './LibraryViews'
@@ -61,7 +60,6 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch, cloud
   const keyword = query.trim()
   const searching = keyword.length > 0
   const inTmp = isTmpPath(path)
-  const inCloudDocs = path === CLOUD_DOC_FOLDER_PATH
   const level = useMemo(() => buildLibraryLevel(items, path), [items, path])
   const levelRowsList = useMemo(() => levelRows(level, t), [level, t])
   const scratchEntries = useMemo(
@@ -91,24 +89,16 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch, cloud
         location: t(LIBRARY_ROOT_KEY),
       }]
     : []
-  // 根目录额外挂「云文档」文件夹（有云文档时）；进入后平铺云文档行。
-  const cloudFolderRow: LibraryRow[] = !inTmp && !inCloudDocs && !searching
-    && cloudDocuments && cloudDocuments.length > 0
-    ? [{
-        kind: 'folder',
-        path: CLOUD_DOC_FOLDER_PATH,
-        name: CLOUD_DOC_FOLDER_PATH,
-        fileCount: cloudDocuments.length,
-        location: t(LIBRARY_ROOT_KEY),
-      }]
+  // 云文档不做文件夹：直接平铺在根目录的文件行之间（kind='cloud-doc' 行）。
+  // 只有根目录（含空资料库）展示；子目录/.tmp/搜索态由各自分支处理。
+  const rootCloudRows: LibraryRow[] = path === ''
+    ? cloudDocRows(cloudDocuments ?? [], t)
     : []
   const rows: LibraryRow[] = hits
     ? [...hits.folders, ...hits.files, ...cloudHits]
     : inTmp && scratchLevel
       ? scratchRows(scratchLevel, t)
-      : inCloudDocs
-        ? withCloudDocs([], cloudDocuments ?? [], path, t)
-        : [...tmpFolderRow, ...cloudFolderRow, ...withCloudDocs(levelRowsList, cloudDocuments ?? [], path, t)]
+      : [...tmpFolderRow, ...levelRowsList, ...rootCloudRows]
   // 面包屑跟当前实际所在目录（state path）：云文档/.tmp 是树外保留目录，
   // level.path 只覆盖文件目录，这里以 state 为准才能显示「资料 / 云文档」。
   const crumbs = useMemo(() => folderCrumbs(path), [path])
@@ -229,9 +219,7 @@ export function LibraryBrowser({ items, actions, scratch, onRevealScratch, cloud
             ? t('workbench:workspace.library.searchNoMatch', { keyword })
             : inTmp
               ? t('workbench:workspace.library.tmpEmpty')
-              : inCloudDocs
-                ? t('workbench:workspace.library.cloudDocEmpty')
-                : t('workbench:workspace.library.folderEmpty')}
+              : t('workbench:workspace.library.folderEmpty')}
         </p>
       )}
     </div>
