@@ -122,6 +122,7 @@
   "activity.workUpdated": "更新了工作 ",
   "activity.generated": "生成了 ",
   "activity.addedMaterial": "添加了材料 ",
+  "activity.runCount": "{count} 次",
   "insight.title": "洞察",
   "insight.updating": "小 E 正在更新…",
   "insight.emptyTitle": "等待第一项工作",

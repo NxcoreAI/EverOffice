@@ -122,6 +122,7 @@
   "activity.workUpdated": "Updated work ",
   "activity.generated": "Generated ",
   "activity.addedMaterial": "Added material ",
+  "activity.runCount": "{count}×",
   "insight.title": "Insight",
   "insight.updating": "Assistant is updating…",
   "insight.emptyTitle": "Waiting for the first piece of work",

@@ -1,17 +1,16 @@
 # 工作空间「概览 · 动态」对齐原型模型：实现方案
 
 > 状态：**P0 + P1 已实现**（2026-11-03，见 §4.6 / §5.7 落地记录）；P2 的 `work-review` 已按「活状态」口径实现（见 §6.1），无需建表。
-> **2026-11-12 信息密度改造**：用户反馈「动态栏太难用、信息密度太低」。根因有三：
-> ① §5.4 SQL 草稿里 run 事件的 `r.prompt AS brief` 落地时被丢弃——`agent_runs.prompt`（用户指令）、
-> `completedAt - startedAt`（耗时）、`error`（失败原因）都是现成数据但从未暴露；
-> ② 一次 run 拆「开始 + 结束」两行，时间轴位置翻倍而每行只有一句裸动词；
-> ③ 展示层浪费（26px 图标 + 8px 上下 padding ≈ 42px/行 只承载 10 个字）。
-> 改造：契约新增 `WorkspaceActivityDetail{brief, durationSec, error}`（可选字段，旧消费方零改动）；
-> 网关侧一次 run 合并为单行（id `run:<runId>`，不再有 `:start`/`:end`；`at` 取结束时刻优先），
-> 同行携带 prompt 首行摘要（≤120 字）、耗时（秒，向上取整）、失败原因；渲染层行结构升级为
-> 「主文案 + 次级行（brief/error，2xs 灰字单行省略，title 给全文）+ 行尾时长徽标」，
-> 图标 26→20px、行距 8→5px、默认折叠 8→12 条；本地回落派生用会话标题作 brief。
-> i18n 新增 `time.durationSeconds/Minutes/Hours`（zh-CN / en-US）。
+> **2026-11-12 信息密度改造（第二轮，用户反馈迭代）**：
+> 第一轮修了「行高浪费 + brief 缺失」（图标 26→20px、默认 8→12 条、契约加 `detail`），
+> 但用户试后仍不满意，两点反馈都指向「行内容是模板 + 用户输入回显，不是发生了什么」：
+> ① **重复**：同一会话多次 run 各出一行「结束了工作 X」× N——改为**按会话聚合**：
+> 一个工作 = 一行（id `work:<sessionId>`），`at` 取最近一次 run 的结束时刻，
+> `runCount` 带执行次数（>1 出「N 次」徽标），`durationSec` 为累计耗时；文案改「完成了工作 / 正在执行 / 执行失败」。
+> ② **brief 复述 prompt 毫无意义**（用户自己知道发了什么）——brief 改为提取该会话**最新一条
+> assistant 回复**的首行（`agent_messages` 按 `role='assistant'` 倒序取 3 条，`displayContent ?? content`，
+> 剥 markdown 记号且跳过 `## 处理完成` 这类 ≤10 字的标题残骸）：AI 做完事的总结，回答「做了什么」。
+> 本地回落派生拿不到消息表，不再给会话行造 brief（宁缺毋假）。
 > 关联：`docs/design/everoffice-feature-inventory.zh-CN.md` §3.4（原型动态卡清单）、`docs/design/product-data-map.zh-CN.md` §9（意图：动态/洞察是派生数据，不建 feed 表）、`docs/workspace-plan-task-design.zh-CN.md`（`workspace_plan_items` 与它的**事件流表**）、`everoffice` 原型 `WorkspacePages.tsx:216-247`、`workspace.ts:105-146`。
 
 ---

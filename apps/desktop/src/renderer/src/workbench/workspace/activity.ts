@@ -88,12 +88,14 @@ export interface ActivityItem {
 
 /** 与契约 `WorkspaceActivityDetail` 同构；brief 是展示快照，不跟随改名。 */
 export interface ActivityDetail {
-  /** 指令/来源摘要：单行省略展示，title 给全文。 */
+  /** 结果摘要（AI 做完事的总结首行）：单行省略展示，title 给全文。 */
   brief?: string
   /** run 耗时（秒）；渲染层格式化为「3 分钟」等。 */
   durationSec?: number
   /** 失败原因（仅 failed 的 run）。 */
   error?: string
+  /** 同一工作累计执行次数；>1 时出「N 次」徽标。 */
+  runCount?: number
 }
 
 /** 概览动态默认最多 12 条（信息密度优化后行高更紧凑，一屏可承载更多；旧值 8）。 */
@@ -136,15 +138,12 @@ function sessionTimeOf(session: SessionActivityInput): string {
 
 function sessionActivityOf(session: SessionActivityInput, t: Translate): ActivityItem {
   // 引用段只放 id：真正的名字由页面按 workId 实时解析，工作改名后历史文案自动跟随。
-  // 本地回落派生时没有 run 的 prompt，用会话标题当 brief（网关派生时 brief 来自 prompt，
-  // 两者的取舍见 docs/workspace-overview-activity-plan.zh-CN.md §5.4 的 brief 说明）。
-  const title = session.title?.trim()
+  // 本地回落派生拿不到 run 数据，没有 brief/runCount（网关派生时 brief 来自 AI 回复总结）。
   return {
     id: `session:${session.id}`,
     kind: sessionKindOf(session),
     segments: [{ text: sessionVerbOf(session, t) }, { workId: session.id }],
     at: sessionTimeOf(session),
-    detail: title ? { brief: title } : undefined,
   }
 }
 
