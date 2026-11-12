@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { useLocale } from '@/i18n/LocaleContext'
 import { catalogToOfficeFile } from '@/office-proto/data'
+import type { OsOpenedDocument } from '@/shared/office'
 import { HomePageHost } from '../home/HomePageHost'
 import { useActiveTab, useWorkbenchStore } from '../state/store'
 import { cn } from '../ui/cn'
@@ -109,6 +110,43 @@ export function Workbench() {
       disposed = true
       unsubscribe()
     }
+  }, [])
+
+  // 访达「打开方式」/ 资源管理器双击打开 Word/Excel/PPT：主进程已把文件导入
+  // 文件库并派发 files:open-from-os。UI 迁移后这条事件一度没有消费方——应用会被
+  // 唤起、文件也入了库，但不会打开编辑器；这里按 catalog 转成 OfficeFile，
+  // 落到归属工作空间的气泡窗（内嵌原生编辑器）。
+  useEffect(() => {
+    const files = window.nxcore?.files
+    if (!files?.onOpenFromOs) return
+    const openFromSystem = async (document: OsOpenedDocument) => {
+      try {
+        const catalog = await files.catalogEntry(document.fileId)
+        const entry = catalogToOfficeFile(catalog)
+        if (!entry) return
+        useWorkbenchStore.getState().openFileInWorkspace(entry.file)
+      } catch (error) {
+        console.error('Failed to open the document from the system file manager.', error)
+      }
+    }
+    const takePending = typeof files.takePendingOsOpen === 'function'
+      ? files.takePendingOsOpen.bind(files)
+      : null
+    // 已消费的事件顺手清掉主进程暂存，避免下次页面重载把旧文件再打开一次。
+    const unsubscribe = files.onOpenFromOs((document) => {
+      void openFromSystem(document)
+      if (takePending) void takePending().catch(() => undefined)
+    })
+    // 冷启动：open-file 可能早于本组件挂载，取走主进程暂存的请求（取后清空）。
+    // 这里不设「已卸载」闸门：StrictMode 的 effect 双跑会先清理第一轮 effect，
+    // 若异步请求在清理后才返回，文件会被静默丢掉。打开文件是全局动作，
+    // 组件卸载后补一次打开也无害。
+    if (takePending) {
+      void takePending()
+        .then((document) => { if (document) void openFromSystem(document) })
+        .catch(() => undefined)
+    }
+    return unsubscribe
   }, [])
 
   // 主进程 open-edit 广播：Agent 落页/续落时该产物未以可编辑会话打开（用户关了页签

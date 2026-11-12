@@ -22,6 +22,9 @@ export type CapabilityBackend = Pick<DocumentService,
   | "resolveDocWriterDraft"
   // 云文档 ↔ 工作空间绑定（JSON 索引旁挂）：Agent 创建成功后归入 run 的 workspaceId。
   | "bindDocumentWorkspace"
+  // 云文档 md 备份（agent-file-backup）：commit 成功后把规范化 markdown 落一份
+  // .md 进文件库（sourceKind=agent-generated），产物/资料页可见可下载。
+  | "exportAgentDocumentMarkdownBackup"
 >;
 
 export const annotations = (readOnlyHint: boolean, destructiveHint = false) => ({

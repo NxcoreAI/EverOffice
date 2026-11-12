@@ -11,8 +11,8 @@ import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
-import { agentEvents, agentMessages, agentSessions, agentWorkspaces, gatewayMetadata } from "../infrastructure/database/schema.js";
-import { asc, eq, inArray } from "drizzle-orm";
+import { agentEvents, agentMessages, agentSessions, agentWorkspaces, gatewayMetadata, parsedDocuments } from "../infrastructure/database/schema.js";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { AgentDebugArchive } from "../modules/agent-debug/archive.js";
 import { AgentDebugTraceStore } from "../modules/agent-debug/trace-store.js";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
@@ -1154,6 +1154,31 @@ export async function createServer(config: GatewayConfig) {
   }
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
+  // 云文档 md 备份（agent-file-backup）：document_write_commit 成功后把规范化
+  // markdown 落一份 .md 进文件库（sourceKind=agent-generated，同一工作空间）。
+  // 产物/资料页立即可见；幂等（内容指纹去重）；失败只记日志不影响云文档。
+  documentService.agentDocumentMarkdownBackupExporter = ({ documentId, title, markdown, workspaceId }) => {
+    const safeTitle = (title.trim() || "未命名云文档").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
+    void (async () => {
+      try {
+        await filesService.importFile({
+          sourceKind: "agent-generated",
+          // 以 documentId 为 sourceKey：同一云文档重复提交产生新版本（内容变了），
+          // 不同云文档互不干扰。
+          sourceKey: `cloud-doc:${documentId}`,
+          originalName: `${safeTitle}.md`,
+          buffer: Buffer.from(markdown, "utf8"),
+          mime: "text/markdown",
+          workspaceId,
+        });
+      } catch (error) {
+        app.log.warn(
+          { err: error instanceof Error ? error.message : String(error), documentId },
+          "cloud document markdown backup failed",
+        );
+      }
+    })();
+  };
   // 回填工作区文件/图片目录：Agent 工具装配早于 filesService 创建（晚绑定）。
   // listCatalog 第 3 参是 options 对象：把目录接口的 (patterns, workspaceId) 适配过去。
   const workspaceFiles = createWorkspaceFileCatalog({
@@ -1497,6 +1522,48 @@ export async function createServer(config: GatewayConfig) {
     const parsed = await documentUnderstandingService.parseVersion(input.fileEntryId, input.fileVersionId);
     return { parsedId: parsed?.id ?? null, dataType: "document" };
   });
+  // 截图型 PDF 的 OCR 回填：历史导入的纯图片 PDF 原生解析只有几百字符，
+  // 下游 LLM 等于拿不到材料（PresentBench 营销例实测）。启动后异步补齐一次。
+  if ((process.env.NXCORE_PDF_OCR_AUTO ?? "1") !== "0") {
+    void (async () => {
+      try {
+        // 只回填最近若干条：库里历史低覆盖 PDF 可能几百份，全量串行 OCR 会跑几小时
+        // 且烧掉大量 VLM 调用（2026-11-11 实测 319 份）。新导入走解析期自动 OCR，这里只兜底近期文档。
+        const limit = Math.max(1, Number(process.env.NXCORE_PDF_OCR_BACKFILL_LIMIT ?? 20));
+        const rows = db.select({
+          id: parsedDocuments.id,
+          fileVersionId: parsedDocuments.fileVersionId,
+          format: parsedDocuments.format,
+          quality: parsedDocuments.quality,
+          artifact: parsedDocuments.artifact,
+        }).from(parsedDocuments).orderBy(desc(parsedDocuments.updatedAt)).limit(limit).all();
+        let filled = 0;
+        for (const row of rows) {
+          if (row.format !== "pdf") continue;
+          const artifact = row.artifact as Record<string, unknown> | null;
+          const doc = artifact?.document as Record<string, unknown> | undefined;
+          if (!doc) continue;
+          const quality = row.quality as Record<string, unknown> | null;
+          const coverage = Number(quality?.nativeTextCoverage ?? 1);
+          const ocrCoverage = Number(quality?.ocrCoverage ?? 0);
+          if (!Number.isFinite(coverage) || coverage >= 0.3) continue;
+          // 有失败页就重跑：analyzePdfVisuals 只处理未完成页，瘦身后单页 OCR 很便宜。
+          if (doc.visualRevision && ocrCoverage >= 0.95) continue;
+          const fileEntryId = String(doc.fileEntryId ?? "");
+          if (!fileEntryId) continue;
+          try {
+            await documentUnderstandingService.analyzePdfVisuals(fileEntryId, row.fileVersionId, "external_vlm_allowed");
+            filled += 1;
+          } catch {
+            // 单篇失败不影响其余
+          }
+        }
+        if (filled > 0) app.log.info({ filled }, "parsed documents OCR backfilled");
+      } catch (error) {
+        app.log.warn({ err: error }, "parsed document OCR backfill skipped");
+      }
+    })();
+  }
   // 文档列举后台增量同步（15 分钟 delta + 每日全量对账）：只处理已有缓存行的
   // 连接，连接断开等预期失败在 worker 内静默跳过。
   documentListSyncWorker = new DocumentListSyncWorker(db, documentImportService, app.log);

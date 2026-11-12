@@ -129,11 +129,11 @@ interface RecordedOp {
 
 interface RectItem { label: string; x: number; y: number; w: number; h: number; order: number }
 
-function rectOf(options: Record<string, unknown>): Omit<RectItem, "order"> | null {
+function rectOf(options: Record<string, unknown>): NonNullable<RecordedOp['rect']> | null {
   const x = options.x, y = options.y, w = options.w, h = options.h
   if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number") return null
   if (w <= 0 || h <= 0) return null
-  return { label: "", x, y, w, h }
+  return { x, y, w, h }
 }
 
 function snapshotText(textArg: unknown, options: Record<string, unknown>): string {
@@ -160,6 +160,47 @@ function intersectionArea(a: RectItem, b: RectItem): number {
   const bottom = Math.min(a.y + a.h, b.y + b.h)
   if (right <= left || bottom <= top) return 0
   return (right - left) * (bottom - top)
+}
+
+const EMU_PER_INCH = 914400
+
+type CanvasLayout = { width: number; height: number }
+
+/** pptxgenjs getSmartParseNumber 同源规则：数字 <100 视为英寸，≥100 视为 EMU，"50%" 按画布尺寸换算。 */
+function toEmuLen(value: unknown, dir: 'X' | 'Y', layout: CanvasLayout): number | null {
+  if (typeof value === 'number') return value < 100 ? Math.round(value * EMU_PER_INCH) : value
+  if (typeof value === 'string' && value.includes('%')) {
+    const pct = Number.parseFloat(value)
+    if (!Number.isFinite(pct)) return null
+    return Math.round((pct / 100) * (dir === 'X' ? layout.width : layout.height))
+  }
+  return null
+}
+
+/**
+ * 画布裁剪：图形只保留画布内的部分（出界的部分不画）。完全出界返回 false，调用方跳过这次 add*。
+ * ponytail: 按 bbox 裁剪——矩形精确；圆等曲线形状裁后变椭圆（pptx 没有形状级 clip，
+ * 真裁剪要 custGeom 多边形近似，出界图形成普遍问题再上）；旋转形状按未旋转 bbox 处理。
+ */
+function clampToCanvas(options: Record<string, unknown>, layout: CanvasLayout): boolean {
+  const x = toEmuLen(options.x, 'X', layout)
+  const y = toEmuLen(options.y, 'Y', layout)
+  const w = toEmuLen(options.w, 'X', layout)
+  const h = toEmuLen(options.h, 'Y', layout)
+  // 解析不了（缺坐标、w/h≤0 的自适应图片等）不拦，交给 pptxgenjs 原行为
+  if (x === null || y === null || w === null || h === null || w <= 0 || h <= 0) return true
+  const nx = Math.max(x, 0)
+  const ny = Math.max(y, 0)
+  const nw = Math.min(x + w, layout.width) - nx
+  const nh = Math.min(y + h, layout.height) - ny
+  if (nw <= 0 || nh <= 0) return false
+  if (nx === x && ny === y && nw === w && nh === h) return true
+  // 写回英寸数字：画布最长 13.34"，恒 <100，getSmartParseNumber 一定按英寸解析
+  options.x = nx / EMU_PER_INCH
+  options.y = ny / EMU_PER_INCH
+  options.w = nw / EMU_PER_INCH
+  options.h = nh / EMU_PER_INCH
+  return true
 }
 
 const clip = (value: string, max: number) => (value.length > max ? `${value.slice(0, max)}…` : value)
@@ -307,11 +348,19 @@ function wrapPptxgen(
                     } else {
                       options = asRecord(callArgs[0])
                     }
+                    // 图形画布裁剪：出界部分不画（完全出界整块跳过），发生在快照之前，
+                    // 这样版式自查看到的也是裁剪后的几何。
+                    if (slideProp === 'addShape' || slideProp === 'addImage') {
+                      const layout = (slideTarget as { _presLayout?: CanvasLayout })._presLayout
+                      if (layout && layout.width > 0 && layout.height > 0 && !clampToCanvas(options, layout)) {
+                        return slideTarget
+                      }
+                    }
                     // 调用时立即快照：pptxgenjs 之后会把 options 原地改写为 EMU。
                     const rect = rectOf(options)
                     slideOps.get(slideNo)?.push({
                       name: slideProp,
-                      rect: rect ? { x: rect.x, y: rect.y, w: rect.w, h: rect.h } : null,
+                      rect,
                       text: snapshotText(textArg, options),
                       ...(slideProp === 'addShape' ? { shapeType: String(options.shapeType ?? 'rect') } : {}),
                       ...(slideProp === 'addShape' ? { filled: Boolean(options.fill || options.gradient) } : {}),

@@ -1,5 +1,7 @@
+import type { RoomDocument } from '@nxcore/agent-contract'
+
 import { translateZh, type Translate } from '@/i18n/LocaleContext'
-import type { RealOfficeFile } from '@/office-proto/data'
+import { cloudDocumentTitle, type RealOfficeFile } from '@/office-proto/data'
 
 import { directoryOf, fileSearchText } from './fileBrowser'
 
@@ -42,6 +44,8 @@ export interface LibraryLevel {
 export type LibraryRow =
   | { kind: 'folder'; path: string; name: string; fileCount: number; location: string }
   | { kind: 'file'; item: RealOfficeFile; location: string }
+  /** 工作空间云文档（documents 表）：无文件夹层级、无文件库条目，点开走云文档编辑器。 */
+  | { kind: 'cloud-doc'; document: RoomDocument; name: string; location: string }
   /** scratch（`.tmp/`）里的临时文件：不入库索引，只读浏览 + 访达定位。 */
   | { kind: 'scratch'; path: string; name: string; location: string; sizeLabel: string; modifiedLabel: string }
 
@@ -284,4 +288,46 @@ export function searchLibrary(
     }))
 
   return { folders: folderRows, files: fileRows }
+}
+
+/* ───────────────── 云文档（documents 表）行 ───────────────── */
+
+/**
+ * 云文档行：没有 relativePath 层级，直接平铺在资料根目录的文件行之间
+ * （kind='cloud-doc'），不做保留文件夹——用户明确不要额外的「云文档」目录。
+ */
+export function cloudDocRows(
+  documents: readonly RoomDocument[],
+  t: Translate = translateZh,
+): LibraryRow[] {
+  return documents.map((document): LibraryRow => ({
+    kind: 'cloud-doc',
+    document,
+    name: cloudDocumentTitle(document),
+    location: folderLabel('', t),
+  }))
+}
+
+/** 云文档搜索命中（按标题，全库搜索范围与文件一致）。 */
+export function searchCloudDocs(
+  documents: readonly RoomDocument[],
+  keyword: string,
+  t: Translate = translateZh,
+): LibraryRow[] {
+  const query = keyword.trim().toLowerCase()
+  if (!query) return []
+  return cloudDocRows(
+    documents.filter((document) => cloudDocumentTitle(document).toLowerCase().includes(query)),
+    t,
+  )
+}
+
+/** 云文档按更新时间倒序（与文件行同一排序口径）。 */
+export function sortCloudDocsByUpdatedDesc(documents: readonly RoomDocument[]): RoomDocument[] {
+  return [...documents].sort((left, right) => {
+    const leftAt = Date.parse(left.updatedAt)
+    const rightAt = Date.parse(right.updatedAt)
+    if (!Number.isFinite(leftAt) || !Number.isFinite(rightAt)) return 0
+    return rightAt - leftAt
+  })
 }

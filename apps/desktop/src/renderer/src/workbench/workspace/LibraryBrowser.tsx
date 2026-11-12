@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, LayoutGrid, List, Search, X } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 
-import type { AgentScratchListing } from '@nxcore/agent-contract'
+import type { AgentScratchListing, RoomDocument } from '@nxcore/agent-contract'
 import { useLocale } from '@/i18n/LocaleContext'
 import type { RealOfficeFile } from '@/office-proto/data'
 
@@ -15,6 +15,8 @@ import {
   levelRows,
   LIBRARY_ROOT_KEY,
   searchLibrary,
+  searchCloudDocs,
+  cloudDocRows,
   buildScratchLevel,
   scratchRows,
   TMP_FOLDER_PATH,
@@ -33,10 +35,13 @@ import { LibraryGrid, LibraryList } from './LibraryViews'
  * `.tmp/`（Agent 过程缓存）作为根目录下的保留文件夹展示：scratch 由清单接口
  * 只读派生，不入文件库索引；里面的文件不能打开/删除，只支持在访达中定位。
  *
+ * 云文档（documents 表）同样挂在根目录的「云文档」保留文件夹下：与文件库
+ * 平级浏览，点开走云文档编辑器（onOpenCloudDocument）。
+ *
  * 访达拖放的落点在页面根节点（LibraryPage），空库/加载态也能拖；本组件只管浏览。
  * 文件夹行操作（删除文件夹）通过 folderActions 交给页面，`.tmp` 保留文件夹除外。
  */
-export function LibraryBrowser({ items, actions, folderActions, scratch, onRevealScratch }: {
+export function LibraryBrowser({ items, actions, folderActions, scratch, onRevealScratch, cloudDocuments, onOpenCloudDocument }: {
   items: readonly RealOfficeFile[]
   actions: FileItemActions
   /** 文件夹行操作；不传 = 文件夹无菜单。 */
@@ -45,6 +50,10 @@ export function LibraryBrowser({ items, actions, folderActions, scratch, onRevea
   scratch: AgentScratchListing | null
   /** 在访达中定位 `.tmp` 里的文件（参数为相对 `.tmp` 根的路径）。 */
   onRevealScratch: (relativePath: string) => void
+  /** 工作空间云文档（documents 表）；空数组 = 无云文档（不显示该文件夹）。 */
+  cloudDocuments?: readonly RoomDocument[]
+  /** 云文档行点开（页面转交气泡窗云文档编辑器）。 */
+  onOpenCloudDocument?: (document: RoomDocument) => void
 }) {
   const { t } = useLocale()
   const [path, setPath] = useState('')
@@ -68,6 +77,10 @@ export function LibraryBrowser({ items, actions, folderActions, scratch, onRevea
     () => (searching ? searchLibrary(items, keyword, t) : null),
     [items, keyword, searching, t],
   )
+  const cloudHits = useMemo(
+    () => (searching ? searchCloudDocs(cloudDocuments ?? [], keyword, t) : []),
+    [cloudDocuments, keyword, searching, t],
+  )
 
   // 根目录额外挂 .tmp 文件夹（scratch 根存在且有内容时），排在普通目录前。
   const tmpFolderRow: LibraryRow[] = !inTmp && !searching && scratchEntries.length > 0
@@ -79,12 +92,19 @@ export function LibraryBrowser({ items, actions, folderActions, scratch, onRevea
         location: t(LIBRARY_ROOT_KEY),
       }]
     : []
+  // 云文档不做文件夹：直接平铺在根目录的文件行之间（kind='cloud-doc' 行）。
+  // 只有根目录（含空资料库）展示；子目录/.tmp/搜索态由各自分支处理。
+  const rootCloudRows: LibraryRow[] = path === ''
+    ? cloudDocRows(cloudDocuments ?? [], t)
+    : []
   const rows: LibraryRow[] = hits
-    ? [...hits.folders, ...hits.files]
+    ? [...hits.folders, ...hits.files, ...cloudHits]
     : inTmp && scratchLevel
       ? scratchRows(scratchLevel, t)
-      : [...tmpFolderRow, ...levelRowsList]
-  const crumbs = useMemo(() => folderCrumbs(level.path), [level.path])
+      : [...tmpFolderRow, ...levelRowsList, ...rootCloudRows]
+  // 面包屑跟当前实际所在目录（state path）：云文档/.tmp 是树外保留目录，
+  // level.path 只覆盖文件目录，这里以 state 为准才能显示「资料 / 云文档」。
+  const crumbs = useMemo(() => folderCrumbs(path), [path])
 
   // 任何目录跳转（进入 / 返回 / 面包屑）都顺手清掉搜索词：
   // 搜索是全库结果，跳目录后再停在搜索态会让人以为看到的是该目录内容。
@@ -102,6 +122,9 @@ export function LibraryBrowser({ items, actions, folderActions, scratch, onRevea
     onRevealScratch: (row: Extract<LibraryRow, { kind: 'scratch' }>) => onRevealScratch(
       row.path.slice(TMP_FOLDER_PATH.length + 1),
     ),
+    onOpenCloudDocument: onOpenCloudDocument
+      ? (document: RoomDocument) => onOpenCloudDocument(document)
+      : undefined,
   }
 
   return (
@@ -112,8 +135,8 @@ export function LibraryBrowser({ items, actions, folderActions, scratch, onRevea
           className="wb-lib-back"
           title={t('workbench:workspace.library.back')}
           aria-label={t('workbench:workspace.library.back')}
-          disabled={!level.path || searching}
-          onClick={() => goTo(parentFolderOf(level.path))}
+          disabled={!path || searching}
+          onClick={() => goTo(parentFolderOf(path))}
         >
           <ChevronLeft size={15} />
         </button>

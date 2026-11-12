@@ -327,6 +327,42 @@ export class DocumentService {
     this.workspaceIndex.bind(id, workspace);
   }
 
+  /**
+   * 云文档 md 备份导出器（agent-file-backup）：由 create-server 注入，
+   * commit 成功后把规范化 markdown 落一份 .md 进文件库
+   * （sourceKind=agent-generated），产物/资料页可见、可在访达定位。
+   *
+   * 未注入时（单测/无桌面场景）备份跳过，云文档本身不受影响。
+   */
+  agentDocumentMarkdownBackupExporter: ((input: {
+    documentId: string;
+    title: string;
+    markdown: string;
+    workspaceId: string;
+  }) => void) | null = null;
+
+  /**
+   * 云文档 md 备份入口（capability backend 调用）：把提交后的文档正文
+   * （规范化 Tiptap → markdown）交给注入的导出器落文件库。
+   *
+   * 幂等性由文件库内容指纹保证：同一文档重复导出（内容未变）不产生新版本。
+   * 空正文（finalSequence=0 的空文档）跳过。
+   */
+  exportAgentDocumentMarkdownBackup(input: { documentId: string; workspaceId: string }): void {
+    const exporter = this.agentDocumentMarkdownBackupExporter;
+    if (!exporter) return;
+    const document = this.get(input.documentId);
+    if (!document || document.status !== "active") return;
+    const markdown = agentDocumentMarkdown.serialize(documentBodyContent(document.contentJson));
+    if (!markdown.trim()) return;
+    exporter({
+      documentId: input.documentId,
+      title: document.title,
+      markdown,
+      workspaceId: input.workspaceId,
+    });
+  }
+
   /** 旧数据迁移入口（create-server 启动时调用一次）：返回迁入 default 的文稿数。 */
   migrateLegacyDocumentWorkspaces(): number {
     if (!this.workspaceIndex) return 0;

@@ -304,10 +304,20 @@ export function createPlugin(
       if (!document) throw new DocumentServiceError("COMMIT_FAILED", "Document commit returned no document", 500);
       // 提交成功后绑定到 run 所属工作空间（JSON 索引旁挂，不落库）：工作台侧栏 /
       // Agent 列表按工作空间过滤；缺省（非工作台 run）归 default。
-      backend.bindDocumentWorkspace(
-        document.id,
-        (context.workspaceId ?? "").trim() || DEFAULT_DOCUMENT_WORKSPACE_ID,
-      );
+      const workspaceId = (context.workspaceId ?? "").trim() || DEFAULT_DOCUMENT_WORKSPACE_ID;
+      backend.bindDocumentWorkspace(document.id, workspaceId);
+      // md 备份（agent-file-backup）：云文档提交成功即落一份 .md 进文件库
+      // （sourceKind=agent-generated，同一工作空间）。产物/资料页立即可见，云文档
+      // 本体仍在 documents 表——两处入口，一份内容。
+      // 失败不阻断提交（文档已生成），只静默跳过：备份是增强而非提交语义的一部分。
+      try {
+        backend.exportAgentDocumentMarkdownBackup?.({
+          documentId: document.id,
+          workspaceId,
+        });
+      } catch {
+        // 备份失败不影响云文档本身
+      }
       return success({
         operationId, state: "completed",
         roomId: document.roomId, docId: document.id,
