@@ -615,6 +615,12 @@
   white-space: nowrap;
 }
 
+/* 执行次数徽标：比时长更弱（次数是频度，不是结果），无底色。 */
+.wb-ov-activity-duration.is-count {
+  padding: 0;
+  background: transparent;
+}
+
 .wb-ov-more {
   align-self: flex-start;
   height: 28px;

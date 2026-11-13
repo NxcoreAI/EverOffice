@@ -2634,12 +2634,14 @@ export interface WorkspaceActivitySegment {
  * 不需要跟随工作/文件改名，这与 segments 的 id 引用语义有意不同。
  */
 export interface WorkspaceActivityDetail {
-  /** 指令/来源摘要（run 的 prompt 首行、文件的原名或 provider）：单行省略展示。 */
+  /** 结果摘要（该工作最新一条 assistant 回复的首行）：回答「做了什么」，单行省略展示。 */
   brief?: string;
   /** run 从开始到结束的耗时（秒）；运行中/无结束时刻的事件没有。 */
   durationSec?: number;
   /** 失败原因（仅 failed 的 run；渲染层截断展示）。 */
   error?: string;
+  /** 该工作（会话）累计执行次数；>1 时渲染层出「N 次」徽标（同工作多次 run 折叠为一行）。 */
+  runCount?: number;
 }
 
 /** 概览动态的一条事件（由 runs / 文件库 / 计划事件流派生，不是独立存储的实体）。 */

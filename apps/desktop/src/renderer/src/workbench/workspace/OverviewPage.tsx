@@ -513,6 +513,11 @@ export function OverviewPage({
                       {durationLabel(item.detail.durationSec, t)}
                     </span>
                   ) : null}
+                  {item.detail?.runCount !== undefined && item.detail.runCount > 1 ? (
+                    <span className="wb-ov-activity-duration is-count">
+                      {t('workbench:activity.runCount', { count: item.detail.runCount })}
+                    </span>
+                  ) : null}
                   {relativeTimeLabel(item.at, t) ? (
                     <time className="wb-ov-activity-time" dateTime={item.at} title={absoluteTimeTitle(item.at)}>
                       {relativeTimeLabel(item.at, t)}

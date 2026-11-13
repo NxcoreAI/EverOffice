@@ -141,7 +141,7 @@ describe("agent workspaces", () => {
     await app.close();
   });
 
-  it("assigns sessions to workspaces, filters by workspace, and re-homes on delete", async () => {
+  it("assigns sessions to workspaces, filters by workspace, and deletes them with the workspace", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
@@ -204,16 +204,19 @@ describe("agent workspaces", () => {
     })).json<AgentSession[]>();
     expect(none).toEqual([]);
 
-    // 删除工作区后，其会话回落到默认工作区（不留孤儿）。
+    // 删除工作区后，其会话一并删除——不回落默认空间变幽灵内容
+    //（2026-11-13 反馈：删空间后点主页 PPT 按钮进默认空间仍看到旧空间的工作）。
     await app.inject({ method: "DELETE", url: `/v1/agent/workspaces/${workspace.id}`, headers });
-    const rehomed = (await app.inject({
+    const afterDelete = (await app.inject({ method: "GET", url: "/v1/agent/sessions", headers }))
+      .json<AgentSession[]>();
+    expect(afterDelete.map((session) => session.id).includes(workspaceSession.id)).toBe(false);
+    const defaultAfterDelete = (await app.inject({
       method: "GET",
       url: "/v1/agent/sessions?workspaceId=default",
       headers,
     })).json<AgentSession[]>();
-    expect(new Set(rehomed.map((session) => session.id)))
-      .toEqual(new Set([defaultSession.id, fallbackSession.id, workspaceSession.id]));
-    expect(rehomed.every((session) => session.workspaceId === "default")).toBe(true);
+    expect(new Set(defaultAfterDelete.map((session) => session.id)))
+      .toEqual(new Set([defaultSession.id, fallbackSession.id]));
     await app.close();
   });
 

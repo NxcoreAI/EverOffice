@@ -11,6 +11,7 @@ import { createDatabase, type DatabaseClient } from "../src/infrastructure/datab
 import { createServer } from "../src/server/create-server.js";
 import {
   agentEvents,
+  agentMessages,
   agentRuns,
   agentSessions,
   agentWorkspaces,
@@ -73,6 +74,7 @@ function seedRun(input: {
   startedAt?: Date | null;
   completedAt?: Date | null;
   status?: "running" | "completed" | "failed";
+  error?: string;
 }): void {
   database.db.insert(agentRuns).values({
     id: input.id,
@@ -83,7 +85,26 @@ function seedRun(input: {
     status: input.status ?? "completed",
     startedAt: input.startedAt ?? null,
     completedAt: input.completedAt ?? null,
+    error: input.error ?? null,
     createdAt: input.startedAt ?? T0,
+  }).run();
+}
+
+function seedReply(input: {
+  sessionId: string;
+  runId?: string;
+  content: string;
+  at?: Date;
+  displayContent?: string | null;
+}): void {
+  database.db.insert(agentMessages).values({
+    id: `msg-${input.sessionId}-${Math.random().toString(36).slice(2, 8)}`,
+    sessionId: input.sessionId,
+    runId: input.runId ?? "run-x",
+    role: "assistant",
+    content: input.content,
+    displayContent: input.displayContent ?? null,
+    createdAt: input.at ?? T0,
   }).run();
 }
 
@@ -147,30 +168,44 @@ afterEach(() => {
 });
 
 describe("workspace activities · 合并与语义", () => {
-  it("一次 run 合并为一行（结束时刻优先），带 brief/时长；文件按产物/材料分流，计划事件带任务引用", () => {
+  it("一个工作（会话）= 一行：多次 run 折叠，brief 是 AI 回复总结而非 prompt 复述", () => {
     seedSession("s-1", "ws-1", at(0), "running");
     seedRun({ id: "run-1", sessionId: "s-1", startedAt: at(1), completedAt: at(9) });
+    seedRun({ id: "run-2", sessionId: "s-1", startedAt: at(10), completedAt: at(14) });
+    seedReply({
+      sessionId: "s-1",
+      runId: "run-2",
+      content: "## 处理完成\n已把三个季度的销售数据整理成对比表，并标注了环比变化。",
+      at: at(14),
+    });
     seedFile({ id: "f-gen", workspaceId: "ws-1", updatedAt: at(3), sourceKind: "agent-generated" });
     seedFile({ id: "f-conn", workspaceId: "ws-1", updatedAt: at(2), sourceKind: "connector" });
 
-    const plan = new PlanService({ db: database.db, now: () => at(10) });
+    const plan = new PlanService({ db: database.db, now: () => at(20) });
     plan.create({ workspaceId: "ws-1", title: "整理成本表" });
 
     const page = service.list("ws-1");
     const ids = page.items.map((item) => item.id);
-    // 计划事件时间最晚（at(10)）→ 排第一；随后 run（挂在结束时刻 at(9)）→ 文件。
-    // run 不再有 :start/:end 两个 id：一次 run 一行，信息进 detail 而不是多占一行。
+    // 计划事件时间最晚（at(20)）→ 排第一；随后工作行（挂在最近一次 run 结束 at(14)）→ 文件。
+    // 同一会话的两次 run 只出一行（`work:<sessionId>`），不再刷屏「结束了工作」×2。
     expect(ids[0]).toMatch(/^plan:/);
-    expect(ids[1]).toBe("run:run-1");
+    expect(ids[1]).toBe("work:s-1");
     expect(ids[2]).toBe("file:f-gen");
     expect(ids[3]).toBe("file:f-conn");
-    expect(ids.filter((id) => id.startsWith("run:"))).toHaveLength(1);
+    expect(ids.filter((id) => id.startsWith("work:"))).toHaveLength(1);
 
     const byId = new Map(page.items.map((item) => [item.id, item]));
-    expect(byId.get("run:run-1")?.kind).toBe("work-done");
-    expect(byId.get("run:run-1")?.at).toBe(at(9).toISOString());
-    // detail：prompt 摘要（用户让它干什么）+ 耗时（信息密度，见 §5.4 的 brief 设计）。
-    expect(byId.get("run:run-1")?.detail).toEqual({ brief: "干活", durationSec: 480 });
+    const work = byId.get("work:s-1");
+    expect(work?.kind).toBe("work-done");
+    expect(work?.at).toBe(at(14).toISOString());
+    expect(work?.segments).toEqual([{ text: "完成了工作 " }, { sessionId: "s-1" }]);
+    // brief = AI 回复首行（剥 markdown 标题），不是用户的 prompt「干活」；
+    // durationSec = 两次 run 累计 (8 + 4 分钟)；runCount = 2。
+    expect(work?.detail).toEqual({
+      brief: "已把三个季度的销售数据整理成对比表，并标注了环比变化。",
+      durationSec: 720,
+      runCount: 2,
+    });
     expect(byId.get("file:f-gen")?.kind).toBe("output");
     expect(byId.get("file:f-gen")?.segments).toEqual([{ text: "生成了 " }, { fileId: "f-gen" }]);
     expect(byId.get("file:f-conn")?.kind).toBe("material");
@@ -186,24 +221,35 @@ describe("workspace activities · 合并与语义", () => {
     }
   });
 
-  it("运行中的 run 也出一行（work-run，无时长），结束后 kind 变 work-done", () => {
+  it("运行中的工作出 work-run（正在执行），没有结束的 run 不计耗时", () => {
     seedSession("s-1", "ws-1", at(0), "running");
-    seedRun({ id: "run-live", sessionId: "s-1", startedAt: at(1), status: "running" });
+    seedRun({ id: "run-done", sessionId: "s-1", startedAt: at(1), completedAt: at(9) });
+    seedRun({ id: "run-live", sessionId: "s-1", startedAt: at(12), status: "running" });
 
-    const live = service.list("ws-1").items.find((item) => item.id === "run:run-live");
-    expect(live?.kind).toBe("work-run");
-    expect(live?.segments).toEqual([{ text: "开始了工作 " }, { sessionId: "s-1" }]);
-    // 运行中：有 brief（prompt 摘要）但没有 durationSec（还没结束）。
-    expect(live?.detail).toEqual({ brief: "干活" });
+    const work = service.list("ws-1").items.find((item) => item.id === "work:s-1");
+    expect(work?.kind).toBe("work-run");
+    expect(work?.segments).toEqual([{ text: "正在执行 " }, { sessionId: "s-1" }]);
+    // at = 最近一次 run 的开始时刻（运行中无结束时刻）；耗时只算已完成的 8 分钟。
+    expect(work?.at).toBe(at(12).toISOString());
+    expect(work?.detail).toEqual({ durationSec: 480, runCount: 2 });
+  });
+
+  it("没有任何 assistant 正文时 brief 缺失（渲染层不显示次级行）", () => {
+    seedSession("s-1", "ws-1", at(0), "running");
+    seedRun({ id: "run-1", sessionId: "s-1", startedAt: at(1), completedAt: at(2) });
+
+    const work = service.list("ws-1").items.find((item) => item.id === "work:s-1");
+    expect(work?.detail).toEqual({ durationSec: 60 });
   });
 
   it("失败的 run 出「执行失败」并带 error，仍是 work-done 视觉分组", () => {
     seedSession("s-1", "ws-1", at(0), "running");
-    seedRun({ id: "run-bad", sessionId: "s-1", startedAt: at(1), completedAt: at(2), status: "failed" });
+    seedRun({ id: "run-bad", sessionId: "s-1", startedAt: at(1), completedAt: at(2), status: "failed", error: "工具调用超时" });
 
-    const end = service.list("ws-1").items.find((item) => item.id === "run:run-bad");
+    const end = service.list("ws-1").items.find((item) => item.id === "work:s-1");
     expect(end?.kind).toBe("work-done");
     expect(end?.segments).toEqual([{ text: "执行失败 " }, { sessionId: "s-1" }]);
+    expect(end?.detail?.error).toBe("工具调用超时");
   });
 
   it("从没跑过 run 的会话出一条 work-created；跑过的会话不重复出", () => {

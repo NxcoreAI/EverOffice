@@ -9,6 +9,7 @@ import { and, desc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
   agentEvents,
+  agentMessages,
   agentRuns,
   agentSessions,
   agentWorkspaces,
@@ -109,13 +110,34 @@ function workSegment(sessionId: string, text: string): WorkspaceActivitySegment[
 /** brief 的长度上限：单行省略展示，超长截断（渲染层还有 CSS line-clamp 兜底）。 */
 const BRIEF_MAX_CHARS = 120;
 
-/** prompt 里最长的一行视为指令正文（跳过短行噪声如“继续”）。 */
-function briefOfPrompt(prompt: string | null): string | null {
-  if (!prompt) return null;
-  const firstLine = prompt.split(/\r?\n/, 1)[0]!.trim();
-  if (!firstLine) return null;
-  // 只截尾不加省略号：文案层的截断记号由渲染层统一负责（title 属性可看全文）。
-  return firstLine.length > BRIEF_MAX_CHARS ? `${firstLine.slice(0, BRIEF_MAX_CHARS)}…` : firstLine;
+/**
+ * 从 assistant 回复正文里提取「做了什么」的第一句。
+ *
+ * AI 回复常以 markdown 结构开头（`## 处理完成` 这类章节标题、列表记号、粗体），
+ * 剥掉记号后的**标题残骸**（如「处理完成」「结果」）仍是噪声——首行若是纯标题，
+ * 跳过它取下一段正文。判定标准：标题行很短（≤10 字）且下一行还有内容。
+ * 没有任何正文时返回 null（渲染层不显示次级行，不会出现空行）。
+ */
+function briefOfAssistantReply(content: string | null | undefined): string | null {
+  if (!content) return null;
+  const lines = content.split(/\r?\n/);
+  const cleaned: string[] = [];
+  for (const rawLine of lines) {
+    const wasHeading = /^#{1,6}\s+/.test(rawLine);
+    const line = rawLine
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/^>\s?/, "")
+      .replace(/^(?:[-*+]|\d+[.)])\s+/, "")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/[*_`~]+/g, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    if (line) cleaned.push(wasHeading && line.length <= 10 ? "" : line);
+  }
+  const first = cleaned.find((line) => line);
+  if (!first) return null;
+  return first.length > BRIEF_MAX_CHARS ? `${first.slice(0, BRIEF_MAX_CHARS)}…` : first;
 }
 
 /** 结束 - 开始（秒，向上取整避免 0 秒）；缺任一时刻或倒挂返回 null。 */
@@ -173,23 +195,26 @@ export class WorkspaceActivityService {
   }
 
   /**
-   * 一次 run = 一行动态（结束时刻优先，没有结束时刻用开始时刻）。
+   * **按会话聚合**：一个工作（会话）= 一行动态，不管跑过多少次 run。
    *
-   * 曾经是「开始 / 结束各一行」：时间轴上一次工作占两个位置，而每行只有一句裸动词，
-   * 信息密度被稀释（用户反馈「动态栏太难用」的主因之一）。现在合并为单行，
-   * 开始/结束语义由 kind（work-run / work-done）与文案承载，并把同一行里读得出来的
-   * 事实放进 detail：prompt 摘要（用户让它干什么）、耗时、失败原因。
+   * 演进史（信息密度）：
+   * 1. 开始/结束各一行 → 一次 run 占两个时间轴位置，每行只有一句裸动词；
+   * 2. 一次 run 一行 → 同一工作反复发消息时刷屏「结束了工作 X」× N，还是重复；
+   * 3. 现在：同会话的 N 次 run 折叠为一行，`at` 取最近一次 run 的结束时刻（运行中取开始），
+   *    `runCount` 带执行次数，`durationSec` 为累计耗时。verbs 按「现在还在跑吗」选。
    *
-   * id 保留 `run:<runId>`（不再有 :start/:end 后缀，一次 run 只有一个 id）。
+   * brief 不再复述用户 prompt（用户自己知道发了什么，回显毫无信息量），改为提取该会话
+   * 最新一条 **assistant 回复** 的首行——AI 做完事的总结，回答的是「做了什么」。
    */
   private runActivities(workspaceId: string, before: Date | null, scanLimit: number): Candidate[] {
     const filters = [eq(agentSessions.workspaceId, workspaceId)];
     if (before) {
       // 用 <= 而不是 <：同一毫秒里可能有好几条，精确的「严格更早」由游标在内存里做。
-      // 结束时刻优先：合并行挂在「这件事定局」的时刻，游标翻页语义与旧行为一致。
+      // 聚合行的 at = 最近一次 run 的 coalesce(completed, started, created)。
       filters.push(or(
         lte(agentRuns.completedAt, before),
         lte(agentRuns.startedAt, before),
+        lte(agentRuns.createdAt, before),
       )!);
     }
 
@@ -200,7 +225,6 @@ export class WorkspaceActivityService {
         startedAt: agentRuns.startedAt,
         completedAt: agentRuns.completedAt,
         sessionId: agentRuns.sessionId,
-        prompt: agentRuns.prompt,
         error: agentRuns.error,
         createdAt: agentRuns.createdAt,
       })
@@ -211,33 +235,79 @@ export class WorkspaceActivityService {
       .limit(scanLimit)
       .all();
 
-    const out: Candidate[] = [];
+    // 按会话分组（rows 已按时间倒序：每组第一条就是该会话最近一次 run）。
+    const bySession = new Map<string, typeof rows>();
     for (const row of rows) {
-      const completedAt = toIso(row.completedAt);
-      const startedAt = toIso(row.startedAt);
-      const failed = row.status === "failed";
-      const brief = briefOfPrompt(row.prompt);
-      const durationSec = durationSeconds(row.startedAt, row.completedAt);
+      const bucket = bySession.get(row.sessionId);
+      if (bucket) bucket.push(row);
+      else bySession.set(row.sessionId, [row]);
+    }
+
+    const out: Candidate[] = [];
+    for (const [sessionId, runs] of bySession) {
+      const latest = runs[0]!;
+      const running = runs.some((run) => run.status === "accepted" || run.status === "running");
+      const failed = !running && latest.status === "failed";
+      const completedAt = toIso(latest.completedAt);
+      const startedAt = toIso(latest.startedAt);
+
+      // 累计耗时 = 每次已完成 run 的 (结束-开始) 之和；正在跑的不计（还没有结束时刻）。
+      let durationSec = 0;
+      let hasDuration = false;
+      let latestError: string | null = null;
+      for (const run of runs) {
+        const seconds = durationSeconds(run.startedAt, run.completedAt);
+        if (seconds !== null) {
+          durationSec += seconds;
+          hasDuration = true;
+        }
+        if (run.status === "failed" && run.error) latestError = run.error;
+      }
+
+      const brief = this.assistantBriefOf(sessionId);
       out.push({
         activity: {
-          id: `run:${row.id}`,
-          kind: completedAt ? "work-done" : "work-run",
+          // id 用会话（工作）：聚合行的稳定键。旧行的 `run:<runId>` id 不再产生。
+          id: `work:${sessionId}`,
+          kind: running ? "work-run" : "work-done",
           actor: "agent",
-          at: completedAt ?? startedAt ?? row.createdAt.toISOString(),
+          at: completedAt ?? startedAt ?? latest.createdAt.toISOString(),
           segments: workSegment(
-            row.sessionId,
-            !completedAt ? "开始了工作 " : failed ? "执行失败 " : "结束了工作 ",
+            sessionId,
+            running ? "正在执行 " : failed ? "执行失败 " : "完成了工作 ",
           ),
           detail: {
             ...(brief ? { brief } : {}),
-            ...(durationSec !== null ? { durationSec } : {}),
-            ...(failed && row.error ? { error: row.error } : {}),
+            ...(hasDuration ? { durationSec } : {}),
+            ...(failed && latestError ? { error: latestError } : {}),
+            ...(runs.length > 1 ? { runCount: runs.length } : {}),
           },
-          source: { table: "agent_runs", rowId: row.id },
+          source: { table: "agent_runs", rowId: latest.id },
         },
       });
     }
     return out;
+  }
+
+  /**
+   * 会话最新一条 assistant 回复的首行（“做了什么”的 AI 总结）。
+   *
+   * `displayContent` 是批注消息的气泡正文，普通消息为 null 回退 content——
+   * 与聊天界面的展示口径一致（见 `toMessage`）。没有任何 assistant 正文时返回 null。
+   */
+  private assistantBriefOf(sessionId: string): string | null {
+    const rows = this.db
+      .select({ displayContent: agentMessages.displayContent, content: agentMessages.content })
+      .from(agentMessages)
+      .where(and(eq(agentMessages.sessionId, sessionId), eq(agentMessages.role, "assistant")))
+      .orderBy(desc(agentMessages.createdAt))
+      .limit(3)
+      .all();
+    for (const row of rows) {
+      const brief = briefOfAssistantReply(row.displayContent ?? row.content);
+      if (brief) return brief;
+    }
+    return null;
   }
 
   /** 从没跑过 run 的会话 = 「新建了工作」（跑过的会话已被上面两行覆盖，不重复出）。 */

@@ -274,8 +274,8 @@ describe('概览动态派生（buildActivities / collapseActivities）', () => {
     expect(byId.get('session:s-done')?.segments).toEqual([{ text: '结束了工作 ' }, { workId: 's-done' }])
     expect(byId.get('session:s-created')?.segments).toEqual([{ text: '新建了工作 ' }, { workId: 's-created' }])
     expect(byId.get('session:s-updated')?.segments).toEqual([{ text: '更新了工作 ' }, { workId: 's-updated' }])
-    // 本地回落派生的信息密度：会话标题进 detail.brief（次级行）。
-    expect(byId.get('session:s-run')?.detail).toEqual({ brief: '跑数据核对' })
+    // 本地回落派生拿不到 run/消息数据：没有 detail（网关派生时 brief 来自 AI 回复总结）。
+    expect(byId.get('session:s-run')?.detail).toBeUndefined()
     expect(byId.get('file:f-gen')?.detail).toBeUndefined()
     // kind 只管视觉分组：idle 会话的「新建 / 更新」共用 work-created，动词区分语义。
     expect(byId.get('session:s-created')?.kind).toBe('work-created')
@@ -1053,12 +1053,12 @@ describe('概览页洞察状态', () => {
 
 describe('概览页动态（网关派生 + 游标）', () => {
   const doneRow = {
-    id: 'run:r1',
+    id: 'work:s-1',
     kind: 'work-done',
     actor: 'agent',
     at: '2026-10-30T12:00:00.000Z',
-    segments: [{ text: '结束了工作 ' }, { sessionId: 's-1' }],
-    detail: { brief: '把三个季度的销售数据整理成对比表', durationSec: 480 },
+    segments: [{ text: '完成了工作 ' }, { sessionId: 's-1' }],
+    detail: { brief: '已把三个季度的销售数据整理成对比表，并标注了环比变化。', durationSec: 480, runCount: 3 },
     source: { table: 'agent_runs', rowId: 'r1' },
   }
   const planRow = {
@@ -1070,7 +1070,7 @@ describe('概览页动态（网关派生 + 游标）', () => {
     source: { table: 'workspace_plan_item_events', rowId: 'e1' },
   }
 
-  it('桥可用时用网关派生事件：分段引用、计划行可点、detail 次级行', async () => {
+  it('桥可用时用网关派生事件：分段引用、计划行可点、detail 次级行与徽标', async () => {
     const { nxcore } = installNxcore({
       activities: () => Promise.resolve({ items: [doneRow, planRow], nextBeforeAt: null, nextBeforeId: null }),
     })
@@ -1083,10 +1083,11 @@ describe('概览页动态（网关派生 + 游标）', () => {
     expect(rows).toHaveLength(2)
     // 契约里的 sessionId 段按 id 实时解析成名字（不是文案快照）。
     expect(rows[0]!.querySelector('.wb-ov-activity-ref')?.textContent).toBe('周报整理')
-    // 次级信息：brief 次级行 + 耗时徽标（run 的 prompt 摘要与时长，信息密度）。
+    // 次级信息：AI 总结次级行 + 耗时/次数徽标（多次 run 折叠为一行的密度补偿）。
     expect(rows[0]!.querySelector('.wb-ov-activity-brief')?.textContent)
-      .toBe('把三个季度的销售数据整理成对比表')
+      .toBe('已把三个季度的销售数据整理成对比表，并标注了环比变化。')
     expect(rows[0]!.querySelector('.wb-ov-activity-duration')?.textContent).toBe('8 分钟')
+    expect(rows[0]!.querySelector('.wb-ov-activity-duration.is-count')?.textContent).toBe('3 次')
     expect(rows[1]!.textContent).toContain('移动到进行中')
     // 计划行的引用跳「计划」看板。
     expect(rows[1]!.querySelector('.wb-ov-activity-ref')?.textContent).toBe('计划项')
@@ -1098,13 +1099,13 @@ describe('概览页动态（网关派生 + 游标）', () => {
     const page1 = {
       items: Array.from({ length: 12 }, (_, index) => ({
         ...doneRow,
-        id: `run:r${index}`,
+        id: `work:s-${index}`,
         at: `2026-10-30T1${index}:00:00.000Z`,
       })),
       nextBeforeAt: '2026-10-30T10:00:00.000Z',
-      nextBeforeId: 'run:r11',
+      nextBeforeId: 'work:s-11',
     }
-    const page2 = { items: [{ ...doneRow, id: 'run:old', at: '2026-10-29T10:00:00.000Z' }], nextBeforeAt: null, nextBeforeId: null }
+    const page2 = { items: [{ ...doneRow, id: 'work:s-old', at: '2026-10-29T10:00:00.000Z' }], nextBeforeAt: null, nextBeforeId: null }
     const { nxcore } = installNxcore({
       activities: () => Promise.resolve(nxcore.workspace.activities.mock.calls.length === 1 ? page1 : page2),
     })
