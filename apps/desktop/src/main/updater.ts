@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, webContents } from 'electron'
+import { app, autoUpdater as electronAutoUpdater, dialog, ipcMain, webContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -104,6 +104,18 @@ export class DesktopUpdater {
   private manualChecking = false
   /** 最近一次更新链路错误（设置页展示用），feed 404 不算。 */
   private lastError: string | null = null
+  /**
+   * 原生 Squirrel.Mac 周期进行中：JS 层 update-downloaded 发出（此刻原生
+   * 周期刚被拉起：代理取包 → ditto 解压 → 签名校验 → 暂存），到原生
+   * update-downloaded（暂存完成）或周期报错为止。
+   *
+   * 此窗口内任何新的 checkForUpdates 都会启动第二个原生周期，其例行清理
+   * （housekeeping）会删除第一个周期正在解压的 update.* 暂存目录——线上
+   * 表现为「ditto: Could not lstat ...」或解压残缺导致的
+   * 「code object is not signed at all」。仅 darwin 需要（Squirrel.Mac
+   * 特有；Windows NSIS 无原生并发周期）。
+   */
+  private nativeCycleInProgress = false
 
   constructor(private readonly saasClient: SaasClient | null) {
     this.channel = currentChannel()
@@ -136,11 +148,22 @@ export class DesktopUpdater {
       }
     })
     autoUpdater.on('update-downloaded', info => {
+      // 原生 Squirrel 周期此刻才被拉起（取包/解压/暂存），进入锁定窗口
+      if (process.platform === 'darwin') this.nativeCycleInProgress = true
       for (const wc of webContents.getAllWebContents()) wc.send('update:downloaded', { version: info.version })
       void this.report('downloaded', info.version)
       void this.promptInstall(info)
     })
+    // darwin：原生 Squirrel.Mac 暂存完成（ShipItState 就绪）——锁定解除。
+    // 非 darwin 平台不注册（nativeCycleInProgress 恒为 false）。
+    if (process.platform === 'darwin') {
+      electronAutoUpdater.on('update-downloaded', () => {
+        this.nativeCycleInProgress = false
+      })
+    }
     autoUpdater.on('error', error => {
+      // 原生周期失败：解除锁定，允许重试（自动轮询或手动）
+      this.nativeCycleInProgress = false
       // 404 = 渠道暂无版本，属正常业务态：不切备源、不产生降级副作用
       if (isFeedNotFound(error)) return
       // 更新链路任何失败（检查/下载/校验/安装）都要可见：广播给设置页 + 上报。
@@ -160,6 +183,9 @@ export class DesktopUpdater {
   /** 设置页「检查更新」按钮：与后台轮询共用下载与弹窗链路。 */
   async checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'> {
     if (this.manualChecking) return 'busy'
+    // 原生 Squirrel 周期进行中：手动检查会触发第二个原生周期，
+    // 其 housekeeping 会删掉正在解压的暂存目录（ditto lstat 失败根因）
+    if (this.nativeCycleInProgress) return 'busy'
     this.manualChecking = true
     try {
       const result = await autoUpdater.checkForUpdates()
@@ -198,6 +224,8 @@ export class DesktopUpdater {
   }
 
   private async check(): Promise<void> {
+    // 原生周期进行中跳过本轮轮询（同 checkNow 的 busy 分支，静默版）
+    if (this.nativeCycleInProgress) return
     try { await autoUpdater.checkForUpdates() } catch { /* 降级逻辑走 error 事件；此处静默 */ }
   }
 
