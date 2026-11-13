@@ -504,7 +504,7 @@
   "home.spaces.renameNamed": "重命名 {name}",
   "home.spaces.deleteNamed": "删除 {name}",
   "home.spaces.deleteTitle": "删除项目空间「{name}」？",
-  "home.spaces.deleteDescription": "空间里的工作会移回默认空间。删除后，资料与产物不再按这个空间归类。",
+  "home.spaces.deleteDescription": "空间及其工作会一并删除，操作不可撤销。删除后，资料与产物不再按这个空间归类。",
   "home.spaces.deleteConfirm": "删除空间",
   "home.spaces.deleted": "已删除项目空间",
   "home.spaces.deleteFailed": "删除失败",

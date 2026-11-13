@@ -522,8 +522,8 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
         error: null,
       })
       persistTabs(remainingTabs, activeTabId)
-      // 网关删除空间时会把名下会话回落到默认空间，本地先移除再对账一次，
-      // 避免轮询后这些会话「突然复活」在别的空间下却与本地状态不一致。
+      // 网关删除空间时会连同名下会话一并删除；本地同步移除后对账一次，
+      // 避免轮询把已删内容带回来。
       void get().refresh()
       return true
     } catch (error) {
