@@ -514,7 +514,12 @@ html[data-desktop='darwin'] .wb-tabbar-left {
   padding: 1px 3px 1px 8px;
   border-radius: var(--ui-radius-sm);
 }
-.wb-ws-work-row:hover { background: var(--ui-hover); }
+/* 悬停分割线：1px 极浅灰实线，贴在悬停行最底部（落在行间 1px 间隙里），
+   用 box-shadow 不占布局空间、不引起行高跳动；颜色跟随主题的极浅描边 token。 */
+.wb-ws-work-row:hover {
+  background: var(--ui-hover);
+  box-shadow: 0 1px 0 0 var(--ui-border-subtle);
+}
 .wb-ws-work-row.is-active { background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .wb-ws-work-main {
   display: flex;
