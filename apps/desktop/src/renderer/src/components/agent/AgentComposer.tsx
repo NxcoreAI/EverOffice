@@ -1209,6 +1209,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                       role="menuitemradio"
                       aria-checked={tierSelected}
                       data-active={String(tierSelected)}
+                      data-kind="tier"
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => chooseModelTier(tier)}
                     >
@@ -1264,7 +1265,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   </button>
                 )
               })}
-              <footer className="agent-model-picker-hint">{t('surface:agentComposer.thinkingLevelFooterHint')}</footer>
             </>
           ) : null}
         </section>

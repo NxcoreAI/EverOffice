@@ -3839,14 +3839,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   background: #e3e5e9;
 }
 
-.agent-model-picker-hint {
-  padding: 7px 10px 6px;
-  border-top: 1px solid #eceef1;
-  color: #8b93a0;
-  font-size: 11px;
-  text-align: center;
-}
-
 /* 模型选择弹层（DSH 两级菜单）：root 面板是「模型/推理等级」两行入口，
    子面板是各自的单选列表。轻量紧凑，锚在底部选择器正上方。 */
 .agent-composer-popover.agent-model-picker {
@@ -4038,6 +4030,14 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 菜单选项行（模型档位 智能/强模型/轻量 与推理等级 默认/关闭/低/中/高）：
+   取消加粗，颜色保持正常黑（继承 #22272f）。
+   data-kind="tier" 标注三个档位按钮；data-level 标注推理等级按钮。 */
+.agent-model-option[data-kind='tier'] strong,
+.agent-model-option[data-level] strong {
+  font-weight: 400;
 }
 
 .agent-model-option > svg {

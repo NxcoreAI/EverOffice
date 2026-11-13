@@ -285,7 +285,8 @@
 
 .wb-ov-insight-text {
   margin: 0;
-  max-width: 78ch;
+  /* 不设 ch 上限：正文铺满卡片内容列（宽度由 .wb-ov-card 所在内容列约束），
+     78ch 对中文只有 ~39 字/行，卡片右侧会留大片空白（与 home.css .wb-journal-body 同因）。 */
   color: var(--ui-text-2);
   font-size: var(--ui-text-base);
   line-height: var(--ui-leading-relaxed);
@@ -371,7 +372,6 @@
 
 .wb-ov-insight-empty-desc {
   margin: 0;
-  max-width: 62ch;
   font-size: var(--ui-text-xs);
   line-height: var(--ui-leading-normal);
   color: var(--ui-text-3);

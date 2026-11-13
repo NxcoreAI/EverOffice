@@ -68,7 +68,6 @@
   "agentComposer.thinkingLevelLow": "Low",
   "agentComposer.thinkingLevelMedium": "Medium",
   "agentComposer.thinkingLevelHigh": "High",
-  "agentComposer.thinkingLevelFooterHint": "Some models only distinguish on/off (e.g. DeepSeek); the middle levels behave the same",
   "agentComposer.primaryTierUnavailable": "Strong model not configured",
   "agentComposer.primaryTierUnavailableHint": "Fill in the primary model in Settings before using this tier.",
   "agentComposer.goConfigure": "Configure",

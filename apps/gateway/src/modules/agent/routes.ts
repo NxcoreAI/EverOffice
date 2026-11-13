@@ -305,7 +305,7 @@ export function agentRoutes(
       { schema: { tags: ["agent"], params: IdParams } },
       async (request, reply) => {
         try {
-          return service.deleteWorkspace(request.params.id)
+          return (await service.deleteWorkspace(request.params.id))
             ? reply.code(204).send()
             : reply.code(404).send({ error: "not_found", message: "Agent workspace not found" });
         } catch (error) {
@@ -313,6 +313,12 @@ export function agentRoutes(
             return reply.code(409).send({
               error: "default_immutable",
               message: "The default workspace cannot be deleted",
+            });
+          }
+          if (error instanceof Error && error.message === "agent_session_busy") {
+            return reply.code(409).send({
+              error: "session_busy",
+              message: "Running agent sessions cannot be deleted",
             });
           }
           throw error;

@@ -1306,23 +1306,46 @@ export class AgentService {
   }
 
   /**
-   * 删除自定义工作区：默认工作区不可删；该工作区下的会话回落到默认工作区，
-   * 不留孤儿会话。不存在返回 false。
+   * 删除自定义工作区：默认工作区不可删；空间连同名下会话一并删除（删除确认
+   * 文案承诺「及其工作会一并移除」，会话不再回落默认空间变成幽灵内容——
+   * 2026-11-13 反馈：删空间后点主页 PPT 按钮进默认空间仍看到旧空间的工作）。
+   * 会话正在运行时拒绝删除（与 deleteSession 同语义）。不存在返回 false。
    */
-  deleteWorkspace(workspaceId: string): boolean {
+  async deleteWorkspace(workspaceId: string): Promise<boolean> {
     const id = workspaceId.trim();
     if (!id) return false;
     if (id === DEFAULT_AGENT_WORKSPACE_ID) throw new Error("agent_workspace_default_immutable");
     const existing = this.db.select({ id: agentWorkspaces.id }).from(agentWorkspaces)
       .where(eq(agentWorkspaces.id, id)).get();
     if (!existing) return false;
+    const sessions = this.db.select().from(agentSessions)
+      .where(eq(agentSessions.workspaceId, id)).all();
+    if (sessions.some((session) => session.status === "running")) {
+      throw new Error("agent_session_busy");
+    }
+    // 记忆是增强能力，落盘失败不阻断删除（与 deleteSession 同口径）。
+    for (const session of sessions) {
+      try {
+        this.memorySessionClose?.(session.id);
+      } catch {
+        /* ignore */
+      }
+    }
     this.db.transaction((tx) => {
-      tx.update(agentSessions)
-        .set({ workspaceId: DEFAULT_AGENT_WORKSPACE_ID })
-        .where(eq(agentSessions.workspaceId, id))
-        .run();
+      tx.delete(agentSessions).where(eq(agentSessions.workspaceId, id)).run();
       tx.delete(agentWorkspaces).where(eq(agentWorkspaces.id, id)).run();
     });
+    for (const session of sessions) {
+      this.bashAuthorizedSessions.delete(session.id);
+      this.editAuthorizedSessions.delete(session.id);
+      this.forgetSessionPermissionMode(this.runtime, session.id);
+      this.forgetSessionThinkingLevel(this.runtime, session.id);
+      await this.revokeChannelSession?.(session.id);
+    }
+    // runtime 侧会话文件尽量清掉；失败不回滚（DB 已删，残留文件无害）。
+    await Promise.allSettled(sessions
+      .filter((session) => session.runtimeId === this.runtime.id && session.runtimeSessionRef)
+      .map((session) => this.runtime.deleteSession(session.runtimeSessionRef!)));
     return true;
   }
 

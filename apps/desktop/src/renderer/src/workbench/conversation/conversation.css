@@ -1268,7 +1268,6 @@
   color: var(--ui-text-3);
 }
 .wb-conversation .agent-mention-icon { border-radius: var(--ui-radius-sm); background: var(--ui-accent-soft); color: var(--ui-accent-strong); }
-.wb-conversation .agent-model-picker-hint { color: var(--ui-text-3); border-top-color: var(--ui-border-subtle); }
 .wb-conversation .agent-context-breakdown { border-radius: var(--ui-radius-lg); }
 .wb-conversation .agent-context-breakdown-bar { background: var(--ui-surface-sunken); }
 .wb-conversation .agent-context-breakdown-head { color: var(--ui-text-3); }
