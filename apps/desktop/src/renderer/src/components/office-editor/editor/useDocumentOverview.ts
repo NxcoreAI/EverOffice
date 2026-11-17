@@ -47,7 +47,7 @@ export function useDocumentOverview({
   /** 外部强制重拉信号（如应用导入候选后——服务端已清速览列，重拉落回无速览态即自动重新生成）。 */
   refreshSignal?: number
 }): { status: DocumentOverviewStatus; regenerate: () => void } {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const [view, setView] = useState<DocumentOverviewView | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [generating, setGenerating] = useState(() => inFlightOverviews.has(documentId))
@@ -110,7 +110,8 @@ export function useDocumentOverview({
     const task = (async (): Promise<DocumentOverviewView | null> => {
       try {
         await prepareDocument()
-        const result = await documents!.generateOverview(documentId)
+        // 速览是 UI 面板文案：跟随界面 locale（英文界面不再渲染出中文速览）。
+        const result = await documents!.generateOverview(documentId, locale)
         setView(result)
         setLoaded(true)
         return result
@@ -135,7 +136,7 @@ export function useDocumentOverview({
       setGenerating(false)
     })
     return task
-  }, [documentId, prepareDocument, refresh])
+  }, [documentId, locale, prepareDocument, refresh])
 
   // 自动生成（无速览的首次进入）：无速览 + eligible + AI 可用 + 解锁 + 无在途 + 本挂载未失败过。
   useEffect(() => {

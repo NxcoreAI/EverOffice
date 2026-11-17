@@ -1294,7 +1294,8 @@ export interface NxcoreDesktopApi {
     resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
     deleteDocumentComment(documentId: string, commentId: string): Promise<void>
     getOverview(documentId: string): Promise<DocumentOverviewView>
-    generateOverview(documentId: string): Promise<DocumentOverviewView>
+    /** responseLanguage：界面 locale，速览输出跟随界面语言；缺省回落正文主语言。 */
+    generateOverview(documentId: string, responseLanguage?: string): Promise<DocumentOverviewView>
     getSectionPreview(documentId: string, input: DocumentSectionPreviewInput): Promise<DocumentSectionPreviewResult>
     restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
     resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>

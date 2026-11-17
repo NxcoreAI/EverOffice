@@ -1762,7 +1762,19 @@ export class PiAgentRuntime implements AgentRuntime {
 /** 网络层失败：SDK 把 DNS/超时/连接重置统一说成 "Connection error."，对用户没有信息量。 */
 const CONNECTION_ERROR_PATTERN = /connection error|econnreset|econnrefused|econnaborted|etimedout|enotfound|eai_again|fetch failed|socket hang up|network error/i;
 
+/** 模型账号额度耗尽（中转 402 透传 / 上游 insufficient_quota）。 */
+const QUOTA_EXHAUSTED_PATTERN = /insufficient_user_quota|insufficient quota|exceeded your current quota|ai_quota_exhausted|预扣费额度失败|额度不足|余额不足/i;
+/** 中转会话未就绪（/ai-relay 代理 503：会话过期未续上或已被清除）。 */
+const RELAY_NOT_READY_PATTERN = /ai_relay_not_ready|AI relay session is not active/i;
+
 export function friendlyRunError(raw: string): string {
+  // 顺序敏感：额度判定要在网络故障之前——上游 402 文本可能带 "503"/"service unavailable" 字样。
+  if (QUOTA_EXHAUSTED_PATTERN.test(raw)) {
+    return "AI 模型额度不足：请到「设置 → AI 模型」检查账号余额并充值后重试。本轮没有任何改动。";
+  }
+  if (RELAY_NOT_READY_PATTERN.test(raw)) {
+    return "AI 模型服务暂时不可用（中转会话未就绪，通常几秒内自动恢复）。请稍后重试；本轮没有任何改动。";
+  }
   if (/model_not_found|Model not exist/i.test(raw)) {
     return "当前配置的模型在服务端不可用（可能已被上游下架，或渠道未配置）。请联系管理员检查模型配置后重试。";
   }

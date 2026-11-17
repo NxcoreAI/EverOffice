@@ -484,6 +484,8 @@ export class DocumentService {
   async generateDocumentOverview(
     documentId: string,
     runtime?: AgentRuntime | null,
+    /** 界面 locale：速览是 UI 面板文案，输出跟随界面语言（缺省回落正文主语言）。 */
+    responseLanguage?: string,
   ): Promise<Omit<DocumentOverviewView, "aiAvailable">> {
     const document = this.get(documentId);
     if (!document) throw new DocumentServiceError("NOT_FOUND", `Document ${documentId} not found`, 404);
@@ -515,6 +517,7 @@ export class DocumentService {
         title: document.title,
         contentMarkdown,
         sessionId: `doc-overview-${documentId}`,
+        ...(responseLanguage?.trim() ? { responseLanguage: responseLanguage.trim() } : {}),
       });
     } catch (error) {
       throw new DocumentServiceError(

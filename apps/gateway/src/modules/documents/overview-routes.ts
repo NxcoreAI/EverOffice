@@ -39,10 +39,17 @@ export function documentOverviewRoutes(
       schema: {
         tags: ["documents"],
         params: Type.Object({ id: Type.String(idText) }),
+        body: Type.Object({
+          /** 界面 locale：速览是 UI 面板文案，输出跟随界面语言；缺省回落正文主语言。 */
+          responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
+        }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        return await service.generateDocumentOverview(request.params.id, runtime());
+        const responseLanguage = typeof request.body.responseLanguage === "string" && request.body.responseLanguage.trim()
+          ? request.body.responseLanguage.trim()
+          : undefined;
+        return await service.generateDocumentOverview(request.params.id, runtime(), responseLanguage);
       } catch (error) {
         if (error instanceof DocumentServiceError) {
           return reply.code(error.statusCode).send({ error: error.code, message: error.message, ...(error.details ?? {}) });
