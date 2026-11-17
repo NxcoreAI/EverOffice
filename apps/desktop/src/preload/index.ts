@@ -721,7 +721,7 @@ const api: NxcoreDesktopApi = {
     resolveDocumentComment: (documentId, commentId, resolved) => invoke('documents:resolve-document-comment', documentId, commentId, resolved),
     deleteDocumentComment: (documentId, commentId) => invoke('documents:delete-document-comment', documentId, commentId),
     getOverview: (documentId) => invoke('documents:get-overview', documentId),
-    generateOverview: (documentId) => invoke('documents:generate-overview', documentId),
+    generateOverview: (documentId, responseLanguage) => invoke('documents:generate-overview', documentId, responseLanguage),
     getSectionPreview: (documentId, input) => invoke('documents:get-section-preview', documentId, input),
     restoreVersion: (documentId, version, baseVersion) =>
       invoke('documents:restore-version', documentId, version, baseVersion),

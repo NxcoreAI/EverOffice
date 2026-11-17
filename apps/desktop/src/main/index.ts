@@ -2570,7 +2570,7 @@ function registerDocumentHandlers(
     resolveDocumentComment: (_event, documentId, commentId, resolved) => bridge.resolveDocumentComment(documentId, commentId, resolved),
     deleteDocumentComment: (_event, documentId, commentId) => bridge.deleteDocumentComment(documentId, commentId),
     getOverview: (_event, documentId) => bridge.getDocumentOverview(documentId),
-    generateOverview: (_event, documentId) => bridge.generateDocumentOverview(documentId),
+    generateOverview: (_event, documentId, responseLanguage) => bridge.generateDocumentOverview(documentId, responseLanguage),
     getSectionPreview: (_event, documentId, input) => bridge.getSectionPreview(documentId, input),
     restoreVersion: (_event, documentId, version, baseVersion) =>
       bridge.restoreVersion(documentId, version, baseVersion),

@@ -179,10 +179,11 @@ export class DocumentGatewayBridge {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/overview`)
   }
 
-  generateDocumentOverview(documentId: string): Promise<DocumentOverviewView> {
+  generateDocumentOverview(documentId: string, responseLanguage?: string): Promise<DocumentOverviewView> {
     return this.request(`/v1/documents/${encodeURIComponent(documentId)}/overview/generate`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      // 速览是 UI 面板文案：跟随界面语言（英文界面不再渲染出中文速览）。
+      body: JSON.stringify({ ...(responseLanguage?.trim() ? { responseLanguage: responseLanguage.trim() } : {}) }),
     })
   }
 

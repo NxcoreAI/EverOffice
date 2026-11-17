@@ -7,6 +7,12 @@ export interface InvokeAgentOptions {
   pageLabel?: string;
   timeoutMs?: number;
   /**
+   * 界面 locale：透传 StartRuntimeRunInput.responseLanguage，runtime 注入
+   * 「当前界面 locale」系统段——内部单次调用（速览等 UI 面板文案）跟随
+   * 用户语言时用；缺省不注入。
+   */
+  responseLanguage?: string;
+  /**
    * 允许正文为空完成（默认 false）。结构化提交型调用（结果经工具参数回传，
    * 见 journal/agent.ts）成功后通常没有正文，「空正文」不是失败——开启后跳过
    * 空内容检查，由调用方自行判断是否拿到了提交结果。
@@ -24,6 +30,7 @@ export async function invokeAgent(
     sessionId: options.sessionId ?? `${agentId}:${randomUUID()}`,
     pageLabel: options.pageLabel ?? agentId,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.responseLanguage === undefined ? {} : { responseLanguage: options.responseLanguage }),
     ...(options.allowEmptyContent === undefined ? {} : { allowEmptyContent: options.allowEmptyContent }),
   });
 }
@@ -32,7 +39,7 @@ export async function invokeRuntime(
   runtime: AgentRuntime,
   prompt: string,
   options: Required<Pick<InvokeAgentOptions, "sessionId" | "pageLabel">>
-    & Pick<InvokeAgentOptions, "timeoutMs" | "allowEmptyContent">,
+    & Pick<InvokeAgentOptions, "timeoutMs" | "allowEmptyContent" | "responseLanguage">,
 ): Promise<string> {
   const runId = randomUUID();
   const controller = new AbortController();
@@ -57,6 +64,7 @@ export async function invokeRuntime(
       runtimeSessionRef: null,
       prompt,
       pageLabel: options.pageLabel,
+      ...(options.responseLanguage?.trim() ? { responseLanguage: options.responseLanguage.trim() } : {}),
     });
     runtimeSessionRef = run.runtimeSessionRef;
     let content = "";

@@ -200,6 +200,47 @@ describe('overview pure functions', () => {
     expect(prompt).toContain('禁止编造')
   })
 
+  it('buildOverviewPrompt follows the UI locale when responseLanguage is present, falls back to body language otherwise', () => {
+    const english = buildOverviewPrompt({
+      title: '中文文档',
+      contentMarkdown: '正文内容。',
+      responseLanguage: 'en-US',
+    })
+    // 界面 locale 优先：英文界面下中文文档的速览也用英文（UI 面板文案）。
+    expect(english).toContain('en-US')
+    expect(english).not.toContain('与正文主语言一致')
+
+    const fallback = buildOverviewPrompt({
+      title: '中文文档',
+      contentMarkdown: '正文内容。',
+    })
+    expect(fallback).toContain('与正文主语言一致')
+
+    const blank = buildOverviewPrompt({
+      title: '中文文档',
+      contentMarkdown: '正文内容。',
+      responseLanguage: '   ',
+    })
+    expect(blank).toContain('与正文主语言一致')
+  })
+
+  it('overview generation carries the UI locale into the runtime prompt and start input', async () => {
+    const { documents } = await createService()
+    const document = await documents.import({
+      id: `doc-ov-locale-${Math.random().toString(36).slice(2, 8)}`,
+      roomId: 'room-ov',
+      title: '中文文档',
+      contentJson: { type: 'doc', content: [longTextParagraph(MIN_OVERVIEW_TEXT_CHARS + 100)] } as never,
+    })
+    const { runtime, calls } = fakeRuntime(() => VALID_OVERVIEW_RESPONSE)
+
+    await documents.generateDocumentOverview(document.id, runtime, 'en-US')
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain('en-US')
+    expect(calls[0]).not.toContain('与正文主语言一致')
+  })
+
   it('parseOverviewResponse tolerates fences and clamps lengths, and rejects missing fields', () => {
     const parsed = parseOverviewResponse([
       '```',
