@@ -91,7 +91,7 @@ function FileRowMenu({ item, actions }: { item: RealOfficeFile; actions: FileRow
         <MenuItem icon={<ExternalLink size={14} />} onSelect={() => actions.onOpen(item)}>
           {t('workbench:home.common.open')}
         </MenuItem>
-        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} label="用其他应用打开" />
+        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} />
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
             {t('workbench:home.files.fileLocation')}

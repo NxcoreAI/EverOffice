@@ -12,13 +12,11 @@ import { useFileApplications } from './useFileApplications'
  * 菜单布局与原来一致。
  */
 export function FileOpenWithSubmenu({
-  fileId, onError, label,
+  fileId, onError,
 }: {
   fileId: string
   /** 失败提示出口；缺省用全局 toast。 */
   onError?: (message: string) => void
-  /** 菜单项文案（中文界面直接传固定文案；缺省用通用 i18n 文案）。 */
-  label?: string
 }) {
   const { t } = useLocale()
   const { applications, busy, openWith } = useFileApplications(fileId, onError)
@@ -27,7 +25,7 @@ export function FileOpenWithSubmenu({
   return (
     <MenuSub>
       <MenuSubTrigger icon={<ExternalLink size={14} aria-hidden="true" />} disabled={busy}>
-        {label ?? t('surface:files.openWithSubmenu')}
+        {t('surface:files.openWithSubmenu')}
       </MenuSubTrigger>
       <MenuSubContent>
         {applications.map((application) => (

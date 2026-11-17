@@ -88,8 +88,8 @@ function CloudDocTile({ document, onOpen }: {
   onOpen: (document: RoomDocument) => void
 }) {
   const { t } = useLocale()
-  const file = cloudDocumentToOfficeFile(document)
-  const title = cloudDocumentTitle(document)
+  const file = cloudDocumentToOfficeFile(document, t)
+  const title = cloudDocumentTitle(document, t)
   return (
     <li className="wb-lib-tile-wrap">
       <button
@@ -111,8 +111,8 @@ function CloudDocRow({ document, onOpen }: {
   onOpen: (document: RoomDocument) => void
 }) {
   const { t } = useLocale()
-  const file = cloudDocumentToOfficeFile(document)
-  const title = cloudDocumentTitle(document)
+  const file = cloudDocumentToOfficeFile(document, t)
+  const title = cloudDocumentTitle(document, t)
   return (
     <li className="wb-lib-row">
       <button

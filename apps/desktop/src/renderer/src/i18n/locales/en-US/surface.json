@@ -1368,6 +1368,7 @@
   "files.openWithTitle": "Open {name} with {app}",
   "files.openWithMenu": "Choose an application",
   "files.openWithSubmenu": "Open with…",
+  "files.untitledCloudDoc": "Untitled cloud document",
   "files.openWithDefaultLabel": "{app} (default)",
   "files.openWithFailed": "Could not open with an external application.",
   "files.openClipperPreview": "Preview web clip",

@@ -550,6 +550,7 @@ export const starterPrompts: Record<FileKind, string[]> = {
 
 import type { RoomDocument } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '@/shared/ingest'
+import { translateZh, type Translate } from '@/i18n/LocaleContext'
 
 export interface RealOfficeFile {
   catalog: FileCatalogDto
@@ -573,20 +574,20 @@ function bytesToLabel(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function updatedLabelFrom(iso: string): string {
+function updatedLabelFrom(iso: string, t: Translate = translateZh): string {
   const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms) || ms < 0) return '刚刚'
+  if (!Number.isFinite(ms) || ms < 0) return t('workbench:time.justNow')
   const minutes = Math.floor(ms / 60_000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
+  if (minutes < 1) return t('workbench:time.justNow')
+  if (minutes < 60) return t('workbench:time.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时前`
+  if (hours < 24) return t('workbench:time.hoursAgo', { count: hours })
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} 天前`
-  return new Date(iso).toLocaleDateString('zh-CN')
+  if (days < 30) return t('workbench:time.daysAgo', { count: days })
+  return new Intl.DateTimeFormat().format(new Date(iso))
 }
 
-export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | null {
+export function catalogToOfficeFile(catalog: FileCatalogDto, t?: Translate): RealOfficeFile | null {
   const name = catalog.displayName ?? catalog.originalName
   const kind = extToKind(name)
   if (!kind) return null
@@ -597,7 +598,7 @@ export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | n
       name,
       kind,
       roomId: catalog.clusterId,
-      updatedLabel: updatedLabelFrom(catalog.updatedAt),
+      updatedLabel: updatedLabelFrom(catalog.updatedAt, t),
       sizeLabel: bytesToLabel(catalog.bytes),
       // 真实文件内容不走 mock content：编辑页按 realCatalog 打开文件库内置预览。
       content: { type: 'md', source: '' },
@@ -606,17 +607,24 @@ export function catalogToOfficeFile(catalog: FileCatalogDto): RealOfficeFile | n
   }
 }
 
+/** 云文档空标题回落文案 key（surface:files.untitledCloudDoc），调用方传 t 解析。 */
+export const UNTITLED_CLOUD_DOC_KEY = 'surface:files.untitledCloudDoc'
+
 /** 展示用的云文档标题：去掉首尾空白，空标题回落「未命名云文档」。 */
-export function cloudDocumentTitle(document: Pick<RoomDocument, 'title'>): string {
-  return document.title?.trim() || '未命名云文档'
+export function cloudDocumentTitle(document: Pick<RoomDocument, 'title'>, t: Translate = translateZh): string {
+  return document.title?.trim() || t(UNTITLED_CLOUD_DOC_KEY)
 }
 
 /**
  * 仅凭 documentId / title 构造云文档「伪文件」：对话产物的云文档卡点击后走这条，
  * 此时没有 documents 快照，更新时间/大小用占位符；正文仍由编辑器按 id 拉取。
  */
-export function cloudDocumentToOfficeFileById(documentId: string, title?: string | null): OfficeFile {
-  const name = title?.trim() || '未命名云文档'
+export function cloudDocumentToOfficeFileById(
+  documentId: string,
+  title?: string | null,
+  t: Translate = translateZh,
+): OfficeFile {
+  const name = title?.trim() || t(UNTITLED_CLOUD_DOC_KEY)
   return {
     id: `cloud-doc:${documentId}`,
     name,
@@ -637,11 +645,11 @@ export function cloudDocumentToOfficeFileById(documentId: string, title?: string
  * `EditorView` 用 `cloudDocument` 标记把它路由到 `CloudDocumentEditor`。
  * 纯函数，供列表与测试共用。
  */
-export function cloudDocumentToOfficeFile(document: RoomDocument): OfficeFile {
+export function cloudDocumentToOfficeFile(document: RoomDocument, t?: Translate): OfficeFile {
   return {
-    ...cloudDocumentToOfficeFileById(document.id, cloudDocumentTitle(document)),
+    ...cloudDocumentToOfficeFileById(document.id, cloudDocumentTitle(document, t), t),
     roomId: document.roomId,
-    updatedLabel: updatedLabelFrom(document.updatedAt),
+    updatedLabel: updatedLabelFrom(document.updatedAt, t),
   }
 }
 
@@ -657,7 +665,7 @@ export async function fetchRealFiles(
   try {
     const { items, total } = await api.list(limit, 0, options)
     return {
-      items: items.map(catalogToOfficeFile).filter((x): x is RealOfficeFile => x !== null),
+      items: items.map((catalog) => catalogToOfficeFile(catalog)).filter((x): x is RealOfficeFile => x !== null),
       total,
     }
   } catch {

@@ -513,11 +513,12 @@ function CloudDocumentBrowserRow({ document, onOpen }: {
   document: RoomDocument
   onOpen: (file: OfficeFile) => void
 }) {
+  const { t } = useLocale()
   // 与气泡标签共用同一套伪文件转换：id / 更新时间 / 文案只在 data.ts 定义一次。
-  const file = cloudDocumentToOfficeFile(document)
-  const title = cloudDocumentTitle(document)
+  const file = cloudDocumentToOfficeFile(document, t)
+  const title = cloudDocumentTitle(document, t)
   const meta = [
-    '云文档',
+    t('workbench:workspace.library.cloudDocKind'),
     document.version ? `v${document.version}` : null,
     file.updatedLabel,
   ].filter((part): part is string => Boolean(part)).join(' · ')
@@ -527,7 +528,7 @@ function CloudDocumentBrowserRow({ document, onOpen }: {
       <button
         type="button"
         className="wb-bubble-browser-row-main"
-        aria-label={`打开云文档 ${title}`}
+        aria-label={t('workbench:workspace.bubble.openCloudDocRow', { title })}
         onClick={() => onOpen(file)}
       >
         <FileTypeIcon kind={file.kind} size={24} />
@@ -541,6 +542,7 @@ function CloudDocumentBrowserRow({ document, onOpen }: {
 }
 
 function BubbleBrowserRow({ item, onOpen }: { item: RealOfficeFile; onOpen: (file: OfficeFile) => void }) {
+  const { t } = useLocale()
   const meta = [item.catalog.sourceLabel, item.file.updatedLabel, item.file.sizeLabel]
     .filter((part) => part && part !== '—')
     .join(' · ')
@@ -549,7 +551,7 @@ function BubbleBrowserRow({ item, onOpen }: { item: RealOfficeFile; onOpen: (fil
       <button
         type="button"
         className="wb-bubble-browser-row-main"
-        aria-label={`打开 ${item.file.name}`}
+        aria-label={t('workbench:workspace.bubble.openFileRow', { name: item.file.name })}
         onClick={() => onOpen(item.file)}
       >
         <FileTypeIcon kind={item.file.kind} size={24} />

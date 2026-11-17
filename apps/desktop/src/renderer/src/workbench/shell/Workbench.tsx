@@ -31,6 +31,9 @@ const SESSION_POLL_MS = 4000
  */
 export function Workbench() {
   const { t } = useLocale()
+  // 事件回调里的翻译器走 ref：effect 只注册一次，闭包里拿不到最新 locale。
+  const tRef = useRef(t)
+  tRef.current = t
   const boot = useWorkbenchStore((state) => state.boot)
   const booted = useWorkbenchStore((state) => state.booted)
   const loading = useWorkbenchStore((state) => state.loading)
@@ -93,7 +96,7 @@ export function Workbench() {
       lastHandledAt.set(request.instanceId, now)
       try {
         const catalog = await window.nxcore?.files?.catalogEntry(request.instanceId)
-        const entry = catalog ? catalogToOfficeFile(catalog) : null
+        const entry = catalog ? catalogToOfficeFile(catalog, tRef.current) : null
         if (disposed) return
         if (entry) {
           useWorkbenchStore.getState().openFileInWorkspace(entry.file)
@@ -122,7 +125,7 @@ export function Workbench() {
     const openFromSystem = async (document: OsOpenedDocument) => {
       try {
         const catalog = await files.catalogEntry(document.fileId)
-        const entry = catalogToOfficeFile(catalog)
+        const entry = catalogToOfficeFile(catalog, tRef.current)
         if (!entry) return
         useWorkbenchStore.getState().openFileInWorkspace(entry.file)
       } catch (error) {
@@ -214,7 +217,7 @@ export function Workbench() {
         // 归属空间没开标签、或不处于激活态：不打扰（见上方边界约定）。
         if (tab?.kind !== 'workspace' || state.activeTabId !== tab.id) return
         const catalog = await files.catalogEntry!(fileId).catch(() => null)
-        const entry = catalog ? catalogToOfficeFile(catalog) : null
+        const entry = catalog ? catalogToOfficeFile(catalog, tRef.current) : null
         if (disposed || !entry) return
         dispatchOpenAgentFile({ tabId: tab.id, workspaceId, file: entry.file })
       } catch {

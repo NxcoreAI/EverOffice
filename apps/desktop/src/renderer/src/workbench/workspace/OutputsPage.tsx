@@ -74,7 +74,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     if (filter !== 'all' && filter !== 'cloud-doc') return []
     const keyword = query.trim().toLowerCase()
     return cloudArts.filter((document) => (
-      !keyword || cloudDocumentTitle(document).toLowerCase().includes(keyword)
+      !keyword || cloudDocumentTitle(document, t).toLowerCase().includes(keyword)
     ))
   }, [cloudArts, filter, query])
 
@@ -130,7 +130,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
   // 云文档行点开：转伪文件走 onOpenFile（→ 气泡窗 CloudDocumentEditor），
   // 与对话产物云文档卡/资料页同一条打开链路。
   const openCloudDocument = (document: RoomDocument) => {
-    onOpenFile(cloudDocumentToOfficeFile(document))
+    onOpenFile(cloudDocumentToOfficeFile(document, t))
   }
 
   // 综合空态：文件产物与云文档都为空才算「还没有产物」；工具条同理。

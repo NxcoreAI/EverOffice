@@ -1368,6 +1368,7 @@
   "files.openWithTitle": "用 {app} 打开：{name}",
   "files.openWithMenu": "选择打开方式",
   "files.openWithSubmenu": "用其他应用打开",
+  "files.untitledCloudDoc": "未命名云文档",
   "files.openWithDefaultLabel": "{app}（默认）",
   "files.openWithFailed": "外部应用打开失败，请稍后再试",
   "files.openClipperPreview": "预览网页剪藏",
