@@ -80,11 +80,11 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
       if (!active) return
       const detail = (event as CustomEvent<OpenCloudDocumentDetail>).detail
       if (!detail?.documentId) return
-      bubble.openFile(cloudDocumentToOfficeFileById(detail.documentId, detail.title))
+      bubble.openFile(cloudDocumentToOfficeFileById(detail.documentId, detail.title, t))
     }
     window.addEventListener(OPEN_CLOUD_DOCUMENT_EVENT, onOpenCloudDocument)
     return () => window.removeEventListener(OPEN_CLOUD_DOCUMENT_EVENT, onOpenCloudDocument)
-  }, [active, bubble])
+  }, [active, bubble, t])
 
   // 「在工作空间里打开文件」（openFileInWorkspace 写入 store 的交接载荷）：
   // 挂载/激活时取走一次并交给气泡窗。非激活标签不抢——store 里只有一份，

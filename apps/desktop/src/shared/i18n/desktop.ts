@@ -27,3 +27,12 @@ export function translateDesktopMessage(
     Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match
   ))
 }
+
+/**
+ * Map a desktop locale to the embedded GenOffice editors' UI language tag
+ * (@genoffice/i18n `Lang`). GenOffice speaks a richer set, but EverOffice only
+ * exposes zh-CN/en-US today; new desktop locales must extend this map.
+ */
+export function genofficeLangForLocale(locale: DesktopLocale): 'zh' | 'en' {
+  return locale === 'zh-CN' ? 'zh' : 'en'
+}

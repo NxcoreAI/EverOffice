@@ -1,4 +1,5 @@
 import {
+  genofficeLangForLocale,
   isDesktopLocale,
   translateDesktopMessage,
   type DesktopLocale,
@@ -20,4 +21,13 @@ export function desktopText(
   values?: Record<string, string | number>,
 ): string {
   return translateDesktopMessage(currentLocale, key, values)
+}
+
+/**
+ * Desktop locale mapped to the embedded GenOffice editors' UI language tag
+ * (@genoffice/i18n `Lang`). Consumed by office/editor-locale.ts, which keeps
+ * the editors' `app:get-language` channel pointed at this value.
+ */
+export function desktopGenofficeLang(): 'zh' | 'en' {
+  return genofficeLangForLocale(currentLocale)
 }

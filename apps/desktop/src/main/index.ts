@@ -89,6 +89,7 @@ import {
 import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
+import { syncEditorLocale, ensureEditorLocaleSync } from './office/editor-locale'
 import { createEverofficeMaterialResolver } from './office/office-material-resolver'
 import { openDocumentFromSystem as runSystemOpen, OsOpenQueue, osOpenPathsFromArgv } from './office/os-open'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
@@ -104,7 +105,7 @@ import { configureSentry, isSentryRemoteDebugEnabled, syncSentryAccount } from '
 import { registerDocumentPdfExportHandler } from './document-pdf-export'
 import { registerSystemClipboardHandler } from './system-clipboard'
 import { installCrossOriginIsolation } from './cross-origin-isolation'
-import { desktopText, setDesktopLocale } from './desktop-locale'
+import { desktopText, getDesktopLocale, setDesktopLocale } from './desktop-locale'
 import {
   assertNoEmbeddedDocumentImages,
   DocumentAssetStore,
@@ -1057,7 +1058,13 @@ ipcMain.handle('app:clear-user-data', () => {
   clearUserDataOnQuit = true
   app.quit()
 })
-ipcMain.on('app:set-locale', (_event, locale: unknown) => setDesktopLocale(locale))
+ipcMain.on('app:set-locale', (_event, locale: unknown) => {
+  const previous = getDesktopLocale()
+  setDesktopLocale(locale)
+  // locale 真正变化时同步嵌入的 GenOffice 编辑器（已打开的渲染端热更新；
+  // 之后新建的编辑器走 web-contents-created 钩子拿到新语言）。
+  if (getDesktopLocale() !== previous) syncEditorLocale()
+})
 
 // Windows 自绘标题栏的窗口控制（macOS 用系统红绿灯按钮，不经过这里）。
 ipcMain.handle('window:minimize', (event) => {
@@ -3803,6 +3810,9 @@ function createWindow(): BrowserWindow {
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   applyNativeTheme(readAppearanceTheme())
+  // 嵌入式 GenOffice 编辑器的语言通道：主窗口/编辑器渲染端创建前装好，
+  // 让 `app:get-language` 从首个编辑器起就返回桌面 locale（详见 editor-locale.ts）。
+  ensureEditorLocaleSync()
   if (process.defaultApp && process.argv[1] && process.platform !== 'darwin') {
     app.setAsDefaultProtocolClient('everroom', process.execPath, [app.getAppPath()])
   } else {

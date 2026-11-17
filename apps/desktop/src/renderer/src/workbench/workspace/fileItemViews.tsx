@@ -77,7 +77,7 @@ export function FileItemMenu({ item, actions, align = 'end' }: {
         <MenuItem icon={<PanelRightOpen size={14} />} onSelect={() => actions.onOpen(item)}>
           {t('workbench:workspace.file.menu.openInBubble')}
         </MenuItem>
-        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} label="用其他应用打开" />
+        <FileOpenWithSubmenu fileId={item.catalog.id} onError={actions.onError} />
         {actions.onReveal ? (
           <MenuItem icon={<FolderOpen size={14} />} onSelect={() => actions.onReveal?.(item)}>
             {isWindowsPlatform()
