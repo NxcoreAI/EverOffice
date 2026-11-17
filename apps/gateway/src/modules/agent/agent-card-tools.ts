@@ -69,6 +69,8 @@ export function createAgentCardTools(
       + "PPT 整册生成必须带 palette（2~5 个 hex 色板，按 主色/次色/强调 顺序）与 "
       + "fonts（标题/正文字体），选定深浅结构再带 notes（如「深色封面 + 浅色内容页」），"
       + "用户在卡片上直接看到色块与字体再决定。"
+      + "卡片全部字段（title、plan、notes、body、planTitle）必须使用用户当前操作语言"
+      + "（系统提示中的界面 locale）；该语言为英文等非中文时不得混入中文。"
       + "带 palette 的计划卡（演示文稿整册）会自动存成一份工作空间云文档并登记到计划页，"
       + "用户可在「云文档」里读改、在计划页上跟踪；卡片上会带「打开计划云文档」入口，步骤在文档里读全文。用 planTitle 指定计划标题（缺省用卡片 title）。"
       + "用户确认返回 choice=approved；取消返回 denied，text 带用户反馈——按反馈调整后重新出卡，"

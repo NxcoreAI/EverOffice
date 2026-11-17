@@ -42,7 +42,7 @@ function seedWorkspace(id: string): void {
   }).run();
 }
 
-function runInput(runId: string, workspaceId: string | null = "ws-1"): StartRuntimeRunInput {
+function runInput(runId: string, workspaceId: string | null = "ws-1", responseLanguage?: string): StartRuntimeRunInput {
   return {
     runId,
     sessionId: "session-deck-plan",
@@ -50,6 +50,7 @@ function runInput(runId: string, workspaceId: string | null = "ws-1"): StartRunt
     prompt: "生成 PPT",
     pageLabel: "Agent",
     workspaceId,
+    ...(responseLanguage ? { responseLanguage } : {}),
   } as StartRuntimeRunInput;
 }
 
@@ -108,6 +109,34 @@ describe("renderDeckPlanDocument", () => {
     const rendered = renderDeckPlanDocument({ ...withoutFonts, palette: [], notes: [] });
     expect(rendered.markdown).not.toContain("## 设计决策");
     expect(rendered.acceptance).not.toContain("色板与字体");
+  });
+
+  it("英文 locale 渲染英文标题与验收，不混入中文", () => {
+    const rendered = renderDeckPlanDocument(
+      {
+        ...baseDraft,
+        planTitle: "About Me Profile Deck - Build Plan",
+        plan: ["Read profile materials", "Define page structure", "Write pptxgenjs script", "Generate pptx"],
+        notes: ["Dark navy cover and closing slides, light content pages"],
+      },
+      "en-US",
+    );
+    expect(rendered.markdown).toContain("## Steps");
+    expect(rendered.markdown).toContain("1. Read profile materials");
+    expect(rendered.markdown).toContain("## Design decisions");
+    expect(rendered.markdown).toContain("- Palette: `#0b5fff`");
+    expect(rendered.markdown).toContain("- Heading font: Source Han Sans");
+    expect(rendered.markdown).toContain("## Acceptance criteria");
+    expect(rendered.acceptance).toContain("\"About Me Profile Deck - Build Plan\"");
+    // 固定文案不再混入中文标题。
+    expect(rendered.markdown).not.toMatch(/执行步骤|设计决策|验收标准|说明/);
+    expect(rendered.acceptance).not.toMatch(/云文档|演示文稿/);
+  });
+
+  it("未提供 locale 时保持中文（既有行为）", () => {
+    const rendered = renderDeckPlanDocument(baseDraft);
+    expect(rendered.markdown).toContain("## 执行步骤");
+    expect(rendered.acceptance).toContain("按云文档《产品介绍演示文稿制作计划》");
   });
 });
 
@@ -179,5 +208,43 @@ describe("createDeckPlanRecorder", () => {
     expect(second.documentId).not.toBe(first.documentId);
     expect(second.planItemId).not.toBe(first.planItemId);
     expect(plans.list({ workspaceId: "ws-1" })).toHaveLength(2);
+  });
+
+  it("英文 locale 落成英文文档结构与英文计划任务说明", async () => {
+    const documents = documentsHarness();
+    const persist = createDeckPlanRecorder({ documents, plans });
+
+    const englishDraft: DeckPlanDraft = {
+      planTitle: "About Me Profile Deck - Build Plan",
+      body: "Materials come from the workspace profile document.",
+      plan: ["Read profile materials", "Define page structure", "Write pptxgenjs script"],
+      palette: ["#0f1b2d", "#1c7293", "#f2a65a"],
+      fonts: { heading: "Arial", body: "Arial" },
+      notes: ["Dark navy cover and closing slides"],
+    };
+    const record = await persist(runInput("run-en", "ws-1", "en-US"), englishDraft);
+
+    const syncInput = documents.syncExternalMarkdown.mock.calls[0]![0];
+    expect(syncInput.title).toBe("About Me Profile Deck - Build Plan");
+    expect(syncInput.markdown).toContain("## Steps");
+    expect(syncInput.markdown).toContain("## Design decisions");
+    expect(syncInput.markdown).toContain("## Acceptance criteria");
+    expect(syncInput.markdown).not.toMatch(/执行步骤|设计决策|验收标准/);
+
+    const item = plans.get(record.planItemId!);
+    expect(item.detail).toContain("Plan document \"About Me Profile Deck - Build Plan\"");
+    expect(item.detail).not.toContain("计划文档");
+    expect(item.acceptance).toContain("cloud document \"About Me Profile Deck - Build Plan\"");
+  });
+
+  it("planTitle 为空时按 locale 取中/英缺省标题", async () => {
+    const documents = documentsHarness();
+    const persist = createDeckPlanRecorder({ documents, plans });
+
+    await persist(runInput("run-zh-empty"), { ...baseDraft, planTitle: "" });
+    expect(documents.syncExternalMarkdown.mock.calls[0]![0].title).toBe("演示文稿制作计划");
+
+    await persist(runInput("run-en-empty", "ws-1", "en-US"), { ...baseDraft, planTitle: "" });
+    expect(documents.syncExternalMarkdown.mock.calls[1]![0].title).toBe("Presentation plan");
   });
 });

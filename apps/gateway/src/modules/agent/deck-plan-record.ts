@@ -34,6 +34,72 @@ export interface DeckPlanDraft {
   notes: string[];
 }
 
+/**
+ * 计划文档/计划页任务里的固定文案（标题、标签、验收句）。
+ * 跟随运行的 responseLanguage：英文界面出英文；未提供或中文回落中文，
+ * 与 agent-card-tools 的 planSavedNote 同一判定口径。
+ */
+interface DeckPlanCopy {
+  stepsHeading: string;
+  designHeading: string;
+  descriptionHeading: string;
+  acceptanceHeading: string;
+  paletteLabel: string;
+  headingFontLabel: string;
+  bodyFontLabel: string;
+  colorSeparator: string;
+  acceptanceStepLine: string;
+  acceptanceDesignLine: string;
+  acceptanceVerbatimLine: string;
+  acceptanceSummarySteps: (title: string) => string;
+  acceptanceSummaryDesign: string;
+  acceptanceSummaryVerbatim: string;
+  fallbackTitle: string;
+  planDetailIntro: (title: string) => string;
+}
+
+const ZH_COPY: DeckPlanCopy = {
+  stepsHeading: "执行步骤",
+  designHeading: "设计决策",
+  descriptionHeading: "说明",
+  acceptanceHeading: "验收标准",
+  paletteLabel: "色板：",
+  headingFontLabel: "标题字体：",
+  bodyFontLabel: "正文字体：",
+  colorSeparator: "、",
+  acceptanceStepLine: "按「执行步骤」生成整册演示文稿，页面结构与本计划一致。",
+  acceptanceDesignLine: "色板与字体按「设计决策」执行，不擅自更换。",
+  acceptanceVerbatimLine: "用户给定的标题、文案与数字逐字保留，不改写、不补值。",
+  acceptanceSummarySteps: (title) => `按云文档《${title}》中的计划生成整册演示文稿，页面结构一致。`,
+  acceptanceSummaryDesign: "色板与字体按「设计决策」执行。",
+  acceptanceSummaryVerbatim: "用户给定的标题、文案与数字逐字保留。",
+  fallbackTitle: "演示文稿制作计划",
+  planDetailIntro: (title) => `计划文档《${title}》（工作空间「云文档」）记录本册结构与设计决策。`,
+};
+
+const EN_COPY: DeckPlanCopy = {
+  stepsHeading: "Steps",
+  designHeading: "Design decisions",
+  descriptionHeading: "Description",
+  acceptanceHeading: "Acceptance criteria",
+  paletteLabel: "Palette: ",
+  headingFontLabel: "Heading font: ",
+  bodyFontLabel: "Body font: ",
+  colorSeparator: ", ",
+  acceptanceStepLine: "Generate the full deck following these steps; the page structure must match this plan.",
+  acceptanceDesignLine: "Apply the palette and fonts from \"Design decisions\"; do not swap in your own.",
+  acceptanceVerbatimLine: "Keep user-provided titles, copy, and numbers verbatim; no rewriting or invented values.",
+  acceptanceSummarySteps: (title) => `Generate the full deck following the plan in cloud document "${title}"; the page structure must match.`,
+  acceptanceSummaryDesign: "Apply the palette and fonts from \"Design decisions\".",
+  acceptanceSummaryVerbatim: "Keep user-provided titles, copy, and numbers verbatim.",
+  fallbackTitle: "Presentation plan",
+  planDetailIntro: (title) => `Plan document "${title}" (workspace cloud documents) records this deck's structure and design decisions.`,
+};
+
+function deckPlanCopy(language: string | null | undefined): DeckPlanCopy {
+  return /^en/i.test((language ?? "").trim()) ? EN_COPY : ZH_COPY;
+}
+
 /** 计划落地结果：云文档 id + 计划页任务 id（任务未建成为 null）。 */
 export interface DeckPlanRecord {
   documentId: string;
@@ -55,44 +121,48 @@ function cleanTitle(value: string): string {
 }
 
 /** 把计划卡渲染成一份可读的云文档正文（文档标题由编辑器渲染为 H1，章节从 ## 起）。 */
-export function renderDeckPlanDocument(draft: DeckPlanDraft): DeckPlanDocument {
+export function renderDeckPlanDocument(
+  draft: DeckPlanDraft,
+  language?: string | null,
+): DeckPlanDocument {
+  const copy = deckPlanCopy(language);
   const steps = draft.plan.map((step) => step.trim()).filter(Boolean);
   const palette = draft.palette.filter(Boolean);
   const fonts: string[] = [];
-  if (draft.fonts?.heading) fonts.push(`- 标题字体：${draft.fonts.heading}`);
-  if (draft.fonts?.body) fonts.push(`- 正文字体：${draft.fonts.body}`);
+  if (draft.fonts?.heading) fonts.push(`- ${copy.headingFontLabel}${draft.fonts.heading}`);
+  if (draft.fonts?.body) fonts.push(`- ${copy.bodyFontLabel}${draft.fonts.body}`);
   const notes = draft.notes.map((note) => note.trim()).filter(Boolean);
   const body = (draft.body ?? "").trim();
 
   const lines: string[] = [];
   if (steps.length) {
-    lines.push("## 执行步骤", "");
+    lines.push(`## ${copy.stepsHeading}`, "");
     steps.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
     lines.push("");
   }
   if (palette.length || fonts.length || notes.length) {
-    lines.push("## 设计决策", "");
+    lines.push(`## ${copy.designHeading}`, "");
     if (palette.length) {
-      lines.push(`- 色板：${palette.map((color) => `\`${color}\``).join("、")}`);
+      lines.push(`- ${copy.paletteLabel}${palette.map((color) => `\`${color}\``).join(copy.colorSeparator)}`);
     }
     lines.push(...fonts);
     for (const note of notes) lines.push(`- ${note}`);
     lines.push("");
   }
   if (body) {
-    lines.push("## 说明", "", body, "");
+    lines.push(`## ${copy.descriptionHeading}`, "", body, "");
   }
   const hasDecisions = palette.length > 0 || fonts.length > 0;
-  lines.push("## 验收标准", "");
-  lines.push("- 按「执行步骤」生成整册演示文稿，页面结构与本计划一致。");
-  if (hasDecisions) lines.push("- 色板与字体按「设计决策」执行，不擅自更换。");
-  lines.push("- 用户给定的标题、文案与数字逐字保留，不改写、不补值。");
+  lines.push(`## ${copy.acceptanceHeading}`, "");
+  lines.push(`- ${copy.acceptanceStepLine}`);
+  if (hasDecisions) lines.push(`- ${copy.acceptanceDesignLine}`);
+  lines.push(`- ${copy.acceptanceVerbatimLine}`);
   lines.push("");
 
   const acceptance = [
-    `按云文档《${cleanTitle(draft.planTitle)}》中的计划生成整册演示文稿，页面结构一致。`,
-    hasDecisions ? "色板与字体按「设计决策」执行。" : "",
-    "用户给定的标题、文案与数字逐字保留。",
+    copy.acceptanceSummarySteps(cleanTitle(draft.planTitle)),
+    hasDecisions ? copy.acceptanceSummaryDesign : "",
+    copy.acceptanceSummaryVerbatim,
   ].filter(Boolean).join("");
 
   return { markdown: lines.join("\n"), acceptance };
@@ -115,8 +185,9 @@ export function createDeckPlanRecorder(
   const records = new Map<string, { documentId: string; planItemId: string | null }>();
 
   return async (input, draft) => {
-    const planTitle = cleanTitle(draft.planTitle) || "演示文稿制作计划";
-    const rendered = renderDeckPlanDocument({ ...draft, planTitle });
+    const copy = deckPlanCopy(input.responseLanguage);
+    const planTitle = cleanTitle(draft.planTitle) || copy.fallbackTitle;
+    const rendered = renderDeckPlanDocument({ ...draft, planTitle }, input.responseLanguage);
     const workspaceId = (input.workspaceId ?? "").trim();
     const documentWorkspaceId = workspaceId || DEFAULT_DOCUMENT_WORKSPACE_ID;
     const planWorkspaceId = workspaceId || DEFAULT_AGENT_WORKSPACE_ID;
@@ -141,7 +212,7 @@ export function createDeckPlanRecorder(
     };
     const refs: PlanRef[] = [{ kind: "document", id: documentId, title: planTitle }];
     const detail = [
-      `计划文档《${planTitle}》（工作空间「云文档」）记录本册结构与设计决策。`,
+      copy.planDetailIntro(planTitle),
       "",
       ...draft.plan.map((step, index) => `${index + 1}. ${step}`),
     ].join("\n").trim();
